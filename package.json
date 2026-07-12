@@ -1,0 +1,30 @@
+{
+  "name": "rollcasters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "db:migrate": "node scripts/apply-migrations.mjs",
+    "db:migrate:dry": "node scripts/apply-migrations.mjs --dry-run",
+    "db:migrate:file": "node scripts/apply-migrations.mjs --files",
+    "db:delete-user": "node scripts/delete-dev-user.mjs",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "pg": "^8.13.1",
+    "playwright": "^1.61.1"
+  }
+}

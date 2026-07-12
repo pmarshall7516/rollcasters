@@ -1,0 +1,790 @@
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #17201b;
+  background: #e9eef0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.app-shell {
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(89, 139, 126, 0.2), transparent 36%),
+    linear-gradient(315deg, rgba(46, 98, 160, 0.16), transparent 38%),
+    #eef2f1;
+}
+
+.world-glow {
+  position: fixed;
+  inset: auto -20% -30% auto;
+  width: 520px;
+  height: 520px;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(50, 125, 147, 0.2), transparent 68%);
+}
+
+.top-bar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1280px;
+  margin: 0 auto 22px;
+}
+
+.logo-button,
+.icon-button,
+.link-button,
+.secondary-button,
+.primary-button,
+.menu-button,
+.tabs button,
+.skill-button,
+.action-grid button {
+  border: 0;
+  border-radius: 8px;
+}
+
+.logo-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #ffffff;
+  color: #15251f;
+  box-shadow: 0 10px 30px rgba(31, 53, 49, 0.1);
+  font-weight: 800;
+}
+
+.logo-button span,
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #fff;
+  background: #164b40;
+}
+
+.account-cluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.coin-pill,
+.user-pill,
+.ability-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 8px 11px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(31, 53, 49, 0.08);
+  font-weight: 700;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  background: #ffffff;
+  color: #2d3835;
+}
+
+.auth-layout {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 28px;
+  align-items: stretch;
+  max-width: 1060px;
+  margin: 8vh auto 0;
+}
+
+.brand-panel,
+.auth-card,
+.setup-panel,
+.rollcaster-panel,
+.loadout-slot,
+.catalog-card,
+.dungeon-card,
+.modal,
+.turn-panel,
+.combat-log,
+.battle-unit {
+  border: 1px solid rgba(18, 47, 41, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 50px rgba(35, 54, 54, 0.12);
+}
+
+.brand-panel,
+.auth-card,
+.setup-panel {
+  padding: 30px;
+}
+
+.brand-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 440px;
+  background:
+    linear-gradient(rgba(17, 70, 62, 0.76), rgba(17, 70, 62, 0.76)),
+    radial-gradient(circle at 20% 20%, #6faf9e, transparent 36%),
+    radial-gradient(circle at 80% 70%, #5c87ba, transparent 34%),
+    #194a43;
+  color: #fff;
+}
+
+.brand-panel h1,
+.setup-panel h1 {
+  margin: 18px 0 8px;
+  font-size: 52px;
+  line-height: 1;
+}
+
+.auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.auth-card label {
+  display: grid;
+  gap: 7px;
+  color: #384640;
+  font-weight: 700;
+}
+
+.auth-card input {
+  width: 100%;
+  border: 1px solid #c7d3d0;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbfa;
+}
+
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 11px 16px;
+  background: #17654d;
+  color: #fff;
+  font-weight: 800;
+}
+
+.secondary-button,
+.link-button {
+  min-height: 38px;
+  padding: 9px 13px;
+  background: #e3ebe8;
+  color: #1b352e;
+  font-weight: 800;
+}
+
+.link-button {
+  background: transparent;
+}
+
+.primary-button:disabled,
+.menu-button:disabled {
+  opacity: 0.55;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.notice {
+  max-width: 1280px;
+  margin: 0 auto 14px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  background: #fff7d9;
+  color: #4a3b08;
+}
+
+.notice.error,
+.error-text {
+  background: #ffe4df;
+  color: #8a2418;
+}
+
+.screen-stack {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 18px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.screen-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.screen-heading.row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.screen-heading h1,
+.rollcaster-panel h1,
+.combat-header h1 {
+  margin: 0;
+}
+
+.screen-heading p,
+.rollcaster-panel p,
+.catalog-card p,
+.loadout-slot p,
+.dungeon-card p,
+.battle-unit p {
+  margin: 4px 0;
+  color: #52605c;
+}
+
+.starter-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.home-layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 280px 190px minmax(440px, 1fr);
+  gap: 18px;
+  max-width: 1280px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+.rollcaster-panel {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  padding: 22px;
+  text-align: center;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #687670;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.main-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.menu-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 68px;
+  padding: 16px;
+  background: #fff;
+  color: #17201b;
+  box-shadow: 0 14px 30px rgba(31, 53, 49, 0.1);
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.play-button {
+  background: #163f38;
+  color: #fff;
+}
+
+.menu-button.muted {
+  background: #e7ecea;
+}
+
+.squad-panel {
+  display: grid;
+  gap: 13px;
+}
+
+.loadout-slot {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.loadout-slot.empty {
+  min-height: 160px;
+  place-content: center;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.slot-topline {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.slot-topline h3,
+.catalog-card h2,
+.dungeon-card h2,
+.battle-unit h3 {
+  margin: 0;
+}
+
+.skill-grid,
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.skill-button,
+.action-grid button {
+  min-height: 34px;
+  padding: 8px;
+  background: #e8f0ed;
+  color: #1c312b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.relic-row {
+  display: flex;
+  gap: 7px;
+}
+
+.relic-slot {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px dashed #94aaa3;
+  border-radius: 8px;
+}
+
+.collection-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.catalog-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 285px;
+  padding: 16px;
+  color: inherit;
+  text-align: left;
+}
+
+button.catalog-card:hover,
+.dungeon-card:hover {
+  transform: translateY(-1px);
+}
+
+.catalog-card.locked {
+  filter: grayscale(0.7);
+  opacity: 0.68;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  width: fit-content;
+}
+
+.tabs button {
+  padding: 10px 14px;
+  background: transparent;
+  color: #41524d;
+  font-weight: 900;
+  text-transform: capitalize;
+}
+
+.tabs button.active {
+  background: #173f38;
+  color: #fff;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  width: 100%;
+}
+
+.stat-grid.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.stat-grid span {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: #eef4f2;
+  color: #40504b;
+  font-size: 12px;
+}
+
+.xp-bar,
+.hp-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dce5e2;
+}
+
+.xp-bar span {
+  display: block;
+  height: 100%;
+  background: #3d8c73;
+}
+
+.hp-bar span {
+  display: block;
+  height: 100%;
+  background: #c7594d;
+}
+
+.sprite {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 3px solid rgba(255, 255, 255, 0.8);
+  border-radius: 28% 42% 30% 38%;
+  color: #fff;
+  box-shadow: inset 0 -12px 25px rgba(0, 0, 0, 0.16), 0 12px 24px rgba(27, 47, 43, 0.16);
+  font-weight: 950;
+}
+
+.sprite img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sprite.has-asset {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.sprite-small {
+  width: 54px;
+  height: 54px;
+  font-size: 17px;
+}
+
+.sprite-medium {
+  width: 74px;
+  height: 74px;
+  font-size: 22px;
+}
+
+.sprite-large {
+  width: 116px;
+  height: 116px;
+  font-size: 34px;
+}
+
+.sprite-hero {
+  width: 168px;
+  height: 168px;
+  font-size: 48px;
+}
+
+.sprite.flipped {
+  transform: scaleX(-1);
+}
+
+.sprite.locked {
+  background: #6f7775;
+}
+
+.element-basic {
+  background: linear-gradient(135deg, #69746f, #2d3733);
+}
+
+.element-vile {
+  background: linear-gradient(135deg, #9265a8, #45633f);
+}
+
+.element-bloom {
+  background: linear-gradient(135deg, #56a664, #e6aa56);
+}
+
+.element-aqua {
+  background: linear-gradient(135deg, #3e88bf, #47b8ad);
+}
+
+.element-metal {
+  background: linear-gradient(135deg, #bb8a42, #647072);
+}
+
+.dungeon-list {
+  display: grid;
+  gap: 12px;
+}
+
+.dungeon-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+}
+
+.combat-screen {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 14px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.combat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mana-readout {
+  display: flex;
+  gap: 8px;
+}
+
+.mana-readout span {
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #fff;
+  font-weight: 900;
+}
+
+.battlefield {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+}
+
+.battle-rollcaster {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  font-weight: 900;
+}
+
+.battle-column {
+  display: grid;
+  gap: 10px;
+}
+
+.battle-unit {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  min-height: 126px;
+  padding: 12px;
+}
+
+.battle-unit.bench {
+  opacity: 0.58;
+}
+
+.battle-unit.opponent {
+  grid-template-columns: 1fr auto;
+}
+
+.battle-unit.opponent .sprite {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.battle-unit.opponent .battle-unit-info {
+  grid-column: 1;
+  grid-row: 1;
+  text-align: right;
+}
+
+.action-grid {
+  grid-column: 1 / -1;
+}
+
+.action-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #163f38;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.turn-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+}
+
+.selection-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.selection-summary span,
+.selection-summary strong {
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: #edf4f1;
+}
+
+.combat-log {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+}
+
+.combat-log p {
+  margin: 0;
+  color: #44534f;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(16, 28, 25, 0.55);
+}
+
+.modal {
+  width: min(760px, 100%);
+  max-height: min(780px, 90vh);
+  overflow: auto;
+  padding: 18px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mini-card {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #edf4f1;
+}
+
+.mini-card.locked {
+  opacity: 0.55;
+}
+
+pre {
+  overflow: auto;
+  padding: 14px;
+  border-radius: 8px;
+  background: #11221e;
+  color: #dbeee7;
+}
+
+@media (max-width: 980px) {
+  .auth-layout,
+  .home-layout,
+  .battlefield {
+    grid-template-columns: 1fr;
+  }
+
+  .starter-row,
+  .collection-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-panel {
+    min-height: 300px;
+  }
+
+  .combat-header,
+  .top-bar,
+  .screen-heading.row,
+  .dungeon-card,
+  .turn-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (min-width: 981px) and (max-width: 1180px) {
+  .home-layout {
+    grid-template-columns: 240px 160px minmax(380px, 1fr);
+  }
+}

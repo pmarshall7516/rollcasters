@@ -1,5 +1,12 @@
 docs/
 docs/*
+implementation/
+implementation/*
 
 .env
 *.env
+
+node_modules/
+dist/
+output/
+supabase/.temp/
