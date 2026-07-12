@@ -1,4 +1,4 @@
-export type View = "auth" | "starter" | "home" | "collection" | "play" | "combat";
+export type View = "auth" | "starter" | "home" | "collection" | "play" | "combat" | "rewards";
 
 export type ElementDef = {
   id: string;
@@ -8,6 +8,13 @@ export type ElementDef = {
   sort_order: number;
 };
 
+export type SkillTargeting =
+  | "single_enemy"
+  | "all_enemies"
+  | "all_others"
+  | "single_any"
+  | "all_friendlies";
+
 export type Skill = {
   id: string;
   name: string;
@@ -15,6 +22,7 @@ export type Skill = {
   skill_type: "attack" | "support";
   power: number;
   mana_cost: number;
+  targeting: SkillTargeting;
   description: string;
   effect: Record<string, unknown>;
   sort_order: number;
@@ -28,7 +36,8 @@ export type Critter = {
   base_atk: number;
   base_def: number;
   base_spd: number;
-  base_dice: number;
+  base_dice_min: number;
+  base_dice_max: number;
   base_block_cost: number;
   base_swap_cost: number;
   asset_path: string | null;
@@ -45,7 +54,8 @@ export type CritterProgression = {
   atk_delta: number;
   def_delta: number;
   spd_delta: number;
-  dice_delta: number;
+  dice_min_delta: number;
+  dice_max_delta: number;
   block_cost_delta: number;
   swap_cost_delta: number;
   total_unlocked_relic_slots: number;
@@ -214,6 +224,12 @@ export type UserAbilitySlot = {
   ability_id: string | null;
 };
 
+export type UserRelicSlot = {
+  user_critter_id: string;
+  slot_index: number;
+  relic_id: string | null;
+};
+
 export type Catalog = {
   elements: ElementDef[];
   skills: Skill[];
@@ -240,6 +256,7 @@ export type PlayerState = {
   squadSlots: UserSquadSlot[];
   skillSlots: UserSkillSlot[];
   abilitySlots: UserAbilitySlot[];
+  relicSlots: UserRelicSlot[];
   unlockedSkillIdsByCritter: Record<string, string[]>;
   unlockedAbilityIdsByRollcaster: Record<string, string[]>;
   dungeonProgress: UserDungeonProgress[];

@@ -4,6 +4,7 @@ import type {
   Catalog,
   PlayerState,
   UserAbilitySlot,
+  UserRelicSlot,
   UserSkillSlot,
 } from "./types";
 
@@ -61,14 +62,15 @@ export async function signIn(email: string, password: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function signUp(email: string, password: string, username: string): Promise<void> {
+export async function signUp(email: string, password: string, username: string): Promise<boolean> {
   const client = requireClient();
-  const { error } = await client.auth.signUp({
+  const { data, error } = await client.auth.signUp({
     email,
     password,
     options: { data: { username } },
   });
   if (error) throw error;
+  return Boolean(data.session);
 }
 
 export async function signOut(): Promise<void> {
@@ -158,6 +160,7 @@ export async function loadPlayerState(): Promise<PlayerState> {
     squadSlots,
     skillSlots,
     abilitySlots,
+    relicSlots,
     unlockedSkills,
     unlockedAbilities,
     dungeonProgress,
@@ -170,6 +173,7 @@ export async function loadPlayerState(): Promise<PlayerState> {
     client.from("user_squad_slots").select("*").order("slot_index", { ascending: true }),
     client.from("user_critter_skill_slots").select("*").order("slot_index", { ascending: true }),
     client.from("user_rollcaster_ability_slots").select("*").order("slot_index", { ascending: true }),
+    client.from("user_critter_relic_slots").select("*").order("slot_index", { ascending: true }),
     client.from("user_critter_skills").select("*"),
     client.from("user_rollcaster_abilities").select("*"),
     client.from("user_dungeon_progress").select("*"),
@@ -184,6 +188,7 @@ export async function loadPlayerState(): Promise<PlayerState> {
     squadSlots,
     skillSlots,
     abilitySlots,
+    relicSlots,
     unlockedSkills,
     unlockedAbilities,
     dungeonProgress,
@@ -215,11 +220,32 @@ export async function loadPlayerState(): Promise<PlayerState> {
     squadSlots: squadSlots.data ?? [],
     skillSlots: (skillSlots.data ?? []) as UserSkillSlot[],
     abilitySlots: (abilitySlots.data ?? []) as UserAbilitySlot[],
+    relicSlots: (relicSlots.data ?? []) as UserRelicSlot[],
     unlockedSkillIdsByCritter,
     unlockedAbilityIdsByRollcaster,
     dungeonProgress: dungeonProgress.data ?? [],
   } as PlayerState;
 }
+
+async function callLoadoutRpc(name: string, args: Record<string, unknown>): Promise<void> {
+  const { error } = await requireClient().rpc(name, args);
+  if (error) throw error;
+}
+
+export const setSquadSlot = (slotIndex: number, userCritterId: string | null) =>
+  callLoadoutRpc("set_squad_critter_slot", { p_slot_index: slotIndex, p_user_critter_id: userCritterId });
+
+export const setCritterSkillSlot = (userCritterId: string, slotIndex: number, skillId: string | null) =>
+  callLoadoutRpc("set_critter_skill_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_skill_id: skillId });
+
+export const setCritterRelicSlot = (userCritterId: string, slotIndex: number, relicId: string | null) =>
+  callLoadoutRpc("set_critter_relic_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_relic_id: relicId });
+
+export const setRollcasterAbilitySlot = (userRollcasterId: string, slotIndex: number, abilityId: string | null) =>
+  callLoadoutRpc("set_rollcaster_ability_slot", { p_user_rollcaster_id: userRollcasterId, p_slot_index: slotIndex, p_ability_id: abilityId });
+
+export const setActiveRollcaster = (userRollcasterId: string) =>
+  callLoadoutRpc("set_active_rollcaster", { p_user_rollcaster_id: userRollcasterId });
 
 export async function loadAppData(): Promise<AppData> {
   const [catalog, player] = await Promise.all([loadCatalog(), loadPlayerState()]);

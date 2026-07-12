@@ -16,7 +16,8 @@ export type StatBlock = {
   atk: number;
   def: number;
   spd: number;
-  dice: number;
+  diceMin: number;
+  diceMax: number;
   blockCost: number;
   swapCost: number;
   relicSlots: number;
@@ -77,7 +78,8 @@ export function critterStats(catalog: Catalog, critter: Critter, level: number):
       atk: acc.atk + row.atk_delta,
       def: acc.def + row.def_delta,
       spd: acc.spd + row.spd_delta,
-      dice: acc.dice + row.dice_delta,
+      diceMin: acc.diceMin + row.dice_min_delta,
+      diceMax: acc.diceMax + row.dice_max_delta,
       blockCost: acc.blockCost + row.block_cost_delta,
       swapCost: acc.swapCost + row.swap_cost_delta,
       relicSlots: row.total_unlocked_relic_slots,
@@ -87,19 +89,24 @@ export function critterStats(catalog: Catalog, critter: Critter, level: number):
       atk: critter.base_atk,
       def: critter.base_def,
       spd: critter.base_spd,
-      dice: critter.base_dice,
+      diceMin: critter.base_dice_min,
+      diceMax: critter.base_dice_max,
       blockCost: critter.base_block_cost,
       swapCost: critter.base_swap_cost,
       relicSlots: 1,
     },
   );
 
+  const diceMin = Math.max(1, Math.floor(total.diceMin));
+  const diceMax = Math.max(diceMin, Math.floor(total.diceMax));
+
   return {
     hp: Math.max(1, total.hp),
     atk: Math.max(1, total.atk),
     def: Math.max(1, total.def),
     spd: Math.max(1, total.spd),
-    dice: Math.max(2, total.dice),
+    diceMin,
+    diceMax,
     blockCost: Math.max(0, total.blockCost),
     swapCost: Math.max(0, total.swapCost),
     relicSlots: Math.max(0, total.relicSlots),
@@ -203,11 +210,13 @@ function pickOpponents(catalog: Catalog, dungeon: Dungeon): DungeonOpponent[] {
 
 export function startTurn(state: CombatState): CombatState {
   const playerUnits = state.playerUnits.map((unit) =>
-    unit.active && unit.hp > 0 ? { ...unit, blocking: false, manaRoll: rollDie(unit.stats.dice, state.turn) } : unit,
-  );
-  const opponentUnits = state.opponentUnits.map((unit, index) =>
     unit.active && unit.hp > 0
-      ? { ...unit, blocking: false, manaRoll: rollDie(unit.stats.dice, state.turn + index + 7) }
+      ? { ...unit, blocking: false, manaRoll: rollManaDie(unit.stats.diceMin, unit.stats.diceMax) }
+      : unit,
+  );
+  const opponentUnits = state.opponentUnits.map((unit) =>
+    unit.active && unit.hp > 0
+      ? { ...unit, blocking: false, manaRoll: rollManaDie(unit.stats.diceMin, unit.stats.diceMax) }
       : unit,
   );
   const playerRoll = playerUnits.reduce((sum, unit) => sum + (unit.active && unit.hp > 0 ? unit.manaRoll : 0), 0);
@@ -265,8 +274,6 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
 
 function chooseEnemyActions(state: CombatState): CombatAction[] {
   let mana = state.opponentMana;
-  const target = state.playerUnits.find((unit) => unit.active && unit.hp > 0);
-  if (!target) return [];
 
   return state.opponentUnits
     .filter((unit) => unit.active && unit.hp > 0)
@@ -274,11 +281,12 @@ function chooseEnemyActions(state: CombatState): CombatAction[] {
       const skill = unit.skills.find((candidate) => candidate.mana_cost <= mana) ?? unit.skills[0];
       if (skill && skill.mana_cost <= mana) {
         mana -= skill.mana_cost;
+        const target = skillTargets(state, unit.key, skill)[0];
         return {
           actorKey: unit.key,
           type: "skill" as const,
           skillId: skill.id,
-          targetKey: target.key,
+          targetKey: isSingleTarget(skill) ? target?.key : undefined,
           cost: skill.mana_cost,
         };
       }
@@ -310,21 +318,49 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
     return swapPlayerUnit(state, action.actorKey, action.swapToId);
   }
 
-  if (action.type === "skill" && action.skillId && action.targetKey) {
+  if (action.type === "skill" && action.skillId) {
     const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
-    const target = findUnit(state, action.targetKey);
-    if (!skill || !target || target.hp <= 0) return state;
-    const damage = skill.skill_type === "attack" ? calculateDamage(actor, target, skill) : 0;
-    const finalDamage = target.blocking ? Math.max(1, Math.floor(damage * 0.1)) : damage;
-    return updateUnit(
-      state,
-      target.key,
-      (unit) => ({ ...unit, hp: Math.max(0, unit.hp - finalDamage) }),
-      `${actor.name} used ${skill.name} on ${target.name} for ${finalDamage} damage.`,
-    );
+    if (!skill) return state;
+    const targets = skillTargets(state, actor.key, skill, action.targetKey);
+    if (!targets.length) return state;
+    return targets.reduce((current, originalTarget) => {
+      const target = findUnit(current, originalTarget.key);
+      if (!target || target.hp <= 0) return current;
+      if (skill.skill_type === "attack") {
+        const damage = calculateDamage(actor, target, skill);
+        const finalDamage = target.blocking ? Math.max(1, Math.floor(damage * 0.1)) : damage;
+        return updateUnit(current, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - finalDamage) }), `${actor.name} used ${skill.name} on ${target.name} for ${finalDamage} damage.`);
+      }
+      const effectKind = String(skill.effect.kind ?? "");
+      const amount = Number(skill.effect.amount ?? 0);
+      if ((effectKind === "heal" || effectKind === "restore_hp") && amount > 0) {
+        const healed = skill.effect.amount_type === "percent_max_hp" ? Math.max(1, Math.floor(target.maxHp * amount)) : amount;
+        return updateUnit(current, target.key, (unit) => ({ ...unit, hp: Math.min(unit.maxHp, unit.hp + healed) }), `${actor.name} used ${skill.name} on ${target.name}, restoring ${healed} HP.`);
+      }
+      return { ...current, log: [`${actor.name} used ${skill.name} on ${target.name}.`, ...current.log] };
+    }, state);
   }
 
   return state;
+}
+
+export function isSingleTarget(skill: Skill): boolean {
+  return (skill.targeting ?? "single_enemy") === "single_enemy" || skill.targeting === "single_any";
+}
+
+export function skillTargets(state: CombatState, actorKey: string, skill: Skill, selectedKey?: string): CombatUnit[] {
+  const actor = findUnit(state, actorKey);
+  if (!actor) return [];
+  const friendlies = actor.side === "player" ? state.playerUnits : state.opponentUnits;
+  const enemies = actor.side === "player" ? state.opponentUnits : state.playerUnits;
+  const onField = (unit: CombatUnit) => unit.active && unit.hp > 0;
+  const targeting = skill.targeting ?? "single_enemy";
+  if (targeting === "all_enemies") return enemies.filter(onField);
+  if (targeting === "all_friendlies") return friendlies.filter(onField);
+  if (targeting === "all_others") return [...friendlies, ...enemies].filter((unit) => onField(unit) && unit.key !== actor.key);
+  const candidates = targeting === "single_any" ? [...friendlies, ...enemies].filter(onField) : enemies.filter(onField);
+  if (!selectedKey) return candidates;
+  return candidates.filter((unit) => unit.key === selectedKey);
 }
 
 function swapPlayerUnit(state: CombatState, actorKey: string, swapToId: string): CombatState {
@@ -373,7 +409,8 @@ function speedFor(state: CombatState, key: string): number {
   return findUnit(state, key)?.stats.spd ?? 0;
 }
 
-function rollDie(sides: number, salt: number): number {
-  const raw = Math.sin((Date.now() % 100000) + salt * 999) * 10000;
-  return 1 + (Math.abs(Math.floor(raw)) % sides);
+export function rollManaDie(min: number, max: number, random: () => number = Math.random): number {
+  const lower = Math.max(1, Math.floor(min));
+  const upper = Math.max(lower, Math.floor(max));
+  return lower + Math.floor(random() * (upper - lower + 1));
 }

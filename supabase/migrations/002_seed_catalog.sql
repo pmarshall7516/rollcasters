@@ -31,11 +31,11 @@ on conflict (id) do update set
 
 insert into public.critters (
   id, name, element_id, base_hp, base_atk, base_def, base_spd,
-  base_dice, base_block_cost, base_swap_cost, description, sort_order
+  base_dice_min, base_dice_max, base_block_cost, base_swap_cost, description, sort_order
 ) values
-  ('001', 'Toxichick', 'vile', 34, 17, 12, 18, 6, 2, 2, 'Fast Vile starter with sharp early tempo.', 1),
-  ('002', 'Spreagle', 'bloom', 40, 14, 16, 13, 6, 2, 3, 'Balanced Bloom starter with sturdy growth potential.', 2),
-  ('003', 'Congua', 'aqua', 44, 13, 18, 10, 8, 3, 2, 'Durable Aqua starter with a larger mana die.', 3)
+  ('001', 'Toxichick', 'vile', 34, 17, 12, 18, 1, 6, 2, 2, 'Fast Vile starter with sharp early tempo.', 1),
+  ('002', 'Spreagle', 'bloom', 40, 14, 16, 13, 1, 6, 2, 3, 'Balanced Bloom starter with sturdy growth potential.', 2),
+  ('003', 'Congua', 'aqua', 44, 13, 18, 10, 1, 8, 3, 2, 'Durable Aqua starter with a larger mana die.', 3)
 on conflict (id) do update set
   name = excluded.name,
   element_id = excluded.element_id,
@@ -43,7 +43,8 @@ on conflict (id) do update set
   base_atk = excluded.base_atk,
   base_def = excluded.base_def,
   base_spd = excluded.base_spd,
-  base_dice = excluded.base_dice,
+  base_dice_min = excluded.base_dice_min,
+  base_dice_max = excluded.base_dice_max,
   base_block_cost = excluded.base_block_cost,
   base_swap_cost = excluded.base_swap_cost,
   description = excluded.description,
@@ -51,23 +52,23 @@ on conflict (id) do update set
 
 insert into public.critter_level_progression (
   critter_id, level, total_required_xp, grant_skill_points, hp_delta, atk_delta, def_delta,
-  spd_delta, dice_delta, block_cost_delta, swap_cost_delta, total_unlocked_relic_slots
+  spd_delta, dice_min_delta, dice_max_delta, block_cost_delta, swap_cost_delta, total_unlocked_relic_slots
 ) values
-  ('001', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
-  ('001', 2, 80, 1, 4, 2, 1, 2, 0, 0, 0, 1),
-  ('001', 3, 180, 2, 4, 2, 2, 1, 0, 0, 0, 1),
-  ('001', 4, 340, 2, 5, 2, 2, 2, 0, 0, 0, 2),
-  ('001', 5, 560, 3, 5, 3, 2, 2, 1, 0, 0, 2),
-  ('002', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
-  ('002', 2, 80, 1, 5, 1, 2, 1, 0, 0, 0, 1),
-  ('002', 3, 180, 2, 5, 2, 2, 1, 0, 0, 0, 1),
-  ('002', 4, 340, 2, 6, 2, 2, 1, 0, 0, -1, 2),
-  ('002', 5, 560, 3, 6, 2, 3, 2, 1, 0, 0, 2),
-  ('003', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
-  ('003', 2, 80, 1, 6, 1, 2, 1, 0, 0, 0, 1),
-  ('003', 3, 180, 2, 6, 2, 3, 1, 0, 0, 0, 1),
-  ('003', 4, 340, 2, 6, 2, 3, 1, 0, -1, 0, 2),
-  ('003', 5, 560, 3, 7, 2, 3, 1, 1, 0, 0, 2)
+  ('001', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
+  ('001', 2, 80, 1, 4, 2, 1, 2, 0, 0, 0, 0, 1),
+  ('001', 3, 180, 2, 4, 2, 2, 1, 0, 0, 0, 0, 1),
+  ('001', 4, 340, 2, 5, 2, 2, 2, 0, 0, 0, 0, 2),
+  ('001', 5, 560, 3, 5, 3, 2, 2, 0, 1, 0, 0, 2),
+  ('002', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
+  ('002', 2, 80, 1, 5, 1, 2, 1, 0, 0, 0, 0, 1),
+  ('002', 3, 180, 2, 5, 2, 2, 1, 0, 0, 0, 0, 1),
+  ('002', 4, 340, 2, 6, 2, 2, 1, 0, 0, 0, -1, 2),
+  ('002', 5, 560, 3, 6, 2, 3, 2, 0, 1, 0, 0, 2),
+  ('003', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
+  ('003', 2, 80, 1, 6, 1, 2, 1, 0, 0, 0, 0, 1),
+  ('003', 3, 180, 2, 6, 2, 3, 1, 0, 0, 0, 0, 1),
+  ('003', 4, 340, 2, 6, 2, 3, 1, 0, 0, -1, 0, 2),
+  ('003', 5, 560, 3, 7, 2, 3, 1, 0, 1, 0, 0, 2)
 on conflict (critter_id, level) do update set
   total_required_xp = excluded.total_required_xp,
   grant_skill_points = excluded.grant_skill_points,
@@ -75,7 +76,8 @@ on conflict (critter_id, level) do update set
   atk_delta = excluded.atk_delta,
   def_delta = excluded.def_delta,
   spd_delta = excluded.spd_delta,
-  dice_delta = excluded.dice_delta,
+  dice_min_delta = excluded.dice_min_delta,
+  dice_max_delta = excluded.dice_max_delta,
   block_cost_delta = excluded.block_cost_delta,
   swap_cost_delta = excluded.swap_cost_delta,
   total_unlocked_relic_slots = excluded.total_unlocked_relic_slots;
