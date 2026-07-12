@@ -40,7 +40,7 @@ export function connectionStringFromEnv(env) {
   }
 
   const projectRef = new URL(supabaseUrl).hostname.split(".")[0];
-  return `postgresql://postgres:${encodeURIComponent(password)}@db.${projectRef}.supabase.co:5432/postgres?sslmode=require`;
+  return `postgresql://postgres:${encodeURIComponent(password)}@db.${projectRef}.supabase.co:5432/postgres?sslmode=verify-full`;
 }
 
 export function createDbClient(env = readEnv()) {

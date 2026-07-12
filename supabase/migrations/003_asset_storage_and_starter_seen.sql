@@ -4,7 +4,7 @@ values (
   'game-assets',
   true,
   5242880,
-  array['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']
+  array['image/png']
 )
 on conflict (id) do update set
   public = excluded.public,
@@ -64,7 +64,7 @@ alter table public.game_assets
 comment on table public.game_assets is
   'Registry for public game art stored in the Supabase Storage game-assets bucket.';
 comment on column public.game_assets.path is
-  'Object path inside game-assets, for example critters/001-toxichick.png or logos/elements/aqua.svg.';
+  'Object path inside game-assets, for example critters/001-toxichick.png or logos/elements/aqua.png.';
 comment on column public.game_assets.variant is
   'Asset variant such as default, icon, portrait, sprite-front, sprite-back, shiny, or thumbnail.';
 
@@ -103,12 +103,12 @@ create index if not exists dungeon_opponents_dungeon_pool_sequence_idx
 insert into public.game_assets (
   path, category, owner_table, owner_id, variant, display_name, alt_text, content_type, sort_order
 ) values
-  ('logos/elements/basic.svg', 'element', 'elements', 'basic', 'icon', 'Basic element logo', 'Basic element logo', 'image/svg+xml', 1),
-  ('logos/elements/vile.svg', 'element', 'elements', 'vile', 'icon', 'Vile element logo', 'Vile element logo', 'image/svg+xml', 2),
-  ('logos/elements/bloom.svg', 'element', 'elements', 'bloom', 'icon', 'Bloom element logo', 'Bloom element logo', 'image/svg+xml', 3),
-  ('logos/elements/aqua.svg', 'element', 'elements', 'aqua', 'icon', 'Aqua element logo', 'Aqua element logo', 'image/svg+xml', 4),
-  ('ui/currency/coins.svg', 'currency', 'global', 'coins', 'icon', 'Coin logo', 'Coin currency logo', 'image/svg+xml', 10),
-  ('ui/mana/mana.svg', 'mana', 'global', 'mana', 'icon', 'Mana logo', 'Mana resource logo', 'image/svg+xml', 11),
+  ('logos/elements/basic.png', 'element', 'elements', 'basic', 'icon', 'Basic element logo', 'Basic element logo', 'image/png', 1),
+  ('logos/elements/vile.png', 'element', 'elements', 'vile', 'icon', 'Vile element logo', 'Vile element logo', 'image/png', 2),
+  ('logos/elements/bloom.png', 'element', 'elements', 'bloom', 'icon', 'Bloom element logo', 'Bloom element logo', 'image/png', 3),
+  ('logos/elements/aqua.png', 'element', 'elements', 'aqua', 'icon', 'Aqua element logo', 'Aqua element logo', 'image/png', 4),
+  ('ui/coins.png', 'currency', 'global', 'coins', 'icon', 'Coin logo', 'Coin currency logo', 'image/png', 10),
+  ('ui/mana.png', 'mana', 'global', 'mana', 'icon', 'Mana logo', 'Mana resource logo', 'image/png', 11),
   ('rollcasters/001-shanks.png', 'rollcaster', 'rollcasters', '001', 'default', 'Shanks sprite', 'Shanks Rollcaster sprite', 'image/png', 100),
   ('critters/001-toxichick.png', 'critter', 'critters', '001', 'default', 'Toxichick sprite', 'Toxichick sprite', 'image/png', 201),
   ('critters/002-spreagle.png', 'critter', 'critters', '002', 'default', 'Spreagle sprite', 'Spreagle sprite', 'image/png', 202),
@@ -126,10 +126,10 @@ on conflict (category, owner_table, owner_id, variant) do update set
 
 update public.elements
 set asset_path = case id
-  when 'basic' then 'logos/elements/basic.svg'
-  when 'vile' then 'logos/elements/vile.svg'
-  when 'bloom' then 'logos/elements/bloom.svg'
-  when 'aqua' then 'logos/elements/aqua.svg'
+  when 'basic' then 'logos/elements/basic.png'
+  when 'vile' then 'logos/elements/vile.png'
+  when 'bloom' then 'logos/elements/bloom.png'
+  when 'aqua' then 'logos/elements/aqua.png'
   else asset_path
 end
 where id in ('basic', 'vile', 'bloom', 'aqua');

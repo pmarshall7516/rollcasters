@@ -42,12 +42,12 @@ critters/002-spreagle.png
 critters/003-congua.png
 rollcasters/001-shanks.png
 relics/001-copper-shield.png
-logos/elements/basic.svg
-logos/elements/vile.svg
-logos/elements/bloom.svg
-logos/elements/aqua.svg
-ui/mana/mana.svg
-ui/currency/coins.svg
+logos/elements/basic.png
+logos/elements/vile.png
+logos/elements/bloom.png
+logos/elements/aqua.png
+ui/mana.png
+ui/coins.png
 ```
 
 Skills and abilities do not have image assets.
@@ -74,7 +74,7 @@ npm run db:migrate -- --files 001_initial_schema.sql,002_seed_catalog.sql
 npm run db:migrate -- --files 003_asset_storage_and_starter_seen.sql
 ```
 
-If the local runner reports certificate-chain errors, use the Supabase SQL editor for the migration files or provide `SUPABASE_DB_URL` plus `SUPABASE_DB_CA_CERT_PATH`.
+If the local runner reports `SELF_SIGNED_CERT_IN_CHAIN`, use the Supabase SQL editor for the migration files or download the Supabase database CA certificate and set `SUPABASE_DB_CA_CERT_PATH` to that file path. Do not disable TLS verification for migrations.
 
 ## Development Database Utilities
 

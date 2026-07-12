@@ -30,6 +30,8 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - Ran `npm audit --audit-level=moderate`; npm reports the existing Vite/esbuild dev-server advisory and recommends a breaking `vite@8.1.4` force upgrade, so this was left unchanged for now.
 - Added `supabase/.temp/` to `.gitignore` so Supabase CLI local state does not get committed.
 - Updated asset storage migrations and docs so skills and abilities do not have image assets, and Basic plus the three starter element logos are registered.
+- Updated the migration utility to derive direct Postgres URLs with `sslmode=verify-full` and emit a clearer `SELF_SIGNED_CERT_IN_CHAIN` remediation message.
+- Updated game asset storage paths and bucket MIME restrictions so all image assets use PNG files.
 
 ## TODO
 

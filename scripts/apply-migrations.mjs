@@ -37,6 +37,20 @@ try {
   process.stdout.write("Migrations applied successfully.\n");
 } catch (error) {
   await client.query("rollback").catch(() => undefined);
+  if (error?.code === "SELF_SIGNED_CERT_IN_CHAIN") {
+    throw new Error(
+      [
+        "Database migration failed TLS verification: self-signed certificate in certificate chain.",
+        "",
+        "Fix options:",
+        "1. Download the Supabase database CA certificate for this project, save it inside the repo, and set SUPABASE_DB_CA_CERT_PATH to that file path.",
+        "2. Set SUPABASE_DB_URL to the exact verified Postgres connection string from Supabase and include sslmode=verify-full.",
+        "3. Apply the SQL files manually in the Supabase SQL editor.",
+        "",
+        "Do not disable TLS verification for migrations.",
+      ].join("\n"),
+    );
+  }
   throw error;
 } finally {
   await client.end().catch(() => undefined);
