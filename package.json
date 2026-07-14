@@ -5,7 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
     "build": "tsc && vite build",
+    "test:effect-runtime": "tsc scripts/effect-runtime-tests.ts src/lib/game.ts src/lib/types.ts --outDir /tmp/rollcasters-effect-runtime-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-effect-runtime-tests/scripts/effect-runtime-tests.js",
+    "test:effect-browser": "RUN_LIVE_EFFECT_BROWSER_TEST=true node scripts/effect-combat-playwright.mjs",
+    "test:collection-layout": "node scripts/collection-layout-tests.mjs",
+    "test:sprite-containment": "node scripts/sprite-containment-tests.mjs",
     "db:migrate": "node scripts/apply-migrations.mjs",
     "db:migrate:dry": "node scripts/apply-migrations.mjs --dry-run",
     "db:migrate:file": "node scripts/apply-migrations.mjs --files",

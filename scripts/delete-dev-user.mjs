@@ -14,7 +14,8 @@ Required safety checks:
   SUPABASE_SERVICE_ROLE_KEY must be set unless --direct-db is passed.
 
 This deletes the matching row from auth.users. Public game data rows cascade through
-foreign keys that reference auth.users(id).
+foreign keys that reference auth.users(id). Catalog authorship is cleared while
+append-only audit entries retain the historical actor UUID.
 
 Preferred auth deletion uses SUPABASE_SERVICE_ROLE_KEY. Direct Postgres deletion is
 available with --direct-db for environments with a verified DB CA certificate.
@@ -92,6 +93,14 @@ async function authAdminRequest(path, options = {}) {
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
     const message = data?.message ?? data?.error_description ?? data?.error ?? response.statusText;
+    if (options.method === "DELETE" && response.status === 500 && /foreign key constraint/i.test(message)) {
+      throw new Error(
+        [
+          `Supabase refused to delete the Auth user because a public table still has a restrictive foreign key: ${message}`,
+          "Apply supabase/migrations/002_auth_user_delete_audit_fks.sql, then rerun this command.",
+        ].join("\n"),
+      );
+    }
     throw new Error(`Supabase Auth Admin request failed (${response.status}): ${message}`);
   }
 

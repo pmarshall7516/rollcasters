@@ -13,7 +13,79 @@ export type SkillTargeting =
   | "all_enemies"
   | "all_others"
   | "single_any"
+  | "self_only"
+  | "all_allies"
   | "all_friendlies";
+
+export type EffectOwnerType = "skill" | "ability" | "relic" | "status";
+export type EffectTarget =
+  | "skill_user"
+  | "selected_target"
+  | "all_enemies"
+  | "all_allies"
+  | "all_friendlies"
+  | "all_friendly_critters"
+  | "active_friendly_critter"
+  | "equipped_critter"
+  | "status_holder";
+
+export type EffectTemplate = {
+  id: string;
+  effect_category: EffectOwnerType;
+  runtime_kind: string;
+  runtime_version: number;
+  is_runtime_supported: boolean;
+  is_active: boolean;
+  is_archived: boolean;
+  version: number;
+};
+
+export type EffectDefinition = {
+  id: string;
+  name: string;
+  description: string;
+  owner_type: EffectOwnerType;
+  parameters: Record<string, unknown>;
+  version: number;
+  is_active: boolean;
+  is_archived: boolean;
+  template: EffectTemplate;
+};
+
+export type ResolvedEffectRef = {
+  id: string;
+  name: string;
+  description: string;
+  ownerType: EffectOwnerType;
+  runtimeKind: string;
+  runtimeVersion: number;
+  parameters: Record<string, unknown>;
+  sortOrder: number;
+  definitionVersion: number;
+  templateVersion: number;
+};
+
+export type EffectAttachment = {
+  effect_id: string;
+  sort_order: number;
+};
+
+export type SkillEffectAttachment = EffectAttachment & { skill_id: string; role: "primary" | "secondary" };
+export type AbilityEffectAttachment = EffectAttachment & { ability_id: string };
+export type RelicEffectAttachment = EffectAttachment & { relic_id: string };
+export type StatusEffectAttachment = EffectAttachment & { status_id: string };
+
+export type Status = {
+  id: string;
+  name: string;
+  description: string;
+  stacking_policy?: "refresh" | "extend" | "stack" | "ignore";
+  default_duration?: number;
+  max_stacks?: number;
+  is_active?: boolean;
+  is_archived?: boolean;
+  version?: number;
+};
 
 export type Skill = {
   id: string;
@@ -142,6 +214,12 @@ export type DungeonOpponent = {
   drops: Array<Record<string, unknown>>;
 };
 
+export type DungeonOpponentStatOverride = {
+  opponent_id: string;
+  stat_key: "hp" | "atk" | "def" | "spd" | "dice_min" | "dice_max" | "block_cost" | "swap_cost";
+  value: number;
+};
+
 export type StarterOption = {
   critter_id: string;
   sort_order: number;
@@ -245,13 +323,19 @@ export type Catalog = {
   dungeonOpponents: DungeonOpponent[];
   starterOptions: StarterOption[];
   gameAssets: GameAsset[];
+  statuses: Status[];
+  effects: EffectDefinition[];
+  effectsBySkill: Record<string, ResolvedEffectRef[]>;
+  effectsByAbility: Record<string, ResolvedEffectRef[]>;
+  effectsByRelic: Record<string, ResolvedEffectRef[]>;
+  effectsByStatus: Record<string, ResolvedEffectRef[]>;
+  dungeonOpponentStatOverrides: DungeonOpponentStatOverride[];
 };
 
 export type PlayerState = {
   profile: Profile;
   rollcasters: UserRollcaster[];
   critters: UserCritter[];
-  seenCritterIds: string[];
   relicInventory: UserRelicInventory[];
   squadSlots: UserSquadSlot[];
   skillSlots: UserSkillSlot[];

@@ -1,5 +1,11 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Game-data bootstrap relationship fix (2026-07-13)
+
+- Fixed authenticated game loading after PostgREST reported two relationships between `effect_definitions` and `effect_templates`; the published-effect embed now explicitly uses `effect_definitions_template_id_fkey`.
+- Improved bootstrap error handling so structured Supabase errors display their real message and are logged for diagnosis instead of always becoming `Unable to load game data.`
+- Verified the signed-in home and collection screens against live Supabase data, then passed the production build, collection layout, sprite containment, and effect runtime test suites.
+
 ## Progress
 
 - Expanded `docs/04-enhanced-ui.md` into a full UI refresh specification covering logo placement, dark fantasy visual tokens, universal 5px-padded contain-fit sprite frames, element-first critter names, standardized home/combat skill tiles, larger relic slots, definitive Rollcaster ability slots, accessible tooltips, equip dialogs, server-side loadout validation, responsive/accessibility requirements, phased implementation, and acceptance criteria.
@@ -141,3 +147,88 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - Combat now rolls uniformly across every integer in the inclusive `[minimum, maximum]` range using `Math.floor(random * range)`, and both combat and stat cards display the full range.
 - Verified production build, migration selection, exact bucket boundaries/uniform bucket counts, fixed-value ranges, live database values, and the unauthenticated app render/browser console with the required Playwright client.
 - Seed values intentionally preserve the current balance (Toxichick 1–6, Spreagle 1–6, Congua 1–8); future catalog edits can raise either bound independently.
+
+## Player effect runtime integration (2026-07-12)
+
+- Integrated the player game with normalized effect definitions and Skill, Ability, Relic, and Status attachment tables from migrations 008/011/012.
+- Catalog bootstrap now loads published definitions with their template runtime contracts, orders attachments by `sort_order` then effect ID, and rejects missing, inactive, archived, unsupported, or owner-mismatched definitions.
+- Added the versioned runtime dispatcher contract for `stat_modifier@1`, `mana_dice_modifier@1`, `apply_status@1`, `restore_hp@1`, `damage_over_time@1`, and `skip_action_chance@1`; handlers use replayable injected RNG state rather than `Math.random()`.
+- Implemented final-value dungeon overrides, player and opponent Relic registration, active Rollcaster Ability registration, flat/percentage stat stacking, Mana Dice/stat clamps, Skill attachment resolution, status application and refresh/extend/stack/ignore policies, timed damage, skip procs, and status expiry.
+- Added canonical `self_only` and `all_allies` player targeting without aliasing either to `all_friendlies`.
+- Dungeon combat now snapshots effect definition/runtime versions, canonical parameters, owner sources, attachment order, player/opponent loadouts, opponent overrides, and RNG seed. Migration `015_game_effect_runtime_integration.sql` adds status lifecycle fields and the authenticated write-once snapshot RPC.
+- Updated Skill, Ability, and Relic tooltips to show normalized attachments in stored order as `<effect name>: <effect description>` without exposing JSON.
+- Added `npm run test:effect-runtime`, covering Harden, Boosted Roll, Poison Touch proc/no-proc, deterministic snapshots, attachment ordering, owner rejection, status refresh, Toxic timing, and Mana Dice clamps.
+- Verified `npm run test:effect-runtime`, `npm run build`, `npm run db:migrate:dry`, and `git diff --check`.
+- Ran the required Playwright client against the local app, inspected `output/effect-runtime-browser/shot-0.png`, and confirmed the live unauthenticated state and auth layout render without captured app errors. Signed-in browser combat remains unavailable without using or creating user credentials.
+
+### Remaining environment step
+
+- Apply migrations 007 through 015 (including `015_game_effect_runtime_integration.sql`) to the configured Supabase project before starting a dungeon with normalized effects.
+- After migration 015 is live, run an authenticated browser pass through battle setup, Skill target confirmation, poison/status turns, victory, and reward claim.
+
+## Shared sprite containment contract (2026-07-13)
+
+- Reworked the shared `Sprite` renderer so every Critter, Rollcaster, Relic, inventory, loadout, combat, reward, detail, and candidate image is an absolutely positioned paint layer inside a relatively positioned, clipped sprite box.
+- Reworked `AssetIcon` into the same fixed-box contract for element, mana, currency, relic-slot, tooltip, and name-row artwork. Image loading or fallback changes no longer participate in surrounding layout sizing.
+- Standardized all sprite images on centered `object-fit: contain`, border-box sizing, explicit width/height, and inherited safe-area padding (5px for framed artwork and 1px for compact icons).
+- Removed the old category-specific portrait width, height, max-size, and `overflow: visible` rules that could let intrinsic image dimensions or Rollcaster overrides escape the frame.
+- Added `npm run test:sprite-containment`, a Playwright geometry regression covering tall, near-square, square, oval, wide, and compact-icon sources at desktop and 360px mobile viewports. All 12 checks pass and both screenshots were visually inspected.
+- Verified `npm run build`, `git diff --check`, the required web-game Playwright client, auth-screen text state, and browser screenshots. The app loaded without captured console errors.
+
+### Remaining authenticated verification
+
+- When an authenticated test session is available, visually recheck the home loadout, collection/detail, equip dialogs, dungeon combat/target picker, and reward screen with live catalog assets. The shared renderer and shape regression are verified independently of authentication.
+
+## Authentication layout correction (2026-07-13)
+
+- Replaced the authentication card's fixed 440px height with a 440px minimum height so the taller sign-up form expands instead of overflowing above and below its border.
+- Added a contained error-message treatment and clear stale authentication errors when switching between log-in and sign-up modes.
+- Verified the production build and ran the required web-game Playwright client against the sign-up state. Visually inspected 700x919 and 360x800 screenshots; all form children stay inside the card, mobile has no horizontal overflow, and no browser console errors were captured.
+
+## Development user deletion foreign keys (2026-07-13)
+
+- Diagnosed Auth Admin deletion failure caused by restrictive Content Studio authorship foreign keys such as `elements_created_by_fkey`.
+- Added `002_auth_user_delete_audit_fks.sql`: live `created_by`/`updated_by` references now use `ON DELETE SET NULL`, while `content_change_log.admin_user_id` retains its immutable historical UUID without a live Auth foreign key.
+- Improved `db:delete-user` to report the required migration explicitly if Supabase returns a foreign-key deletion failure.
+- Applied migration 002 successfully to the configured Supabase database and deleted `patrick.wayne.marshall@gmail.com` through Supabase Auth Admin.
+
+## Collection sorting, filtering, and fixed cards (2026-07-13)
+
+- Fixed the active home Rollcaster portrait's collapsed 2px frame by using the same explicit `CardSprite` frame contract as collection Rollcaster cards and sizing its button to the 236px frame.
+- Collection Critters, Rollcasters, and Relics now sort by collectible ID with numeric-aware comparison, independent of catalog `sort_order`.
+- Added a shared name/ID search field beneath the collection tabs and a Critter-only searchable element dropdown with element logo/name rows and logo/name selected state.
+- Standardized all collection grid cards at 440px tall across tabs; responsive breakpoints retain identical card dimensions while changing only the number of columns.
+- Centered Critter `SEEN` and `UNDISCOVERED` status text, made it uppercase and bold, and widened the first compact stat column so `Mana Dice 10–12` remains fully contained on one line.
+- Added `npm run test:collection-layout`, covering identical card dimensions, 10–12 Mana Dice containment, and status alignment/casing at desktop and 360px mobile widths.
+- Verified the authenticated home and all three collection tabs in Chrome: active Rollcaster art rendered at 236x236, collection IDs appeared in 001/002/003 order, search reduced results by name/ID, element selection showed its logo/name and filtered the grid, all live cards measured 440px tall, and the 390px viewport had no horizontal overflow.
+- Verified `npm run test:collection-layout`, `npm run test:sprite-containment`, the required web-game Playwright smoke client, production build, `git diff --check`, and an empty browser error log. Visually inspected desktop/mobile collection regression images and authenticated home/collection screenshots.
+
+## Unified locked collection and grid-only scrolling (2026-07-13)
+
+- Removed the player client's Critter seen-state query/type/rendering dependency. All catalog Critters now expose their normal artwork, element, and name; ownership alone determines whether the card is unlocked.
+- Standardized every unowned Critter, Rollcaster, and Relic as a disabled greyed card with one centered, uppercase, bold `LOCKED` status. Removed `SEEN`, `UNDISCOVERED`, placeholder names, and question-mark art from collection cards.
+- Locked Relics no longer show ownership/description content or open their detail modal; owned Relics retain their existing details.
+- Added a fixed collection shell and dedicated grid viewport. The document is viewport-locked, only the card viewport scrolls, and the grid remains exactly three columns with 440px cards.
+- Reserved fixed tab, search, and element-filter geometry so the title, controls, and grid origin do not move when switching collection tabs. Narrow screens keep the literal three-column grid inside the horizontally/vertically scrollable collection viewport.
+- Expanded `npm run test:collection-layout` to verify three columns, fixed document overflow, grid-only vertical scrolling, stable anchors with/without the Critter filter, identical card sizes, locked status styling, and double-digit Mana Dice containment at desktop and mobile sizes.
+- Authenticated Chrome verification confirmed stable coordinates across Critter/Rollcaster/Relic tabs, real artwork for all unowned Critters, disabled locked cards, centered `LOCKED` statuses, no browser errors, and a real scroll moving the collection grid while page `scrollY` remained zero.
+
+## Locked collection details and page scrolling (2026-07-13)
+
+- Restored level-1 stat grids on locked Critter cards so players can compare catalog Critters before owning them.
+- Added normalized effect summaries to every Relic card, including locked Relics, while preserving the locked ownership treatment.
+- Removed the fixed-height collection shell and nested grid viewport; collection grids now use responsive columns and the document itself scrolls on desktop and mobile.
+- Updated the collection layout regression to verify document scrolling, the absence of nested grid scrolling, responsive 3/1-column layouts, locked Critter stat containment, and visible locked Relic effect copy.
+- Verified `npm run test:collection-layout`, `npm run build`, and `git diff --check`; also ran the required web-game Playwright smoke client and visually inspected its clean auth render plus the desktop/mobile collection regression screenshots.
+
+## Effect runtime contract hardening (2026-07-13)
+
+- Audited the live effect catalog and category invariants against the supplied game integration contract. The live category/template/definition relationships are consistent, but the database did not yet expose the write-once dungeon effect snapshot RPC or explicit Status lifecycle columns expected by the client.
+- Added strict game-side validation for supported runtime versions, canonical parameters, category-specific targets, template category/activity, and referenced active Statuses.
+- Snapshotted effect/template versions, source order, Status lifecycle, loadouts, overrides, parameters, and RNG inputs into a run-owned runtime registry so combat no longer resolves against mutable catalog effect maps.
+- Reworked combat stat recomputation so flat modifiers apply before one summed percentage bucket, Status and Skill modifiers do not compound accidentally, and active Relic/Ability modifiers are removed/reapplied when wearers are defeated or swapped.
+- Added `003_game_effect_runtime_support.sql` for Status stacking/duration/max-stack fields plus the authenticated, idempotent, write-once `snapshot_dungeon_run_effects` RPC.
+- Combat initialization now uses the exact `selected_opponents` stored by `start_dungeon_run` instead of independently selecting again from the mutable catalog, preventing boss/regular encounter divergence and ensuring the snapshot matches the server-owned run.
+- Added a self-contained authenticated Playwright regression that creates and removes a temporary Auth user, enters a live dungeon, verifies the stored Effect/Status snapshot, plays through victory/rewards, captures both screens, and fails on browser errors.
+- Applied `003_game_effect_runtime_support.sql` to the connected Supabase project. Post-apply checks report zero template, definition, and attachment category violations; the snapshot column/function exist; and no temporary browser-test users remain.
+- Final verification passed `npm run typecheck`, `npm run build`, `npm run test:effect-runtime`, `npm run test:effect-browser`, `npm run test:collection-layout`, `npm run test:sprite-containment`, `npm run db:migrate:dry`, and `git diff --check`. The authenticated browser run reached rewards with three snapshotted effects and no console/page errors; combat and reward screenshots were visually inspected.

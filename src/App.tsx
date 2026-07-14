@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
+  ChevronDown,
   Coins,
   Gem,
   LogOut,
   Play,
+  Search,
   Shield,
   Sparkles,
   Swords,
@@ -27,6 +29,7 @@ import {
   signIn,
   signOut,
   signUp,
+  snapshotDungeonRunEffects,
   startDungeonRun,
   supabase,
 } from "./lib/supabase";
@@ -48,6 +51,7 @@ import type {
   Dungeon,
   PlayerState,
   Relic,
+  ResolvedEffectRef,
   Skill,
   UserCritter,
   UserRollcaster,
@@ -56,6 +60,12 @@ import type {
 import { describeEffect } from "./lib/presentation";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
+
+const collectibleIdCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function sortByCollectibleId<T extends { id: string }>(items: T[]): T[] {
+  return [...items].sort((left, right) => collectibleIdCollator.compare(left.id, right.id));
+}
 
 export function App() {
   const [sessionReady, setSessionReady] = useState(false);
@@ -82,7 +92,8 @@ export function App() {
         setView(loaded.player?.profile.starter_selected_at ? "home" : "starter");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load game data.");
+      console.error("Unable to load game data.", err);
+      setError(errorMessage(err, "Unable to load game data."));
     } finally {
       setLoading(false);
     }
@@ -132,15 +143,21 @@ export function App() {
               player: combat.playerUnits.map((unit) => ({
                 name: unit.name,
                 hp: unit.hp,
+                maxHp: unit.maxHp,
                 active: unit.active,
                 roll: unit.manaRoll,
+                stats: unit.stats,
               })),
               opponents: combat.opponentUnits.map((unit) => ({
                 name: unit.name,
                 hp: unit.hp,
+                maxHp: unit.maxHp,
                 active: unit.active,
                 roll: unit.manaRoll,
+                stats: unit.stats,
               })),
+              statuses: combat.statuses.map((status) => ({ statusId: status.statusId, holder: status.holderKey, duration: status.duration, stacks: status.stacks })),
+              rngState: combat.rngState,
             }
           : null,
       });
@@ -153,7 +170,7 @@ export function App() {
   if (!data?.player) return <Shell><Loading message="Loading Rollcasters..." error={error} /></Shell>;
 
   return (
-    <Shell>
+    <Shell className={view === "collection" ? "collection-shell" : ""}>
       <TopBar
         data={data}
         player={data.player}
@@ -206,8 +223,10 @@ export function App() {
           onStart={async (dungeon) => {
             setLoading(true);
             try {
-              const runId = await startDungeonRun(dungeon.id);
-              setCombat(createInitialCombatState(data.catalog, data.player!, dungeon, runId));
+              const run = await startDungeonRun(dungeon.id);
+              const initialCombat = createInitialCombatState(data.catalog, data.player!, dungeon, run.id, run.selectedOpponents);
+              await snapshotDungeonRunEffects(run.id, initialCombat.snapshot);
+              setCombat(initialCombat);
               setView("combat");
             } catch (err) {
               setError(err instanceof Error ? err.message : "Unable to start dungeon.");
@@ -242,9 +261,17 @@ export function App() {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return fallback;
+}
+
+function Shell({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${className}`.trim()}>
       <div className="world-glow" />
       {children}
     </main>
@@ -350,7 +377,14 @@ function AuthScreen({
         <button className="primary-button" disabled={busy}>
           {busy ? "Working..." : mode === "login" ? "Log in" : "Sign up"}
         </button>
-        <button type="button" className="link-button" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => {
+            setError(null);
+            setMode(mode === "login" ? "signup" : "login");
+          }}
+        >
           {mode === "login" ? "Need an account?" : "Already have an account?"}
         </button>
         </>}
@@ -468,7 +502,7 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
       <aside className="rollcaster-panel">
         <p className="eyebrow">Active Rollcaster</p>
         <button className="portrait-button" onClick={() => setEquipTarget({ type: "rollcaster", slotIndex: 1 })} aria-label="Choose active Rollcaster">
-          <SpriteFrame size="hero" className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path)} size="hero" fit="portrait" /></SpriteFrame>
+          <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path)} size="hero" fit="portrait" /></CardSprite>
         </button>
         <h1>{rollcaster?.name ?? "Unknown"}</h1>
         <p>Level {activeRollcaster?.level ?? 1}</p>
@@ -477,7 +511,7 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
             const slotIndex = index + 1;
             const row = player.abilitySlots.find((slot) => slot.user_rollcaster_id === activeRollcaster?.id && slot.slot_index === slotIndex);
             const ability = byId(data.catalog.rollcasterAbilities, row?.ability_id);
-            return <AbilitySlot key={slotIndex} ability={ability} slotIndex={slotIndex} onClick={() => activeRollcaster && setEquipTarget({ type: "ability", slotIndex, owned: activeRollcaster })} />;
+            return <AbilitySlot key={slotIndex} data={data} ability={ability} slotIndex={slotIndex} onClick={() => activeRollcaster && setEquipTarget({ type: "ability", slotIndex, owned: activeRollcaster })} />;
           })}
         </div>
       </aside>
@@ -575,10 +609,11 @@ function SkillTile({ data, skill, onClick, disabled = false, disabledReason, sel
   const element = skill ? byId(data.catalog.elements, skill.element_id) : null;
   const elementPath = skill ? catalogAssetPath(data, "element", skill.element_id, element?.asset_path, "icon") : null;
   const manaPath = findAssetPath(data, "mana", "mana");
-  const effectText = skill ? describeEffect(skill.effect, skill.description) : "Choose a skill.";
+  const attachments = skill ? data.catalog.effectsBySkill[skill.id] ?? [] : [];
+  const effectText = skill ? attachmentText(attachments, describeEffect(skill.effect, skill.description)) : "Choose a skill.";
   const targetText = skill ? targetingDescription(skill) : "";
   const label = skill ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}. ${effectText} ${targetText}` : "Choose a skill.";
-  const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{effectText}</span><span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
+  const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span>{attachments.length ? attachmentRows(attachments) : <span className="tooltip-description">{effectText}</span>}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
   return <GameTooltip label={label.trim()} content={tooltip}><button type="button" className={`skill-tile ${skill ? "" : "empty"} ${selected ? "selected" : ""}`} onClick={onClick} disabled={disabled || !onClick}>
     <span className="skill-title">{skill && <AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={16} />} />}<strong>{skill?.name ?? "-----"}</strong></span>
     {skill?.skill_type === "attack" && <span className="skill-power">PWR {skill.power}</span>}
@@ -589,17 +624,19 @@ function SkillTile({ data, skill, onClick, disabled = false, disabledReason, sel
 
 function RelicSlot({ data, relic, slotIndex, onClick }: { data: AppData; relic?: Relic | null; slotIndex: number; onClick: () => void }) {
   const emptyPath = findAssetPath(data, "ui", "relic-slot", "empty") ?? "ui/relic-slot.png";
-  const details = relic ? `${relic.name}. ${describeEffect(relic.effect, relic.description)}` : "Choose a relic.";
-  return <GameTooltip label={details.trim()} content={<span className="tooltip-description">{details.trim()}</span>}><button type="button" className="relic-slot" onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
+  const attachments = relic ? data.catalog.effectsByRelic[relic.id] ?? [] : [];
+  const details = relic ? `${relic.name}. ${attachmentText(attachments, describeEffect(relic.effect, relic.description))}` : "Choose a relic.";
+  return <GameTooltip label={details.trim()} content={attachments.length ? attachmentRows(attachments) : <span className="tooltip-description">{details.trim()}</span>}><button type="button" className="relic-slot" onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
     <SpriteFrame size="sm"><AssetIcon path={relic ? catalogAssetPath(data, "relic", relic.id, relic.asset_path) : emptyPath} alt={relic?.name ?? "Empty relic slot"} fallback={<Shield size={26} />} /></SpriteFrame>
     <span>{relic?.name ?? "-----"}</span>
   </button></GameTooltip>;
 }
 
-function AbilitySlot({ ability, slotIndex, onClick }: { ability?: { name: string; description: string; effect: Record<string, unknown> } | null; slotIndex: number; onClick: () => void }) {
-  const effect = ability ? describeEffect(ability.effect, ability.description) : "Choose an ability.";
+function AbilitySlot({ data, ability, slotIndex, onClick }: { data: AppData; ability?: { id: string; name: string; description: string; effect: Record<string, unknown> } | null; slotIndex: number; onClick: () => void }) {
+  const attachments = ability ? data.catalog.effectsByAbility[ability.id] ?? [] : [];
+  const effect = ability ? attachmentText(attachments, describeEffect(ability.effect, ability.description)) : "Choose an ability.";
   const details = ability ? `${ability.name}. ${effect}` : effect;
-  const tooltip = ability ? <><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{effect}</span></> : <span className="tooltip-description">Choose an ability.</span>;
+  const tooltip = ability ? <><span className="tooltip-heading"><strong>{ability.name}</strong></span>{attachments.length ? attachmentRows(attachments) : <span className="tooltip-description">{effect}</span>}</> : <span className="tooltip-description">Choose an ability.</span>;
   return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className="ability-slot" onClick={onClick} aria-label={`Equip ability · Slot ${slotIndex}`}>
     <span><small>Slot {slotIndex}</small><strong>{ability?.name ?? "-----"}</strong></span>
   </button></GameTooltip>;
@@ -611,8 +648,18 @@ function targetingDescription(skill: Skill): string {
     case "all_others": return "Targets all other Critters.";
     case "single_any": return "Targets one Friendly or Enemy Critter.";
     case "all_friendlies": return "Targets all Friendly Critters.";
+    case "all_allies": return "Targets every active Friendly teammate except the user.";
+    case "self_only": return "Targets only the acting Critter.";
     default: return "Targets one Enemy Critter.";
   }
+}
+
+function attachmentText(effects: ResolvedEffectRef[], fallback: string): string {
+  return effects.length ? effects.map((effect) => `${effect.name}: ${effect.description}`).join(" ") : fallback;
+}
+
+function attachmentRows(effects: ResolvedEffectRef[]): React.ReactNode {
+  return effects.map((effect) => <span className="tooltip-description" key={effect.id}><strong>{effect.name}:</strong> {effect.description}</span>);
 }
 
 function unlockedAbilitySlotCount(data: AppData, owned?: UserRollcaster): number {
@@ -700,12 +747,24 @@ function CollectionScreen({
   setDetail: (detail: { type: "critter" | "rollcaster" | "relic"; id: string } | null) => void;
   onBack: () => void;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [elementId, setElementId] = useState<string | null>(null);
+  const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+  const matchesSearch = (entry: { id: string; name: string }) =>
+    !normalizedQuery || entry.id.toLocaleLowerCase().includes(normalizedQuery) || entry.name.toLocaleLowerCase().includes(normalizedQuery);
+  const rollcasters = sortByCollectibleId(data.catalog.rollcasters).filter(matchesSearch);
+  const critters = sortByCollectibleId(data.catalog.critters).filter(
+    (critter) => matchesSearch(critter) && (!elementId || critter.element_id === elementId),
+  );
+  const relics = sortByCollectibleId(data.catalog.relics).filter(matchesSearch);
+  const displayedCount = tab === "rollcasters" ? rollcasters.length : tab === "critters" ? critters.length : relics.length;
+
   return (
-    <section className="screen-stack">
+    <section className="screen-stack collection-screen">
       <div className="screen-heading row">
         <div>
           <h1>Collection</h1>
-          <p>Review unlocked, seen, and undiscovered game pieces.</p>
+          <p>Review owned and locked game pieces.</p>
         </div>
         <button className="secondary-button" onClick={onBack}>Back</button>
       </div>
@@ -716,27 +775,98 @@ function CollectionScreen({
           </button>
         ))}
       </div>
-      {tab === "rollcasters" && <RollcasterGrid data={data} setDetail={setDetail} />}
-      {tab === "critters" && <CritterGrid data={data} setDetail={setDetail} />}
-      {tab === "relics" && <RelicGrid data={data} setDetail={setDetail} />}
+      <div className="collection-tools">
+        <label className="collection-search">
+          <Search size={19} aria-hidden="true" />
+          <span className="sr-only">Search {tab} by name or ID</span>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={`Search ${tab} by name or ID`}
+          />
+        </label>
+        <div className="collection-filter-slot">
+          {tab === "critters" && <ElementFilter data={data} selectedId={elementId} onChange={setElementId} />}
+        </div>
+      </div>
+      <div className="collection-grid-content">
+        {tab === "rollcasters" && <RollcasterGrid data={data} rollcasters={rollcasters} setDetail={setDetail} />}
+        {tab === "critters" && <CritterGrid data={data} critters={critters} setDetail={setDetail} />}
+        {tab === "relics" && <RelicGrid data={data} relics={relics} setDetail={setDetail} />}
+        {displayedCount === 0 && <p className="collection-empty">No {tab} match the current filters.</p>}
+      </div>
       {detail && <DetailModal data={data} detail={detail} onClose={() => setDetail(null)} />}
     </section>
   );
 }
 
+function ElementFilter({ data, selectedId, onChange }: { data: AppData; selectedId: string | null; onChange: (id: string | null) => void }) {
+  const [query, setQuery] = useState("");
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const selected = selectedId ? byId(data.catalog.elements, selectedId) : null;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const elements = [...data.catalog.elements]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .filter((element) => !normalizedQuery || element.name.toLocaleLowerCase().includes(normalizedQuery) || element.id.toLocaleLowerCase().includes(normalizedQuery));
+
+  function select(id: string | null) {
+    onChange(id);
+    setQuery("");
+    detailsRef.current?.removeAttribute("open");
+  }
+
+  return (
+    <details className="element-filter" ref={detailsRef}>
+      <summary>
+        <span className="element-filter-value">
+          {selected && <ElementIcon data={data} elementId={selected.id} />}
+          <span>{selected?.name ?? "None"}</span>
+        </span>
+        <ChevronDown size={17} aria-hidden="true" />
+      </summary>
+      <div className="element-filter-menu">
+        <label className="element-filter-search">
+          <Search size={16} aria-hidden="true" />
+          <span className="sr-only">Search elemental types</span>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search elements" />
+        </label>
+        <div className="element-filter-options" role="listbox" aria-label="Elemental type">
+          <button type="button" className={!selectedId ? "selected" : ""} role="option" aria-selected={!selectedId} onClick={() => select(null)}>None</button>
+          {elements.map((element) => (
+            <button key={element.id} type="button" className={selectedId === element.id ? "selected" : ""} role="option" aria-selected={selectedId === element.id} onClick={() => select(element.id)}>
+              <ElementIcon data={data} elementId={element.id} />
+              <span>{element.name}</span>
+            </button>
+          ))}
+          {elements.length === 0 && <span className="element-filter-empty">No elements found</span>}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function ElementIcon({ data, elementId }: { data: AppData; elementId: string }) {
+  const element = byId(data.catalog.elements, elementId);
+  const path = catalogAssetPath(data, "element", elementId, element?.asset_path, "icon");
+  return <AssetIcon path={path} alt={`${element?.name ?? elementId} element`} fallback={<Sparkles size={16} />} />;
+}
+
 function RollcasterGrid({
   data,
+  rollcasters,
   setDetail,
 }: {
   data: AppData;
+  rollcasters: AppData["catalog"]["rollcasters"];
   setDetail: (detail: { type: "rollcaster"; id: string }) => void;
 }) {
   return (
     <div className="collection-grid">
-      {data.catalog.rollcasters.map((rollcaster) => {
+      {rollcasters.map((rollcaster) => {
         const owned = data.player!.rollcasters.find((row) => row.rollcaster_id === rollcaster.id);
         return (
-          <button key={rollcaster.id} className={`catalog-card ${!owned ? "locked" : ""}`} onClick={() => owned && setDetail({ type: "rollcaster", id: owned.id })}>
+          <button key={rollcaster.id} className={`catalog-card ${!owned ? "locked" : ""}`} disabled={!owned} onClick={() => owned && setDetail({ type: "rollcaster", id: owned.id })}>
             <span className="collectible-id">{rollcaster.id}</span>
             <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} size="hero" fit="portrait" /></CardSprite>
             <CardName data={data} name={rollcaster.name} />
@@ -747,7 +877,7 @@ function RollcasterGrid({
                 <p>{owned.ability_points} ability points</p>
               </>
             ) : (
-              <p>Locked</p>
+              <p className="collection-status">Locked</p>
             )}
           </button>
         );
@@ -758,45 +888,44 @@ function RollcasterGrid({
 
 function CritterGrid({
   data,
+  critters,
   setDetail,
 }: {
   data: AppData;
+  critters: Critter[];
   setDetail: (detail: { type: "critter"; id: string }) => void;
 }) {
   return (
     <div className="collection-grid">
-      {data.catalog.critters.map((critter) => {
+      {critters.map((critter) => {
         const owned = data.player!.critters.find((row) => row.critter_id === critter.id);
-        const seen = data.player!.seenCritterIds.includes(critter.id);
         const stats = critterStats(data.catalog, critter, owned?.level ?? 1);
         return (
           <button
             key={critter.id}
             className={`catalog-card ${!owned ? "locked" : ""}`}
+            disabled={!owned}
             onClick={() => owned && setDetail({ type: "critter", id: owned.id })}
           >
             <span className="collectible-id">{critter.id}</span>
             <CardSprite><Sprite
-              name={owned || seen ? critter.name : "Unknown"}
+              name={critter.name}
               element={critter.element_id}
-              assetPath={owned || seen ? catalogAssetPath(data, "critter", critter.id, critter.asset_path) : null}
+              assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)}
               size="large"
-              locked={!owned && !seen}
             /></CardSprite>
-            <CardName data={data} name={owned || seen ? critter.name : "???"} elementId={owned || seen ? critter.element_id : undefined} />
+            <CardName data={data} name={critter.name} elementId={critter.element_id} />
             {owned ? (
               <>
                 <p>Level {owned.level}</p>
                 <ProgressBar current={owned.xp} needed={nextCritterXp(data, owned)} />
                 <StatGrid stats={stats} compact />
               </>
-            ) : seen ? (
+            ) : (
               <>
-                <p>Seen</p>
+                <p className="collection-status">Locked</p>
                 <StatGrid stats={stats} compact />
               </>
-            ) : (
-              <p>Undiscovered</p>
             )}
           </button>
         );
@@ -805,25 +934,26 @@ function CritterGrid({
   );
 }
 
-function RelicGrid({ data, setDetail }: { data: AppData; setDetail: (detail: { type: "relic"; id: string }) => void }) {
+function RelicGrid({ data, relics, setDetail }: { data: AppData; relics: Relic[]; setDetail: (detail: { type: "relic"; id: string }) => void }) {
   return (
     <div className="collection-grid">
-      {data.catalog.relics.map((relic) => {
+      {relics.map((relic) => {
         const inventory = data.player!.relicInventory.find((row) => row.relic_id === relic.id);
-        return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} onClick={() => inventory && setDetail({ type: "relic", id: relic.id })} />;
+        return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} onClick={() => inventory && inventory.quantity > 0 && setDetail({ type: "relic", id: relic.id })} />;
       })}
     </div>
   );
 }
 
 function RelicCard({ data, relic, quantity, onClick }: { data: AppData; relic: Relic; quantity: number; onClick: () => void }) {
+  const effect = attachmentText(data.catalog.effectsByRelic[relic.id] ?? [], describeEffect(relic.effect, relic.description)) || "No additional effect.";
   return (
-    <button className={`catalog-card ${quantity <= 0 ? "locked" : ""}`} onClick={onClick}>
+    <button className={`catalog-card ${quantity <= 0 ? "locked" : ""}`} disabled={quantity <= 0} onClick={onClick}>
       <span className="collectible-id">{relic.id}</span>
       <CardSprite><Sprite name={relic.name} element="metal" assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} size="large" /></CardSprite>
       <CardName data={data} name={relic.name} />
-      <p>{relic.description}</p>
-      <p>Owned {quantity} / {relic.max_owned}</p>
+      {quantity > 0 ? <p>Owned {quantity} / {relic.max_owned}</p> : <p className="collection-status">Locked</p>}
+      <p className="relic-card-effect"><strong>Effect:</strong> {effect}</p>
     </button>
   );
 }
@@ -890,7 +1020,7 @@ function DetailModal({
         <p>{relic.description}</p>
         <p><strong>Owned:</strong> {quantity} / {relic.max_owned}</p>
         <h3>Effect</h3>
-        <p className="effect-summary">{describeEffect(relic.effect, relic.description) || "No additional effect."}</p>
+        <p className="effect-summary">{attachmentText(data.catalog.effectsByRelic[relic.id] ?? [], describeEffect(relic.effect, relic.description)) || "No additional effect."}</p>
       </Modal>
     );
   }
@@ -1291,12 +1421,14 @@ function Sprite({
       className={`sprite sprite-${size} sprite-fit-${fit} element-${element} ${src ? "has-asset" : ""} ${locked ? "locked" : ""} ${
         flipped ? "flipped" : ""
       }`}
+      data-sprite-box
     >
       {src ? (
         <img
           src={src}
           alt={name}
-          className={fit === "portrait" ? "portrait-sprite-image" : undefined}
+          className={`sprite-box__image ${fit === "portrait" ? "portrait-sprite-image" : ""}`.trim()}
+          data-sprite-image
           onError={() => setFailedAssetPath(assetPath ?? null)}
         />
       ) : locked ? "?" : initials}
@@ -1320,8 +1452,20 @@ function AssetIcon({
     setFailedAssetPath(null);
   }, [path]);
 
-  if (!src) return <>{fallback}</>;
-  return <img className="asset-icon" src={src} alt={alt} onError={() => setFailedAssetPath(path ?? null)} />;
+  if (!src && fallback === null) return null;
+  return (
+    <span className="asset-icon" data-sprite-box>
+      {src ? (
+        <img
+          className="asset-icon__image sprite-box__image"
+          src={src}
+          alt={alt}
+          data-sprite-image
+          onError={() => setFailedAssetPath(path ?? null)}
+        />
+      ) : fallback}
+    </span>
+  );
 }
 
 function catalogAssetPath(
@@ -1355,7 +1499,7 @@ function StatGrid({ stats, compact }: { stats: ReturnType<typeof critterStats>; 
       <span>ATK <strong>{stats.atk}</strong></span>
       <span>DEF <strong>{stats.def}</strong></span>
       <span>SPD <strong>{stats.spd}</strong></span>
-      <span>Mana Dice <strong>{stats.diceMin}–{stats.diceMax}</strong></span>
+      <span className="mana-dice-stat">Mana Dice <strong>{stats.diceMin}–{stats.diceMax}</strong></span>
       <span>Block <strong>{stats.blockCost}</strong></span>
       <span>Swap <strong>{stats.swapCost}</strong></span>
       <span>Relics <strong>{stats.relicSlots}</strong></span>

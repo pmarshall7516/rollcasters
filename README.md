@@ -32,7 +32,7 @@ Apply the SQL files in this order in the Supabase SQL editor or with your prefer
 
 The seed migration only creates catalog content: Shanks, Toxichick, Spreagle, Congua, Slam, Copper Shield, starter options, elements, statuses, and dungeons. It does not create user accounts or user-owned save data.
 
-`003_asset_storage_and_starter_seen.sql` creates a public-read Supabase Storage bucket named `game-assets`, a `public.game_assets` registry table, asset paths on starter catalog rows, and performance indexes for common game-state reads. It also updates starter selection so every active starter is added to `user_seen_critters`, while only the selected critter is inserted into `user_critters`.
+`003_asset_storage_and_starter_seen.sql` creates a public-read Supabase Storage bucket named `game-assets`, a `public.game_assets` registry table, asset paths on starter catalog rows, and performance indexes for common game-state reads. The player client no longer uses the legacy `user_seen_critters` state: every catalog Critter displays its artwork and name, while ownership alone determines whether its card is unlocked.
 
 Recommended `game-assets` object layout:
 
