@@ -58,6 +58,18 @@ function validateElementIds(value: unknown, label: string): void {
   }
 }
 
+function normalizeEffectParameters(row: CombatEffectRow): Record<string, unknown> {
+  const parameters = { ...requireRecord(row.parameters, `Effect ${row.id} parameters`) };
+  const target = parameters.target;
+  const usesElementTarget = row.owner_type === "ability"
+    && (target === "all_element_friendlies" || target === "all_element_enemies");
+
+  // The Content Studio can persist its hidden element picker default on templates
+  // that do not expose elemental targeting. It has no combat meaning there.
+  if (!usesElementTarget) delete parameters.element_ids;
+  return parameters;
+}
+
 export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: EffectOwnerType): void {
   if (expectedOwner && effect.ownerType !== expectedOwner) {
     throw new Error(`Effect owner mismatch: ${effect.id} belongs to ${effect.ownerType}, not ${expectedOwner}.`);
@@ -163,7 +175,7 @@ export function groupCombatEffectRows(rows: CombatEffectRow[]): Record<EffectOwn
       templateId: row.template_id,
       runtimeKind: row.runtime_kind,
       runtimeVersion: row.runtime_version,
-      parameters: row.parameters,
+      parameters: normalizeEffectParameters(row),
       sortOrder: row.sort_order,
     };
     assertEffectContract(effect, row.owner_type);

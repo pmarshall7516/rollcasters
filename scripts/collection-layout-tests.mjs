@@ -6,17 +6,27 @@ import { chromium } from "playwright";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = path.join(root, "output", "collection-layout");
 const css = await readFile(path.join(root, "src", "styles.css"), "utf8");
-const card = (id, name, extraClass = "") => `
-  <button class="catalog-card ${extraClass}">
+const card = (id, name) => {
+  const owned = id === "004" || id === "005" || id === "009";
+  const progression = name === "Critter"
+    ? `<div class="collection-progression critter-progression">${owned
+      ? '<p>Level 2</p><div class="xp-progress"><div class="xp-bar"><span style="width:20%"></span></div><p>20 / 100 XP</p></div>'
+      : '<p class="collection-status">Locked</p><div class="locked-xp-space"></div>'}</div>`
+    : name === "Rollcaster"
+      ? `<div class="collection-progression">${owned ? '<p>Level 1</p>' : '<p class="collection-status">Locked</p>'}<div class="xp-progress"><div class="xp-bar"><span style="width:0%"></span></div><p>0 / 120 XP</p></div></div>`
+      : owned ? '<p>Owned 1 / 5</p>' : '<p class="collection-status">Locked</p>';
+  return `
+  <button class="catalog-card ${name.toLowerCase()}-card ${owned ? "" : "locked"}">
     <span class="collectible-id">${id}</span>
     <span class="card-sprite-frame"><span class="sprite"></span></span>
     <span class="card-name-row"><strong>${name}</strong></span>
-    <p class="collection-status">Locked</p>
+    ${progression}
     ${name === "Critter" ? `<div class="stat-grid compact">
       <span>HP <strong>120</strong></span><span>ATK <strong>24</strong></span><span>DEF <strong>18</strong></span><span>SPD <strong>16</strong></span>
       <span class="mana-dice-stat">Mana Dice <strong>10–12</strong></span><span>Block <strong>2</strong></span><span>Swap <strong>3</strong></span><span>Relics <strong>2</strong></span>
-    </div>` : name === "Relic" ? `<p class="relic-card-effect"><strong>Effect:</strong> Harden: Increases DEF by 10%.</p>` : ""}
+    </div><p class="point-counter"><strong>${owned ? 1 : 0}</strong> skill points</p>` : name === "Rollcaster" ? `<p class="point-counter"><strong>0</strong> ability points</p>` : `<span class="effect-list relic-card-effects"><span class="effect-list-row"><strong>Harden:</strong> Increases DEF by 10%.</span><span class="effect-list-row"><strong>Steady:</strong> Prevents one point of loss.</span></span>`}
   </button>`;
+};
 
 const browser = await chromium.launch({ headless: true });
 
@@ -47,7 +57,7 @@ try {
         const value = document.querySelector(selector).getBoundingClientRect();
         return [value.left, value.top, value.width, value.height];
       };
-      return { heading: rect(".screen-heading"), tabs: rect(".tabs"), tools: rect(".collection-tools"), content: rect(".collection-grid-content") };
+      return { heading: rect(".screen-heading"), tabs: rect(".tabs"), tools: rect(".collection-tools"), search: rect(".collection-search"), content: rect(".collection-grid-content") };
     });
     await page.evaluate(() => {
       document.querySelector(".collection-filter-slot").innerHTML = '<details class="element-filter"><summary>Ember</summary></details>';
@@ -56,8 +66,21 @@ try {
     const result = await page.evaluate(() => {
       const cards = [...document.querySelectorAll(".collection-grid .catalog-card")];
       const mana = [...document.querySelectorAll(".mana-dice-stat")];
-      const effects = [...document.querySelectorAll(".relic-card-effect")];
+      const effects = [...document.querySelectorAll(".relic-card-effects")];
       const statuses = [...document.querySelectorAll(".collection-status")];
+      const points = [...document.querySelectorAll(".point-counter")];
+      const critterStatOffsets = [...document.querySelectorAll(".critter-card")].map((entry) => entry.querySelector(".stat-grid").getBoundingClientRect().top - entry.getBoundingClientRect().top);
+      const critterSpacing = [...document.querySelectorAll(".critter-card")].map((entry) => {
+        const cardRect = entry.getBoundingClientRect();
+        const progressionRect = entry.querySelector(".collection-progression").getBoundingClientRect();
+        const statsRect = entry.querySelector(".stat-grid").getBoundingClientRect();
+        const pointsRect = entry.querySelector(".point-counter").getBoundingClientRect();
+        return {
+          progressionToStats: statsRect.top - progressionRect.bottom,
+          statsToPoints: pointsRect.top - statsRect.bottom,
+          pointsToBottom: cardRect.bottom - pointsRect.bottom,
+        };
+      });
       const grid = document.querySelector(".collection-grid");
       const content = document.querySelector(".collection-grid-content");
       const rect = (selector) => {
@@ -65,7 +88,7 @@ try {
         return [value.left, value.top, value.width, value.height];
       };
       return {
-        anchors: { heading: rect(".screen-heading"), tabs: rect(".tabs"), tools: rect(".collection-tools"), content: rect(".collection-grid-content") },
+        anchors: { heading: rect(".screen-heading"), tabs: rect(".tabs"), tools: rect(".collection-tools"), search: rect(".collection-search"), content: rect(".collection-grid-content") },
         cards: cards.map((entry) => {
           const rect = entry.getBoundingClientRect();
           return { width: rect.width, height: rect.height };
@@ -85,7 +108,13 @@ try {
         effects: effects.map((entry) => ({
           text: entry.textContent.trim(),
           visible: entry.getBoundingClientRect().height > 0 && entry.scrollHeight <= entry.clientHeight,
+          namedRows: [...entry.querySelectorAll(".effect-list-row")].every((row) => row.firstElementChild?.tagName === "STRONG"),
         })),
+        pointCount: points.length,
+        pointsVisible: points.every((entry) => entry.getBoundingClientRect().bottom <= entry.closest(".catalog-card").getBoundingClientRect().bottom),
+        critterStatOffsets,
+        critterSpacing,
+        stableScrollbarGutter: getComputedStyle(document.documentElement).scrollbarGutter.includes("stable"),
         statuses: statuses.map((entry) => ({
           align: getComputedStyle(entry).textAlign,
           transform: getComputedStyle(entry).textTransform,
@@ -106,14 +135,18 @@ try {
     const [firstCard, ...otherCards] = viewport.cards;
     const sameCards = otherCards.every((entry) => Math.abs(entry.width - firstCard.width) < 0.1 && entry.height === firstCard.height && entry.height === 440);
     const manaFits = viewport.mana.every((entry) => entry.fits && entry.whiteSpace === "nowrap" && entry.valueLines === 1);
-    const effectsVisible = viewport.effects.length === 3 && viewport.effects.every((entry) => entry.visible && entry.text.startsWith("Effect:"));
+    const effectsVisible = viewport.effects.length === 3 && viewport.effects.every((entry) => entry.visible && entry.namedRows && !entry.text.startsWith("Effect:"));
+    const pointCountersVisible = viewport.pointCount === 6 && viewport.pointsVisible;
+    const critterStatsAligned = viewport.critterStatOffsets.every((offset) => Math.abs(offset - viewport.critterStatOffsets[0]) < 0.1);
+    const minimumGap = viewport.name === "desktop" ? 13 : 10;
+    const critterSpacingMatches = viewport.critterSpacing.every((spacing) => spacing.progressionToStats >= minimumGap && spacing.statsToPoints >= minimumGap && spacing.pointsToBottom >= 0);
     const statusesMatch = viewport.statuses.every((entry) => entry.align === "center" && entry.transform === "uppercase" && entry.weight >= 700);
     const anchorsStable = JSON.stringify(viewport.beforeFilter) === JSON.stringify(viewport.anchors);
     const expectedColumns = viewport.name === "desktop" ? 3 : 1;
-    const layoutMatches = viewport.documentScrollable && viewport.noHorizontalOverflow && viewport.pageScrollY > 0 && viewport.gridColumns === expectedColumns && !viewport.nestedGridScrollable && anchorsStable;
-    return sameCards && firstCard.height === 440 && manaFits && effectsVisible && statusesMatch && layoutMatches
+    const layoutMatches = viewport.documentScrollable && viewport.noHorizontalOverflow && viewport.pageScrollY > 0 && viewport.gridColumns === expectedColumns && !viewport.nestedGridScrollable && anchorsStable && viewport.stableScrollbarGutter;
+    return sameCards && firstCard.height === 440 && manaFits && effectsVisible && pointCountersVisible && critterStatsAligned && critterSpacingMatches && statusesMatch && layoutMatches
       ? []
-      : [{ viewport: viewport.name, sameCards, manaFits, effectsVisible, statusesMatch, anchorsStable, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
+      : [{ viewport: viewport.name, sameCards, manaFits, effectsVisible, pointCountersVisible, critterStatsAligned, critterSpacingMatches, critterSpacing: viewport.critterSpacing, statusesMatch, anchorsStable, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
   });
 
   if (failures.length) throw new Error(`Collection layout failures:\n${JSON.stringify(failures, null, 2)}`);
