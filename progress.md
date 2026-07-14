@@ -1,5 +1,18 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Inline owner effect combat integration (2026-07-14)
+
+- Replaced the player bootstrap dependency on reusable effect definitions and attachment tables with the `combat_effects_v1` inline owner view from `004_inline_owner_effects.sql`.
+- Reworked the runtime contract to use the new `value_mode`, owner-specific targets, application-owned finite/indefinite Status durations, element filters, and owner-scoped effect IDs.
+- Implemented one chance roll per attached effect, signed half-up delta rounding, actual-damage healing, active-slot-only targeting, slot-following selections across swaps, holder-relative Status damage/skip targets, Mana refunds for skipped actions, and active-source recomputation for Abilities and Relics.
+- Added ordered Status icons/tooltips above active combat sprites and updated Skill, Ability, and Relic tooltips so normal owner copy precedes every inline effect description.
+- Replaced the old runtime regression with inline-contract coverage for all runtime kinds, owner target families, duration behavior, chance failures, source lifetimes, snapshot freezing, and invalid owner/version/target rejection. `npm run test:effect-runtime` passes.
+
+- Verified the five live `combat_effects_v1` rows conform to the client contract without mutating the database.
+- Passed `npm run test:effect-runtime`, `npm run test:effect-ui`, `npm run typecheck`, `npm run build`, `npm run test:collection-layout`, `npm run test:sprite-containment`, `npm run db:migrate:dry`, and `git diff --check`.
+- Ran the required web-game browser client and visually inspected its clean unauthenticated render. Also visually inspected the local combat effect UI, Status tooltip, desktop/mobile collection, and desktop/mobile sprite-containment screenshots.
+- The service-role authenticated combat script was intentionally not run because it creates/deletes a real Auth user; no live data was mutated during this implementation.
+
 ## Game-data bootstrap relationship fix (2026-07-13)
 
 - Fixed authenticated game loading after PostgREST reported two relationships between `effect_definitions` and `effect_templates`; the published-effect embed now explicitly uses `effect_definitions_template_id_fkey`.
@@ -232,3 +245,11 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - Added a self-contained authenticated Playwright regression that creates and removes a temporary Auth user, enters a live dungeon, verifies the stored Effect/Status snapshot, plays through victory/rewards, captures both screens, and fails on browser errors.
 - Applied `003_game_effect_runtime_support.sql` to the connected Supabase project. Post-apply checks report zero template, definition, and attachment category violations; the snapshot column/function exist; and no temporary browser-test users remain.
 - Final verification passed `npm run typecheck`, `npm run build`, `npm run test:effect-runtime`, `npm run test:effect-browser`, `npm run test:collection-layout`, `npm run test:sprite-containment`, `npm run db:migrate:dry`, and `git diff --check`. The authenticated browser run reached rewards with three snapshotted effects and no console/page errors; combat and reward screenshots were visually inspected.
+
+## Developer collectible grant/revoke commands (2026-07-14)
+
+- Added six service-role-only commands: `game:grant:{relic,critter,rollcaster}` and `game:revoke:{relic,critter,rollcaster}`. Their argument reader supports the requested npm form without a separate `--` by reading npm config environment values, while also supporting direct forwarded CLI arguments.
+- Added atomic database function migration `005_dev_collectible_commands.sql`. Relics default to one copy, respect `max_owned`, cannot be revoked below equipped quantity, and delete the inventory row at zero. Critter and Rollcaster grants initialize level-one zero-cost unlocks and slots; revokes clean dependent ownership state and safely replace an active Rollcaster when possible.
+- Added focused command validation/transport/message tests and documented setup, success/failure behavior, and all examples in the README.
+- Applied migration 005 to the configured Supabase project. Focused unit tests and a live temporary-user round trip passed across all six commands, including duplicate ownership, maximum quantity, equipped-copy protection, zero-quantity relocking, and default Skill/Ability slot initialization; the temporary user was removed automatically.
+- Ran the required web-game Playwright smoke client and visually inspected `output/collectible-command-browser/shot-0.png`; the auth screen rendered cleanly and `render_game_to_text` reported the expected unauthenticated state.

@@ -774,6 +774,41 @@ button.catalog-card:hover,
 .rollcaster-combat-frame { width: 116px; height: 116px; }
 .critter-combat-frame { width: 86px; height: 86px; }
 
+.combat-sprite-stack {
+  position: relative;
+  display: block;
+  width: 86px;
+  height: 86px;
+}
+
+.status-icon-row {
+  position: absolute;
+  z-index: 5;
+  top: -15px;
+  right: 0;
+  display: flex;
+  gap: 4px;
+}
+
+.status-icon-row .tooltip-anchor { flex: 0 0 auto; }
+
+.status-icon {
+  position: relative;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 3px;
+  border: 1px solid var(--border-bright);
+  border-radius: 8px;
+  background: #080b1d;
+  box-shadow: 0 5px 14px rgb(0 0 0 / 42%);
+}
+
+.status-icon .asset-icon { width: 22px; height: 22px; }
+.status-icon small { position: absolute; right: -4px; bottom: -5px; min-width: 16px; padding: 1px 3px; border-radius: 999px; background: var(--accent-magic); color: #fff; font-size: 9px; font-weight: 950; text-align: center; }
+.status-duration { padding-top: 6px; border-top: 1px solid var(--border-soft); color: var(--accent-cyan); font-weight: 800; }
+
 .battle-column {
   display: grid;
   gap: 10px;
@@ -798,6 +833,11 @@ button.catalog-card:hover,
 }
 
 .battle-unit.opponent .sprite {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.battle-unit.opponent .combat-sprite-stack {
   grid-column: 2;
   grid-row: 1;
 }

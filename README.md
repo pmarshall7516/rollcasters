@@ -78,6 +78,23 @@ If the local runner reports `SELF_SIGNED_CERT_IN_CHAIN`, use the Supabase SQL ed
 
 ## Development Database Utilities
 
+Grant or revoke collectibles for an existing Auth user by email:
+
+```bash
+npm run game:grant:relic --user=player@example.com --id=001 --count=2
+npm run game:revoke:relic --user=player@example.com --id=001 --count=1
+npm run game:grant:critter --user=player@example.com --id=001
+npm run game:revoke:critter --user=player@example.com --id=001
+npm run game:grant:rollcaster --user=player@example.com --id=001
+npm run game:revoke:rollcaster --user=player@example.com --id=001
+```
+
+Relic `--count` values default to `1`. Granting cannot exceed the catalog Relic's `max_owned`, and revoking cannot reduce inventory below the number of equipped copies. Reducing a Relic to zero removes its inventory row and locks it again. Critters and Rollcasters are whole collectibles, so their commands reject `--count`; a grant initializes their level-one default Skill or Ability unlocks and equipment slots. Revoking an active Rollcaster selects the user's oldest remaining Rollcaster as active, or clears the active selection if none remain.
+
+The commands require `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the database function in `supabase/migrations/005_dev_collectible_commands.sql`. They return a concise success message and exit nonzero with a specific failure message for missing users or catalog IDs, duplicate ownership, missing ownership, invalid counts, maximum-count violations, and equipped-copy conflicts. The service-role key stays server-side and must never use a `VITE_` prefix.
+
+The no-separator form above is supported as requested. Current npm versions may print an npm-owned `Unknown cli config` warning for those flags; add the standard argument separator (`npm run game:grant:relic -- --user=... --id=...`) to avoid that warning and remain compatible with the next npm major version.
+
 Delete a development user by email:
 
 ```bash
