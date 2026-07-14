@@ -1,17 +1,11 @@
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
-import { assertEffectContract } from "./effects";
+import { groupCombatEffectRows } from "./effects";
 import type {
   AppData,
-  AbilityEffectAttachment,
   Catalog,
-  EffectDefinition,
-  EffectOwnerType,
+  CombatEffectRow,
   DungeonOpponent,
   PlayerState,
-  RelicEffectAttachment,
-  ResolvedEffectRef,
-  SkillEffectAttachment,
-  StatusEffectAttachment,
   UserAbilitySlot,
   UserRelicSlot,
   UserSkillSlot,
@@ -58,70 +52,16 @@ async function selectAllOptional<T>(table: string, order = "sort_order"): Promis
   }
 }
 
-async function loadPublishedEffects(): Promise<EffectDefinition[]> {
+async function loadCombatEffects(): Promise<CombatEffectRow[]> {
   const { data, error } = await requireClient()
-    .from("effect_definitions")
-    .select(`
-      id, name, description, owner_type, parameters, version, is_active, is_archived,
-      template:effect_templates!effect_definitions_template_id_fkey!inner(
-        id, effect_category, runtime_kind, runtime_version, is_runtime_supported,
-        is_active, is_archived, version
-      )
-    `)
-    .eq("is_active", true)
-    .eq("is_archived", false)
-    .eq("template.is_runtime_supported", true)
-    .eq("template.is_active", true)
-    .eq("template.is_archived", false);
+    .from("combat_effects_v1")
+    .select("owner_type,owner_id,id,name,description,sort_order,template_id,runtime_kind,runtime_version,parameters")
+    .order("owner_type", { ascending: true })
+    .order("owner_id", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
   if (error) throw error;
-  return (data ?? []) as unknown as EffectDefinition[];
-}
-
-function resolveAttachmentMap<T extends { effect_id: string; sort_order: number }>(
-  rows: T[],
-  ownerKey: keyof T,
-  expectedOwner: EffectOwnerType,
-  effects: EffectDefinition[],
-): Record<string, ResolvedEffectRef[]> {
-  const definitions = new Map(effects.map((effect) => [effect.id, effect]));
-  const result: Record<string, ResolvedEffectRef[]> = {};
-
-  for (const attachment of rows) {
-    const ownerId = String(attachment[ownerKey]);
-    const definition = definitions.get(attachment.effect_id);
-    if (!definition) {
-      throw new Error(`Invalid ${expectedOwner} effect attachment: ${attachment.effect_id} is missing, inactive, archived, or unsupported.`);
-    }
-    if (definition.owner_type !== expectedOwner) {
-      throw new Error(`Effect owner mismatch: ${definition.id} belongs to ${definition.owner_type}, not ${expectedOwner}.`);
-    }
-    const template = Array.isArray(definition.template) ? definition.template[0] : definition.template;
-    if (!template?.is_runtime_supported || !template.is_active || template.is_archived) {
-      throw new Error(`Unsupported effect runtime for ${definition.id}.`);
-    }
-    if (template.effect_category !== definition.owner_type) {
-      throw new Error(`Effect category mismatch: ${definition.id} is ${definition.owner_type}, but template ${template.id} is ${template.effect_category}.`);
-    }
-    const ref: ResolvedEffectRef = {
-      id: definition.id,
-      name: definition.name,
-      description: definition.description,
-      ownerType: definition.owner_type,
-      runtimeKind: template.runtime_kind,
-      runtimeVersion: template.runtime_version,
-      parameters: definition.parameters,
-      sortOrder: attachment.sort_order,
-      definitionVersion: definition.version,
-      templateVersion: template.version,
-    };
-    assertEffectContract(ref, expectedOwner);
-    result[ownerId] = [...(result[ownerId] ?? []), ref];
-  }
-
-  for (const refs of Object.values(result)) {
-    refs.sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
-  }
-  return result;
+  return (data ?? []) as unknown as CombatEffectRow[];
 }
 
 export async function getSession(): Promise<Session | null> {
@@ -190,11 +130,7 @@ export async function loadCatalog(): Promise<Catalog> {
     starterOptions,
     gameAssets,
     statuses,
-    effects,
-    skillEffectAttachments,
-    abilityEffectAttachments,
-    relicEffectAttachments,
-    statusEffectAttachments,
+    combatEffects,
     dungeonOpponentStatOverrides,
   ] = await Promise.all([
     selectAll("elements"),
@@ -212,14 +148,11 @@ export async function loadCatalog(): Promise<Catalog> {
     selectAll("starter_options"),
     selectAllOptional("game_assets"),
     selectAll("statuses"),
-    loadPublishedEffects(),
-    selectAll<SkillEffectAttachment>("skill_effect_attachments"),
-    selectAll<AbilityEffectAttachment>("ability_effect_attachments"),
-    selectAll<RelicEffectAttachment>("relic_effect_attachments"),
-    selectAll<StatusEffectAttachment>("status_effect_attachments"),
+    loadCombatEffects(),
     selectAllOptional("dungeon_opponent_stat_overrides", "stat_key"),
   ]);
 
+  const groupedEffects = groupCombatEffectRows(combatEffects);
   return {
     elements,
     skills,
@@ -236,11 +169,10 @@ export async function loadCatalog(): Promise<Catalog> {
     starterOptions,
     gameAssets,
     statuses,
-    effects,
-    effectsBySkill: resolveAttachmentMap(skillEffectAttachments, "skill_id", "skill", effects),
-    effectsByAbility: resolveAttachmentMap(abilityEffectAttachments, "ability_id", "ability", effects),
-    effectsByRelic: resolveAttachmentMap(relicEffectAttachments, "relic_id", "relic", effects),
-    effectsByStatus: resolveAttachmentMap(statusEffectAttachments, "status_id", "status", effects),
+    effectsBySkill: groupedEffects.skill,
+    effectsByAbility: groupedEffects.ability,
+    effectsByRelic: groupedEffects.relic,
+    effectsByStatus: groupedEffects.status,
     dungeonOpponentStatOverrides,
   } as Catalog;
 }
@@ -338,6 +270,9 @@ export const setRollcasterAbilitySlot = (userRollcasterId: string, slotIndex: nu
 
 export const setActiveRollcaster = (userRollcasterId: string) =>
   callLoadoutRpc("set_active_rollcaster", { p_user_rollcaster_id: userRollcasterId });
+
+export const unlockCritterSkill = (userCritterId: string, skillId: string) =>
+  callLoadoutRpc("unlock_critter_skill", { p_user_critter_id: userCritterId, p_skill_id: skillId });
 
 export async function loadAppData(): Promise<AppData> {
   const [catalog, player] = await Promise.all([loadCatalog(), loadPlayerState()]);

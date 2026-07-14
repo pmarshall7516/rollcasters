@@ -41,6 +41,7 @@ export type CombatUnit = {
   maxHp: number;
   skills: Skill[];
   active: boolean;
+  battlefieldSlot: number | null;
   blocking: boolean;
   manaRoll: number;
 };
@@ -49,8 +50,7 @@ export type CombatStatus = {
   instanceId: string;
   statusId: string;
   holderKey: string;
-  duration: number;
-  stacks: number;
+  duration: number | null;
   sourceOwnerType: EffectOwnerType;
   sourceOwnerId: string;
   sourceCritterKey?: string;
@@ -80,12 +80,13 @@ export type RunEffectSnapshot = {
   seed: number;
   effects: Array<{
     id: string;
-    definitionVersion: number;
+    name: string;
+    description: string;
+    templateId: string;
     runtimeKind: string;
     runtimeVersion: number;
-    templateVersion: number;
     ownerType: EffectOwnerType;
-    sourceOwnerId: string;
+    ownerId: string;
     sourceOrder: number;
     sortOrder: number;
     parameters: Record<string, unknown>;
@@ -99,9 +100,9 @@ export type RunEffectSnapshot = {
   };
   statuses: Array<{
     id: string;
-    stackingPolicy: NonNullable<Status["stacking_policy"]>;
-    defaultDuration: number;
-    maxStacks: number;
+    name: string;
+    description: string;
+    assetPath: string | null;
     version: number;
   }>;
 };
@@ -233,6 +234,7 @@ export function createInitialCombatState(
       maxHp: stats.hp,
       skills,
       active: index < dungeon.player_active_count,
+      battlefieldSlot: index < dungeon.player_active_count ? index : null,
       blocking: false,
       manaRoll: 0,
     };
@@ -262,6 +264,7 @@ export function createInitialCombatState(
       maxHp: stats.hp,
       skills,
       active: index < dungeon.opponent_active_count,
+      battlefieldSlot: index < dungeon.opponent_active_count ? index : null,
       blocking: false,
       manaRoll: 0,
     };
@@ -303,12 +306,13 @@ export function createInitialCombatState(
   const seed = hashSeed(runId);
   const snapshotEffects = setupSources.flatMap((source) => source.effects.map((effect) => ({
     id: effect.id,
-    definitionVersion: effect.definitionVersion,
+    name: effect.name,
+    description: effect.description,
+    templateId: effect.templateId,
     runtimeKind: effect.runtimeKind,
     runtimeVersion: effect.runtimeVersion,
-    templateVersion: effect.templateVersion,
     ownerType: effect.ownerType,
-    sourceOwnerId: source.ownerId,
+    ownerId: source.ownerId,
     sourceOrder: source.sourceOrder,
     sortOrder: effect.sortOrder,
     parameters: structuredClone(effect.parameters),
@@ -316,9 +320,9 @@ export function createInitialCombatState(
   for (const skillId of relevantSkillIds) {
     for (const effect of runEffects.skill[skillId] ?? []) {
       snapshotEffects.push({
-        id: effect.id, definitionVersion: effect.definitionVersion, runtimeKind: effect.runtimeKind,
-        runtimeVersion: effect.runtimeVersion, templateVersion: effect.templateVersion,
-        ownerType: effect.ownerType, sourceOwnerId: skillId, sourceOrder: 0,
+        id: effect.id, name: effect.name, description: effect.description, templateId: effect.templateId,
+        runtimeKind: effect.runtimeKind, runtimeVersion: effect.runtimeVersion,
+        ownerType: effect.ownerType, ownerId: skillId, sourceOrder: 0,
         sortOrder: effect.sortOrder, parameters: structuredClone(effect.parameters),
       });
     }
@@ -326,9 +330,9 @@ export function createInitialCombatState(
   for (const status of Object.values(statusRegistry).sort((a, b) => a.id.localeCompare(b.id))) {
     for (const effect of runEffects.status[status.id] ?? []) {
       snapshotEffects.push({
-        id: effect.id, definitionVersion: effect.definitionVersion, runtimeKind: effect.runtimeKind,
-        runtimeVersion: effect.runtimeVersion, templateVersion: effect.templateVersion,
-        ownerType: effect.ownerType, sourceOwnerId: status.id, sourceOrder: 0,
+        id: effect.id, name: effect.name, description: effect.description, templateId: effect.templateId,
+        runtimeKind: effect.runtimeKind, runtimeVersion: effect.runtimeVersion,
+        ownerType: effect.ownerType, ownerId: status.id, sourceOrder: 0,
         sortOrder: effect.sortOrder, parameters: structuredClone(effect.parameters),
       });
     }
@@ -367,24 +371,14 @@ export function createInitialCombatState(
         .sort((a, b) => a.id.localeCompare(b.id))
         .map((status) => ({
           id: status.id,
-          stackingPolicy: status.stacking_policy ?? "refresh",
-          defaultDuration: Math.max(1, status.default_duration ?? 3),
-          maxStacks: Math.max(1, status.max_stacks ?? 1),
+          name: status.name,
+          description: status.description,
+          assetPath: status.asset_path ?? null,
           version: status.version ?? 1,
         })),
     },
   };
   initialState = recomputeCombatStats(initialState);
-  for (const source of activeSetupSources(initialState)) {
-    for (const effect of source.effects) {
-      if (effect.runtimeKind === "stat_modifier" || effect.runtimeKind === "mana_dice_modifier") continue;
-      initialState = resolveEffect(initialState, effect, {
-        sourceOwnerType: source.ownerType,
-        sourceOwnerId: source.ownerId,
-        sourceCritterKey: source.sourceKey,
-      });
-    }
-  }
   return initialState;
 }
 
@@ -443,9 +437,12 @@ function createRunEffectRegistry(catalog: Catalog, relevantSkillIds: ReadonlySet
 
 function validateRunEffects(registry: RunEffectRegistry, statuses: Record<string, Status>): void {
   for (const ownerType of ["skill", "ability", "relic", "status"] as const) {
-    for (const effects of Object.values(registry[ownerType])) {
+    for (const [ownerId, effects] of Object.entries(registry[ownerType])) {
       for (const effect of effects) {
         assertEffectContract(effect, ownerType);
+        if (effect.ownerId !== ownerId) {
+          throw new Error(`Inline effect ${effect.id} belongs to ${effect.ownerType} ${effect.ownerId}, not ${ownerId}.`);
+        }
         if (effect.runtimeKind === "apply_status" && !statuses[String(effect.parameters.status_id)]) {
           throw new Error(`Effect ${effect.id} references missing or inactive status ${String(effect.parameters.status_id)}.`);
         }
@@ -490,6 +487,9 @@ function recomputeCombatStats(state: CombatState): CombatState {
         sourceOwnerType: source.ownerType,
         sourceOwnerId: source.ownerId,
         sourceCritterKey: source.sourceKey,
+        elementIds: Array.isArray(effect.parameters.element_ids)
+          ? effect.parameters.element_ids.filter((id): id is string => typeof id === "string")
+          : undefined,
       });
       for (const unit of targets) effectsByTarget.set(unit.key, [...(effectsByTarget.get(unit.key) ?? []), effect]);
     }
@@ -497,16 +497,10 @@ function recomputeCombatStats(state: CombatState): CombatState {
 
   const apply = (unit: CombatUnit): CombatUnit => {
     const persistentStats = applyStatEffects(unit.baseStats, effectsByTarget.get(unit.key) ?? []);
-    const statusEffects = state.statuses
-      .filter((instance) => instance.holderKey === unit.key)
-      .flatMap((instance) => Array.from(
-        { length: instance.stacks },
-        () => instance.effects.filter((effect) => effect.runtimeKind === "stat_modifier" || effect.runtimeKind === "mana_dice_modifier"),
-      ).flat());
     const modifierEffects = state.modifiers
       .filter((modifier) => modifier.holderKey === unit.key)
       .map((modifier) => modifier.effect);
-    const stats = applyStatEffects(persistentStats, [...statusEffects, ...modifierEffects]);
+    const stats = applyStatEffects(persistentStats, modifierEffects);
     const hp = Math.min(stats.hp, Math.max(0, unit.hp + Math.max(0, stats.hp - unit.maxHp)));
     return { ...unit, persistentStats, stats, maxHp: stats.hp, hp };
   };
@@ -515,26 +509,27 @@ function recomputeCombatStats(state: CombatState): CombatState {
 
 function applyStatEffects(base: StatBlock, effects: ResolvedEffectRef[]): StatBlock {
   const next = { ...base };
-  const flats: Record<string, number> = { hp: 0, atk: 0, def: 0, spd: 0 };
-  const percentages: Record<string, number> = { hp: 0, atk: 0, def: 0, spd: 0 };
   for (const effect of effects) {
     if (effect.runtimeKind === "stat_modifier") {
-      const stat = String(effect.parameters.stat);
-      const bucket = effect.parameters.mode === "percentage" ? percentages : flats;
-      bucket[stat] = (bucket[stat] ?? 0) + Number(effect.parameters.amount ?? 0);
+      const stat = String(effect.parameters.stat) as "hp" | "atk" | "def" | "spd";
+      const amount = Number(effect.parameters.amount ?? 0);
+      const delta = effect.parameters.value_mode === "percentage" ? roundHalfUp(next[stat] * amount) : amount;
+      next[stat] = Math.max(1, next[stat] + delta);
     } else if (effect.runtimeKind === "mana_dice_modifier") {
       next.diceMin += Number(effect.parameters.minimum_delta ?? 0);
       next.diceMax += Number(effect.parameters.maximum_delta ?? 0);
     }
   }
-  for (const stat of ["hp", "atk", "def", "spd"] as const) {
-    next[stat] = Math.max(1, Math.round((next[stat] + flats[stat]) * (1 + percentages[stat])));
-  }
-  next.diceMin = Math.max(1, Math.round(next.diceMin));
-  next.diceMax = Math.max(next.diceMin, Math.round(next.diceMax));
+  next.diceMin = Math.max(1, roundHalfUp(next.diceMin));
+  next.diceMax = Math.max(next.diceMin, roundHalfUp(next.diceMax));
   next.blockCost = Math.max(0, next.blockCost);
   next.swapCost = Math.max(0, next.swapCost);
   return next;
+}
+
+export function roundHalfUp(value: number): number {
+  if (!Number.isFinite(value) || value === 0) return 0;
+  return Math.sign(value) * Math.floor(Math.abs(value) + 0.5);
 }
 
 export function startTurn(state: CombatState): CombatState {
@@ -588,7 +583,7 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
     opponentMana: Math.max(0, next.opponentMana - enemyCost),
   };
 
-  const allActions = [...actions, ...enemyActions];
+  const allActions = [...actions, ...enemyActions].map((action) => prepareActionTarget(next, action));
   next = resolveActionStage(next, allActions, "swap");
   next = resolveActionStage(next, allActions, "block");
   next = resolveActionStage(next, allActions, "skip");
@@ -634,14 +629,24 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
   return ordered.reduce((current, action) => recomputeCombatStats(resolveAction(current, action)), state);
 }
 
+function prepareActionTarget(state: CombatState, action: CombatAction): CombatAction {
+  if (!action.targetKey || action.targetSlotIndex !== undefined) return action;
+  const target = findUnit(state, action.targetKey);
+  if (!target || target.battlefieldSlot === null) return action;
+  return { ...action, targetSlotSide: target.side, targetSlotIndex: target.battlefieldSlot };
+}
+
 function resolveAction(state: CombatState, action: CombatAction): CombatState {
   const actor = findUnit(state, action.actorKey);
-  if (!actor || actor.hp <= 0) return state;
+  if (!actor || actor.hp <= 0 || !actor.active) return state;
 
   if (action.type !== "skip") {
-    const skip = resolveSkipCheck(state, actor.key);
+    const skip = resolveSkipCheck(state, actor.key, action.type);
     state = skip.state;
-    if (skip.skipped) return { ...state, log: [`${actor.name} is unable to act.`, ...state.log] };
+    if (skip.skipped) {
+      const refunded = refundActionCost(state, actor.side, action.cost);
+      return { ...refunded, log: [`${actor.name}'s ${action.type} was skipped by ${skip.effectName}; ${action.cost} mana was refunded.`, ...refunded.log] };
+    }
   }
 
   if (action.type === "skip") {
@@ -659,31 +664,32 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
   if (action.type === "skill" && action.skillId) {
     const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
     if (!skill) return state;
-    const targets = skillTargets(state, actor.key, skill, action.targetKey);
+    const targetSlot = action.targetSlotSide !== undefined && action.targetSlotIndex !== undefined
+      ? { side: action.targetSlotSide, index: action.targetSlotIndex }
+      : undefined;
+    const targets = skillTargets(state, actor.key, skill, action.targetKey, targetSlot);
     if (!targets.length) return state;
+    let damageDone = 0;
     let next = targets.reduce((current, originalTarget) => {
       const target = findUnit(current, originalTarget.key);
       if (!target || target.hp <= 0) return current;
       if (skill.skill_type === "attack") {
         const damage = calculateDamage(actor, target, skill);
         const finalDamage = target.blocking ? Math.max(1, Math.floor(damage * 0.1)) : damage;
+        damageDone += Math.min(target.hp, finalDamage);
         return updateUnit(current, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - finalDamage) }), `${actor.name} used ${skill.name} on ${target.name} for ${finalDamage} damage.`);
-      }
-      const effectKind = String(skill.effect.kind ?? "");
-      const amount = Number(skill.effect.amount ?? 0);
-      if ((effectKind === "heal" || effectKind === "restore_hp") && amount > 0) {
-        const healed = skill.effect.amount_type === "percent_max_hp" ? Math.max(1, Math.floor(target.maxHp * amount)) : amount;
-        return updateUnit(current, target.key, (unit) => ({ ...unit, hp: Math.min(unit.maxHp, unit.hp + healed) }), `${actor.name} used ${skill.name} on ${target.name}, restoring ${healed} HP.`);
       }
       return { ...current, log: [`${actor.name} used ${skill.name} on ${target.name}.`, ...current.log] };
     }, state);
+    next = recomputeCombatStats(next);
     const effects = next.runEffects.skill[skill.id] ?? [];
     if (effects.length) {
       for (const effect of effects) next = resolveEffect(next, effect, {
         sourceOwnerType: "skill",
         sourceOwnerId: skill.id,
         sourceCritterKey: actor.key,
-        selectedTargetKey: action.targetKey,
+        skillTargetKeys: targets.map((target) => target.key),
+        damageDone,
       });
     }
     return next;
@@ -692,11 +698,24 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
   return state;
 }
 
+function refundActionCost(state: CombatState, side: CombatUnit["side"], cost: number): CombatState {
+  if (cost <= 0) return state;
+  return side === "player"
+    ? { ...state, playerMana: state.playerMana + cost }
+    : { ...state, opponentMana: state.opponentMana + cost };
+}
+
 export function isSingleTarget(skill: Skill): boolean {
   return (skill.targeting ?? "single_enemy") === "single_enemy" || skill.targeting === "single_any";
 }
 
-export function skillTargets(state: CombatState, actorKey: string, skill: Skill, selectedKey?: string): CombatUnit[] {
+export function skillTargets(
+  state: CombatState,
+  actorKey: string,
+  skill: Skill,
+  selectedKey?: string,
+  selectedSlot?: { side: CombatUnit["side"]; index: number },
+): CombatUnit[] {
   const actor = findUnit(state, actorKey);
   if (!actor) return [];
   const friendlies = actor.side === "player" ? state.playerUnits : state.opponentUnits;
@@ -709,6 +728,7 @@ export function skillTargets(state: CombatState, actorKey: string, skill: Skill,
   if (targeting === "all_allies") return friendlies.filter((unit) => onField(unit) && unit.key !== actor.key);
   if (targeting === "all_others") return [...friendlies, ...enemies].filter((unit) => onField(unit) && unit.key !== actor.key);
   const candidates = targeting === "single_any" ? [...friendlies, ...enemies].filter(onField) : enemies.filter(onField);
+  if (selectedSlot) return candidates.filter((unit) => unit.side === selectedSlot.side && unit.battlefieldSlot === selectedSlot.index);
   if (!selectedKey) return candidates;
   return candidates.filter((unit) => unit.key === selectedKey);
 }
@@ -717,90 +737,107 @@ type RuntimeContext = {
   sourceOwnerType: EffectOwnerType;
   sourceOwnerId: string;
   sourceCritterKey?: string;
-  selectedTargetKey?: string;
+  skillTargetKeys?: string[];
   statusHolderKey?: string;
+  damageDone?: number;
+  elementIds?: string[];
 };
 
 function effectTargets(state: CombatState, target: string, context: RuntimeContext): CombatUnit[] {
-  const source = context.sourceCritterKey ? findUnit(state, context.sourceCritterKey) : undefined;
+  const holder = context.statusHolderKey ? findUnit(state, context.statusHolderKey) : undefined;
+  const source = holder ?? (context.sourceCritterKey ? findUnit(state, context.sourceCritterKey) : undefined);
   const friendlies = source?.side === "opponent" ? state.opponentUnits : state.playerUnits;
   const enemies = source?.side === "opponent" ? state.playerUnits : state.opponentUnits;
   const active = (unit: CombatUnit) => unit.active && unit.hp > 0;
   switch (target) {
-    case "skill_user": {
+    case "self": {
       if (!source) throw new Error(`Missing source Critter for ${context.sourceOwnerType} effect from ${context.sourceOwnerId}.`);
       return active(source) ? [source] : [];
     }
-    case "selected_target": {
-      if (!context.selectedTargetKey) throw new Error(`Missing selected target for effect from ${context.sourceOwnerId}.`);
-      const selected = findUnit(state, context.selectedTargetKey);
-      return selected && active(selected) ? [selected] : [];
-    }
     case "all_enemies": return enemies.filter(active);
     case "all_allies": return friendlies.filter((unit) => active(unit) && unit.key !== source?.key);
-    case "all_friendlies":
-    case "all_friendly_critters": return friendlies.filter(active);
-    case "active_friendly_critter": return friendlies.filter(active).slice(0, 1);
+    case "all_friendlies": return friendlies.filter(active);
+    case "target_enemies": {
+      const selected = new Set(context.skillTargetKeys ?? []);
+      return enemies.filter((unit) => active(unit) && selected.has(unit.key));
+    }
+    case "all_element_friendlies":
+    case "all_element_enemies": {
+      const elements = new Set(context.elementIds ?? []);
+      const candidates = target === "all_element_friendlies" ? friendlies : enemies;
+      return candidates.filter((unit) => active(unit) && elements.has(unit.critter.element_id));
+    }
     case "equipped_critter": {
       if (!source) throw new Error(`Missing equipped Critter for relic effect from ${context.sourceOwnerId}.`);
       return active(source) ? [source] : [];
     }
+    case "equipped_allies": return friendlies.filter((unit) => active(unit) && unit.key !== source?.key);
+    case "equipped_friendlies": return friendlies.filter(active);
     case "status_holder": {
-      if (!context.statusHolderKey) throw new Error(`Missing status holder for status effect from ${context.sourceOwnerId}.`);
-      const holder = findUnit(state, context.statusHolderKey);
-      return holder && holder.hp > 0 ? [holder] : [];
+      if (!holder) throw new Error(`Missing status holder for status effect from ${context.sourceOwnerId}.`);
+      return active(holder) ? [holder] : [];
     }
+    case "status_holder_allies": return holder && active(holder) ? friendlies.filter((unit) => active(unit) && unit.key !== holder.key) : [];
+    case "status_holder_friendlies": return holder && active(holder) ? friendlies.filter(active) : [];
+    case "status_holder_enemies": return holder && active(holder) ? enemies.filter(active) : [];
     default: throw new Error(`Unsupported effect target: ${target}`);
   }
 }
 
 function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: RuntimeContext): CombatState {
   assertEffectContract(effect, context.sourceOwnerType);
-  const targets = effectTargets(state, String(effect.parameters.target ?? ""), context);
+  const targets = effectTargets(state, String(effect.parameters.target ?? ""), {
+    ...context,
+    elementIds: Array.isArray(effect.parameters.element_ids)
+      ? effect.parameters.element_ids.filter((id): id is string => typeof id === "string")
+      : undefined,
+  });
   if (!targets.length) return state;
   const key = `${effect.runtimeKind}@${effect.runtimeVersion}`;
+  const chance = rollChance(state, Number(effect.parameters.chance));
+  let next = chance.state;
+  if (!chance.activated) return next;
   if (key === "restore_hp@1") {
-    return targets.reduce((next, original) => {
-      const target = findUnit(next, original.key)!;
-      const raw = effect.parameters.mode === "percent_max_hp"
+    return targets.reduce((current, original) => {
+      const target = findUnit(current, original.key)!;
+      const raw = effect.parameters.value_mode === "percent_max_hp"
         ? target.maxHp * Number(effect.parameters.amount ?? 0)
-        : Number(effect.parameters.amount ?? 0);
-      const amount = Math.max(0, Math.round(raw));
-      return updateUnit(next, target.key, (unit) => ({ ...unit, hp: Math.min(unit.maxHp, unit.hp + amount) }), `${effect.name} restored ${amount} HP to ${target.name}.`);
-    }, state);
+        : effect.parameters.value_mode === "percent_damage_done"
+          ? Number(context.damageDone ?? 0) * Number(effect.parameters.amount ?? 0)
+          : Number(effect.parameters.amount ?? 0);
+      const amount = Math.max(0, roundHalfUp(raw));
+      const restored = Math.min(amount, target.maxHp - target.hp);
+      return updateUnit(current, target.key, (unit) => ({ ...unit, hp: unit.hp + restored }), `${effect.name} restored ${restored} HP to ${target.name}.`);
+    }, next);
   }
   if (key === "apply_status@1") {
-    let next = state;
+    const duration = effect.parameters.indefinite ? null : Number(effect.parameters.turns);
     for (const target of targets) {
-      const roll = nextRandom(next.rngState);
-      next = { ...next, rngState: roll.state };
-      if (roll.value < Number(effect.parameters.chance ?? 0)) {
-        next = applyStatus(next, String(effect.parameters.status_id), target.key, context);
-      }
+      next = applyStatus(next, String(effect.parameters.status_id), target.key, context, duration);
     }
     return next;
   }
-  if (key === "damage_over_time@1" || key === "skip_action_chance@1") {
-    const duration = Number(effect.parameters.duration ?? 1);
-    if (context.sourceOwnerType === "status") return state;
-    return targets.reduce((next, target) => addTimedEffect(next, effect, target.key, context, duration), state);
-  }
-  if (key === "stat_modifier@1" || key === "mana_dice_modifier@1") {
+  if (key === "stat_modifier@1") {
     const modifiers = targets.map((target, index): CombatModifier => ({
       instanceId: `${context.sourceOwnerType}:${context.sourceOwnerId}:${effect.id}:${target.key}:${state.turn}:${state.modifiers.length + index}`,
       holderKey: target.key,
       sourceOwnerType: context.sourceOwnerType,
       sourceOwnerId: context.sourceOwnerId,
       sourceCritterKey: context.sourceCritterKey,
-      effect,
+      effect: cloneEffect(effect),
     }));
     return recomputeCombatStats({
-      ...state,
-      modifiers: [...state.modifiers, ...modifiers],
-      log: [...targets.map((target) => `${effect.name} affected ${target.name}.`).reverse(), ...state.log],
+      ...next,
+      modifiers: [...next.modifiers, ...modifiers],
+      log: [...targets.map((target) => `${effect.name} affected ${target.name}.`).reverse(), ...next.log],
     });
   }
   throw new Error(`Unsupported effect runtime: ${key}`);
+}
+
+function rollChance(state: CombatState, chance: number): { state: CombatState; activated: boolean } {
+  const roll = nextRandom(state.rngState);
+  return { state: { ...state, rngState: roll.state }, activated: roll.value < chance };
 }
 
 function applyStatus(
@@ -808,27 +845,28 @@ function applyStatus(
   statusId: string,
   holderKey: string,
   context: RuntimeContext,
+  duration: number | null,
 ): CombatState {
   const status = state.statusRegistry[statusId];
   if (!status) throw new Error(`Unknown status: ${statusId}`);
-  const duration = Math.max(1, Number(status.default_duration ?? 3));
-  const policy = status.stacking_policy ?? "refresh";
   const existingIndex = state.statuses.findIndex((item) => item.statusId === statusId && item.holderKey === holderKey);
   let statuses = [...state.statuses];
   if (existingIndex >= 0) {
-    const existing = statuses[existingIndex];
-    if (policy === "refresh") statuses[existingIndex] = { ...existing, duration };
-    if (policy === "extend") statuses[existingIndex] = { ...existing, duration: existing.duration + duration };
-    if (policy === "stack") statuses[existingIndex] = { ...existing, stacks: Math.min(status.max_stacks ?? 99, existing.stacks + 1), duration };
+    statuses[existingIndex] = {
+      ...statuses[existingIndex],
+      duration,
+      sourceOwnerType: context.sourceOwnerType,
+      sourceOwnerId: context.sourceOwnerId,
+      sourceCritterKey: context.sourceCritterKey,
+    };
   } else {
     statuses.push({
-      instanceId: `${statusId}:${holderKey}:${state.turn}`,
+      instanceId: `${statusId}:${holderKey}`,
       statusId,
       holderKey,
       duration,
-      stacks: 1,
-      sourceOwnerType: "status",
-      sourceOwnerId: statusId,
+      sourceOwnerType: context.sourceOwnerType,
+      sourceOwnerId: context.sourceOwnerId,
       sourceCritterKey: context.sourceCritterKey,
       effects: state.runEffects.status[statusId] ?? [],
     });
@@ -837,89 +875,88 @@ function applyStatus(
   return recomputeCombatStats({ ...state, statuses, log: [`${holder?.name ?? holderKey} received ${status.name}.`, ...state.log] });
 }
 
-function addTimedEffect(state: CombatState, effect: ResolvedEffectRef, holderKey: string, context: RuntimeContext, duration: number): CombatState {
-  const instance: CombatStatus = {
-    instanceId: `effect:${effect.id}:${holderKey}:${state.turn}`,
-    statusId: `effect:${effect.id}`,
-    holderKey,
-    duration,
-    stacks: 1,
-    sourceOwnerType: context.sourceOwnerType,
-    sourceOwnerId: context.sourceOwnerId,
-    sourceCritterKey: context.sourceCritterKey,
-    effects: [effect],
-  };
-  return { ...state, statuses: [...state.statuses.filter((item) => item.instanceId !== instance.instanceId), instance] };
-}
-
 function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_of_turn"): CombatState {
   let next = state;
   for (const instance of state.statuses) {
     for (const effect of instance.effects) {
       if (effect.runtimeKind !== "damage_over_time" || effect.parameters.timing !== timing) continue;
       const holder = findUnit(next, instance.holderKey);
-      if (!holder || holder.hp <= 0) continue;
-      const raw = effect.parameters.mode === "percent_max_hp"
-        ? holder.maxHp * Number(effect.parameters.amount ?? 0)
-        : Number(effect.parameters.amount ?? 0);
-      const damage = Math.max(0, Math.round(raw)) * instance.stacks;
-      next = updateUnit(next, holder.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - damage) }), `${holder.name} took ${damage} damage from ${effect.name}.`);
+      if (!holder || !holder.active || holder.hp <= 0) continue;
+      const chance = rollChance(next, Number(effect.parameters.chance));
+      next = chance.state;
+      if (!chance.activated) continue;
+      const targets = effectTargets(next, String(effect.parameters.target), {
+        sourceOwnerType: "status",
+        sourceOwnerId: instance.statusId,
+        statusHolderKey: instance.holderKey,
+      });
+      for (const original of targets) {
+        const target = findUnit(next, original.key);
+        if (!target) continue;
+        const raw = effect.parameters.value_mode === "percent_max_hp"
+          ? target.maxHp * Number(effect.parameters.amount ?? 0)
+          : Number(effect.parameters.amount ?? 0);
+        const damage = Math.max(0, roundHalfUp(raw));
+        next = updateUnit(next, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - damage) }), `${target.name} took ${damage} damage from ${effect.name}.`);
+      }
     }
   }
   if (timing === "end_of_turn") {
-    next = { ...next, statuses: next.statuses.map((item) => ({ ...item, duration: item.duration - 1 })).filter((item) => item.duration > 0) };
+    next = {
+      ...next,
+      statuses: next.statuses
+        .map((item) => item.duration === null ? item : { ...item, duration: item.duration - 1 })
+        .filter((item) => item.duration === null || item.duration > 0),
+    };
   }
   return recomputeCombatStats(next);
 }
 
-function resolveSkipCheck(state: CombatState, holderKey: string): { state: CombatState; skipped: boolean } {
+function resolveSkipCheck(
+  state: CombatState,
+  actorKey: string,
+  actionType: Exclude<CombatAction["type"], "skip">,
+): { state: CombatState; skipped: boolean; effectName: string } {
   let next = state;
-  for (const instance of state.statuses.filter((item) => item.holderKey === holderKey)) {
+  for (const instance of state.statuses) {
+    const holder = findUnit(next, instance.holderKey);
+    if (!holder || !holder.active || holder.hp <= 0) continue;
     for (const effect of instance.effects.filter((item) => item.runtimeKind === "skip_action_chance")) {
-      for (let stack = 0; stack < instance.stacks; stack += 1) {
-        const roll = nextRandom(next.rngState);
-        next = { ...next, rngState: roll.state };
-        if (roll.value < Number(effect.parameters.chance ?? 0)) return { state: next, skipped: true };
-      }
+      const configuredAction = String(effect.parameters.combat_action);
+      if (configuredAction !== "all" && configuredAction !== actionType) continue;
+      const targets = effectTargets(next, String(effect.parameters.target), {
+        sourceOwnerType: "status",
+        sourceOwnerId: instance.statusId,
+        statusHolderKey: instance.holderKey,
+      });
+      if (!targets.some((target) => target.key === actorKey)) continue;
+      const chance = rollChance(next, Number(effect.parameters.chance));
+      next = chance.state;
+      if (chance.activated) return { state: next, skipped: true, effectName: effect.name };
     }
   }
-  return { state: next, skipped: false };
+  return { state: next, skipped: false, effectName: "a status effect" };
 }
 
 function swapPlayerUnit(state: CombatState, actorKey: string, swapToId: string): CombatState {
   const activeIndex = state.playerUnits.findIndex((unit) => unit.key === actorKey);
   const benchIndex = state.playerUnits.findIndex((unit) => unit.userCritter?.id === swapToId && !unit.active && unit.hp > 0);
   if (activeIndex < 0 || benchIndex < 0) return state;
+  const battlefieldSlot = state.playerUnits[activeIndex].battlefieldSlot;
 
   const units = state.playerUnits.map((unit, index) => {
-    if (index === activeIndex) return { ...unit, active: false };
-    if (index === benchIndex) return { ...unit, active: true };
+    if (index === activeIndex) return { ...unit, active: false, battlefieldSlot: null };
+    if (index === benchIndex) return { ...unit, active: true, battlefieldSlot };
     return unit;
   });
 
-  const beforeSources = new Set(activeSetupSources(state).map(setupSourceIdentity));
   let next: CombatState = {
     ...state,
     playerUnits: units,
     log: [`${state.playerUnits[activeIndex].name} swapped with ${state.playerUnits[benchIndex].name}.`, ...state.log],
   };
   next = recomputeCombatStats(next);
-  const activatedSources = activeSetupSources(next).filter((source) => !beforeSources.has(setupSourceIdentity(source)));
-  for (const source of activatedSources) {
-    for (const effect of source.effects) {
-      if (effect.runtimeKind === "stat_modifier" || effect.runtimeKind === "mana_dice_modifier") continue;
-      next = resolveEffect(next, effect, {
-        sourceOwnerType: source.ownerType,
-        sourceOwnerId: source.ownerId,
-        sourceCritterKey: source.sourceKey,
-      });
-    }
-  }
   return next;
-}
-
-function setupSourceIdentity(source: SetupEffectSource): string {
-  return `${source.ownerType}:${source.ownerId}:${source.sourceKey ?? "team"}:${source.sourceOrder}`;
 }
 
 function resolvePostTurn(state: CombatState): CombatState {

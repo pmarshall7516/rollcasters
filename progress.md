@@ -1,5 +1,18 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Inline owner effect combat integration (2026-07-14)
+
+- Replaced the player bootstrap dependency on reusable effect definitions and attachment tables with the `combat_effects_v1` inline owner view from `004_inline_owner_effects.sql`.
+- Reworked the runtime contract to use the new `value_mode`, owner-specific targets, application-owned finite/indefinite Status durations, element filters, and owner-scoped effect IDs.
+- Implemented one chance roll per attached effect, signed half-up delta rounding, actual-damage healing, active-slot-only targeting, slot-following selections across swaps, holder-relative Status damage/skip targets, Mana refunds for skipped actions, and active-source recomputation for Abilities and Relics.
+- Added ordered Status icons/tooltips above active combat sprites and updated Skill, Ability, and Relic tooltips so normal owner copy precedes every inline effect description.
+- Replaced the old runtime regression with inline-contract coverage for all runtime kinds, owner target families, duration behavior, chance failures, source lifetimes, snapshot freezing, and invalid owner/version/target rejection. `npm run test:effect-runtime` passes.
+
+- Verified the five live `combat_effects_v1` rows conform to the client contract without mutating the database.
+- Passed `npm run test:effect-runtime`, `npm run test:effect-ui`, `npm run typecheck`, `npm run build`, `npm run test:collection-layout`, `npm run test:sprite-containment`, `npm run db:migrate:dry`, and `git diff --check`.
+- Ran the required web-game browser client and visually inspected its clean unauthenticated render. Also visually inspected the local combat effect UI, Status tooltip, desktop/mobile collection, and desktop/mobile sprite-containment screenshots.
+- The service-role authenticated combat script was intentionally not run because it creates/deletes a real Auth user; no live data was mutated during this implementation.
+
 ## Game-data bootstrap relationship fix (2026-07-13)
 
 - Fixed authenticated game loading after PostgREST reported two relationships between `effect_definitions` and `effect_templates`; the published-effect embed now explicitly uses `effect_definitions_template_id_fkey`.
@@ -232,3 +245,42 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - Added a self-contained authenticated Playwright regression that creates and removes a temporary Auth user, enters a live dungeon, verifies the stored Effect/Status snapshot, plays through victory/rewards, captures both screens, and fails on browser errors.
 - Applied `003_game_effect_runtime_support.sql` to the connected Supabase project. Post-apply checks report zero template, definition, and attachment category violations; the snapshot column/function exist; and no temporary browser-test users remain.
 - Final verification passed `npm run typecheck`, `npm run build`, `npm run test:effect-runtime`, `npm run test:effect-browser`, `npm run test:collection-layout`, `npm run test:sprite-containment`, `npm run db:migrate:dry`, and `git diff --check`. The authenticated browser run reached rewards with three snapshotted effects and no console/page errors; combat and reward screenshots were visually inspected.
+
+## Developer collectible grant/revoke commands (2026-07-14)
+
+- Added six service-role-only commands: `game:grant:{relic,critter,rollcaster}` and `game:revoke:{relic,critter,rollcaster}`. Their argument reader supports the requested npm form without a separate `--` by reading npm config environment values, while also supporting direct forwarded CLI arguments.
+- Added atomic database function migration `005_dev_collectible_commands.sql`. Relics default to one copy, respect `max_owned`, cannot be revoked below equipped quantity, and delete the inventory row at zero. Critter and Rollcaster grants initialize level-one zero-cost unlocks and slots; revokes clean dependent ownership state and safely replace an active Rollcaster when possible.
+- Added focused command validation/transport/message tests and documented setup, success/failure behavior, and all examples in the README.
+- Applied migration 005 to the configured Supabase project. Focused unit tests and a live temporary-user round trip passed across all six commands, including duplicate ownership, maximum quantity, equipped-copy protection, zero-quantity relocking, and default Skill/Ability slot initialization; the temporary user was removed automatically.
+- Ran the required web-game Playwright smoke client and visually inspected `output/collectible-command-browser/shot-0.png`; the auth screen rendered cleanly and `render_game_to_text` reported the expected unauthenticated state.
+
+## Inline effect parameter normalization (2026-07-14)
+
+- Diagnosed live Relic effect `a597cea0-309a-4a70-9f49-bb691c38c111` (`Lighter Roll`) failing catalog bootstrap because the Content Studio persisted its hidden `element_ids: []` picker default on a non-elemental Relic Mana Dice modifier.
+- Normalized `combat_effects_v1` rows before strict contract validation so `element_ids` is retained only for element-filtered Ability targets and removed everywhere it has no combat meaning.
+- Added the exact live Relic row shape as a runtime regression while preserving strict validation for every other unsupported parameter.
+- Verified `npm run test:effect-runtime`, `npm run typecheck`, `npm run build`, and `git diff --check`; all seven currently published live effect rows now pass the fixed runtime contract. Ran the required browser smoke client and visually inspected the clean authentication render and expected unauthenticated text state.
+
+## Collection, progression, and loadout UI refinements (2026-07-14, in progress)
+
+- Added interval XP presentation so cumulative totals display as progress within the current level (including the requested 79/80 then 20/100 carryover behavior).
+- Added home-loadout passive stat calculation and per-source breakdown data for equipped Relics and active Rollcaster Abilities, including positive, negative, and mixed modification tracking.
+- Reworked locked collection entries to open catalog-based details, aligned Critter/Rollcaster progression and point-counter regions, and changed Relic effect copy to named effect rows.
+- Added database migration 006 with automatic XP-driven level/point processing, transactional Critter Skill purchasing, optional Rollcaster Ability loadouts, and squad removal that clears the removed Critter's Relics.
+- `npm run test:collection-ui`, `npm run typecheck`, and `npm run build` pass after the first implementation slice.
+- Completed the interaction slice: all equipped Skills/Abilities show checks, the selected slot occupant uses a green border and can be selected again to unequip, Critters retain the one-Skill minimum, Rollcasters allow zero Abilities, and a selected squad Critter can be removed when another squad member remains.
+- Standardized every detail modal at a 900x760 scrollable hidden-scrollbar pane. Unlocked Critter Skills render at full color, level-eligible locked Skills show a centered opaque purchase button, and Rollcaster Ability details now use the same two-column presentation language.
+- Expanded `test:collection-layout` and added `test:collection-interaction-ui`; both desktop/mobile layout screenshots and the skills/abilities/stats modal screenshot were visually inspected. The collection anchor, 440px card, point-counter, stat alignment, effect-row, modal-size, unlock-overlay, equipped-border, and stat-tooltip checks pass.
+- Final local verification passed `npm run test:effect-runtime`, `npm run test:effect-ui`, `npm run test:collection-ui`, `npm run test:collection-layout`, `npm run test:collection-interaction-ui`, `npm run test:sprite-containment`, `npm run typecheck`, `npm run build`, `npm run db:migrate:dry`, and `git diff --check`. The required web-game client rendered a clean unauthenticated app with no captured app errors.
+- Migration 006 was intentionally not applied to the configured Supabase database: the remote schema/data mutation requires explicit user approval. Apply `006_collection_progression_and_loadout.sql` before live-testing level-up point grants, Skill purchases, zero-Ability loadouts, and squad-removal Relic clearing.
+- Follow-up collection polish reserves a stable viewport scrollbar gutter so the search control retains the same width across tabs with different result heights. Critter cards retain their 440px height while using larger progression-to-stats and stats-to-points gaps, reduced bottom padding, and responsive spacing that keeps the point counter inside mobile cards.
+- Home loadout stat cells now all use the modified-stat border treatment, including unchanged values. Rollcaster popup Ability cards now place their unlock level and Ability Point cost in a separate metadata row beneath each card, matching Critter Skill details.
+- Extended the Playwright checks to assert stable search geometry, responsive Critter spacing, visible point counters, uniform home stat borders, and Ability metadata placement. `test:collection-layout`, `test:collection-interaction-ui`, `typecheck`, `build`, and `git diff --check` pass; the updated desktop/mobile collection and popup screenshots were visually inspected.
+
+## Main-page equipped-card layout refinement (2026-07-14)
+
+- Enlarged each equipped Critter header sprite, element logo, name, and level treatment while reducing Skill tiles only inside home-page loadout cards.
+- Added interval XP progress to equipped Critter headers and the active Rollcaster panel. Both compact bars place their numeric progress to the right; the Rollcaster bar sits immediately above its level label.
+- Removed the visual relic inset by left-aligning the relic frame inside its wider label button, so the first relic frame shares the exact left edge of the Critter sprite and Skill grid.
+- Added `test:home-loadout-layout`, which verifies the shared left edge, responsive 112/96/88px Critter frames, reduced 62px Skill tiles, enlarged identity typography/logos, XP placement, single-line representative name, and horizontal containment at 1380px, 980px, and 360px.
+- Visually inspected all three home-loadout regression screenshots plus the real unauthenticated app smoke render. Final checks pass: `test:home-loadout-layout`, `test:collection-ui`, `test:collection-layout`, `test:sprite-containment`, `test:effect-ui`, `typecheck`, `build`, and `git diff --check`.

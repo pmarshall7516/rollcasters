@@ -19,37 +19,32 @@ export type SkillTargeting =
 
 export type EffectOwnerType = "skill" | "ability" | "relic" | "status";
 export type EffectTarget =
-  | "skill_user"
-  | "selected_target"
+  | "self"
   | "all_enemies"
   | "all_allies"
   | "all_friendlies"
-  | "all_friendly_critters"
-  | "active_friendly_critter"
+  | "target_enemies"
+  | "all_element_friendlies"
+  | "all_element_enemies"
   | "equipped_critter"
-  | "status_holder";
+  | "equipped_allies"
+  | "equipped_friendlies"
+  | "status_holder"
+  | "status_holder_allies"
+  | "status_holder_friendlies"
+  | "status_holder_enemies";
 
-export type EffectTemplate = {
-  id: string;
-  effect_category: EffectOwnerType;
-  runtime_kind: string;
-  runtime_version: number;
-  is_runtime_supported: boolean;
-  is_active: boolean;
-  is_archived: boolean;
-  version: number;
-};
-
-export type EffectDefinition = {
+export type CombatEffectRow = {
+  owner_type: EffectOwnerType;
+  owner_id: string;
   id: string;
   name: string;
   description: string;
-  owner_type: EffectOwnerType;
+  sort_order: number;
+  template_id: string;
+  runtime_kind: string;
+  runtime_version: number;
   parameters: Record<string, unknown>;
-  version: number;
-  is_active: boolean;
-  is_archived: boolean;
-  template: EffectTemplate;
 };
 
 export type ResolvedEffectRef = {
@@ -57,31 +52,20 @@ export type ResolvedEffectRef = {
   name: string;
   description: string;
   ownerType: EffectOwnerType;
+  ownerId: string;
+  templateId: string;
   runtimeKind: string;
   runtimeVersion: number;
   parameters: Record<string, unknown>;
   sortOrder: number;
-  definitionVersion: number;
-  templateVersion: number;
 };
-
-export type EffectAttachment = {
-  effect_id: string;
-  sort_order: number;
-};
-
-export type SkillEffectAttachment = EffectAttachment & { skill_id: string; role: "primary" | "secondary" };
-export type AbilityEffectAttachment = EffectAttachment & { ability_id: string };
-export type RelicEffectAttachment = EffectAttachment & { relic_id: string };
-export type StatusEffectAttachment = EffectAttachment & { status_id: string };
 
 export type Status = {
   id: string;
   name: string;
   description: string;
-  stacking_policy?: "refresh" | "extend" | "stack" | "ignore";
-  default_duration?: number;
-  max_stacks?: number;
+  asset_path?: string | null;
+  sort_order?: number;
   is_active?: boolean;
   is_archived?: boolean;
   version?: number;
@@ -96,7 +80,6 @@ export type Skill = {
   mana_cost: number;
   targeting: SkillTargeting;
   description: string;
-  effect: Record<string, unknown>;
   sort_order: number;
 };
 
@@ -162,7 +145,6 @@ export type RollcasterAbility = {
   id: string;
   name: string;
   description: string;
-  effect: Record<string, unknown>;
   sort_order: number;
 };
 
@@ -180,7 +162,6 @@ export type Relic = {
   name: string;
   description: string;
   max_owned: number;
-  effect: Record<string, unknown>;
   asset_path: string | null;
   sort_order: number;
 };
@@ -230,7 +211,7 @@ export type GameAsset = {
   id: string;
   bucket_id: string;
   path: string;
-  category: "critter" | "rollcaster" | "relic" | "element" | "currency" | "mana" | "ui" | "other";
+  category: "critter" | "rollcaster" | "relic" | "status" | "element" | "currency" | "mana" | "ui" | "other";
   owner_table: string | null;
   owner_id: string | null;
   variant: string;
@@ -324,7 +305,6 @@ export type Catalog = {
   starterOptions: StarterOption[];
   gameAssets: GameAsset[];
   statuses: Status[];
-  effects: EffectDefinition[];
   effectsBySkill: Record<string, ResolvedEffectRef[]>;
   effectsByAbility: Record<string, ResolvedEffectRef[]>;
   effectsByRelic: Record<string, ResolvedEffectRef[]>;
@@ -359,5 +339,7 @@ export type CombatAction = {
   skillId?: string;
   targetKey?: string;
   swapToId?: string;
+  targetSlotSide?: "player" | "opponent";
+  targetSlotIndex?: number;
   cost: number;
 };
