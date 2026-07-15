@@ -31,7 +31,7 @@ try {
           </div>
           <div class="loadout-slot">
             <h3>Equipped Skills</h3>
-            <div class="dialog-skill-grid">
+            <div class="skill-tile-grid">
               ${skill("Slam", "selected equipped")}
               ${skill("Headbutt", "equipped", true)}
               ${skill("Fire Rush")}
@@ -44,7 +44,7 @@ try {
               <span class="stat-cell modified" tabindex="0">ATK <strong class="negative">24</strong><span class="game-tooltip stat-breakdown"><span class="stat-breakdown-line"><span>25 (Base)</span><strong class="negative"> -1 (Heavy Charm)</strong></span></span></span>
               <span class="stat-cell modified def-stat" tabindex="0">DEF <strong class="mixed">21</strong><span class="game-tooltip stat-breakdown"><span class="stat-breakdown-line"><span>20 (Base)</span><strong class="positive"> +3 (Guard Charm)</strong><strong class="negative"> -2 (Risky Ward)</strong></span></span></span>
               <span class="stat-cell">SPD <strong>15</strong></span>
-              <span class="stat-cell modified mana-dice-stat" tabindex="0">Mana Dice <strong><span>1</span>–<span class="positive">9</span></strong><span class="game-tooltip stat-breakdown"><span class="stat-breakdown-line"><strong>Maximum: </strong><span>6 (Base)</span><strong class="positive"> +3 (High Roll)</strong></span></span></span>
+              <span class="stat-cell modified mana-dice-stat" tabindex="0">Mana <strong><span>1</span>–<span class="positive">9</span></strong><span class="game-tooltip stat-breakdown"><span class="stat-breakdown-line"><strong>Maximum: </strong><span>6 (Base)</span><strong class="positive"> +3 (High Roll)</strong></span></span></span>
               <span class="stat-cell">Block <strong>2</strong></span><span class="stat-cell">Swap <strong>2</strong></span><span class="stat-cell">Relics <strong>1</strong></span>
             </div>
             <h3>Relic Effects</h3>

@@ -1,5 +1,5 @@
 import { calculateLoadoutStats } from "../src/lib/loadout.js";
-import { xpProgress } from "../src/lib/progression.js";
+import { relicSlotUnlocks, xpProgress } from "../src/lib/progression.js";
 import type { AppData, Catalog, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -16,6 +16,15 @@ check(beforeLevel.current === 79 && beforeLevel.needed === 80, "Level-one progre
 const afterLevel = xpProgress(thresholds, 2, 100);
 check(afterLevel.current === 20 && afterLevel.needed === 100, "Level-two progress must carry over and show 20 / 100.");
 check(xpProgress(thresholds, 3, 180).isMaxLevel, "The final progression row must display max level.");
+
+const relicUnlocks = relicSlotUnlocks([
+  { critter_id: "hero", level: 1, total_unlocked_relic_slots: 1 },
+  { critter_id: "hero", level: 3, total_unlocked_relic_slots: 2 },
+  { critter_id: "hero", level: 5, total_unlocked_relic_slots: 3 },
+], "hero");
+check(relicUnlocks.length === 10, "The home loadout must expose a fixed 10-cell Relic matrix.");
+check(relicUnlocks.slice(0, 3).map((slot) => slot.unlockLevel).join(",") === "1,3,5", "Relic cells must retain the first level that unlocks each slot.");
+check(relicUnlocks.slice(3).length === 7 && relicUnlocks.slice(3).every((slot) => slot.unlockLevel === null), "Relic cells beyond the lifetime maximum must remain null slots.");
 
 function effect(
   ownerType: "relic" | "ability",
@@ -98,7 +107,7 @@ const calculated = calculateLoadoutStats({ catalog, player } as AppData, player.
 check(calculated.stats.hp === 32, "An ally Relic must affect the selected squad Critter.");
 check(calculated.stats.atk === 24, "The equipped Relic ATK penalty must be reflected on the home card.");
 check(calculated.stats.def === 21, "Positive and negative DEF deltas must combine into the combat value.");
-check(calculated.stats.diceMin === 1 && calculated.stats.diceMax === 9, "Only the modified Mana Dice maximum must change.");
+check(calculated.stats.diceMin === 1 && calculated.stats.diceMax === 9, "Only the modified Mana maximum must change.");
 check(calculated.breakdowns.def?.sources.map((source) => source.amount).join(",") === "3,-2", "The DEF tooltip must retain positive and negative source deltas in resolution order.");
 
 console.log("Collection progression and loadout stat tests passed.");

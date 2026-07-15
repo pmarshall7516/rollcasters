@@ -44,7 +44,7 @@ try {
     </article></div></section>
     <section class="owner-tooltip-grid" aria-label="Owner effect tooltips">
       <span class="tooltip-anchor"><button class="preview-owner">Skill: Vampire Bite</button><span class="game-tooltip"><span class="tooltip-heading"><strong>Vampire Bite - Attack - 55 Power</strong></span><span class="tooltip-description">Bite one enemy and drain its strength.</span><span class="tooltip-description"><strong>Vampire:</strong> Restores 25% of damage actually dealt.</span></span></span>
-      <span class="tooltip-anchor"><button class="preview-owner">Ability: High Roller</button><span class="game-tooltip"><span class="tooltip-heading"><strong>High Roller</strong></span><span class="tooltip-description">Improves compatible Mana Dice.</span><span class="tooltip-description"><strong>Loaded Dice:</strong> Bloom friendlies gain +2 minimum and +3 maximum.</span></span></span>
+      <span class="tooltip-anchor"><button class="preview-owner">Ability: High Roller</button><span class="game-tooltip"><span class="tooltip-heading"><strong>High Roller</strong></span><span class="tooltip-description">Improves compatible Mana.</span><span class="tooltip-description"><strong>Loaded Dice:</strong> Bloom friendlies gain +2 minimum and +3 maximum.</span></span></span>
       <span class="tooltip-anchor"><button class="preview-owner">Relic: Expanded Pouch</button><span class="game-tooltip"><span class="tooltip-heading"><strong>Expanded Pouch</strong></span><span class="tooltip-description">A surprisingly roomy enchanted pouch.</span><span class="tooltip-description"><strong>Extra Dice:</strong> Equipped allies gain -1 minimum and +5 maximum.</span></span></span>
     </section>
   </main></body></html>`);

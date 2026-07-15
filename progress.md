@@ -1,5 +1,25 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Main-page empty squad slot consistency (2026-07-15)
+
+- Made the squad grid use equal-height rows so every empty squad slot always matches occupied squad slot dimensions across responsive layouts.
+- Replaced the empty squad slot's circled text glyph with the same Lucide Plus icon and sizing class used by empty relic slots.
+- Expanded the home loadout layout regression fixture to cover an occupied and empty squad slot together and assert equal dimensions plus shared icon treatment.
+- Verified exact width/height equality across seven responsive viewports from 1920px desktop through 320px mobile, visually inspected desktop/mobile screenshots, passed `npm run build` and `git diff --check`, and completed the required real-app Playwright smoke render without captured app errors.
+
+## Player-facing Mana terminology (2026-07-14)
+
+- Replaced the player-facing “Mana Dice”/“mana die” terminology with “Mana” across stat cards, generated effect copy, validation copy, and UI regression fixtures.
+- Removed the collection-only compressed typography that was needed for the longer label while retaining close label/value spacing.
+- Confirmed no old terminology remains in `src` or UI test fixtures and visually inspected collection, home loadout, stat detail, effect tooltip, and real-app smoke screenshots.
+- Passed `npm run build`, `npm run test:collection-ui`, `npm run test:effect-runtime`, `npm run test:collection-layout`, `npm run test:home-loadout-layout`, `npm run test:collection-interaction-ui`, `npm run test:effect-ui`, and `git diff --check`.
+
+## Collection Mana Dice spacing refinement (2026-07-14)
+
+- Tightened the collection Critter card's Mana Dice label/value spacing, removed excess horizontal padding, and restored its responsive type scale closer to the other stat cells.
+- Expanded the collection layout regression to require centered, tightly spaced, single-line Mana Dice content at a readable responsive size.
+- Visually inspected the generated desktop and mobile collection screenshots. `npm run test:collection-layout`, `npm run build`, `git diff --check`, and the required real-app Playwright smoke render pass.
+
 ## Inline owner effect combat integration (2026-07-14)
 
 - Replaced the player bootstrap dependency on reusable effect definitions and attachment tables with the `combat_effects_v1` inline owner view from `004_inline_owner_effects.sql`.
@@ -284,3 +304,134 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - Removed the visual relic inset by left-aligning the relic frame inside its wider label button, so the first relic frame shares the exact left edge of the Critter sprite and Skill grid.
 - Added `test:home-loadout-layout`, which verifies the shared left edge, responsive 112/96/88px Critter frames, reduced 62px Skill tiles, enlarged identity typography/logos, XP placement, single-line representative name, and horizontal containment at 1380px, 980px, and 360px.
 - Visually inspected all three home-loadout regression screenshots plus the real unauthenticated app smoke render. Final checks pass: `test:home-loadout-layout`, `test:collection-ui`, `test:collection-layout`, `test:sprite-containment`, `test:effect-ui`, `typecheck`, `build`, and `git diff --check`.
+
+## Fluid multi-device layout system (2026-07-14)
+
+- Unified the signed-in header, notices, home, collection, and combat surfaces under a shared fluid 1920px content ceiling with clamp-based page gutters and section gaps, replacing the mismatched 1280/1380px caps that created unnecessary side dead space.
+- Added container-responsive equipped Critter cards so their sprite/header/XP composition responds to the card's real width rather than only the browser width.
+- Changed collection and starter grids to auto-fit stable minimum card widths, allowing five/three/two/one collection columns across ultrawide desktop, laptop, iPad, and mobile without changing the card hierarchy.
+- Expanded the home regression to six viewports (1920, 1380, 1280, iPad landscape, iPad portrait, and mobile); the first pass passes all alignment, scaling, viewport-fill, layout-mode, and overflow checks.
+- Expanded the collection regression to ultrawide, desktop, both iPad orientations, and mobile, with responsive five/three/two/one-column expectations and stable controls/card geometry.
+- Added `test:responsive-shell-layout` for matching header/content edges, combat reflow, Rollcaster visibility, header collision prevention, modal viewport containment, and candidate-grid behavior across desktop, iPad, and mobile.
+- Visually inspected the generated home, collection, combat, modal, interaction, effect, and sprite-containment screenshots. Final checks pass: `test:home-loadout-layout`, `test:responsive-shell-layout`, `test:collection-layout`, `test:collection-interaction-ui`, `test:collection-ui`, `test:sprite-containment`, `test:effect-ui`, `typecheck`, `build`, and `git diff --check`; the required real-app smoke client also rendered the configured authentication screen cleanly with the expected unauthenticated text state.
+
+## Main-page Critter pane compaction (2026-07-14)
+
+- Changed the equipped Critter header grid so its XP bar follows the name/level block at the normal card gap instead of being pushed toward the right edge by a flexible identity column.
+- Extra-wide equipped Critter cards now use one four-column Skill row, reducing oversized Skill tiles and using the available horizontal space without changing the established two-column tablet or one-column mobile presentation.
+- Expanded the home-loadout regression fixture to match the live two-row stat block and verify both the close identity-to-XP spacing and responsive 4/2/1 Skill-column behavior.
+- Visually inspected wide desktop, standard desktop, iPad portrait, and mobile renders. Final checks pass: `test:home-loadout-layout`, `test:responsive-shell-layout`, `test:sprite-containment`, `typecheck`, `build`, and `git diff --check`; the required real-app smoke client also rendered the configured authentication screen cleanly with the expected unauthenticated state.
+
+## Collection card size and grid invariants (2026-07-14)
+
+- Replaced collapsing, stretch-to-fill collection tracks with shared 320px fixed tracks and preserved empty tracks, so sparse Rollcaster and Relic tabs use the same card width and column coordinates as a full Critter tab.
+- Standardized every collection card at a 320x440 footprint across ultrawide desktop, desktop, and iPad; narrow phones scale the complete card, artwork, padding, gaps, typography, progression, and stat geometry together at the same aspect ratio.
+- Balanced complete grid columns across identical left and right grid edges while retaining responsive five/three/two/one-column layouts and allowing incomplete rows to remain incomplete.
+- Expanded the collection Playwright regression to swap between three Rollcasters, nine Critters, and four Relics at every viewport, asserting identical tab grid edges, column positions, card dimensions, proportional internals, and non-stretching sparse rows.
+- Visually inspected ultrawide, desktop, iPad portrait, and narrow-mobile collection renders. Final checks pass: `test:collection-layout`, `test:collection-interaction-ui`, `test:responsive-shell-layout`, `typecheck`, `build`, and `git diff --check`; the required web-game smoke client rendered the configured unauthenticated screen cleanly with matching text state.
+
+## Equipped Critter progression row (2026-07-14)
+
+- Grouped each equipped Critter's level label and XP progress into one flex row beneath its name, with vertically centered text, bar, and progress numbers.
+- Simplified the Critter header to a sprite/content composition with a pinned Edit label, allowing the progression row to use the full remaining width on mobile without wrapping or separating the level from its bar.
+- Updated the home-loadout regression to assert the level-to-XP gap and exact shared vertical center across six responsive viewports; visually inspected wide desktop, desktop, iPad portrait, and mobile renders.
+- Final checks pass: `test:home-loadout-layout`, `test:responsive-shell-layout`, `typecheck`, `build`, and `git diff --check`; the required web-game smoke client rendered the configured unauthenticated screen cleanly with matching text state.
+
+## Skill and Relic loadout matrix (2026-07-14)
+
+- Replaced the wide Skill row and trailing Relic row with a balanced equipment region: a fixed 2x2 Skill grid on the left and a fixed 5x3 Relic grid on the right, both sharing the same rendered height.
+- Added progression-derived Relic-slot state generation. Each Critter shows interactive slots up to its current unlocked total, future slots with a lock icon and their first unlock level, and permanently unavailable cells as fully shaded inset null slots.
+- Preserved the existing Relic equip dialog behavior for every interactive cell while making future and null cells non-interactive and accessible through explicit disabled labels.
+- Added the requested 1-at-level-1, 2-at-level-3, 3-at-level-5 progression example to the logic suite, including the 15-cell cap and twelve null cells.
+- Expanded the responsive home regression to require 2 Skill columns, 5 Relic columns, 3 Relic rows, equal grid heights, correct 1/2/12 state counts, and horizontal containment across six viewports. Compact-width Skill metadata now uses a footer row so names remain readable on iPad landscape and mobile.
+- Visually inspected wide desktop, desktop, both iPad orientations, and mobile renders. Final checks pass: `test:home-loadout-layout`, `test:collection-ui`, `test:responsive-shell-layout`, `typecheck`, `build`, and `git diff --check`; the required web-game smoke client rendered the configured unauthenticated screen cleanly with matching text state.
+
+## Wider responsive collection cards (2026-07-14)
+
+- Replaced the 320px fixed collection tracks and distributed leftover whitespace with fluid tracks separated by a fixed 12px gap.
+- Collection grids now use four columns at the supplied 2022px reference viewport, three on a standard desktop, two on iPad-sized views, and one on phones; incomplete Rollcaster and Relic rows preserve the same track positions as Critters.
+- Enlarged cards from 440px to a 500px baseline height and made card padding, gaps, artwork frames, names, and stat text scale against each card's own content width with a proportional narrow-card fallback.
+- Expanded the collection layout regression to include the exact 2022x873 reference size and assert track fill, 12px gutters, wider minimum card sizes, responsive internals, and complete child containment. The first updated regression pass succeeds across six viewports, with no horizontal overflow or clipped stats, point counters, effects, or card children.
+- Visually inspected the updated reference, desktop, iPad, and mobile collection renders plus the shared desktop/mobile sprite-containment renders. Final checks pass: `test:collection-layout`, `test:collection-interaction-ui`, `test:sprite-containment`, `test:responsive-shell-layout`, `typecheck`, `build`, and `git diff --check`; the required web-game client also rendered the configured authentication screen cleanly with the expected unauthenticated text state.
+## Ten-slot Relic matrix and equal Critter stats (2026-07-14)
+
+- Reduced each equipped Critter's Relic matrix from 5×3 to 5×2, capping the visible equipment area at 10 slots and giving every Relic cell more vertical space.
+- Updated Relic progression's default visible matrix to 10 slots while preserving unlocked, future-unlock, and permanently unavailable slot states.
+- Made all eight Critter stat cells use equal-width columns on both the main loadout and collection cards.
+- Added collection-card Mana Dice compaction so its longer value remains readable and contained inside the same-width stat cell.
+- Expanded responsive layout coverage to assert the 5×2 Relic matrix, equal Skill/Relic grid heights, correct Relic states, and equal Critter stat widths across wide desktop, desktop, iPad landscape, iPad portrait, and mobile views.
+- Verified with `npm run test:collection-ui`, `npm run test:home-loadout-layout`, `npm run test:collection-layout`, `npm run test:responsive-shell-layout`, `npm run typecheck`, `npm run build`, and the required live-page browser smoke test.
+
+## Empty Relic slot plus icon (2026-07-14)
+
+- Replaced the default shield artwork in empty interactive Relic slots with a centered plus icon on both equipped Critter loadouts and the shared Relic slot component.
+- Preserved Relic artwork for equipped slots and the shield fallback only when an equipped Relic's artwork cannot load.
+- Extended the home layout regression to require the plus empty state and visually verified it across the responsive equipment grid.
+- Passed `npm run test:home-loadout-layout`, `npm run typecheck`, `npm run build`, `git diff --check`, and the required live-page browser smoke test.
+
+## Equipped Relic artwork treatment (2026-07-14)
+
+- Expanded equipped Relic artwork to nearly the full interactive slot with a 1px image inset, including the shared legacy Relic slot presentation.
+- Replaced the green equipped border/glow with the normal bright equipment border and a purple magic glow.
+- Extended the responsive home regression with an equipped Relic fixture that asserts the art footprint, purple glow, non-green border, unchanged 5×2 matrix geometry, and mobile containment.
+- Visually verified the updated equipped slot at desktop and mobile sizes; `npm run test:home-loadout-layout`, `npm run typecheck`, and `npm run build` pass.
+- The required live-page browser smoke test rendered the clean unauthenticated app with matching text state; `git diff --check` also passes.
+
+## Responsive Skill Equip scaling (2026-07-14)
+
+- Enlarged equipped Skill names, element icons, power/mana metadata, button height, padding, and corner radius with loadout-container-relative sizing instead of fixed compact values.
+- Kept element icons visible at every supported width and moved Skill metadata into a compact footer before content becomes cramped.
+- Added explicit geometry coverage across seven viewports from 1920px wide desktop through 320px narrow mobile, including monotonic button/content scaling, icon visibility, child containment, equal Skill/Relic grid heights, and horizontal overflow checks.
+- `npm run test:home-loadout-layout` passes; wide, desktop, 390px mobile, and 320px mobile screenshots were visually inspected.
+- Final verification also passes `npm run test:responsive-shell-layout`, `npm run build`, and `git diff --check`; the required real-app Playwright smoke client rendered the configured authentication screen with the expected unauthenticated text state.
+
+## Compact Critter summary stats (2026-07-14)
+
+- Removed the visible Edit label from occupied squad Critter slots while retaining the full identity area as the accessible squad-change control.
+- Moved all eight Critter stats into a compact four-column, two-row block to the right of the sprite/name/level/XP summary on sufficiently wide cards; narrow cards stack the same fixed two-row block below the identity.
+- Replaced space-between stat content with tightly centered label/value pairs, reducing the complete stat block to roughly 257px in the responsive home fixture.
+- Expanded the home layout regression to verify no Edit label, exact 4×2 stats, close label/value spacing, right-side/stacked responsive placement, one-line level text, containment, and existing Skill/Relic invariants across seven viewports.
+- Visually inspected the final wide, desktop, iPad landscape, mobile, collection, and combat screenshots. Final verification passes `test:home-loadout-layout`, `test:collection-layout`, `test:responsive-shell-layout`, `build`, and `git diff --check`; the required real-app smoke client rendered the expected clean unauthenticated state.
+
+## Unified Critter Skill slot and equip-popup presentation (2026-07-14)
+
+- Replaced the separate home `skill-grid` and popup `dialog-skill-grid` wrappers with one `SkillTileGrid` component and one `skill-tile-grid` CSS contract.
+- Moved responsive Skill sizing, title/icon placement, power/mana organization, selection-check positioning, and the fixed two-column layout into that shared contract so the popup no longer falls back to the larger generic Skill layout.
+- Added `test:skill-equip-layout`, a focused Playwright parity regression that requires matching slot/popup geometry, two-column organization, title/icon row, power/mana footer, selection placement, responsive scaling, and overflow behavior.
+- Visually inspected the matching desktop/mobile parity renders, the responsive home loadout, modal Skill states, and mobile modal containment. Final verification passes `test:skill-equip-layout`, `test:home-loadout-layout`, `test:collection-interaction-ui`, `test:responsive-shell-layout`, `typecheck`, `build`, and `git diff --check`; the required real-app Playwright smoke client rendered the configured authentication screen cleanly with matching unauthenticated text state.
+
+## Right-aligned uniform Critter stats (2026-07-14)
+
+- Widened the equipped Critter stat cells with one shared responsive width, keeping all eight boxes exactly equal within each viewport.
+- Increased the separation between the Critter identity/XP area and its 4×2 stat block, and anchored the stat block to the card's right edge so it aligns exactly with the right edge of the Relic matrix.
+- Preserved the two-row layout on compact cards with 64px cells that right-align without horizontal overflow; roomy tablet and desktop cards reach 76px cells.
+- Expanded the home-loadout regression to assert equal widths, the larger identity-to-stat separation, and exact stat-to-Relic right-edge alignment across seven viewports. `npm run test:home-loadout-layout`, `npm run test:responsive-shell-layout`, `npm run build`, and `git diff --check` pass; wide, desktop, mobile, and narrow-mobile renders were visually inspected, and the required real-app smoke client rendered the expected clean unauthenticated state.
+
+## Exact Skill slot/popup sizing and power placement (2026-07-14)
+
+- The clicked home Skill grid now passes its measured rendered width into the equip target, and the popup grid caps itself to that width so candidate tiles resolve to the exact same width, height, padding, typography, and icon sizes as the source slots.
+- Restored `PWR X` to the top-right and kept Mana at the bottom-right in the shared Skill tile contract.
+- Added a shared width-observed compact state for grids at 180px or narrower. Those tiles preserve the same four corners on both surfaces—element top-left, power top-right, name bottom-left, Mana bottom-right—without hiding the element icon or overflowing at 320px.
+- Updated the focused parity and home layout regressions to require exact popup/source grid and tile dimensions, top-right power placement, compact child containment, icon visibility, and responsive scaling.
+- Visually inspected matching desktop/compact slot-popup renders, the 390px and 320px home loadouts, mobile modal containment, and the required real-app smoke render. Final verification passes `test:skill-equip-layout`, `test:home-loadout-layout`, `test:collection-interaction-ui`, `test:responsive-shell-layout`, `typecheck`, `build`, and `git diff --check`.
+
+## Stable three-digit Critter level geometry (2026-07-14)
+
+- Reserved a fixed 82px level-label column, enabled tabular numerals, and increased the Level-to-XP separation to a responsive 12–16px so levels through `Level 999` never push the XP block.
+- Made the Critter XP bar/number split fluid inside its fixed outer position, preserving readable, contained progress content from wide desktop through 320px narrow mobile.
+- Expanded the home regression to snapshot every rendered element in the main-page layout, swap `Level 3` to `Level 999`, and require every box coordinate and dimension to remain unchanged across seven viewports. It also emits explicit three-digit screenshots and checks XP child containment.
+- Visually inspected the `Level 999` desktop, mobile, and narrow-mobile renders. `npm run test:home-loadout-layout`, `npm run test:skill-equip-layout`, `npm run test:responsive-shell-layout`, `npm run build`, and `git diff --check` pass; the required real-app smoke client rendered the expected clean unauthenticated state.
+
+## Larger Critter stats and collection Mana alignment (2026-07-14)
+
+- Scaled equipped Critter stat cells and typography to 1.5× their previous size; narrower loadout cards reflow the eight equal cells to a two-column matrix so the larger boxes remain contained.
+- Restored the collection Critter Mana cell to the same left-label/right-value alignment as the other seven stats.
+- Updated the home and collection layout regressions to cover the enlarged geometry and exact Mana edge alignment across wide desktop, desktop, tablet, mobile, and 320px narrow-mobile layouts.
+- Visually inspected the responsive home, collection, stat-detail, combat, and real-app smoke screenshots. Final verification passes `test:home-loadout-layout`, `test:collection-layout`, `test:collection-interaction-ui`, `test:responsive-shell-layout`, `build`, and `git diff --check`; the required web-game client rendered the clean configured authentication state with matching text output and no console errors.
+
+## Relic-aligned equipped Critter stats (2026-07-14)
+
+- Sized the equipped Critter stat grid from the same shared half-row calculation as the Relic matrix, making their total widths and right edges match exactly.
+- Kept all eight stat cells identical in width and changed every cell to a left-aligned label with a right-aligned value.
+- Added responsive 4×2, 2×4, and 1×8 stat matrices so the shared width remains readable on narrow loadout slots.
+- Visually inspected wide desktop, desktop, iPad landscape, mobile, narrow-mobile, Skill equip parity, combat-shell, and real-app smoke screenshots. Final verification passes `test:home-loadout-layout`, `test:skill-equip-layout`, `test:responsive-shell-layout`, `build`, and `git diff --check`; the real-app browser client rendered the expected authentication state with matching text output and no console errors.

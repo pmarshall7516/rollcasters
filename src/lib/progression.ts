@@ -31,3 +31,36 @@ export function xpProgress(
     isMaxLevel: false,
   };
 }
+
+type RelicSlotProgression = {
+  critter_id: string;
+  level: number;
+  total_unlocked_relic_slots: number;
+};
+
+export type RelicSlotUnlock = {
+  slotIndex: number;
+  unlockLevel: number | null;
+};
+
+export function relicSlotUnlocks(
+  progression: RelicSlotProgression[],
+  critterId: string,
+  visibleSlots = 10,
+): RelicSlotUnlock[] {
+  const unlockLevels: Array<number | null> = Array.from({ length: visibleSlots }, () => null);
+  if (visibleSlots > 0) unlockLevels[0] = 1;
+
+  let knownSlots = visibleSlots > 0 ? 1 : 0;
+  const rows = progression
+    .filter((row) => row.critter_id === critterId)
+    .sort((left, right) => left.level - right.level);
+
+  for (const row of rows) {
+    const total = Math.min(visibleSlots, Math.max(0, Math.floor(row.total_unlocked_relic_slots)));
+    for (let index = knownSlots; index < total; index += 1) unlockLevels[index] = row.level;
+    knownSlots = Math.max(knownSlots, total);
+  }
+
+  return unlockLevels.map((unlockLevel, index) => ({ slotIndex: index + 1, unlockLevel }));
+}

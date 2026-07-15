@@ -18,12 +18,12 @@ const card = (id, name) => {
   return `
   <button class="catalog-card ${name.toLowerCase()}-card ${owned ? "" : "locked"}">
     <span class="collectible-id">${id}</span>
-    <span class="card-sprite-frame"><span class="sprite"></span></span>
+    <span class="card-sprite-frame ${name === "Rollcaster" ? "rollcaster-sprite-frame" : ""}"><span class="sprite"></span></span>
     <span class="card-name-row"><strong>${name}</strong></span>
     ${progression}
     ${name === "Critter" ? `<div class="stat-grid compact">
-      <span>HP <strong>120</strong></span><span>ATK <strong>24</strong></span><span>DEF <strong>18</strong></span><span>SPD <strong>16</strong></span>
-      <span class="mana-dice-stat">Mana Dice <strong>10–12</strong></span><span>Block <strong>2</strong></span><span>Swap <strong>3</strong></span><span>Relics <strong>2</strong></span>
+      <span class="stat-cell"><span class="stat-label">HP</span><strong>120</strong></span><span class="stat-cell"><span class="stat-label">ATK</span><strong>24</strong></span><span class="stat-cell"><span class="stat-label">DEF</span><strong>18</strong></span><span class="stat-cell"><span class="stat-label">SPD</span><strong>16</strong></span>
+      <span class="stat-cell mana-dice-stat"><span class="stat-label">Mana</span><strong>10–12</strong></span><span class="stat-cell"><span class="stat-label">Block</span><strong>2</strong></span><span class="stat-cell"><span class="stat-label">Swap</span><strong>3</strong></span><span class="stat-cell"><span class="stat-label">Relics</span><strong>2</strong></span>
     </div><p class="point-counter"><strong>${owned ? 1 : 0}</strong> skill points</p>` : name === "Rollcaster" ? `<p class="point-counter"><strong>0</strong> ability points</p>` : `<span class="effect-list relic-card-effects"><span class="effect-list-row"><strong>Harden:</strong> Increases DEF by 10%.</span><span class="effect-list-row"><strong>Steady:</strong> Prevents one point of loss.</span></span>`}
   </button>`;
 };
@@ -33,6 +33,11 @@ const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1180, height: 720 }, deviceScaleFactor: 1 });
   const cards = Array.from({ length: 9 }, (_, index) => card(String(index + 1).padStart(3, "0"), ["Rollcaster", "Critter", "Relic"][index % 3])).join("");
+  const tabCards = {
+    rollcasters: Array.from({ length: 3 }, (_, index) => card(String(index + 1).padStart(3, "0"), "Rollcaster")).join(""),
+    critters: Array.from({ length: 9 }, (_, index) => card(String(index + 1).padStart(3, "0"), "Critter")).join(""),
+    relics: Array.from({ length: 4 }, (_, index) => card(String(index + 1).padStart(3, "0"), "Relic")).join(""),
+  };
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>
     <main class="app-shell collection-shell">
       <header class="top-bar"><span>Rollcasters</span></header>
@@ -70,6 +75,7 @@ try {
       const statuses = [...document.querySelectorAll(".collection-status")];
       const points = [...document.querySelectorAll(".point-counter")];
       const critterStatOffsets = [...document.querySelectorAll(".critter-card")].map((entry) => entry.querySelector(".stat-grid").getBoundingClientRect().top - entry.getBoundingClientRect().top);
+      const critterStatWidths = [...document.querySelectorAll(".critter-card")].map((entry) => [...entry.querySelectorAll(".stat-grid > span")].map((cell) => cell.getBoundingClientRect().width));
       const critterSpacing = [...document.querySelectorAll(".critter-card")].map((entry) => {
         const cardRect = entry.getBoundingClientRect();
         const progressionRect = entry.querySelector(".collection-progression").getBoundingClientRect();
@@ -83,6 +89,7 @@ try {
       });
       const grid = document.querySelector(".collection-grid");
       const content = document.querySelector(".collection-grid-content");
+      const gridStyle = getComputedStyle(grid);
       const rect = (selector) => {
         const value = document.querySelector(selector).getBoundingClientRect();
         return [value.left, value.top, value.width, value.height];
@@ -91,19 +98,46 @@ try {
         anchors: { heading: rect(".screen-heading"), tabs: rect(".tabs"), tools: rect(".collection-tools"), search: rect(".collection-search"), content: rect(".collection-grid-content") },
         cards: cards.map((entry) => {
           const rect = entry.getBoundingClientRect();
-          return { width: rect.width, height: rect.height };
+          const sprite = entry.querySelector(".card-sprite-frame").getBoundingClientRect();
+          const style = getComputedStyle(entry);
+          const contentWidth = rect.width
+            - Number.parseFloat(style.borderLeftWidth)
+            - Number.parseFloat(style.borderRightWidth)
+            - Number.parseFloat(style.paddingLeft)
+            - Number.parseFloat(style.paddingRight);
+          const childrenFit = [...entry.children].every((child) => {
+            const childRect = child.getBoundingClientRect();
+            return childRect.left >= rect.left - .5 && childRect.right <= rect.right + .5 && childRect.top >= rect.top - .5 && childRect.bottom <= rect.bottom + .5;
+          });
+          return {
+            type: [...entry.classList].find((name) => name.endsWith("-card") && name !== "catalog-card"),
+            width: rect.width,
+            height: rect.height,
+            contentWidth,
+            spriteWidth: sprite.width,
+            nameSize: Number.parseFloat(getComputedStyle(entry.querySelector(".card-name-row")).fontSize),
+            contentFits: childrenFit && entry.scrollWidth <= entry.clientWidth && entry.scrollHeight <= entry.clientHeight,
+          };
         }),
         documentScrollable: document.documentElement.scrollHeight > document.documentElement.clientHeight,
         noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-        gridColumns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
+        gridColumns: gridStyle.gridTemplateColumns.split(" ").length,
+        gridColumnGap: Number.parseFloat(gridStyle.columnGap),
         nestedGridScrollable:
           content.scrollHeight > content.clientHeight &&
           ["auto", "scroll"].includes(getComputedStyle(content).overflowY),
         mana: mana.map((entry) => ({
           text: entry.textContent.trim(),
           fits: entry.scrollWidth <= entry.clientWidth,
+          clientWidth: entry.clientWidth,
+          scrollWidth: entry.scrollWidth,
+          fontSize: Number.parseFloat(getComputedStyle(entry).fontSize),
+          gap: Number.parseFloat(getComputedStyle(entry).gap),
+          justifyContent: getComputedStyle(entry).justifyContent,
           whiteSpace: getComputedStyle(entry).whiteSpace,
           valueLines: entry.querySelector("strong").getClientRects().length,
+          labelOffset: entry.querySelector(".stat-label").getBoundingClientRect().left - entry.getBoundingClientRect().left,
+          valueOffset: entry.getBoundingClientRect().right - entry.querySelector("strong").getBoundingClientRect().right,
         })),
         effects: effects.map((entry) => ({
           text: entry.textContent.trim(),
@@ -113,6 +147,7 @@ try {
         pointCount: points.length,
         pointsVisible: points.every((entry) => entry.getBoundingClientRect().bottom <= entry.closest(".catalog-card").getBoundingClientRect().bottom),
         critterStatOffsets,
+        critterStatWidths,
         critterSpacing,
         stableScrollbarGutter: getComputedStyle(document.documentElement).scrollbarGutter.includes("stable"),
         statuses: statuses.map((entry) => ({
@@ -122,6 +157,24 @@ try {
         })),
       };
     });
+    result.tabLayouts = {};
+    for (const [tab, markup] of Object.entries(tabCards)) {
+      await page.locator(".collection-grid").evaluate((grid, html) => { grid.innerHTML = html; }, markup);
+      result.tabLayouts[tab] = await page.evaluate(() => {
+        const grid = document.querySelector(".collection-grid");
+        const gridRect = grid.getBoundingClientRect();
+        const cards = [...grid.querySelectorAll(".catalog-card")].map((entry) => {
+          const rect = entry.getBoundingClientRect();
+          return { left: rect.left, width: rect.width, height: rect.height };
+        });
+        return {
+          grid: { left: gridRect.left, right: gridRect.right, width: gridRect.width },
+          columns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
+          cards,
+        };
+      });
+    }
+    await page.locator(".collection-grid").evaluate((grid, html) => { grid.innerHTML = html; }, cards);
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     result.pageScrollY = await page.evaluate(() => window.scrollY);
     await page.evaluate(() => window.scrollTo(0, 0));
@@ -130,23 +183,62 @@ try {
     return { name, screenshot, beforeFilter, ...result };
   }
 
-  const viewports = [await inspect("desktop", 1180, 720), await inspect("mobile", 360, 720)];
+  const viewports = [
+    await inspect("reference", 2022, 873),
+    await inspect("wide", 1920, 1080),
+    await inspect("desktop", 1180, 720),
+    await inspect("ipad-landscape", 1024, 768),
+    await inspect("ipad-portrait", 820, 1180),
+    await inspect("mobile", 360, 720),
+  ];
   const failures = viewports.flatMap((viewport) => {
     const [firstCard, ...otherCards] = viewport.cards;
-    const sameCards = otherCards.every((entry) => Math.abs(entry.width - firstCard.width) < 0.1 && entry.height === firstCard.height && entry.height === 440);
-    const manaFits = viewport.mana.every((entry) => entry.fits && entry.whiteSpace === "nowrap" && entry.valueLines === 1);
+    const sameCards = otherCards.every((entry) => Math.abs(entry.width - firstCard.width) < 0.1 && Math.abs(entry.height - firstCard.height) < 0.1);
+    const clamp = (minimum, value, maximum) => Math.min(maximum, Math.max(minimum, value));
+    const expectedSpriteWidth = (entry) => entry.contentWidth <= 319
+      ? entry.contentWidth * ({ "rollcaster-card": 235, "critter-card": 190, "relic-card": 190 }[entry.type] / 320)
+      : entry.type === "rollcaster-card"
+        ? clamp(235, entry.contentWidth * .58, 260)
+        : entry.type === "critter-card"
+          ? clamp(190, entry.contentWidth * .48, 220)
+          : clamp(190, entry.contentWidth * .5, 230);
+    const expectedCardHeight = viewport.anchors.content[2] - 4 <= 319
+      ? (viewport.anchors.content[2] - 4) * 500 / 320
+      : 500;
+    const responsiveCards = viewport.cards.every((entry) =>
+      Math.abs(entry.height - expectedCardHeight) < .1 &&
+      Math.abs(entry.nameSize - (entry.contentWidth <= 319 ? entry.contentWidth * 18 / 320 : clamp(18, entry.contentWidth * .05, 22))) < .1 &&
+      Math.abs(entry.spriteWidth - expectedSpriteWidth(entry)) < .1 &&
+      entry.contentFits
+    );
+    const maximumManaEdgeOffset = viewport.name === "mobile" ? 10 : 6;
+    const manaFits = viewport.mana.every((entry) => entry.text === "Mana10–12" && entry.fits && entry.fontSize >= (viewport.name === "mobile" ? 10 : 12) && entry.gap >= 4 && entry.justifyContent === "space-between" && entry.labelOffset >= 3 && entry.labelOffset <= maximumManaEdgeOffset && entry.valueOffset >= 0 && entry.valueOffset <= maximumManaEdgeOffset && entry.whiteSpace === "nowrap" && entry.valueLines === 1);
     const effectsVisible = viewport.effects.length === 3 && viewport.effects.every((entry) => entry.visible && entry.namedRows && !entry.text.startsWith("Effect:"));
     const pointCountersVisible = viewport.pointCount === 6 && viewport.pointsVisible;
     const critterStatsAligned = viewport.critterStatOffsets.every((offset) => Math.abs(offset - viewport.critterStatOffsets[0]) < 0.1);
-    const minimumGap = viewport.name === "desktop" ? 13 : 10;
+    const critterStatsEqualWidth = viewport.critterStatWidths.every((widths) => widths.every((width) => Math.abs(width - widths[0]) < .1));
+    const minimumGap = viewport.name === "mobile" ? 10 : 13;
     const critterSpacingMatches = viewport.critterSpacing.every((spacing) => spacing.progressionToStats >= minimumGap && spacing.statsToPoints >= minimumGap && spacing.pointsToBottom >= 0);
     const statusesMatch = viewport.statuses.every((entry) => entry.align === "center" && entry.transform === "uppercase" && entry.weight >= 700);
     const anchorsStable = JSON.stringify(viewport.beforeFilter) === JSON.stringify(viewport.anchors);
-    const expectedColumns = viewport.name === "desktop" ? 3 : 1;
-    const layoutMatches = viewport.documentScrollable && viewport.noHorizontalOverflow && viewport.pageScrollY > 0 && viewport.gridColumns === expectedColumns && !viewport.nestedGridScrollable && anchorsStable && viewport.stableScrollbarGutter;
-    return sameCards && firstCard.height === 440 && manaFits && effectsVisible && pointCountersVisible && critterStatsAligned && critterSpacingMatches && statusesMatch && layoutMatches
+    const expectedColumns = { reference: 4, wide: 4, desktop: 3, "ipad-landscape": 2, "ipad-portrait": 2, mobile: 1 }[viewport.name];
+    const tabEntries = Object.values(viewport.tabLayouts);
+    const referenceColumns = viewport.tabLayouts.critters.cards;
+    const tabCardsMatch = tabEntries.every((layout) => layout.columns === expectedColumns && layout.cards.every((entry) => Math.abs(entry.width - firstCard.width) < .1 && Math.abs(entry.height - firstCard.height) < .1));
+    const gridEdgesMatch = tabEntries.every((layout) => JSON.stringify(layout.grid) === JSON.stringify(tabEntries[0].grid));
+    const columnEdgesMatch = tabEntries.every((layout) => layout.cards.slice(0, expectedColumns).every((entry, index) => Math.abs(entry.left - referenceColumns[index].left) < .1));
+    const fillsViewport = viewport.anchors.heading[0] <= Math.max(52, viewport.anchors.heading[2] * .03);
+    const availableTrackWidth = expectedColumns === 1
+      ? Math.min(viewport.anchors.content[2] - 4, 520)
+      : (viewport.anchors.content[2] - 4 - (expectedColumns - 1) * 12) / expectedColumns;
+    const tracksFillWidth = Math.abs(firstCard.width - availableTrackWidth) < 1;
+    const minimumCardWidth = { reference: 450, wide: 430, desktop: 350, "ipad-landscape": 450, "ipad-portrait": 370, mobile: 310 }[viewport.name];
+    const cardsAreWide = firstCard.width >= minimumCardWidth;
+    const compactGap = Math.abs(viewport.gridColumnGap - 12) < .1;
+    const layoutMatches = viewport.documentScrollable && viewport.noHorizontalOverflow && viewport.pageScrollY > 0 && viewport.gridColumns === expectedColumns && fillsViewport && !viewport.nestedGridScrollable && anchorsStable && viewport.stableScrollbarGutter;
+    return sameCards && responsiveCards && tabCardsMatch && gridEdgesMatch && columnEdgesMatch && tracksFillWidth && cardsAreWide && compactGap && manaFits && effectsVisible && pointCountersVisible && critterStatsAligned && critterStatsEqualWidth && critterSpacingMatches && statusesMatch && layoutMatches
       ? []
-      : [{ viewport: viewport.name, sameCards, manaFits, effectsVisible, pointCountersVisible, critterStatsAligned, critterSpacingMatches, critterSpacing: viewport.critterSpacing, statusesMatch, anchorsStable, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
+      : [{ viewport: viewport.name, sameCards, responsiveCards, cards: viewport.cards, tabCardsMatch, gridEdgesMatch, columnEdgesMatch, tracksFillWidth, availableTrackWidth, cardsAreWide, minimumCardWidth, compactGap, gridColumnGap: viewport.gridColumnGap, manaFits, mana: viewport.mana, effectsVisible, pointCountersVisible, critterStatsAligned, critterStatsEqualWidth, critterSpacingMatches, critterSpacing: viewport.critterSpacing, statusesMatch, anchorsStable, fillsViewport, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, expectedColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
   });
 
   if (failures.length) throw new Error(`Collection layout failures:\n${JSON.stringify(failures, null, 2)}`);
