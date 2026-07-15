@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -487,6 +487,8 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
   const [equipTarget, setEquipTarget] = useState<EquipTarget | null>(null);
   const [equipError, setEquipError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const squadPanelRef = useRef<HTMLElement>(null);
+  const squadLayoutKey = squad.map((slot) => `${slot.slot_index}:${slot.user_critter_id ?? "empty"}`).join("|");
   const abilityCount = unlockedAbilitySlotCount(data, activeRollcaster);
   const rollcasterProgress = activeRollcaster && rollcaster
     ? xpProgress(
@@ -495,6 +497,40 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
         activeRollcaster.xp,
       )
     : null;
+
+  useLayoutEffect(() => {
+    const panel = squadPanelRef.current;
+    if (!panel) return;
+
+    let animationFrame = 0;
+    let lastWidth = -1;
+    const syncSlotHeight = () => {
+      window.cancelAnimationFrame(animationFrame);
+      panel.style.removeProperty("--squad-slot-height");
+      animationFrame = window.requestAnimationFrame(() => {
+        const occupiedSlot = panel.querySelector<HTMLElement>(".loadout-slot:not(.empty)");
+        if (!occupiedSlot) return;
+        const occupiedHeight = occupiedSlot.getBoundingClientRect().height;
+        panel.style.setProperty("--squad-slot-height", `${Math.ceil(occupiedHeight * 100) / 100}px`);
+      });
+    };
+
+    syncSlotHeight();
+    void document.fonts?.ready.then(syncSlotHeight);
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (Math.abs(width - lastWidth) < 0.1) return;
+      lastWidth = width;
+      syncSlotHeight();
+    });
+    observer.observe(panel);
+
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(animationFrame);
+      panel.style.removeProperty("--squad-slot-height");
+    };
+  }, [squadLayoutKey]);
 
   async function equip(operation: () => Promise<void>) {
     setSaving(true);
@@ -545,7 +581,7 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
         </button>
       </nav>
 
-      <section className="squad-panel">
+      <section ref={squadPanelRef} className="squad-panel">
         {squad.map((slot) => {
           const owned = player.critters.find((critter) => critter.id === slot.user_critter_id);
           return (

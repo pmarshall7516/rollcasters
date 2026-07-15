@@ -7,6 +7,15 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - Expanded the home loadout layout regression fixture to cover an occupied and empty squad slot together and assert equal dimensions plus shared icon treatment.
 - Verified exact width/height equality across seven responsive viewports from 1920px desktop through 320px mobile, visually inspected desktop/mobile screenshots, passed `npm run build` and `git diff --check`, and completed the required real-app Playwright smoke render without captured app errors.
 
+## Fixed critter squad slot geometry (2026-07-15)
+
+- Authenticated as the supplied Patrick account and measured the live Ramber slot at 696.34×454.27px in the 1280×720 app viewport.
+- Replaced equal-fraction grid stretching with an explicit shared squad-slot height synchronized from the first occupied slot, recalculated when the responsive squad width or equipped-slot set changes.
+- Anchored occupied cards to a stable summary/equipment row structure so later equipped Critters use identical sprite, stat, Skill, and Relic coordinates.
+- Expanded the responsive home regression to render two occupied Critters plus an empty slot and compare every external dimension and internal anchor.
+- Confirmed the authenticated Patrick page now exposes a shared `454.27px` slot height at 1280×720; Ramber and both empty slots each render at exactly 696.34×454.27px with no browser warnings/errors.
+- Passed `npm run build`, the seven-viewport `npm run test:home-loadout-layout` suite, `git diff --check`, and the required real-app web-game smoke render; visually inspected laptop and mobile two-equipped-plus-empty fixtures.
+
 ## Player-facing Mana terminology (2026-07-14)
 
 - Replaced the player-facing “Mana Dice”/“mana die” terminology with “Mana” across stat cards, generated effect copy, validation copy, and UI regression fixtures.
