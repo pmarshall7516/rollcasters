@@ -3,7 +3,7 @@ const STAT_LABELS: Record<string, string> = {
   atk: "ATK",
   def: "DEF",
   spd: "SPD",
-  dice: "mana die",
+  dice: "mana",
   block_cost: "block cost",
   swap_cost: "swap cost",
 };

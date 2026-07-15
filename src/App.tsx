@@ -4,8 +4,10 @@ import {
   ChevronDown,
   Coins,
   Gem,
+  Lock,
   LogOut,
   Play,
+  Plus,
   Search,
   Shield,
   Sparkles,
@@ -46,7 +48,7 @@ import {
   type CombatState,
 } from "./lib/game";
 import { calculateLoadoutStats, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
-import { xpProgress, type XpProgress } from "./lib/progression";
+import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
 import type {
   AppData,
   CombatAction,
@@ -472,7 +474,7 @@ function StarterScreen({ data, onSelect }: { data: AppData; onSelect: (critterId
 
 type EquipTarget =
   | { type: "critter"; slotIndex: number }
-  | { type: "skill"; slotIndex: number; owned: UserCritter }
+  | { type: "skill"; slotIndex: number; owned: UserCritter; gridWidth: number }
   | { type: "relic"; slotIndex: number; owned: UserCritter }
   | { type: "ability"; slotIndex: number; owned: UserRollcaster }
   | { type: "rollcaster"; slotIndex: number };
@@ -567,7 +569,7 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
   if (!owned) {
     return (
       <button className="loadout-slot empty" onClick={() => onEquip({ type: "critter", slotIndex })}>
-        <span className="empty-slot-plus">+</span><h3>Squad slot {slotIndex}</h3><p>Choose a critter</p>
+        <Plus className="empty-relic-plus" aria-hidden="true" /><h3>Squad slot {slotIndex}</h3><p>Choose a critter</p>
       </button>
     );
   }
@@ -580,31 +582,43 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
     owned.level,
     owned.xp,
   );
+  const relicSlotStates = relicSlotUnlocks(data.catalog.critterProgression, critter.id);
 
   return (
     <article className="loadout-slot">
-      <button className="slot-topline slot-button loadout-critter-header" onClick={() => onEquip({ type: "critter", slotIndex })}>
-        <SpriteFrame size="md" className="loadout-critter-frame"><Sprite name={critter.name} element={critter.element_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="small" /></SpriteFrame>
-        <div className="loadout-critter-identity">
-          <CritterName data={data} critter={critter} />
-          <p className="loadout-critter-level">Level {owned.level}</p>
-        </div>
-        <ProgressBar progress={progress} inline className="loadout-critter-xp-progress" />
-        <span className="edit-label">Edit</span>
-      </button>
-      <StatGrid stats={stats} breakdowns={calculated.breakdowns} compact />
-      <div className="skill-grid">
-        {[1, 2, 3, 4].map((skillSlot) => {
-          const row = data.player!.skillSlots.find((candidate) => candidate.user_critter_id === owned.id && candidate.slot_index === skillSlot);
-          return <SkillTile key={skillSlot} data={data} skill={byId(data.catalog.skills, row?.skill_id)} onClick={() => onEquip({ type: "skill", slotIndex: skillSlot, owned })} />;
-        })}
+      <div className="loadout-critter-summary">
+        <button className="slot-topline slot-button loadout-critter-header" onClick={() => onEquip({ type: "critter", slotIndex })} aria-label={`Change ${critter.name} in squad slot ${slotIndex}`}>
+          <SpriteFrame size="md" className="loadout-critter-frame"><Sprite name={critter.name} element={critter.element_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="small" /></SpriteFrame>
+          <div className="loadout-critter-content">
+            <div className="loadout-critter-identity">
+              <CritterName data={data} critter={critter} />
+            </div>
+            <div className="loadout-critter-progression">
+              <p className="loadout-critter-level">Level {owned.level}</p>
+              <ProgressBar progress={progress} inline className="loadout-critter-xp-progress" />
+            </div>
+          </div>
+        </button>
+        <StatGrid stats={stats} breakdowns={calculated.breakdowns} compact />
       </div>
-      <div className="relic-row">
-        {Array.from({ length: stats.relicSlots }, (_, index) => {
-          const relicSlot = index + 1;
-          const row = data.player!.relicSlots.find((candidate) => candidate.user_critter_id === owned.id && candidate.slot_index === relicSlot);
-          return <RelicSlot key={relicSlot} data={data} relic={byId(data.catalog.relics, row?.relic_id)} slotIndex={relicSlot} onClick={() => onEquip({ type: "relic", slotIndex: relicSlot, owned })} />;
-        })}
+      <div className="loadout-equipment-grid">
+        <SkillTileGrid ariaLabel={`${critter.name} skill slots`}>
+          {[1, 2, 3, 4].map((skillSlot) => {
+            const row = data.player!.skillSlots.find((candidate) => candidate.user_critter_id === owned.id && candidate.slot_index === skillSlot);
+            return <SkillTile key={skillSlot} data={data} skill={byId(data.catalog.skills, row?.skill_id)} onClick={(event) => {
+              const grid = event.currentTarget.closest(".skill-tile-grid");
+              onEquip({ type: "skill", slotIndex: skillSlot, owned, gridWidth: grid?.getBoundingClientRect().width ?? 0 });
+            }} />;
+          })}
+        </SkillTileGrid>
+        <div className="loadout-relic-grid" aria-label="Relic slots">
+          {relicSlotStates.map(({ slotIndex: relicSlot, unlockLevel }) => {
+            if (unlockLevel === null) return <span key={relicSlot} className="loadout-relic-cell null" aria-hidden="true" />;
+            if (relicSlot > stats.relicSlots) return <button key={relicSlot} type="button" className="loadout-relic-cell locked" disabled aria-label={`Relic slot ${relicSlot} unlocks at level ${unlockLevel}`}><Lock aria-hidden="true" /><span>Level {unlockLevel}</span></button>;
+            const row = data.player!.relicSlots.find((candidate) => candidate.user_critter_id === owned.id && candidate.slot_index === relicSlot);
+            return <LoadoutRelicSlot key={relicSlot} data={data} relic={byId(data.catalog.relics, row?.relic_id)} slotIndex={relicSlot} onClick={() => onEquip({ type: "relic", slotIndex: relicSlot, owned })} />;
+          })}
+        </div>
       </div>
     </article>
   );
@@ -624,7 +638,24 @@ function GameTooltip({ label, content, children }: { label: string; content: Rea
   return <span className="tooltip-anchor" tabIndex={0} aria-label={label}>{children}<span className="game-tooltip" role="tooltip">{content}</span></span>;
 }
 
-function SkillTile({ data, skill, onClick, disabled = false, disabledReason, selected = false, equipped = false }: { data: AppData; skill?: Skill | null; onClick?: () => void; disabled?: boolean; disabledReason?: string; selected?: boolean; equipped?: boolean }) {
+function SkillTileGrid({ ariaLabel, children, width }: { ariaLabel: string; children: React.ReactNode; width?: number }) {
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(Boolean(width && width <= 180));
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const update = () => setCompact(grid.getBoundingClientRect().width <= 180);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, [width]);
+
+  return <div ref={gridRef} className={`skill-tile-grid ${compact ? "compact" : ""}`.trim()} aria-label={ariaLabel} style={width ? { width: "100%", maxWidth: width } : undefined}>{children}</div>;
+}
+
+function SkillTile({ data, skill, onClick, disabled = false, disabledReason, selected = false, equipped = false }: { data: AppData; skill?: Skill | null; onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void; disabled?: boolean; disabledReason?: string; selected?: boolean; equipped?: boolean }) {
   const element = skill ? byId(data.catalog.elements, skill.element_id) : null;
   const elementPath = skill ? catalogAssetPath(data, "element", skill.element_id, element?.asset_path, "icon") : null;
   const manaPath = findAssetPath(data, "mana", "mana");
@@ -642,13 +673,25 @@ function SkillTile({ data, skill, onClick, disabled = false, disabledReason, sel
 }
 
 function RelicSlot({ data, relic, slotIndex, onClick }: { data: AppData; relic?: Relic | null; slotIndex: number; onClick: () => void }) {
-  const emptyPath = findAssetPath(data, "ui", "relic-slot", "empty") ?? "ui/relic-slot.png";
   const attachments = relic ? data.catalog.effectsByRelic[relic.id] ?? [] : [];
   const details = relic ? `${relic.name}. ${relic.description} ${attachmentText(attachments)}` : "Choose a relic.";
   const tooltip = relic ? <><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments)}</> : <span className="tooltip-description">Choose a relic.</span>;
   return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className="relic-slot" onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
-    <SpriteFrame size="sm"><AssetIcon path={relic ? catalogAssetPath(data, "relic", relic.id, relic.asset_path) : emptyPath} alt={relic?.name ?? "Empty relic slot"} fallback={<Shield size={26} />} /></SpriteFrame>
+    <SpriteFrame size="sm">{relic
+      ? <AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield size={26} />} />
+      : <Plus className="empty-relic-plus" aria-hidden="true" />}</SpriteFrame>
     <span>{relic?.name ?? "-----"}</span>
+  </button></GameTooltip>;
+}
+
+function LoadoutRelicSlot({ data, relic, slotIndex, onClick }: { data: AppData; relic?: Relic | null; slotIndex: number; onClick: () => void }) {
+  const attachments = relic ? data.catalog.effectsByRelic[relic.id] ?? [] : [];
+  const details = relic ? `${relic.name}. ${relic.description} ${attachmentText(attachments)}` : `Choose a relic for slot ${slotIndex}.`;
+  const tooltip = relic ? <><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments)}</> : <span className="tooltip-description">Choose a relic for slot {slotIndex}.</span>;
+  return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className={`loadout-relic-cell unlocked ${relic ? "equipped" : "empty"}`} onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
+    {relic
+      ? <AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield aria-hidden="true" />} />
+      : <Plus className="empty-relic-plus" aria-hidden="true" />}
   </button></GameTooltip>;
 }
 
@@ -726,7 +769,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
     const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex).map((row) => row.skill_id));
     const equippedCount = rows.filter((row) => row.skill_id).length;
     const eligible = ids.map((id) => byId(data.catalog.skills, id)).filter((skill): skill is Skill => Boolean(skill));
-    content = eligible.length ? <div className="dialog-skill-grid">{eligible.map((skill) => {
+    content = eligible.length ? <SkillTileGrid ariaLabel="Available skills" width={target.gridWidth}>{eligible.map((skill) => {
       const selected = current === skill.id;
       const equipped = selected || equippedElsewhere.has(skill.id);
       const cannotRemoveLast = selected && equippedCount <= 1;
@@ -740,7 +783,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
         disabledReason={cannotRemoveLast ? "At least one skill must remain equipped." : equippedElsewhere.has(skill.id) ? "Equipped in another slot." : undefined}
         onClick={() => onEquip(() => setCritterSkillSlot(target.owned.id, target.slotIndex, selected ? null : skill.id))}
       />;
-    })}</div> : <p className="empty-state">No skills available</p>;
+    })}</SkillTileGrid> : <p className="empty-state">No skills available</p>;
   } else if (target.type === "relic") {
     const current = player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id;
     const eligible = data.catalog.relics.filter((relic) => {
@@ -1630,7 +1673,7 @@ function StatCell({ label, value, className = "", breakdowns = [] }: { label: st
   const accessibleBreakdown = breakdowns.map((entry) => breakdownText(entry.label ?? label, entry.breakdown)).join(". ");
   return (
     <span className={`stat-cell ${className} ${modified ? "modified" : ""}`.trim()} tabIndex={modified ? 0 : undefined} aria-label={modified ? `${label} ${accessibleBreakdown}` : undefined}>
-      {label} {value}
+      <span className="stat-label">{label}</span>{value}
       {modified && <span className="game-tooltip stat-breakdown" role="tooltip">{breakdowns.map((entry, index) => <StatBreakdownLine key={`${entry.label ?? label}-${index}`} label={entry.label} breakdown={entry.breakdown} />)}</span>}
     </span>
   );
@@ -1644,7 +1687,7 @@ function StatGrid({ stats, compact, breakdowns = {} }: { stats: ReturnType<typeo
       <StatCell label="DEF" value={<strong className={modificationTone(breakdowns.def)}>{stats.def}</strong>} breakdowns={breakdowns.def ? [{ breakdown: breakdowns.def }] : []} />
       <StatCell label="SPD" value={<strong className={modificationTone(breakdowns.spd)}>{stats.spd}</strong>} breakdowns={breakdowns.spd ? [{ breakdown: breakdowns.spd }] : []} />
       <StatCell
-        label="Mana Dice"
+        label="Mana"
         className="mana-dice-stat"
         value={<strong><span className={modificationTone(breakdowns.diceMin)}>{stats.diceMin}</span>–<span className={modificationTone(breakdowns.diceMax)}>{stats.diceMax}</span></strong>}
         breakdowns={[

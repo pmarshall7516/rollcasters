@@ -112,8 +112,8 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     rejectUnknownKeys(parameters, effect.ownerType === "ability" ? ["minimum_delta", "maximum_delta", "target", "element_ids"] : ["minimum_delta", "maximum_delta", "target"], `Effect ${effect.id}`);
     const minimum = requireFinite(parameters.minimum_delta, `Effect ${effect.id} minimum_delta`);
     const maximum = requireFinite(parameters.maximum_delta, `Effect ${effect.id} maximum_delta`);
-    if (!Number.isInteger(minimum) || !Number.isInteger(maximum)) throw new Error(`Effect ${effect.id} Mana Dice deltas must be integers.`);
-    if (minimum === 0 && maximum === 0) throw new Error(`Effect ${effect.id} must change at least one Mana Dice bound.`);
+    if (!Number.isInteger(minimum) || !Number.isInteger(maximum)) throw new Error(`Effect ${effect.id} Mana deltas must be integers.`);
+    if (minimum === 0 && maximum === 0) throw new Error(`Effect ${effect.id} must change at least one Mana bound.`);
     if (target === "all_element_friendlies" || target === "all_element_enemies") validateElementIds(parameters.element_ids, `Effect ${effect.id} element_ids`);
     return;
   }
