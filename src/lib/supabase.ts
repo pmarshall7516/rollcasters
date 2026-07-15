@@ -3,9 +3,12 @@ import { groupCombatEffectRows } from "./effects";
 import type {
   AppData,
   Catalog,
+  CollectiblePlayerSnapshot,
   CombatEffectRow,
+  CombatProgressEvent,
   DungeonOpponent,
   PlayerState,
+  ShopPurchaseReceipt,
   UserAbilitySlot,
   UserRelicSlot,
   UserSkillSlot,
@@ -50,6 +53,48 @@ async function selectAllOptional<T>(table: string, order = "sort_order"): Promis
     if (code === "42P01" || code === "PGRST205") return [];
     throw error;
   }
+}
+
+async function selectActiveAll<T>(table: string, order = "sort_order"): Promise<T[]> {
+  const { data, error } = await requireClient()
+    .from(table)
+    .select("*")
+    .eq("is_active", true)
+    .eq("is_archived", false)
+    .order(order, { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as T[];
+}
+
+function emptyCollectibleSnapshot(): CollectiblePlayerSnapshot {
+  return { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] };
+}
+
+type CollectibleShopCatalog = Pick<Catalog,
+  "currencies" | "collectibleUnlockRequirements" | "collectibleUnlockChallenges" | "shopEntries"
+>;
+
+async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
+  const { data, error } = await requireClient().rpc("get_collectible_shop_catalog");
+  if (error) throw error;
+  const payload = data as {
+    currencies?: Catalog["currencies"];
+    requirements?: Catalog["collectibleUnlockRequirements"];
+    challenges?: Catalog["collectibleUnlockChallenges"];
+    shop_entries?: Catalog["shopEntries"];
+  } | null;
+  return {
+    currencies: payload?.currencies ?? [],
+    collectibleUnlockRequirements: payload?.requirements ?? [],
+    collectibleUnlockChallenges: payload?.challenges ?? [],
+    shopEntries: payload?.shop_entries ?? [],
+  };
+}
+
+export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
+  const { data, error } = await requireClient().rpc("get_collectible_player_snapshot");
+  if (error) throw error;
+  return { ...emptyCollectibleSnapshot(), ...(data as Partial<CollectiblePlayerSnapshot> | null) };
 }
 
 async function loadCombatEffects(): Promise<CombatEffectRow[]> {
@@ -115,6 +160,7 @@ export function getGameAssetUrl(assetPath: string | null | undefined): string | 
 
 export async function loadCatalog(): Promise<Catalog> {
   const [
+    collectibleShopCatalog,
     elements,
     skills,
     critters,
@@ -133,6 +179,7 @@ export async function loadCatalog(): Promise<Catalog> {
     combatEffects,
     dungeonOpponentStatOverrides,
   ] = await Promise.all([
+    loadCollectibleShopCatalog(),
     selectAll("elements"),
     selectAll("skills"),
     selectAll("critters"),
@@ -154,6 +201,7 @@ export async function loadCatalog(): Promise<Catalog> {
 
   const groupedEffects = groupCombatEffectRows(combatEffects);
   return {
+    ...collectibleShopCatalog,
     elements,
     skills,
     critters,
@@ -179,6 +227,7 @@ export async function loadCatalog(): Promise<Catalog> {
 
 export async function loadPlayerState(): Promise<PlayerState> {
   const client = requireClient();
+  const collectibleSnapshot = await getCollectiblePlayerSnapshot();
   const [
     profile,
     rollcasters,
@@ -248,6 +297,7 @@ export async function loadPlayerState(): Promise<PlayerState> {
     unlockedSkillIdsByCritter,
     unlockedAbilityIdsByRollcaster,
     dungeonProgress: dungeonProgress.data ?? [],
+    collectibleSnapshot,
   } as PlayerState;
 }
 
@@ -305,4 +355,45 @@ export async function resolveDungeonRun(runId: string): Promise<void> {
   const client = requireClient();
   const { error } = await client.rpc("resolve_dungeon_run", { p_run_id: runId });
   if (error) throw error;
+}
+
+export async function trackCollectibleChallenge(challengeId: string): Promise<CollectiblePlayerSnapshot> {
+  const { error } = await requireClient().rpc("track_collectible_challenge", { p_challenge_id: challengeId });
+  if (error) throw error;
+  return getCollectiblePlayerSnapshot();
+}
+
+export async function untrackCollectibleChallenge(challengeId: string): Promise<CollectiblePlayerSnapshot> {
+  const { error } = await requireClient().rpc("untrack_collectible_challenge", { p_challenge_id: challengeId });
+  if (error) throw error;
+  return getCollectiblePlayerSnapshot();
+}
+
+export async function acknowledgeCollectibleUnlockEvent(eventId: string): Promise<void> {
+  const { error } = await requireClient().rpc("acknowledge_collectible_unlock_event", { p_event_id: eventId });
+  if (error) throw error;
+}
+
+export async function purchaseShopEntry(entryId: string, requestId: string): Promise<ShopPurchaseReceipt> {
+  const { data, error } = await requireClient().rpc("purchase_shop_entry", {
+    p_entry_id: entryId,
+    p_request_id: requestId,
+  });
+  if (error) throw error;
+  return data as ShopPurchaseReceipt;
+}
+
+export async function submitCollectibleCombatEvents(
+  runId: string,
+  turnNumber: number,
+  events: CombatProgressEvent[],
+): Promise<CollectiblePlayerSnapshot> {
+  if (events.length === 0) return getCollectiblePlayerSnapshot();
+  const { data, error } = await requireClient().rpc("submit_collectible_combat_events", {
+    p_run_id: runId,
+    p_turn_number: turnNumber,
+    p_events: events,
+  });
+  if (error) throw error;
+  return { ...emptyCollectibleSnapshot(), ...(data as Partial<CollectiblePlayerSnapshot> | null) };
 }

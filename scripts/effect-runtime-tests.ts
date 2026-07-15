@@ -30,6 +30,7 @@ function effect(
 
 function makeCatalog(): Catalog {
   return {
+    currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [],
     elements: [
       { id: "basic", name: "Basic", description: null, asset_path: null, sort_order: 0 },
       { id: "bloom", name: "Bloom", description: null, asset_path: null, sort_order: 1 },
@@ -110,6 +111,7 @@ function makePlayer(): PlayerState {
     unlockedSkillIdsByCritter: {},
     unlockedAbilityIdsByRollcaster: {},
     dungeonProgress: [],
+    collectibleSnapshot: { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] },
   };
 }
 
@@ -120,6 +122,15 @@ function battle(catalog: Catalog, player = makePlayer(), runId = "test-run") {
 function takeTurn(state: ReturnType<typeof battle>, actions: CombatAction[], mana = 50) {
   return resolveTurn({ ...state, phase: "selecting", playerMana: mana }, actions);
 }
+
+const eventCatalog = makeCatalog();
+let eventBattle = battle(eventCatalog, makePlayer(), "progress-events");
+eventBattle.opponentMana = 0;
+const eventTarget = eventBattle.opponentUnits[0];
+const eventResult = takeTurn(eventBattle, [{ actorKey: eventBattle.playerUnits[0].key, type: "skill", skillId: "strike", targetKey: eventTarget.key, cost: 1 }]);
+check(eventResult.turnEvents.some((event) => event.event_type === "use_skill" && event.skill_id === "strike" && event.source_critter_id === "p1"), "A successful player skill must emit a use_skill progress event.");
+check(eventResult.turnEvents.some((event) => event.event_type === "deal_damage" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit a positive deal_damage progress event.");
+check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
 
 check(roundHalfUp(2.5) === 3 && roundHalfUp(-2.5) === -3, "Shared half-up rounding must round exact halves away from zero.");
 

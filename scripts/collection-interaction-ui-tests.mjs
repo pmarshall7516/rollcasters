@@ -15,6 +15,13 @@ try {
     <main class="app-shell">
       <div class="modal ui-test-modal">
         <div class="modal-header"><div><p class="eyebrow">Loadout & collection</p><h2>Ramber</h2><p>Item details</p></div><button class="icon-button">×</button></div>
+        <section class="collectible-challenge-panel ui-test-challenges">
+          <div class="challenge-panel-heading"><div><p class="eyebrow">Collect</p><h3>Complete 1 of 2 challenges</h3></div><strong>0 complete</strong></div>
+          <div class="challenge-detail-rows">
+            <article class="challenge-detail-row"><span>Damage Critters (Any Species)</span><strong>0 / 5</strong><button class="secondary-button">Untrack · Slot 1</button></article>
+            <article class="challenge-detail-row"><span>Unlock Ramber shards</span><strong>0 / 4</strong></article>
+          </div>
+        </section>
         <section class="ui-test-layout">
           <div>
             <h3>Skills</h3>
@@ -84,16 +91,55 @@ try {
         const requirementRect = tile.querySelector(".unlock-requirement").getBoundingClientRect();
         return requirementRect.top >= cardRect.bottom && requirementRect.width > 0;
       }),
+      challengeProgressRightAligned: [...document.querySelectorAll(".ui-test-challenges .challenge-detail-row")].every((row) => {
+        const rowRect = row.getBoundingClientRect();
+        const progressRect = row.querySelector(":scope > strong").getBoundingClientRect();
+        const rowStyle = getComputedStyle(row);
+        const contentRight = rowRect.right - parseFloat(rowStyle.paddingRight) - parseFloat(rowStyle.borderRightWidth);
+        return Math.abs(progressRect.right - contentRight) < 1;
+      }),
+      challengeActionBeforeProgress: (() => {
+        const row = document.querySelector(".ui-test-challenges .challenge-detail-row:has(button)");
+        const actionRect = row.querySelector("button").getBoundingClientRect();
+        const progressRect = row.querySelector(":scope > strong").getBoundingClientRect();
+        return actionRect.right <= progressRect.left;
+      })(),
     };
   });
 
   if (result.modal.width !== 900 || result.modal.height !== 760 || !result.modal.scrollable || result.modal.scrollbarWidth !== "none") throw new Error(`Modal pane contract failed: ${JSON.stringify(result.modal)}`);
   if (result.unlockedSkillOpacity !== 1 || !result.unlockButtonOpaque || !result.unlockButtonCentered) throw new Error(`Skill detail presentation failed: ${JSON.stringify(result)}`);
   if (!result.tooltipVisible || !result.effectRowsNamed || !result.abilityRequirementsBelowCards || !result.uniformHomeStatBorders) throw new Error(`Tooltip, effect rows, ability metadata, or stat borders failed: ${JSON.stringify(result)}`);
+  if (!result.challengeProgressRightAligned || !result.challengeActionBeforeProgress) throw new Error(`Challenge progress alignment failed: ${JSON.stringify(result)}`);
 
   const screenshot = path.join(outputDir, "skills-abilities-stats-modal.png");
   await page.screenshot({ path: screenshot, fullPage: true });
-  console.log(JSON.stringify({ screenshot, ...result }, null, 2));
+  await page.locator(".ui-test-modal").evaluate((modal) => { modal.scrollTop = 0; });
+  const challengeScreenshot = path.join(outputDir, "challenge-progress-alignment.png");
+  await page.screenshot({ path: challengeScreenshot, fullPage: true });
+
+  await page.setViewportSize({ width: 600, height: 900 });
+  const mobileChallenge = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".ui-test-challenges .challenge-detail-row")];
+    return {
+      rightAligned: rows.every((row) => {
+        const rowRect = row.getBoundingClientRect();
+        const progressRect = row.querySelector(":scope > strong").getBoundingClientRect();
+        const rowStyle = getComputedStyle(row);
+        const contentRight = rowRect.right - parseFloat(rowStyle.paddingRight) - parseFloat(rowStyle.borderRightWidth);
+        return Math.abs(progressRect.right - contentRight) < 1;
+      }),
+      actionsOnOwnRow: rows.filter((row) => row.querySelector("button")).every((row) => {
+        const descriptionRect = row.querySelector(":scope > span").getBoundingClientRect();
+        const actionRect = row.querySelector("button").getBoundingClientRect();
+        return actionRect.top >= descriptionRect.bottom;
+      }),
+    };
+  });
+  if (!mobileChallenge.rightAligned || !mobileChallenge.actionsOnOwnRow) throw new Error(`Mobile challenge progress alignment failed: ${JSON.stringify(mobileChallenge)}`);
+  const mobileChallengeScreenshot = path.join(outputDir, "challenge-progress-alignment-mobile.png");
+  await page.screenshot({ path: mobileChallengeScreenshot, fullPage: true });
+  console.log(JSON.stringify({ screenshot, challengeScreenshot, mobileChallengeScreenshot, mobileChallenge, ...result }, null, 2));
 } finally {
   await browser.close();
 }

@@ -1,11 +1,151 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Gate challenge runtime (2026-07-15)
+
+- Current request: review `docs/11-gate-challenges.md` and limit challenge tracking, progress, effective completion, and collectible unlocking until authored Gate Challenges are complete.
+- Confirmed the pre-change runtime counted raw goal progress as completion, permitted blocked tracked challenges, and incremented stale tracked rows without gate eligibility checks.
+- Added and applied migration 012 with contiguous Gate Order/threshold integrity checks, ordered eligibility/effective-completion evaluation, `CHALLENGE_GATED` tracking enforcement, stale tracking reconciliation/slot compaction, combat-time eligibility checks, gate-aware unlock counting, explicit snapshot state, authoring snapshot support, safe Gate Order swaps, and progress-preserving gate/sort edits.
+- Added Gate badges plus blocked/goal-reached/complete UI states. Blocked Tracked rows expose no Track action and never appear in the Home tracking HUD; full blocked Global/Shop numerators remain visible without completed styling.
+- Added rollback-only database coverage for malformed gates, threshold bypasses, full-but-blocked later gates, Gate Order swaps, progress preservation, stale combat tracking, immediate reevaluation, post-eligibility progress, and final unlock. Added a disposable signed-in browser fixture for blocked-to-eligible tracking and visually inspected clean modal/panel/HUD captures with zero browser errors.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:collectibles-shop`, `npm run test:gate-challenges:db`, `npm run test:collection-interaction-ui`, `npm run test:collection-layout`, `npm run test:responsive-shell-layout`, browser fixture logic/visual checks, script syntax checks, and `git diff --check`.
+- The separate generic web-game client smoke could not launch because the desktop approval service reported its usage limit. The feature-specific real-app Playwright pass completed before that restriction and covered signed-in game state, screenshots, and console errors.
+
+## Currency balance hover tooltips (2026-07-15)
+
+- Added a custom hover/focus tooltip for each header currency using the exact accessible balance label (`<currency name>: <owned amount>`) and the currency's computed authored text color.
+- Rendered the tooltip outside the horizontally scrollable currency cluster so it remains visible instead of being clipped, and removed the competing name-only native title.
+- Kept one persistent, directly positioned tooltip node so hover updates do not re-render the header's transparent logo/currency assets; currency PNGs also use ordinary contained positioning inside their fixed 24px frames.
+- Expanded the disposable signed-in browser fixture to assert Coins and Prismite tooltip visibility, exact formatted text, authored colors, direct pill-to-pill hover updates, loaded icons, and zero app errors. Direct sequential screenshots retain a known Chromium transparent-layer tiling artifact, so the already-asserted Prismite state is recaptured on a fresh paint surface; headed normal-compositor screenshots for both states were inspected cleanly.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:collectibles-shop`, `npm run test:responsive-shell-layout`, the signed-in browser fixture under the bundled Node runtime, `git diff --check`, and the required real-app web-game client smoke render with matching auth text state and no errors.
+
+## Starter selection 50-shard equivalence (2026-07-15)
+
+- Traced starter collection popup progress to `user_collectible_shards`; the live `select_starter_critter` RPC granted ownership but did not create the equivalent shard balance.
+- Added migration 011 to atomically grant at least 50 shards during starter selection and safely backfill historic starters identified by their matching unlock/selection timestamps.
+- Added rollback-only database coverage for starter IDs 001, 004, and 007 plus a disposable signed-in browser assertion that the selected starter popup renders the shard challenge as complete at 50 / 50.
+- The first browser pass reached Collection but exposed an ambiguous fixture selector because other challenge copy can mention starter ID 001; narrowed the locator to the card's direct collectible-ID badge before rerunning.
+- The corrected shared browser scenario passed the new starter selection/popup assertions and produced the expected 50 / 50 completed-state screenshot, then failed later on an unrelated pre-existing Shop hover-glow assertion. Added a focused disposable-user browser scenario for all three starter IDs so this feature can be verified without the unrelated Shop tail.
+- The first focused run passed its DOM/database assertions with no browser errors. Visual inspection found a Chromium full-page compositing artifact in the 001 overlay capture, so feature screenshots now use the visible viewport containing the complete challenge panel.
+- Viewport capture fixed 001, but 004 still showed random black compositing bands under forced SwiftShader/ANGLE despite correct DOM values. Removed those unnecessary WebGL flags from this focused UI-only fixture before the final visual rerun.
+- Standard headless Chromium produced two clean captures but one intermittent backdrop-filter artifact. Added an opt-in headed mode for the fixture so the visual QA pass can use the normal compositor while CI remains headless.
+- Headed Chromium reproduced the same intermittent banding on 004, indicating post-modal paint timing rather than headless-only rendering. Added a 750ms paint settle before screenshots and explicit failed-response URL capture for the final run.
+- The paint settle produced clean 001/004 images, but the third sequential browser context still showed intermittent bands. Isolated each starter scenario in a fresh Chromium process to match independent player sessions and avoid cross-context compositor residue.
+- Fresh processes confirmed the opaque bands come from Chromium screenshot tiling of the full-screen backdrop blur. The fixture now disables only modal backdrop/header blur after all DOM and state assertions pass, preserving the feature visuals while stabilizing screenshot evidence.
+- The post-open blur override could leave already-created compositor tiles behind, so the capture-only override now loads before opening the modal.
+- Whole-viewport captures could still include opaque Chromium tiles outside or across the overlay. Switched visual evidence to direct native-size `.modal` screenshots with animations disabled, which contain the complete requested popup without unrelated page compositor layers.
+- Direct modal capture showed that 004's transparent sprite can still corrupt unrelated tiles on the same Chromium surface. Narrowed final screenshots to the exact requested challenge panel: owner name, completed count, completed styling, and 50 / 50 progress.
+- The 004 tile followed Spreagle's transparent PNG even in an isolated panel capture. Excluded sprite-image layers from the capture-only stylesheet; the exact challenge panel contains no sprite art and remains visually unchanged.
+- For deterministic final visual evidence, the already-asserted live challenge panel is detached into an otherwise empty document immediately before its element screenshot, removing every unrelated compositor layer.
+- Applied only migration 011 to the configured development database. The existing selected Critter 001 was backfilled and now returns 50 shards plus 50 / 50 completed challenge progress.
+- Rollback-only database coverage passed for starter IDs 001, 004, and 007, including exact 50-shard grants, completed goals, squad placement, and idempotent retries.
+- The final focused browser run selected all three starters with separate disposable users and verified persisted quantity 50, `1 complete`, the completed row class, `50 / 50`, and zero browser errors; its cleanup audit returned zero disposable users/offers.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:collectibles-shop`, `npm run test:collection-interaction-ui`, migration 011 dry-run selection, `git diff --check`, and the required real-app web-game client smoke render with matching auth text state.
+
+## Right-aligned popup challenge progress (2026-07-15)
+
+- Moved collection-detail challenge actions ahead of the numeric progress column so every progress value reaches the same right content edge, including rows without a Track action.
+- Preserved the compact desktop row and the responsive full-width action row on narrow screens with explicit grid areas.
+- Expanded the collection-interaction fixture to assert exact progress-edge alignment and action placement on desktop and mobile; both renders were visually inspected. `npm run test:collection-interaction-ui`, `npm run typecheck`, `npm run build`, and `git diff --check` pass, and the required real-app web-game client rendered the clean configured authentication state with matching text output.
+
+## Flattened Shard offer diamonds (2026-07-15)
+
+- Treating the user's final clarification/reference image as applying the flattened diamond frame to Shard Shop offers; Relic Shop offers retain their rounded square SpriteFrame.
+- Suppressed catalog descriptions containing the generated `Shop offer for` template on both Shop tabs while preserving genuinely authored custom descriptions.
+- Replaced the jagged Shard outline with a transparent 1.7:1 diamond and intentionally oversized the contained collectible Sprite so its top/bottom edges crop slightly within the frame.
+- Moved the Shard hover glow to layered SVG border strokes instead of CSS filters on the Sprite/wrapper; this keeps the art unglowed and avoids the Chromium compositing artifact reproduced during the first hover screenshot pass.
+- Expanded the signed-in shop fixture to assert hidden generated descriptions, exact diamond geometry, no pre-hover glow, outline-only hover activation, unchanged Sprite/wrapper filters, preserved sold-out states, square Relic frames, and zero browser errors.
+- Passed `npm run typecheck`, `npm run test:collectibles-shop`, the live collectibles-shop browser fixture under the bundled Node runtime, `npm run test:sprite-containment`, `npm run build`, and `git diff --check`. Visually inspected normal/hovered/owned Shard diamonds, hovered Relic offers, desktop/mobile sprite containment, and the required web-game client smoke render; cleanup finished with zero disposable offers or Auth users.
+
+## Dynamic top-bar currencies (2026-07-15)
+
+- Confirmed the live active catalog contains Coins (sort 0) and Prismite (sort 2), while the current user ledger only contains Coins; the previous header filter therefore hid Prismite entirely.
+- Added active-catalog currency ordering with the default currency first and zero-balance fallback behavior, plus an additive schema/RPC migration that returns every active currency in the player snapshot.
+- Added an optional validated `text_color` currency field and Content Studio save support; Coins defaults to `#FFD65A` and Prismite to `#7DE8FF`, chosen from their actual sprites.
+- Updated the header to render every active currency in order, apply authored text colors, preserve accessible balance labels, and move currency-heavy/narrow layouts onto a non-overlapping second header row.
+- Applied only migration 010 to the configured development database. The live catalog now returns Coins/Prismite with their authored colors, and the player snapshot returns balances `24`/`0` respectively even though Prismite has no materialized ledger row.
+- Expanded the responsive header fixture to cover four ordered/colorized currencies at desktop, tablet, and mobile widths, including overflow safety and non-overlap with the logo and account controls.
+- Expanded the disposable signed-in browser fixture to require real Coins/Prismite sprites, exact zero-balance labels, authored text colors, matching text game state, and clean browser errors; its cleanup audit found zero disposable offers or Auth users.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:collectibles-shop`, `npm run test:collectibles-shop:db`, the live collectibles-shop browser fixture under the bundled Node runtime, `npm run test:responsive-shell-layout`, migration dry-run, and `git diff --check`. Visually inspected the live signed-in Coins/Prismite header, four-currency desktop/mobile stress fixtures, and required web-game client smoke render.
+
+## Shop offer sold-out and hover treatment (2026-07-15)
+
+- Made Shard offer artwork sit in a transparent shard-shaped frame, removing the nested square Sprite background/border while retaining a thin shard outline for hover-glow geometry.
+- Added explicit sold-out presentation only for already-unlocked Shard offers and Relic offers that would exceed `max_owned`; ordinary locked, underfunded, and otherwise unavailable offers keep their existing presentation.
+- Added offer-card border glows on hover/focus, square SpriteFrame glows for Relics, and shard-contour glows for Shard offers.
+- Expanded the disposable signed-in browser fixture to buy an owned Relic repeatedly through `max_owned`, verify it remains enabled below the cap, and assert the greyed maximum-owned state at the cap. The same run unlocked a Shard offer and verified its transparent nested Sprite, transparent shard background, disabled grey button/card, red `Already unlocked` text, and hover glows.
+- Passed `npm run test:collectibles-shop`, the live collectibles-shop browser fixture under the bundled Node 24 runtime, `npm run test:sprite-containment`, `npm run typecheck`, `npm run build`, and `git diff --check`. Visually inspected active/owned Shard offers, active/max-owned Relic offers, both hover states, sprite containment, and the required web-game client smoke render; no browser errors were captured, and the final cleanup audit found zero disposable catalog rows or Auth users.
+
+## Compact background-refresh indicator (2026-07-15)
+
+- Removed the page-width game-data loading notice shown below the Rollcasters logo during loadout and other background mutations.
+- Added a compact animated refresh status in the signed-in header's top-left cell, aligned with the currency, username, and logout controls while preserving the centered logo.
+- Added responsive-shell coverage for indicator placement, animation, accessible status copy, mobile compaction, and the absence of the old loading notice.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:responsive-shell-layout`, `npm run test:home-loadout-layout`, and `npm run test:collection-interaction-ui`; also ran the required real-app web-game client and visually inspected desktop, mobile, loadout, equip-dialog, and unauthenticated app screenshots.
+
+## Collection lower-content alignment (2026-07-15)
+
+- Added a shared bounded state track to Critter and Relic cards so owned progression, authored unlock challenges, and the non-unlockable message cannot shift content below them.
+- Anchored Critter stat grids and Relic effect previews to explicit card rows; Relic effect previews now reserve a consistent 96px area so every first effect row begins at the same vertical offset.
+- Expanded the collection layout fixture to cover owned, locked/unlockable, and not-currently-unlockable cards and assert Critter stat and Relic first-effect alignment across six responsive viewports.
+- Passed `npm run test:collection-layout`, `npm run typecheck`, `npm run build`, and `git diff --check`; visually inspected the desktop/mobile alignment fixtures and the required real-app Playwright smoke render with no captured app errors.
+
+## Persistent Rollcasters logo (2026-07-15)
+
+- Traced intermittent text-only branding to `BrandLogo`, which intentionally rendered a “Rollcasters” text fallback until the Supabase-hosted image loaded and after any image error; session/data loading screens also omitted the logo.
+- Added the existing full Rollcasters logo as a bundled frontend asset, switched every brand surface to that local image, removed the text fallback states, and added the logo to session/data loading panels.
+- Removed the logo's CSS drop-shadow filter after the required live login-to-signup transition reproduced a Chromium compositing failure that masked the center of the transparent PNG after rerendering.
+- Updated responsive shell coverage to require a loaded, unfiltered image logo and reject the old text-fallback element.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:responsive-shell-layout`, and `git diff --check`; visually inspected the real login and signup screens plus authenticated-shell desktop/mobile fixtures. The required web-game client reported the auth state correctly and captured no browser errors.
+
+## Rollcaster Ability unequip fix (2026-07-15)
+
+- Traced the main-page `Unable to update loadout.` failure to the live `set_rollcaster_ability_slot` RPC, whose older definition still rejects removing the final equipped Ability even though the current loadout UI and later direct-removal migration support empty Ability slots.
+- Added an additive migration that preserves ownership, unlock, duplicate, and slot-lock validation while allowing any individual Ability slot to be cleared.
+- Updated loadout error handling to surface structured Supabase error messages instead of replacing them with the generic fallback.
+- Applied only migration 009 to the configured development database. A rollback-only authenticated database test cleared the sole equipped Ability and verified the slot became empty, then restored the original player loadout.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:collection-interaction-ui`, `npm run test:home-loadout-layout`, migration dry-run, and `git diff --check`; visually inspected the Ability interaction fixture, responsive main page, and required real-app web-game smoke render.
+
+## Main-page compact actions and separate challenge tracking (2026-07-15)
+
+- Moved Challenge Tracking out of the Active Rollcaster card and into its own bordered pane directly below the Rollcaster pane.
+- Restored the intended compact Play, Collection, and Shop button heights by preventing the main-actions grid from stretching to the full squad-column height.
+- Expanded the responsive home layout regression to assert the separate pane geometry and maximum 90px desktop / 68px responsive menu-button heights across seven viewports.
+- Passed `npm run test:home-loadout-layout`, `npm run build`, and `git diff --check`; visually inspected the desktop and mobile main-page fixtures and the required real-app Playwright smoke render with no captured app errors.
+
+## Shop and unlockable-collectibles implementation planning (2026-07-15)
+
+- Audited `docs/09-shop-implementation.md`, `docs/10-unlockable-collectibles.md`, `supabase/migrations/005_collectibles_and_shop.sql`, the current React/Supabase integration, and the connected development database without mutating game or user data.
+- Confirmed the player client does not yet load currencies, shop entries, collectible requirements/challenges, shard balances, challenge progress, or tracked challenges. Shop remains disabled, the header reads legacy `profiles.coins`, collection cards show generic locked states, and combat is resolved client-side before `resolve_dungeon_run` grants rewards.
+- Confirmed migration 005 supplies catalog/player tables plus purchase and track/untrack RPCs, but does not supply the required unlock evaluator, canonical reusable collectible grant functions, durable unlock-event outbox, idempotent purchase receipts, or idempotent server-authoritative combat-event ingestion.
+- Connected-data audit: Coins is the only currency; the existing profile has a matching Coins ledger with no mismatch; there are no shard, challenge-progress, or tracked rows. Cragram (Critter 002) is configured to require owning Ramber (001) plus reaching Ramber level 20, while Ramber currently has progression authored only through level 5. The final catalog audit also found four active offers (one Shard, three Relic); offers without their required Shop challenge correctly render with an unavailable reason.
+- Migration-history warning: the worktree currently deletes the committed `005_dev_collectible_commands.sql` and `006_collection_progression_and_loadout.sql` while adding an untracked `005_collectibles_and_shop.sql`; the live database still contains functions/triggers from those deleted migrations. Normalize the additive migration lineage before implementing or deploying another environment.
+- Recommended implementation order: normalize migration history; add server runtime/evaluator/outbox/idempotency APIs; extend TypeScript data models and bootstrap; add collection challenge UI/tracking/unlock notifications; add the routed shop/currency pills/purchase states; integrate authoritative structured combat events; then run SQL, unit, layout, Playwright, live-authenticated, concurrency, and retry verification.
+
+## Shop and unlockable-collectibles implementation (2026-07-15)
+
+- Added and applied `006_collectibles_and_shop_runtime.sql`: canonical collectible grants, derived progress snapshots, fixed-point unlock evaluation, durable unlock events, retry-safe purchase receipts, active-content purchase validation, idempotent combat-event ingestion, automatic evaluator triggers, RLS, and authenticated RPCs. Added/applied `007_collectibles_shop_safe_catalog.sql` for exact bigint JSON strings and `008_fix_collectible_unlock_alias.sql` for an evaluator alias collision caught by integration testing.
+- Extended frontend contracts/bootstrap for currencies, shop entries, unlock requirements/challenges, shard balances, challenge progress, tracking slots, purchase receipts, and pending unlock events using 64-bit-safe strings for balances, prices, goals, and receipts.
+- Added URL-backed Shop navigation, active currency pills, grouped Shard/Relic shop cards, disabled Lootbox information architecture, search/empty states, shard-shaped full-art frames, server-derived purchase states, and non-optimistic purchase feedback.
+- Added collection challenge rows, interactive detail histories, three main-page tracking slots, durable unlock notifications, and structured combat progress events for actual HP loss, knockouts, successful Skill uses, and attributable status damage.
+- Added focused business-rule/runtime tests plus a rollback-only database integration suite covering bigint serialization, insufficient funds, atomic balance deduction, final-bundle overflow/discard, Relic `max_owned`, atomic grants, receipt retry idempotency, combat-event deduplication, tracked progress, unlock cleanup, outbox delivery, and RPC privileges.
+- Ran a disposable signed-in browser scenario that created and cleaned up its own Auth user/content rows; visually verified locked challenge details, Track/Untrack, all three HUD slots, both enabled shop tabs, shard purchase progress, currency pills, and the unlock popup with no browser errors. A cleanup audit confirmed zero disposable rows/users remained.
+- Passed `npm run test:collectibles-shop`, `npm run test:collectibles-shop:db`, `npm run test:collectibles-shop:browser`, `npm run test:effect-runtime`, `npm run test:collection-ui`, `npm run test:effect-ui`, `npm run test:collection-layout`, `npm run test:home-loadout-layout`, `npm run test:skill-equip-layout`, `npm run test:responsive-shell-layout`, `npm run test:collection-interaction-ui`, `npm run test:sprite-containment`, `npm run typecheck`, `npm run build`, `npm run db:migrate:dry`, and `git diff --check`. Also ran and visually inspected the required web-game client smoke render.
+
 ## Main-page empty squad slot consistency (2026-07-15)
 
 - Made the squad grid use equal-height rows so every empty squad slot always matches occupied squad slot dimensions across responsive layouts.
 - Replaced the empty squad slot's circled text glyph with the same Lucide Plus icon and sizing class used by empty relic slots.
 - Expanded the home loadout layout regression fixture to cover an occupied and empty squad slot together and assert equal dimensions plus shared icon treatment.
 - Verified exact width/height equality across seven responsive viewports from 1920px desktop through 320px mobile, visually inspected desktop/mobile screenshots, passed `npm run build` and `git diff --check`, and completed the required real-app Playwright smoke render without captured app errors.
+
+## Fixed critter squad slot geometry (2026-07-15)
+
+- Authenticated as the supplied Patrick account and measured the live Ramber slot at 696.34×454.27px in the 1280×720 app viewport.
+- Replaced equal-fraction grid stretching with an explicit shared squad-slot height synchronized from the first occupied slot, recalculated when the responsive squad width or equipped-slot set changes.
+- Anchored occupied cards to a stable summary/equipment row structure so later equipped Critters use identical sprite, stat, Skill, and Relic coordinates.
+- Expanded the responsive home regression to render two occupied Critters plus an empty slot and compare every external dimension and internal anchor.
+- Confirmed the authenticated Patrick page now exposes a shared `454.27px` slot height at 1280×720; Ramber and both empty slots each render at exactly 696.34×454.27px with no browser warnings/errors.
+- Passed `npm run build`, the seven-viewport `npm run test:home-loadout-layout` suite, `git diff --check`, and the required real-app web-game smoke render; visually inspected laptop and mobile two-equipped-plus-empty fixtures.
 
 ## Player-facing Mana terminology (2026-07-14)
 

@@ -21,15 +21,25 @@ const equippedRelic = `<span class="tooltip-anchor"><button class="loadout-relic
 const html = `<!doctype html><html><head><style>${css}</style></head><body>
   <main class="app-shell">
     <section class="home-layout">
-      <aside class="rollcaster-panel">
-        <p class="eyebrow">Active Rollcaster</p>
-        <button class="portrait-button"><span class="card-sprite-frame rollcaster-sprite-frame"><span class="sprite sprite-fit-portrait"></span></span></button>
-        <h1>Shanks</h1>
-        ${xp("rollcaster-xp-progress", 35)}
-        <p class="rollcaster-level">Level 2</p>
-        <div class="ability-list"><button class="ability-slot"><span><small>Slot 1</small><strong>Fortify</strong></span></button></div>
-      </aside>
-      <nav class="main-actions"><button class="menu-button play-button">Play</button><button class="menu-button">Collection</button></nav>
+      <div class="home-rollcaster-column">
+        <aside class="rollcaster-panel">
+          <p class="eyebrow">Active Rollcaster</p>
+          <button class="portrait-button"><span class="card-sprite-frame rollcaster-sprite-frame"><span class="sprite sprite-fit-portrait"></span></span></button>
+          <h1>Shanks</h1>
+          ${xp("rollcaster-xp-progress", 35)}
+          <p class="rollcaster-level">Level 2</p>
+          <div class="ability-list"><button class="ability-slot"><span><small>Slot 1</small><strong>Fortify</strong></span></button></div>
+        </aside>
+        <section class="challenge-tracking" aria-label="Challenge tracking">
+          <div class="challenge-tracking-heading"><span>◎</span><strong>Challenge Tracking</strong></div>
+          <div class="challenge-tracking-slots">
+            <div class="tracked-challenge-card empty"><span>◎</span><span>Tracking slot 1</span></div>
+            <div class="tracked-challenge-card empty"><span>◎</span><span>Tracking slot 2</span></div>
+            <div class="tracked-challenge-card empty"><span>◎</span><span>Tracking slot 3</span></div>
+          </div>
+        </section>
+      </div>
+      <nav class="main-actions"><button class="menu-button play-button">Play</button><button class="menu-button">Collection</button><button class="menu-button">Shop</button></nav>
       <section class="squad-panel">
         <article class="loadout-slot">
           <div class="loadout-critter-summary">
@@ -55,12 +65,23 @@ const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1380, height: 900 }, deviceScaleFactor: 1 });
   await page.setContent(html);
+  await page.evaluate(() => {
+    const panel = document.querySelector(".squad-panel");
+    const occupied = panel.querySelector(".loadout-slot:not(.empty)");
+    const secondOccupied = occupied.cloneNode(true);
+    secondOccupied.querySelector(".critter-name strong").textContent = "Ramber";
+    panel.insertBefore(secondOccupied, panel.querySelector(".loadout-slot.empty"));
+  });
   await mkdir(outputDir, { recursive: true });
 
   async function inspect(name, width, height) {
     await page.setViewportSize({ width, height });
     await page.evaluate(() => {
+      const panel = document.querySelector(".squad-panel");
+      panel.style.removeProperty("--squad-slot-height");
       document.querySelectorAll(".skill-tile-grid").forEach((grid) => grid.classList.toggle("compact", grid.getBoundingClientRect().width <= 180));
+      const occupied = panel.querySelector(".loadout-slot:not(.empty)");
+      panel.style.setProperty("--squad-slot-height", `${Math.ceil(occupied.getBoundingClientRect().height * 100) / 100}px`);
     });
     const metrics = await page.evaluate(() => {
       const rectForElement = (value) => ({
@@ -80,10 +101,23 @@ try {
         .map((element) => rectForElement(element.getBoundingClientRect()));
       const levelElement = document.querySelector(".loadout-critter-level");
       const baselineSnapshot = mainPageSnapshot();
+      const occupiedSlots = [...document.querySelectorAll(".loadout-slot:not(.empty)")];
+      const anchoredSelectors = [".loadout-critter-header", ".loadout-critter-summary > .stat-grid", ".loadout-equipment-grid", ".loadout-equipment-grid > .skill-tile-grid", ".loadout-relic-grid"];
+      const occupiedSlotLayouts = occupiedSlots.map((slot) => {
+        const slotRect = slot.getBoundingClientRect();
+        return {
+          rect: rectForElement(slotRect),
+          anchors: anchoredSelectors.map((selector) => {
+            const child = slot.querySelector(selector).getBoundingClientRect();
+            return { selector, left: child.left - slotRect.left, top: child.top - slotRect.top, width: child.width, height: child.height };
+          }),
+        };
+      });
       const baseline = {
         home: rect(".home-layout"),
         loadout: rect(".loadout-slot"),
         emptyLoadout: rect(".loadout-slot.empty"),
+        occupiedSlotLayouts,
         summary: rect(".loadout-critter-summary"),
         critterHeader: rect(".loadout-critter-header"),
         sprite: rect(".loadout-critter-frame"),
@@ -111,6 +145,11 @@ try {
         rollcasterBar: rect(".rollcaster-xp-progress .xp-bar"),
         rollcasterNumbers: rect(".rollcaster-xp-progress > p"),
         rollcasterLevel: rect(".rollcaster-level"),
+        rollcasterPanel: rect(".rollcaster-panel"),
+        rollcasterColumn: rect(".home-rollcaster-column"),
+        challengeTracking: rect(".challenge-tracking"),
+        mainActions: rect(".main-actions"),
+        menuButtonHeights: [...document.querySelectorAll(".main-actions .menu-button")].map((button) => button.getBoundingClientRect().height),
         critterNameSize: Number.parseFloat(style(".loadout-critter-identity .critter-name").fontSize),
         critterNameTextHeight: rect(".loadout-critter-identity .critter-name strong").height,
         critterLevelSize: Number.parseFloat(style(".loadout-critter-level").fontSize),
@@ -131,9 +170,9 @@ try {
         statRows: style(".loadout-critter-summary > .stat-grid").gridTemplateRows.split(" ").length,
         hasEditLabel: Boolean(document.querySelector(".loadout-critter-header .edit-label")),
         relicStateCounts: {
-          unlocked: document.querySelectorAll(".loadout-relic-cell.unlocked").length,
-          locked: document.querySelectorAll(".loadout-relic-cell.locked").length,
-          null: document.querySelectorAll(".loadout-relic-cell.null").length,
+          unlocked: occupiedSlots[0].querySelectorAll(".loadout-relic-cell.unlocked").length,
+          locked: occupiedSlots[0].querySelectorAll(".loadout-relic-cell.locked").length,
+          null: occupiedSlots[0].querySelectorAll(".loadout-relic-cell.null").length,
         },
         emptyRelicUsesPlus: Boolean(document.querySelector(".loadout-relic-cell.empty .empty-relic-plus")),
         emptySquadUsesRelicPlus: Boolean(document.querySelector(".loadout-slot.empty > .empty-relic-plus")),
@@ -141,8 +180,8 @@ try {
         equippedRelicIcon: rect(".loadout-relic-cell.equipped .asset-icon"),
         equippedRelicBorder: style(".loadout-relic-cell.equipped").borderColor,
         equippedRelicGlow: style(".loadout-relic-cell.equipped").boxShadow,
-        statWidths: [...document.querySelectorAll(".loadout-critter-summary > .stat-grid > .stat-cell")].map((entry) => entry.getBoundingClientRect().width),
-        statLayouts: [...document.querySelectorAll(".loadout-critter-summary > .stat-grid > .stat-cell")].map((entry) => {
+        statWidths: [...occupiedSlots[0].querySelectorAll(".loadout-critter-summary > .stat-grid > .stat-cell")].map((entry) => entry.getBoundingClientRect().width),
+        statLayouts: [...occupiedSlots[0].querySelectorAll(".loadout-critter-summary > .stat-grid > .stat-cell")].map((entry) => {
           const cell = entry.getBoundingClientRect();
           const label = entry.querySelector(".stat-label").getBoundingClientRect();
           const value = entry.querySelector("strong").getBoundingClientRect();
@@ -168,9 +207,9 @@ try {
     const screenshot = path.join(outputDir, `home-loadout-${name}.png`);
     await page.screenshot({ path: screenshot, fullPage: true });
     const threeDigitScreenshot = path.join(outputDir, `home-loadout-${name}-level-999.png`);
-    await page.locator(".loadout-critter-level").evaluate((element) => { element.textContent = "Level 999"; });
+    await page.evaluate(() => document.querySelectorAll(".loadout-critter-level").forEach((element) => { element.textContent = "Level 999"; }));
     await page.screenshot({ path: threeDigitScreenshot, fullPage: true });
-    await page.locator(".loadout-critter-level").evaluate((element) => { element.textContent = "Level 3"; });
+    await page.evaluate(() => document.querySelectorAll(".loadout-critter-level").forEach((element) => { element.textContent = "Level 3"; }));
     return { name, width, height, screenshot, threeDigitScreenshot, ...metrics };
   }
 
@@ -232,7 +271,23 @@ try {
     const emptySquadMatchesOccupied = Math.abs(viewport.emptyLoadout.width - viewport.loadout.width) < .1
       && Math.abs(viewport.emptyLoadout.height - viewport.loadout.height) < .1
       && viewport.emptySquadUsesRelicPlus;
-    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && emptySquadMatchesOccupied && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
+    const trackerIsSeparatePane = viewport.challengeTracking.top - viewport.rollcasterPanel.bottom >= 15
+      && Math.abs(viewport.challengeTracking.left - viewport.rollcasterPanel.left) < .1
+      && Math.abs(viewport.challengeTracking.width - viewport.rollcasterPanel.width) < .1
+      && viewport.challengeTracking.bottom <= viewport.rollcasterColumn.bottom + .1;
+    const compactMainActions = viewport.menuButtonHeights.length === 3
+      && viewport.menuButtonHeights.every((height) => height <= 90.1)
+      && viewport.mainActions.height <= viewport.menuButtonHeights.reduce((total, height) => total + height, 0) + 28.1;
+    const occupiedSlotsMatch = viewport.occupiedSlotLayouts.every((slot) => Math.abs(slot.rect.width - viewport.occupiedSlotLayouts[0].rect.width) < .1
+      && Math.abs(slot.rect.height - viewport.occupiedSlotLayouts[0].rect.height) < .1
+      && slot.anchors.every((anchor, index) => {
+        const expected = viewport.occupiedSlotLayouts[0].anchors[index];
+        return Math.abs(anchor.left - expected.left) < .1
+          && Math.abs(anchor.top - expected.top) < .1
+          && Math.abs(anchor.width - expected.width) < .1
+          && Math.abs(anchor.height - expected.height) < .1;
+      }));
+    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
   });
 
   const byLoadoutWidth = [...viewports].sort((a, b) => a.loadout.width - b.loadout.width);
