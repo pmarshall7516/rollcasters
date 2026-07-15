@@ -43,6 +43,7 @@ export type CollectibleUnlockChallenge = {
   required_amount: string | null;
   required_level: number | null;
   sort_order: number;
+  gate_order?: number | null;
 };
 
 export type ShopEntry = {
@@ -66,7 +67,11 @@ export type UserCollectibleChallengeProgress = {
   challenge_id: string;
   current: string;
   goal: string;
+  goal_reached?: boolean;
+  eligible?: boolean;
   completed: boolean;
+  blocked_by_gate_order?: number | null;
+  trackable?: boolean;
 };
 export type UserTrackedCollectibleChallenge = { challenge_id: string; slot_order: number };
 export type CollectibleUnlockEvent = {

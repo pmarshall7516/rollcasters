@@ -59,6 +59,8 @@ import { calculateLoadoutStats, type LoadoutStatKey, type StatBreakdown } from "
 import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
 import {
   challengeDescription,
+  challengeGateBadge,
+  challengeGateBlockMessage,
   challengesFor,
   collectibleAssetPath,
   collectibleIsOwned,
@@ -772,7 +774,10 @@ function HomeScreen({ data, onCollection, onShop, onPlay, onRefresh }: { data: A
 function ChallengeTracking({ data, onRefresh }: { data: AppData; onRefresh: () => Promise<void> }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [trackingError, setTrackingError] = useState<string | null>(null);
-  const tracked = data.player!.collectibleSnapshot.tracked;
+  const tracked = data.player!.collectibleSnapshot.tracked.filter((trackedRow) => {
+    const progress = progressFor(data, trackedRow.challenge_id);
+    return progress.eligible !== false;
+  });
 
   async function untrack(challengeId: string) {
     setBusyId(challengeId);
@@ -1322,9 +1327,17 @@ function CollectibleChallengeRows({ data, type, id, compact = true }: { data: Ap
     <div className={`challenge-rows ${compact ? "compact" : ""}`.trim()} aria-label={`${collectibleName(data, type, id)} unlock challenges`}>
       {challenges.map((challenge) => {
         const progress = progressFor(data, challenge.id);
+        const gateBadge = challengeGateBadge(challenge);
+        const blockedMessage = challengeGateBlockMessage(challenge, progress);
         return (
-          <div className={`challenge-row ${progress.completed ? "complete" : ""}`} key={challenge.id}>
-            <span>{challengeDescription(data, challenge)}</span>
+          <div className={`challenge-row ${progress.completed ? "complete" : ""} ${blockedMessage ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()} key={challenge.id}>
+            <span className="challenge-row-copy">
+              {(gateBadge || blockedMessage) && <span className="challenge-state-line">
+                {gateBadge && <span className="gate-badge">{gateBadge}</span>}
+                {blockedMessage && <span className="gate-blocked"><Lock size={11} />{blockedMessage}</span>}
+              </span>}
+              <span>{challengeDescription(data, challenge)}</span>
+            </span>
             <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
           </div>
         );
@@ -1471,7 +1484,13 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
       await onRefresh();
     } catch (error) {
       const raw = errorMessage(error, "Unable to update challenge tracking.");
-      setPanelError(raw.includes("TRACKING_LIMIT_REACHED") ? "3 challenge limit reached" : raw);
+      setPanelError(
+        raw.includes("CHALLENGE_GATED")
+          ? "Complete the required Gate Challenges before tracking this challenge."
+          : raw.includes("TRACKING_LIMIT_REACHED")
+            ? "3 challenge limit reached"
+            : raw,
+      );
     } finally {
       setBusyId(null);
     }
@@ -1489,12 +1508,21 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
         {challenges.map((challenge) => {
           const progress = progressFor(data, challenge.id);
           const slot = trackedSlotFor(data, challenge.id);
-          const trackable = isTrackableChallenge(challenge);
+          const trackedFamily = isTrackableChallenge(challenge);
+          const trackable = trackedFamily && progress.trackable !== false;
+          const gateBadge = challengeGateBadge(challenge);
+          const blockedMessage = challengeGateBlockMessage(challenge, progress);
           return (
-            <article className={`challenge-detail-row ${progress.completed ? "complete" : ""}`} key={challenge.id}>
-              <span>{challengeDescription(data, challenge)}</span>
+            <article className={`challenge-detail-row ${progress.completed ? "complete" : ""} ${blockedMessage ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()} key={challenge.id}>
+              <span className="challenge-detail-copy">
+                {(gateBadge || blockedMessage) && <span className="challenge-state-line">
+                  {gateBadge && <span className="gate-badge">{gateBadge}</span>}
+                  {blockedMessage && <span className="gate-blocked"><Lock size={12} />{blockedMessage}</span>}
+                </span>}
+                <span>{challengeDescription(data, challenge)}</span>
+              </span>
               <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
-              {!unlocked && trackable && <button
+              {!unlocked && trackedFamily && (trackable || slot !== null) && <button
                 className={slot ? "secondary-button" : "primary-button"}
                 disabled={busyId === challenge.id || (!slot && trackingFull)}
                 title={!slot && trackingFull ? "3 challenge limit reached" : undefined}

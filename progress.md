@@ -1,5 +1,15 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Gate challenge runtime (2026-07-15)
+
+- Current request: review `docs/11-gate-challenges.md` and limit challenge tracking, progress, effective completion, and collectible unlocking until authored Gate Challenges are complete.
+- Confirmed the pre-change runtime counted raw goal progress as completion, permitted blocked tracked challenges, and incremented stale tracked rows without gate eligibility checks.
+- Added and applied migration 012 with contiguous Gate Order/threshold integrity checks, ordered eligibility/effective-completion evaluation, `CHALLENGE_GATED` tracking enforcement, stale tracking reconciliation/slot compaction, combat-time eligibility checks, gate-aware unlock counting, explicit snapshot state, authoring snapshot support, safe Gate Order swaps, and progress-preserving gate/sort edits.
+- Added Gate badges plus blocked/goal-reached/complete UI states. Blocked Tracked rows expose no Track action and never appear in the Home tracking HUD; full blocked Global/Shop numerators remain visible without completed styling.
+- Added rollback-only database coverage for malformed gates, threshold bypasses, full-but-blocked later gates, Gate Order swaps, progress preservation, stale combat tracking, immediate reevaluation, post-eligibility progress, and final unlock. Added a disposable signed-in browser fixture for blocked-to-eligible tracking and visually inspected clean modal/panel/HUD captures with zero browser errors.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:collectibles-shop`, `npm run test:gate-challenges:db`, `npm run test:collection-interaction-ui`, `npm run test:collection-layout`, `npm run test:responsive-shell-layout`, browser fixture logic/visual checks, script syntax checks, and `git diff --check`.
+- The separate generic web-game client smoke could not launch because the desktop approval service reported its usage limit. The feature-specific real-app Playwright pass completed before that restriction and covered signed-in game state, screenshots, and console errors.
+
 ## Currency balance hover tooltips (2026-07-15)
 
 - Added a custom hover/focus tooltip for each header currency using the exact accessible balance label (`<currency name>: <owned amount>`) and the currency's computed authored text color.

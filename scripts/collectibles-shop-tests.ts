@@ -1,4 +1,6 @@
 import {
+  challengeGateBadge,
+  challengeGateBlockMessage,
   challengeDescription,
   formatAmount,
   orderedCurrencies,
@@ -25,6 +27,7 @@ const shardChallenge: CollectibleUnlockChallenge = {
   target_ids: [],
   any_target: false,
   sort_order: 1,
+  gate_order: null,
 };
 
 const relicChallenge: CollectibleUnlockChallenge = {
@@ -116,6 +119,34 @@ check(shopAvailability(data({ shards: "10" }), shardEntry).code === "SHOP_SHARDS
 check(shopAvailability(data({ balance: "100", relicQuantity: 1 }), relicEntry).enabled, "A Relic below its ownership cap must be purchasable.");
 check(shopAvailability(data({ balance: "100", relicQuantity: 2 }), relicEntry).code === "RELIC_MAX_OWNED_REACHED", "Relic purchases must respect max_owned.");
 check(challengeDescription(data(), shardChallenge) === "Unlock Cragram shards", "Shard challenge copy must use the collectible name.");
+const laterGate = { ...shardChallenge, gate_order: 2 };
+check(challengeGateBadge(laterGate) === "Gate 2", "Gated rows must expose their authored Gate number.");
+check(
+  challengeGateBlockMessage(laterGate, {
+    challenge_id: laterGate.id,
+    current: "10",
+    goal: "10",
+    goal_reached: true,
+    eligible: false,
+    completed: false,
+    blocked_by_gate_order: 1,
+    trackable: false,
+  }) === "Waiting for Gate 1",
+  "A full-progress later gate must still explain which earlier gate blocks completion.",
+);
+check(
+  challengeGateBlockMessage(shardChallenge, {
+    challenge_id: shardChallenge.id,
+    current: "10",
+    goal: "10",
+    goal_reached: true,
+    eligible: false,
+    completed: false,
+    blocked_by_gate_order: 1,
+    trackable: false,
+  }) === "Complete all gates first",
+  "A blocked ungated row must explain that the full gate sequence is required.",
+);
 check(shopErrorMessage(new Error("RPC failed: INSUFFICIENT_FUNDS")) === "You do not have enough currency for this purchase.", "RPC error codes must map to safe player-facing messages.");
 
 console.log("Collectible and shop business-rule tests passed.");

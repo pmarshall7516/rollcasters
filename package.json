@@ -18,6 +18,8 @@
     "test:collectibles-shop": "tsc scripts/collectibles-shop-tests.ts src/lib/collectibles.ts src/lib/types.ts --outDir /tmp/rollcasters-collectibles-shop-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-collectibles-shop-tests/scripts/collectibles-shop-tests.js",
     "test:collectibles-shop:db": "node scripts/collectibles-shop-db-tests.mjs",
     "test:collectibles-shop:browser": "RUN_LIVE_COLLECTIBLES_BROWSER_TEST=true node scripts/collectibles-shop-playwright.mjs",
+    "test:gate-challenges:db": "node scripts/gate-challenges-db-tests.mjs",
+    "test:gate-challenges:browser": "RUN_LIVE_GATE_CHALLENGE_BROWSER_TEST=true node scripts/gate-challenges-playwright.mjs",
     "test:starter-selection:db": "node scripts/starter-selection-db-tests.mjs",
     "test:starter-selection:browser": "RUN_LIVE_STARTER_SELECTION_TEST=true node scripts/starter-selection-playwright.mjs",
     "test:collection-interaction-ui": "node scripts/collection-interaction-ui-tests.mjs",

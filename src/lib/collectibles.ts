@@ -59,12 +59,43 @@ export function challengesFor(data: AppData, type: CollectibleType, id: string):
 }
 
 export function progressFor(data: AppData, challengeId: string): UserCollectibleChallengeProgress {
-  return data.player?.collectibleSnapshot.progress.find((row) => row.challenge_id === challengeId) ?? {
+  const progress = data.player?.collectibleSnapshot.progress.find((row) => row.challenge_id === challengeId);
+  if (!progress) return {
     challenge_id: challengeId,
     current: "0",
     goal: "0",
+    goal_reached: false,
+    eligible: true,
     completed: false,
+    blocked_by_gate_order: null,
+    trackable: true,
   };
+
+  const eligible = progress.eligible ?? true;
+  const completed = eligible && progress.completed;
+  return {
+    ...progress,
+    goal_reached: progress.goal_reached ?? safeBigInt(progress.current) >= safeBigInt(progress.goal),
+    eligible,
+    completed,
+    blocked_by_gate_order: progress.blocked_by_gate_order ?? null,
+    trackable: progress.trackable ?? (eligible && !completed),
+  };
+}
+
+export function challengeGateBadge(challenge: CollectibleUnlockChallenge): string | null {
+  return challenge.gate_order == null ? null : `Gate ${challenge.gate_order}`;
+}
+
+export function challengeGateBlockMessage(
+  challenge: CollectibleUnlockChallenge,
+  progress: UserCollectibleChallengeProgress,
+): string | null {
+  if (progress.eligible !== false) return null;
+  if (challenge.gate_order != null && progress.blocked_by_gate_order != null) {
+    return `Waiting for Gate ${progress.blocked_by_gate_order}`;
+  }
+  return "Complete all gates first";
 }
 
 export function requirementFor(data: AppData, type: CollectibleType, id: string): number {
