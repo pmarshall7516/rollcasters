@@ -49,6 +49,7 @@ function effect(
 }
 
 const catalog = {
+  currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [],
   elements: [{ id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 }],
   skills: [],
   critters: [
@@ -101,6 +102,7 @@ const player = {
     { user_critter_id: "owned-ally", slot_index: 1, relic_id: "ally-aura" },
   ],
   unlockedSkillIdsByCritter: {}, unlockedAbilityIdsByRollcaster: {}, dungeonProgress: [],
+  collectibleSnapshot: { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] },
 } as PlayerState;
 
 const calculated = calculateLoadoutStats({ catalog, player } as AppData, player.critters[0]);

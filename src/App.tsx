@@ -8,19 +8,24 @@ import {
   LogOut,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Shield,
+  ShoppingBag,
   Sparkles,
   Swords,
+  Target,
   UserRound,
   X,
 } from "lucide-react";
 import {
+  acknowledgeCollectibleUnlockEvent,
   ensureUserGameState,
   getGameAssetUrl,
   getSession,
   hasSupabaseConfig,
   loadAppData,
+  purchaseShopEntry,
   resolveDungeonRun,
   setActiveRollcaster,
   setCritterRelicSlot,
@@ -33,7 +38,10 @@ import {
   signUp,
   snapshotDungeonRunEffects,
   startDungeonRun,
+  submitCollectibleCombatEvents,
   supabase,
+  trackCollectibleChallenge,
+  untrackCollectibleChallenge,
   unlockCritterSkill,
 } from "./lib/supabase";
 import {
@@ -49,27 +57,68 @@ import {
 } from "./lib/game";
 import { calculateLoadoutStats, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
 import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
+import {
+  challengeDescription,
+  challengesFor,
+  collectibleAssetPath,
+  collectibleIsOwned,
+  collectibleName,
+  collectibleTargetAvailable,
+  currencyBalance,
+  currencyFor,
+  formatAmount,
+  isTrackableChallenge,
+  orderedCurrencies,
+  progressFor,
+  requirementFor,
+  shopAvailability,
+  shopErrorMessage,
+  trackedSlotFor,
+} from "./lib/collectibles";
 import type {
   AppData,
   CombatAction,
+  CollectibleUnlockEvent,
+  CollectibleType,
+  CollectibleUnlockChallenge,
   Critter,
   Dungeon,
   PlayerState,
   Relic,
   ResolvedEffectRef,
   Skill,
+  ShopEntry,
   UserCritter,
   UserRollcaster,
   View,
 } from "./lib/types";
+import rollcastersLogoUrl from "./assets/rollcasters-logo.png";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
+type ShopTab = "shard" | "relic" | "lootbox";
 type CollectionDetail = { type: "critter" | "rollcaster" | "relic"; id: string };
 
 const collectibleIdCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 function sortByCollectibleId<T extends { id: string }>(items: T[]): T[] {
   return [...items].sort((left, right) => collectibleIdCollator.compare(left.id, right.id));
+}
+
+function routeFromLocation(): { view: View; shopTab: ShopTab } {
+  const params = new URLSearchParams(window.location.search);
+  const requestedTab = params.get("tab");
+  const shopTab: ShopTab = requestedTab === "relic" ? "relic" : "shard";
+  if (window.location.pathname === "/shop") return { view: "shop", shopTab };
+  if (window.location.pathname === "/collection") return { view: "collection", shopTab };
+  if (window.location.pathname === "/play") return { view: "play", shopTab };
+  return { view: "home", shopTab };
+}
+
+function viewUrl(view: View, shopTab: ShopTab): string {
+  if (view === "shop") return `/shop?tab=${shopTab}`;
+  if (view === "collection") return "/collection";
+  if (view === "play") return "/play";
+  return "/";
 }
 
 export function App() {
@@ -80,8 +129,19 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("critters");
+  const [shopTab, setShopTab] = useState<ShopTab>(() => routeFromLocation().shopTab);
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
   const [combat, setCombat] = useState<CombatState | null>(null);
+  const [unlockQueue, setUnlockQueue] = useState<CollectibleUnlockEvent[]>([]);
+  const seenUnlockEvents = useRef(new Set<string>());
+
+  function navigate(nextView: View, nextShopTab = shopTab, replace = false) {
+    if (nextView === "shop") setShopTab(nextShopTab);
+    setView(nextView);
+    if (["home", "collection", "shop", "play"].includes(nextView)) {
+      window.history[replace ? "replaceState" : "pushState"]({}, "", viewUrl(nextView, nextShopTab));
+    }
+  }
 
   async function refresh(nextView?: View) {
     if (!hasSupabaseConfig) return;
@@ -94,7 +154,9 @@ export function App() {
       if (nextView) {
         setView(nextView);
       } else {
-        setView(loaded.player?.profile.starter_selected_at ? "home" : "starter");
+        const route = routeFromLocation();
+        setShopTab(route.shopTab);
+        setView(loaded.player?.profile.starter_selected_at ? route.view : "starter");
       }
     } catch (err) {
       console.error("Unable to load game data.", err);
@@ -132,6 +194,31 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    function popstate() {
+      if (!isAuthed || !data?.player?.profile.starter_selected_at) return;
+      const route = routeFromLocation();
+      setShopTab(route.shopTab);
+      setView(route.view);
+    }
+    window.addEventListener("popstate", popstate);
+    return () => window.removeEventListener("popstate", popstate);
+  }, [isAuthed, data?.player?.profile.starter_selected_at]);
+
+  const pendingUnlockIds = data?.player?.collectibleSnapshot.unlock_events.map((event) => event.id).join("|") ?? "";
+  useEffect(() => {
+    const pending = data?.player?.collectibleSnapshot.unlock_events ?? [];
+    const additions = pending.filter((event) => !seenUnlockEvents.current.has(event.id));
+    if (!additions.length) return;
+    additions.forEach((event) => seenUnlockEvents.current.add(event.id));
+    setUnlockQueue((current) => [...current, ...additions]);
+    additions.forEach((event) => {
+      void acknowledgeCollectibleUnlockEvent(event.id).catch((ackError) => {
+        console.error("Unable to acknowledge collectible unlock event.", ackError);
+      });
+    });
+  }, [pendingUnlockIds]);
+
+  useEffect(() => {
     window.render_game_to_text = () =>
       JSON.stringify({
         view,
@@ -139,6 +226,10 @@ export function App() {
         authed: isAuthed,
         starterSelected: data?.player?.profile.starter_selected_at != null,
         coins: data?.player?.profile.coins ?? 0,
+        currencies: data?.player?.collectibleSnapshot.currencies ?? [],
+        trackedChallenges: data?.player?.collectibleSnapshot.tracked ?? [],
+        shop: view === "shop" ? { tab: shopTab, offers: data?.catalog.shopEntries.filter((entry) => entry.shop_type === shopTab).length ?? 0 } : null,
+        unlockNotification: unlockQueue[0] ?? null,
         combat: combat
           ? {
               phase: combat.phase,
@@ -167,7 +258,7 @@ export function App() {
           : null,
       });
     window.advanceTime = () => undefined;
-  }, [view, loading, isAuthed, data, combat]);
+  }, [view, shopTab, loading, isAuthed, data, combat, unlockQueue]);
 
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
@@ -175,18 +266,18 @@ export function App() {
   if (!data?.player) return <Shell><Loading message="Loading Rollcasters..." error={error} /></Shell>;
 
   return (
-    <Shell className={view === "collection" ? "collection-shell" : ""}>
+    <Shell className={view === "collection" || view === "shop" ? "collection-shell" : ""}>
       <TopBar
         data={data}
         player={data.player}
-        onHome={() => setView(data.player?.profile.starter_selected_at ? "home" : "starter")}
+        refreshing={loading}
+        onHome={() => navigate(data.player?.profile.starter_selected_at ? "home" : "starter")}
         onSignOut={async () => {
           await signOut();
           setIsAuthed(false);
         }}
       />
       {error && <div className="notice error">{error}</div>}
-      {loading && <div className="notice">Loading latest game state...</div>}
       {view === "starter" && (
         <StarterScreen
           data={data}
@@ -206,8 +297,9 @@ export function App() {
       {view === "home" && (
         <HomeScreen
           data={data}
-          onCollection={() => setView("collection")}
-          onPlay={() => setView("play")}
+          onCollection={() => navigate("collection")}
+          onShop={() => navigate("shop", "shard")}
+          onPlay={() => navigate("play")}
           onRefresh={() => refresh("home")}
         />
       )}
@@ -219,13 +311,22 @@ export function App() {
           detail={detail}
           setDetail={setDetail}
           onRefresh={() => refresh("collection")}
-          onBack={() => setView("home")}
+          onBack={() => navigate("home")}
+        />
+      )}
+      {view === "shop" && (
+        <ShopScreen
+          data={data}
+          tab={shopTab}
+          setTab={(tab) => navigate("shop", tab)}
+          onBack={() => navigate("home")}
+          onRefresh={() => refresh("shop")}
         />
       )}
       {view === "play" && (
         <PlayScreen
           data={data}
-          onBack={() => setView("home")}
+          onBack={() => navigate("home")}
           onStart={async (dungeon) => {
             setLoading(true);
             try {
@@ -247,7 +348,18 @@ export function App() {
           data={data}
           combat={combat}
           setCombat={setCombat}
-          onBack={() => setView("play")}
+          onTurnResolved={async (resolved) => {
+            setCombat(resolved);
+            if (!resolved.runId || resolved.turnEvents.length === 0) return;
+            try {
+              await submitCollectibleCombatEvents(resolved.runId, combat.turn, resolved.turnEvents);
+              await refresh("combat");
+            } catch (progressError) {
+              console.error("Unable to submit collectible combat progress.", progressError);
+              setError(errorMessage(progressError, "Unable to update challenge progress."));
+            }
+          }}
+          onBack={() => navigate("play")}
           onWin={async () => {
             if (!combat.runId) return;
             setLoading(true);
@@ -262,7 +374,8 @@ export function App() {
           }}
         />
       )}
-      {view === "rewards" && combat && <RewardScreen data={data} combat={combat} onContinue={() => { setCombat(null); setView("home"); }} />}
+      {view === "rewards" && combat && <RewardScreen data={data} combat={combat} onContinue={() => { setCombat(null); navigate("home"); }} />}
+      {unlockQueue[0] && <UnlockNotification data={data} event={unlockQueue[0]} onClose={() => setUnlockQueue((current) => current.slice(1))} />}
     </Shell>
   );
 }
@@ -300,7 +413,8 @@ VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY`}</pre>
 
 function Loading({ message, error }: { message: string; error?: string | null }) {
   return (
-    <section className="setup-panel">
+    <section className="setup-panel loading-panel">
+      <BrandLogo />
       <h1>{message}</h1>
       {error && <p className="error-text">{error}</p>}
     </section>
@@ -402,25 +516,76 @@ function AuthScreen({
 function TopBar({
   data,
   player,
+  refreshing,
   onHome,
   onSignOut,
 }: {
   data: AppData;
   player: PlayerState;
+  refreshing: boolean;
   onHome: () => void;
   onSignOut: () => void;
 }) {
-  const coinAssetPath = findAssetPath(data, "currency", "coins");
-  const logoPath = findAssetPath(data, "ui", "logo", "full") ?? "ui/logo.png";
+  const currencies = orderedCurrencies(data);
+  const topBarRef = useRef<HTMLElement>(null);
+  const currencyTooltipRef = useRef<HTMLSpanElement>(null);
+
+  const showCurrencyTooltip = (element: HTMLElement, label: string) => {
+    const topBar = topBarRef.current;
+    const tooltip = currencyTooltipRef.current;
+    if (!topBar || !tooltip) return;
+    const topBarRect = topBar.getBoundingClientRect();
+    const currencyRect = element.getBoundingClientRect();
+    const tooltipMaxWidth = Math.min(260, window.innerWidth - 24);
+    tooltip.textContent = label;
+    tooltip.style.color = window.getComputedStyle(element).color;
+    tooltip.style.left = `${Math.max(0, Math.min(currencyRect.left - topBarRect.left, topBarRect.width - tooltipMaxWidth))}px`;
+    tooltip.style.top = `${currencyRect.bottom - topBarRect.top + 7}px`;
+    tooltip.classList.add("visible");
+  };
+
+  const hideCurrencyTooltip = () => currencyTooltipRef.current?.classList.remove("visible");
+
   return (
-    <header className="top-bar">
+    <header ref={topBarRef} className={`top-bar ${currencies.length > 3 ? "currency-rich" : ""}`.trim()}>
+      {refreshing && (
+        <div className="refresh-indicator" role="status" aria-live="polite" title="Refreshing game data">
+          <RefreshCw aria-hidden="true" />
+          <span>Refreshing</span>
+          <span className="sr-only"> game data</span>
+        </div>
+      )}
       <button type="button" className="brand-home-button" onClick={onHome} aria-label="Rollcasters home">
-        <BrandLogo path={logoPath} compact />
+        <BrandLogo compact />
       </button>
       <div className="account-cluster">
-        <div className="coin-pill">
-          <AssetIcon path={coinAssetPath} alt="Coins" fallback={<Coins size={17} />} />
-          {player.profile.coins}
+        <div
+          className="currency-cluster"
+          aria-label="Currency balances"
+          onMouseLeave={hideCurrencyTooltip}
+          onScroll={hideCurrencyTooltip}
+        >
+          {currencies.map((currency) => {
+            const amount = formatAmount(currencyBalance(data, currency.id));
+            const label = `${currency.name}: ${amount}`;
+            return (
+              <div
+                className="coin-pill currency-pill"
+                key={currency.id}
+                role="group"
+                tabIndex={0}
+                aria-label={label}
+                data-currency-id={currency.id}
+                style={currency.text_color ? { color: currency.text_color } : undefined}
+                onMouseEnter={(event) => showCurrencyTooltip(event.currentTarget, label)}
+                onFocus={(event) => showCurrencyTooltip(event.currentTarget, label)}
+                onBlur={hideCurrencyTooltip}
+              >
+                <AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={17} />} />
+                <span>{amount}</span>
+              </div>
+            );
+          })}
         </div>
         <div className="user-pill">
           <UserRound size={17} />
@@ -430,18 +595,18 @@ function TopBar({
           <LogOut size={18} />
         </button>
       </div>
+      <span
+        ref={currencyTooltipRef}
+        className="currency-hover-tooltip"
+        aria-hidden="true"
+      />
     </header>
   );
 }
 
-function BrandLogo({ path = "ui/logo.png", compact = false }: { path?: string | null; compact?: boolean }) {
-  const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const src = hasSupabaseConfig && path && !failed ? getGameAssetUrl(path) : null;
-  useEffect(() => { setFailed(false); setLoaded(false); }, [path]);
+function BrandLogo({ compact = false }: { compact?: boolean }) {
   return <span className="brand-lockup">
-    {(!src || !loaded) && <span className={`brand-logo-fallback ${compact ? "signed-in" : ""}`} aria-label="Rollcasters">Rollcasters</span>}
-    {src && <img className={`brand-logo ${compact ? "signed-in" : ""} ${loaded ? "loaded" : "loading"}`} src={src} alt="Rollcasters" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />}
+    <img className={`brand-logo ${compact ? "signed-in" : ""}`} src={rollcastersLogoUrl} alt="Rollcasters" draggable={false} />
   </span>;
 }
 
@@ -479,7 +644,7 @@ type EquipTarget =
   | { type: "ability"; slotIndex: number; owned: UserRollcaster }
   | { type: "rollcaster"; slotIndex: number };
 
-function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
+function HomeScreen({ data, onCollection, onShop, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onShop: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
   const player = data.player!;
   const activeRollcaster = player.rollcasters.find((row) => row.id === player.profile.active_rollcaster_id) ?? player.rollcasters[0];
   const rollcaster = byId(data.catalog.rollcasters, activeRollcaster?.rollcaster_id);
@@ -540,7 +705,7 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
       await onRefresh();
       setEquipTarget(null);
     } catch (err) {
-      setEquipError(err instanceof Error ? err.message : "Unable to update loadout.");
+      setEquipError(errorMessage(err, "Unable to update loadout."));
     } finally {
       setSaving(false);
     }
@@ -548,23 +713,26 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
 
   return (
     <><section className="home-layout">
-      <aside className="rollcaster-panel">
-        <p className="eyebrow">Active Rollcaster</p>
-        <button className="portrait-button" onClick={() => setEquipTarget({ type: "rollcaster", slotIndex: 1 })} aria-label="Choose active Rollcaster">
-          <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path)} size="hero" fit="portrait" /></CardSprite>
-        </button>
-        <h1>{rollcaster?.name ?? "Unknown"}</h1>
-        {rollcasterProgress && <ProgressBar progress={rollcasterProgress} inline className="rollcaster-xp-progress" />}
-        <p className="rollcaster-level">Level {activeRollcaster?.level ?? 1}</p>
-        <div className="ability-list" aria-label="Rollcaster abilities">
-          {Array.from({ length: abilityCount }, (_, index) => {
-            const slotIndex = index + 1;
-            const row = player.abilitySlots.find((slot) => slot.user_rollcaster_id === activeRollcaster?.id && slot.slot_index === slotIndex);
-            const ability = byId(data.catalog.rollcasterAbilities, row?.ability_id);
-            return <AbilitySlot key={slotIndex} data={data} ability={ability} slotIndex={slotIndex} onClick={() => activeRollcaster && setEquipTarget({ type: "ability", slotIndex, owned: activeRollcaster })} />;
-          })}
-        </div>
-      </aside>
+      <div className="home-rollcaster-column">
+        <aside className="rollcaster-panel">
+          <p className="eyebrow">Active Rollcaster</p>
+          <button className="portrait-button" onClick={() => setEquipTarget({ type: "rollcaster", slotIndex: 1 })} aria-label="Choose active Rollcaster">
+            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path)} size="hero" fit="portrait" /></CardSprite>
+          </button>
+          <h1>{rollcaster?.name ?? "Unknown"}</h1>
+          {rollcasterProgress && <ProgressBar progress={rollcasterProgress} inline className="rollcaster-xp-progress" />}
+          <p className="rollcaster-level">Level {activeRollcaster?.level ?? 1}</p>
+          <div className="ability-list" aria-label="Rollcaster abilities">
+            {Array.from({ length: abilityCount }, (_, index) => {
+              const slotIndex = index + 1;
+              const row = player.abilitySlots.find((slot) => slot.user_rollcaster_id === activeRollcaster?.id && slot.slot_index === slotIndex);
+              const ability = byId(data.catalog.rollcasterAbilities, row?.ability_id);
+              return <AbilitySlot key={slotIndex} data={data} ability={ability} slotIndex={slotIndex} onClick={() => activeRollcaster && setEquipTarget({ type: "ability", slotIndex, owned: activeRollcaster })} />;
+            })}
+          </div>
+        </aside>
+        <ChallengeTracking data={data} onRefresh={onRefresh} />
+      </div>
 
       <nav className="main-actions" aria-label="Main menu">
         <button className="menu-button play-button" onClick={onPlay}>
@@ -575,8 +743,8 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
           <Gem size={24} />
           Collection
         </button>
-        <button className="menu-button muted" disabled>
-          <Coins size={24} />
+        <button className="menu-button" onClick={onShop}>
+          <ShoppingBag size={24} />
           Shop
         </button>
       </nav>
@@ -599,6 +767,61 @@ function HomeScreen({ data, onCollection, onPlay, onRefresh }: { data: AppData; 
     {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} error={equipError} onClose={() => setEquipTarget(null)} onEquip={equip} />}
     </>
   );
+}
+
+function ChallengeTracking({ data, onRefresh }: { data: AppData; onRefresh: () => Promise<void> }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [trackingError, setTrackingError] = useState<string | null>(null);
+  const tracked = data.player!.collectibleSnapshot.tracked;
+
+  async function untrack(challengeId: string) {
+    setBusyId(challengeId);
+    setTrackingError(null);
+    try {
+      await untrackCollectibleChallenge(challengeId);
+      await onRefresh();
+    } catch (error) {
+      setTrackingError(errorMessage(error, "Unable to untrack challenge."));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <section className="challenge-tracking" aria-label="Challenge tracking">
+      <div className="challenge-tracking-heading"><Target size={17} /><strong>Challenge Tracking</strong></div>
+      {trackingError && <p className="tracking-error" role="alert">{trackingError}</p>}
+      <div className="challenge-tracking-slots">
+        {[1, 2, 3].map((slot) => {
+          const trackedRow = tracked.find((row) => row.slot_order === slot);
+          const challenge = data.catalog.collectibleUnlockChallenges.find((row) => row.id === trackedRow?.challenge_id);
+          if (!challenge) return <div className="tracked-challenge-card empty" key={slot}><Target size={20} /><span>Tracking slot {slot}</span></div>;
+          const progress = progressFor(data, challenge.id);
+          return (
+            <article className="tracked-challenge-card" key={slot}>
+              <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="xs" />
+              <div className="tracked-challenge-copy">
+                <strong>{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong>
+                <span>{challengeDescription(data, challenge)}</span>
+                <span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span>
+              </div>
+              <button className="link-button tracked-untrack" disabled={busyId === challenge.id} onClick={() => untrack(challenge.id)}>Untrack</button>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function CollectibleSprite({ data, type, id, size = "sm", shard = false }: { data: AppData; type: CollectibleType; id: string; size?: "xs" | "sm" | "md"; shard?: boolean }) {
+  const name = collectibleName(data, type, id);
+  const critter = type === "critter" ? byId(data.catalog.critters, id) : undefined;
+  const element = critter?.element_id ?? (type === "relic" ? "metal" : "basic");
+  const content = <Sprite name={name} element={element} assetPath={catalogAssetPath(data, type, id, collectibleAssetPath(data, type, id))} size="small" fit={type === "rollcaster" ? "portrait" : "contain"} />;
+  return shard
+    ? <span className="shard-sprite-glow" role="img" aria-label={`${name} shards`}><svg className="shard-sprite-outline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon className="shard-outline-glow shard-outline-glow-wide" points="1,50 50,1 99,50 50,99" /><polygon className="shard-outline-glow shard-outline-glow-mid" points="1,50 50,1 99,50 50,99" /><polygon className="shard-outline-border" points="1,50 50,1 99,50 50,99" /></svg><span className="shard-sprite-frame" aria-hidden="true">{content}</span></span>
+    : <SpriteFrame size={size}>{content}</SpriteFrame>;
 }
 
 function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData; slotIndex: number; owned?: UserCritter; onEquip: (target: EquipTarget) => void }) {
@@ -936,6 +1159,111 @@ function CollectionScreen({
   );
 }
 
+function ShopScreen({ data, tab, setTab, onBack, onRefresh }: { data: AppData; tab: ShopTab; setTab: (tab: ShopTab) => void; onBack: () => void; onRefresh: () => Promise<void> }) {
+  const [query, setQuery] = useState("");
+  const [busyEntry, setBusyEntry] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+  const requestIds = useRef(new Map<string, string>());
+  const normalized = query.trim().toLocaleLowerCase();
+  const authoredEntries = data.catalog.shopEntries.filter((entry) => entry.shop_type === tab);
+  const validEntries = authoredEntries.filter((entry) => currencyFor(data, entry.currency_id) && collectibleTargetAvailable(data, entry.target_category, entry.target_id));
+  const entries = validEntries.filter((entry) => !normalized
+    || entry.name.toLocaleLowerCase().includes(normalized)
+    || entry.target_id.toLocaleLowerCase().includes(normalized)
+    || collectibleName(data, entry.target_category, entry.target_id).toLocaleLowerCase().includes(normalized));
+
+  useEffect(() => {
+    authoredEntries.filter((entry) => !validEntries.includes(entry)).forEach((entry) => {
+      console.warn("Omitting shop entry with unavailable target or currency.", entry.id);
+    });
+  }, [authoredEntries.map((entry) => entry.id).join("|"), validEntries.map((entry) => entry.id).join("|")]);
+
+  async function purchase(entry: ShopEntry) {
+    setBusyEntry(entry.id); setFeedback(null);
+    const requestId = requestIds.current.get(entry.id) ?? crypto.randomUUID();
+    requestIds.current.set(entry.id, requestId);
+    try {
+      const receipt = await purchaseShopEntry(entry.id, requestId);
+      requestIds.current.delete(entry.id);
+      const hasDiscarded = receipt.discarded !== "0";
+      setFeedback({
+        tone: "success",
+        message: hasDiscarded
+          ? `Purchase complete. ${formatAmount(receipt.granted)} granted and ${formatAmount(receipt.discarded)} overflow discarded.`
+          : `Purchase complete. ${formatAmount(receipt.granted)} granted.`,
+      });
+      await onRefresh();
+    } catch (error) {
+      setFeedback({ tone: "error", message: shopErrorMessage(error) });
+    } finally {
+      setBusyEntry(null);
+    }
+  }
+
+  const groups: Array<{ type: CollectibleType; label: string }> = [
+    { type: "critter", label: "Critter Shards" },
+    { type: "rollcaster", label: "Rollcaster Shards" },
+    { type: "relic", label: "Relic Shards" },
+  ];
+
+  return (
+    <section className="screen-stack shop-screen">
+      <div className="screen-heading row"><div><p className="eyebrow">Camp Market</p><h1>Shop</h1><p>Spend your currencies on shards and Relics.</p></div><button className="secondary-button" onClick={onBack}>Back</button></div>
+      <div className="tabs shop-tabs" role="tablist" aria-label="Shop categories">
+        <button className={tab === "shard" ? "active" : ""} onClick={() => setTab("shard")}>Shard Shop</button>
+        <button className={tab === "relic" ? "active" : ""} onClick={() => setTab("relic")}>Relic Shop</button>
+        <button className={tab === "lootbox" ? "active" : ""} disabled title="Coming later">Lootbox Shop <small>Coming later</small></button>
+      </div>
+      <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or collectible ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, collectible name, or ID" /></label>
+      {feedback && <p className={`notice ${feedback.tone === "error" ? "error" : "success"}`} role="status">{feedback.message}</p>}
+      {tab === "lootbox" ? <div className="shop-empty"><ShoppingBag size={38} /><h2>Lootbox Shop</h2><p>Coming later. Lootboxes, rolls, pity rules, and awards are intentionally reserved for a separate system.</p></div> : tab === "shard" ? (
+        <div className="shop-groups">
+          {groups.map((group) => {
+            const grouped = entries.filter((entry) => entry.target_category === group.type);
+            if (!grouped.length) return null;
+            return <section className="shop-group" key={group.type}><h2>{group.label}</h2><div className="shop-grid">{grouped.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}</div></section>;
+          })}
+          {entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}
+        </div>
+      ) : <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>}
+    </section>
+  );
+}
+
+function ShopEmptyState({ hasAuthoredEntries }: { hasAuthoredEntries: boolean }) {
+  return <div className="shop-empty"><ShoppingBag size={34} /><h2>{hasAuthoredEntries ? "No shop entries match" : "No offers available yet"}</h2><p>{hasAuthoredEntries ? "Try a different name or collectible ID." : "Active offers authored in Content Studio will appear here."}</p></div>;
+}
+
+function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry: ShopEntry; busy: boolean; onPurchase: () => void }) {
+  const availability = shopAvailability(data, entry);
+  const soldOut = availability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || availability.code === "RELIC_MAX_OWNED_REACHED";
+  const currency = currencyFor(data, entry.currency_id)!;
+  const targetName = collectibleName(data, entry.target_category, entry.target_id);
+  const description = entry.description?.trim();
+  const showDescription = Boolean(description && !/\bshop offer for\b/i.test(description));
+  const inventory = entry.target_category === "relic" ? data.player!.relicInventory.find((row) => row.relic_id === entry.target_id) : undefined;
+  const relicChallenge = entry.shop_type === "relic" ? challengesFor(data, "relic", entry.target_id).find((row) => row.challenge_type === "shop_relic") : undefined;
+  const ownershipLabel = entry.shop_type === "shard"
+    ? `Shards: ${formatAmount(availability.current)} / ${formatAmount(availability.goal)}`
+    : collectibleIsOwned(data, "relic", entry.target_id)
+      ? `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(availability.goal)}`
+      : `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(relicChallenge?.required_amount ?? 0)} to unlock`;
+  return (
+    <article className={`shop-entry-card ${soldOut ? "sold-out" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"}>
+      <span className="shop-entry-category">{entry.target_category}</span>
+      <CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="md" shard={entry.shop_type === "shard"} />
+      <div className="shop-entry-copy"><h3>{entry.name}</h3><p className="shop-target">{targetName} ({entry.target_id})</p>{showDescription && <p>{description}</p>}</div>
+      <div className="shop-entry-meta">
+        <strong>{formatAmount(entry.quantity)} × {entry.shop_type === "shard" ? "Shards" : targetName}</strong>
+        <span className="shop-price"><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} />{formatAmount(entry.price)}</span>
+      </div>
+      <p className="shop-owned">{ownershipLabel}</p>
+      <button className="primary-button shop-purchase" disabled={busy || !availability.enabled} onClick={onPurchase}>{busy ? "Purchasing…" : "Purchase"}</button>
+      {!availability.enabled && <p className="shop-unavailable">{availability.reason}</p>}
+    </article>
+  );
+}
+
 function ElementFilter({ data, selectedId, onChange }: { data: AppData; selectedId: string | null; onChange: (id: string | null) => void }) {
   const [query, setQuery] = useState("");
   const detailsRef = useRef<HTMLDetailsElement>(null);
@@ -987,6 +1315,24 @@ function ElementIcon({ data, elementId }: { data: AppData; elementId: string }) 
   return <AssetIcon path={path} alt={`${element?.name ?? elementId} element`} fallback={<Sparkles size={16} />} />;
 }
 
+function CollectibleChallengeRows({ data, type, id, compact = true }: { data: AppData; type: CollectibleType; id: string; compact?: boolean }) {
+  const challenges = challengesFor(data, type, id);
+  if (!challenges.length) return <p className="collection-status challenge-empty">Not currently unlockable</p>;
+  return (
+    <div className={`challenge-rows ${compact ? "compact" : ""}`.trim()} aria-label={`${collectibleName(data, type, id)} unlock challenges`}>
+      {challenges.map((challenge) => {
+        const progress = progressFor(data, challenge.id);
+        return (
+          <div className={`challenge-row ${progress.completed ? "complete" : ""}`} key={challenge.id}>
+            <span>{challengeDescription(data, challenge)}</span>
+            <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function RollcasterGrid({
   data,
   rollcasters,
@@ -1010,11 +1356,7 @@ function RollcasterGrid({
             <span className="collectible-id">{rollcaster.id}</span>
             <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} size="hero" fit="portrait" /></CardSprite>
             <CardName data={data} name={rollcaster.name} />
-            <div className="collection-progression">
-              {owned ? <p>Level {owned.level}</p> : <p className="collection-status">Locked</p>}
-              <ProgressBar progress={progress} />
-            </div>
-            <PointCounter kind="ability" points={owned?.ability_points ?? 0} />
+            {owned ? <><div className="collection-progression"><p>Level {owned.level}</p><ProgressBar progress={progress} /></div><PointCounter kind="ability" points={owned.ability_points} /></> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} />}
           </button>
         );
       })}
@@ -1039,7 +1381,7 @@ function CritterGrid({
         return (
           <button
             key={critter.id}
-            className={`catalog-card critter-card ${!owned ? "locked" : ""}`}
+            className={`catalog-card critter-card ${!owned ? "locked challenge-locked" : ""}`}
             onClick={() => setDetail({ type: "critter", id: critter.id })}
           >
             <span className="collectible-id">{critter.id}</span>
@@ -1050,8 +1392,8 @@ function CritterGrid({
               size="large"
             /></CardSprite>
             <CardName data={data} name={critter.name} elementId={critter.element_id} />
-            <div className="collection-progression critter-progression">
-              {owned ? <><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></> : <><p className="collection-status">Locked</p><div className="locked-xp-space" aria-hidden="true" /></>}
+            <div className="collection-card-state">
+              {owned ? <div className="collection-progression critter-progression"><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} />}
             </div>
             <StatGrid stats={stats} compact />
             <PointCounter kind="skill" points={owned?.skill_points ?? 0} />
@@ -1067,20 +1409,22 @@ function RelicGrid({ data, relics, setDetail }: { data: AppData; relics: Relic[]
     <div className="collection-grid">
       {relics.map((relic) => {
         const inventory = data.player!.relicInventory.find((row) => row.relic_id === relic.id);
-        return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} onClick={() => setDetail({ type: "relic", id: relic.id })} />;
+        return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} unlocked={inventory?.discovered_at != null} onClick={() => setDetail({ type: "relic", id: relic.id })} />;
       })}
     </div>
   );
 }
 
-function RelicCard({ data, relic, quantity, onClick }: { data: AppData; relic: Relic; quantity: number; onClick: () => void }) {
+function RelicCard({ data, relic, quantity, unlocked, onClick }: { data: AppData; relic: Relic; quantity: number; unlocked: boolean; onClick: () => void }) {
   const effects = data.catalog.effectsByRelic[relic.id] ?? [];
   return (
-    <button className={`catalog-card relic-card ${quantity <= 0 ? "locked" : ""}`} onClick={onClick}>
+    <button className={`catalog-card relic-card ${!unlocked ? "locked" : ""}`} onClick={onClick}>
       <span className="collectible-id">{relic.id}</span>
       <CardSprite><Sprite name={relic.name} element="metal" assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} size="large" /></CardSprite>
       <CardName data={data} name={relic.name} />
-      {quantity > 0 ? <p>Owned {quantity} / {relic.max_owned}</p> : <p className="collection-status">Locked</p>}
+      <div className="collection-card-state">
+        {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} />}
+      </div>
       <EffectList effects={effects} className="relic-card-effects" />
     </button>
   );
@@ -1102,6 +1446,66 @@ function CardName({ data, name, elementId }: { data: AppData; name: string; elem
       {elementId && <AssetIcon path={path} alt={`${element?.name ?? elementId} element`} fallback={null} />}
       <strong>{name}</strong>
     </span>
+  );
+}
+
+function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { data: AppData; type: CollectibleType; id: string; unlocked: boolean; onRefresh: () => Promise<void> }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const challenges = challengesFor(data, type, id);
+  if (!challenges.length) return <section className="collectible-challenge-panel"><h3>Collect</h3><p className="challenge-empty">Not currently unlockable through challenges.</p></section>;
+  const required = requirementFor(data, type, id);
+  const complete = challenges.filter((challenge) => progressFor(data, challenge.id).completed).length;
+  const tracked = data.player!.collectibleSnapshot.tracked;
+  const sameCollectibleTracked = tracked.some((row) => {
+    const challenge = data.catalog.collectibleUnlockChallenges.find((candidate) => candidate.id === row.challenge_id);
+    return challenge?.collectible_type === type && challenge.collectible_id === id;
+  });
+  const trackingFull = tracked.length >= 3 && !sameCollectibleTracked;
+
+  async function changeTracking(challenge: CollectibleUnlockChallenge, currentlyTracked: boolean) {
+    setBusyId(challenge.id); setPanelError(null);
+    try {
+      if (currentlyTracked) await untrackCollectibleChallenge(challenge.id);
+      else await trackCollectibleChallenge(challenge.id);
+      await onRefresh();
+    } catch (error) {
+      const raw = errorMessage(error, "Unable to update challenge tracking.");
+      setPanelError(raw.includes("TRACKING_LIMIT_REACHED") ? "3 challenge limit reached" : raw);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <section className="collectible-challenge-panel">
+      <div className="challenge-panel-heading">
+        <div><p className="eyebrow">Collect</p><h3>Complete {required} of {challenges.length} challenges</h3></div>
+        <strong>{complete} complete</strong>
+      </div>
+      {required === 0 && <p className="challenge-note">Automatic challenge unlocking is disabled for this collectible.</p>}
+      {panelError && <p className="notice error" role="alert">{panelError}</p>}
+      <div className="challenge-detail-rows">
+        {challenges.map((challenge) => {
+          const progress = progressFor(data, challenge.id);
+          const slot = trackedSlotFor(data, challenge.id);
+          const trackable = isTrackableChallenge(challenge);
+          return (
+            <article className={`challenge-detail-row ${progress.completed ? "complete" : ""}`} key={challenge.id}>
+              <span>{challengeDescription(data, challenge)}</span>
+              <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
+              {!unlocked && trackable && <button
+                className={slot ? "secondary-button" : "primary-button"}
+                disabled={busyId === challenge.id || (!slot && trackingFull)}
+                title={!slot && trackingFull ? "3 challenge limit reached" : undefined}
+                onClick={() => changeTracking(challenge, slot !== null)}
+              >{slot ? `Untrack · Slot ${slot}` : "Track"}</button>}
+            </article>
+          );
+        })}
+      </div>
+      {!unlocked && trackingFull && <p className="challenge-note">3 challenge limit reached. Untrack one from the main page to add another collectible.</p>}
+    </section>
   );
 }
 
@@ -1146,6 +1550,7 @@ function DetailModal({
         {detailError && <p className="notice error" role="alert">{detailError}</p>}
         <CollectibleDetailHero data={data} id={critter.id} name={critter.name} elementId={critter.element_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} assetElement={critter.element_id} />
         <p className="detail-level">{owned ? `Level ${owned.level}` : "Locked"}</p>
+        <CollectibleChallengePanel data={data} type="critter" id={critter.id} unlocked={Boolean(owned)} onRefresh={onRefresh} />
         <StatGrid stats={stats} />
         <PointCounter kind="skill" points={owned?.skill_points ?? 0} />
         <h3>Skills</h3>
@@ -1178,6 +1583,7 @@ function DetailModal({
         <CollectibleDetailHero data={data} id={relic.id} name={relic.name} assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} assetElement="metal" />
         <p>{relic.description}</p>
         <p><strong>Owned:</strong> {quantity} / {relic.max_owned}</p>
+        <CollectibleChallengePanel data={data} type="relic" id={relic.id} unlocked={collectibleIsOwned(data, "relic", relic.id)} onRefresh={onRefresh} />
         <EffectList effects={data.catalog.effectsByRelic[relic.id] ?? []} className="effect-summary" />
       </Modal>
     );
@@ -1190,6 +1596,7 @@ function DetailModal({
     <Modal title={rollcaster.name} onClose={onClose}>
       <CollectibleDetailHero data={data} id={rollcaster.id} name={rollcaster.name} assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} assetElement="basic" />
       <p className="detail-level">{owned ? `Level ${owned.level}` : "Locked"}</p>
+      <CollectibleChallengePanel data={data} type="rollcaster" id={rollcaster.id} unlocked={Boolean(owned)} onRefresh={onRefresh} />
       {owned && <ProgressBar progress={xpProgress(data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id), owned.level, owned.xp)} />}
       <PointCounter kind="ability" points={owned?.ability_points ?? 0} />
       <h3>Abilities</h3>
@@ -1285,17 +1692,20 @@ function CombatScreen({
   data,
   combat,
   setCombat,
+  onTurnResolved,
   onBack,
   onWin,
 }: {
   data: AppData;
   combat: CombatState;
   setCombat: (state: CombatState) => void;
+  onTurnResolved: (state: CombatState) => Promise<void>;
   onBack: () => void;
   onWin: () => void;
 }) {
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
   const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill; mode: "select" | "preview" } | null>(null);
+  const [submittingProgress, setSubmittingProgress] = useState(false);
   const activePlayer = combat.playerUnits.filter((unit) => unit.active && unit.hp > 0);
   const totalCost = Object.values(actions).reduce((sum, action) => sum + action.cost, 0);
   const manaAssetPath = findAssetPath(data, "mana", "mana");
@@ -1408,15 +1818,17 @@ function CombatScreen({
             </div>
             <button
               className="primary-button"
-              disabled={Boolean(targeting) || totalCost > combat.playerMana}
-              onClick={() => {
+              disabled={submittingProgress || Boolean(targeting) || totalCost > combat.playerMana}
+              onClick={async () => {
                 const submitted = activePlayer.map(
                   (unit) => actions[unit.key] ?? { actorKey: unit.key, type: "skip", cost: 0 },
                 );
-                setCombat(resolveTurn(combat, submitted));
+                const resolved = resolveTurn(combat, submitted);
+                setSubmittingProgress(true);
+                try { await onTurnResolved(resolved); } finally { setSubmittingProgress(false); }
               }}
             >
-              Continue
+              {submittingProgress ? "Recording turn…" : "Continue"}
             </button>
           </>
         )}
@@ -1535,6 +1947,21 @@ function StatusIconRow({ data, statuses }: { data: AppData; statuses: CombatStat
       <span className="status-icon"><AssetIcon path={iconPath} alt={status.name} fallback={<Sparkles size={16} />} /><small>{instance.duration === null ? "∞" : instance.duration}</small></span>
     </GameTooltip>;
   })}</span>;
+}
+
+function UnlockNotification({ data, event, onClose }: { data: AppData; event: CollectibleUnlockEvent; onClose: () => void }) {
+  const name = collectibleName(data, event.collectible_type, event.collectible_id);
+  return (
+    <Modal title="Collection Updated" description={`${name} unlocked`} onClose={onClose}>
+      <div className="unlock-notification">
+        <CollectibleSprite data={data} type={event.collectible_type} id={event.collectible_id} size="md" />
+        <Sparkles size={28} />
+        <h2>{name} unlocked!</h2>
+        <p>Your new {event.collectible_type} is ready in the Collection.</p>
+        <button className="primary-button" onClick={onClose}>Continue</button>
+      </div>
+    </Modal>
+  );
 }
 
 function Modal({ title, description = "Item details", children, onClose }: { title: string; description?: string; children: React.ReactNode; onClose: () => void }) {

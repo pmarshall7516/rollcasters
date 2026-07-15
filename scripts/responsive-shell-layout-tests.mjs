@@ -5,7 +5,12 @@ import { chromium } from "playwright";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = path.join(root, "output", "responsive-shell-layout");
-const css = await readFile(path.join(root, "src", "styles.css"), "utf8");
+const [css, appSource] = await Promise.all([
+  readFile(path.join(root, "src", "styles.css"), "utf8"),
+  readFile(path.join(root, "src", "App.tsx"), "utf8"),
+]);
+const logo = await readFile(path.join(root, "src", "assets", "rollcasters-logo.png"));
+const logoUrl = "https://rollcasters.test/rollcasters-logo.png";
 
 const unit = (opponent = false) => `<article class="battle-unit ${opponent ? "opponent" : ""}">
   ${opponent ? "" : '<span class="combat-sprite-frame critter-combat-frame"><span class="sprite"></span></span>'}
@@ -14,9 +19,19 @@ const unit = (opponent = false) => `<article class="battle-unit ${opponent ? "op
 </article>`;
 
 const combatHtml = `<!doctype html><html><head><style>${css}</style></head><body><main class="app-shell">
-  <header class="top-bar">
-    <button class="brand-home-button"><span class="brand-logo-fallback signed-in">Rollcasters</span></button>
-    <div class="account-cluster"><span class="coin-pill">◆ 999</span><button class="icon-button">×</button></div>
+  <header class="top-bar currency-rich">
+    <div class="refresh-indicator" role="status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-15.2 6.5L3 16"/><path d="M3 21v-5h5"/><path d="M3 12A9 9 0 0 1 18.2 5.5L21 8"/><path d="M21 3v5h-5"/></svg><span>Refreshing</span><span class="sr-only"> game data</span></div>
+    <button class="brand-home-button" aria-label="Rollcasters home"><span class="brand-lockup"><img class="brand-logo signed-in" src="${logoUrl}" alt="Rollcasters"></span></button>
+    <div class="account-cluster">
+      <div class="currency-cluster" aria-label="Currency balances">
+        <span class="coin-pill currency-pill" data-currency-id="coins" style="color:#FFD65A">◆ <span>999</span></span>
+        <span class="coin-pill currency-pill" data-currency-id="prismite" style="color:#7DE8FF">♦ <span>14</span></span>
+        <span class="coin-pill currency-pill" data-currency-id="moonstone" style="color:#C6A8FF">● <span>7</span></span>
+        <span class="coin-pill currency-pill" data-currency-id="embers" style="color:#FF9B62">✦ <span>2</span></span>
+      </div>
+      <span class="user-pill">Player</span>
+      <button class="icon-button">×</button>
+    </div>
   </header>
   <section class="combat-screen">
     <header class="combat-header"><h1>Dungeon Battle</h1><div class="mana-readout"><span>Mana 8</span><span>Turn 3</span></div></header>
@@ -41,6 +56,7 @@ const browser = await chromium.launch({ headless: true });
 
 try {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
+  await page.route(logoUrl, (route) => route.fulfill({ status: 200, contentType: "image/png", body: logo }));
   await mkdir(outputDir, { recursive: true });
   const viewports = [
     { name: "wide", width: 1920, height: 1080 },
@@ -62,12 +78,30 @@ try {
       const screen = rect(".combat-screen");
       const brand = rect(".brand-home-button");
       const account = rect(".account-cluster");
+      const refresh = rect(".refresh-indicator");
+      const logo = document.querySelector(".brand-logo");
+      const refreshLabel = document.querySelector(".refresh-indicator > span:not(.sr-only)");
+      const refreshIconStyle = getComputedStyle(document.querySelector(".refresh-indicator svg"));
+      const currencyPills = [...document.querySelectorAll(".currency-pill")];
+      const overlaps = (left, right) => left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
       return {
         top,
         screen,
         battlefieldColumns: getComputedStyle(document.querySelector(".battlefield")).gridTemplateColumns.split(" ").length,
         rollcasterVisible: getComputedStyle(document.querySelector(".battle-rollcaster")).display !== "none",
-        headerItemsSeparate: brand.right <= account.left,
+        headerItemsSeparate: !overlaps(brand, account),
+        refreshSeparate: !overlaps(refresh, brand) && !overlaps(refresh, account),
+        accountBelowBrand: account.top >= brand.bottom,
+        refreshOnBrandRow: Math.abs((refresh.top + refresh.bottom) / 2 - (brand.top + brand.bottom) / 2) < 1,
+        refreshAnimated: refreshIconStyle.animationName === "refresh-spin" && refreshIconStyle.animationIterationCount === "infinite",
+        refreshLabelVisible: getComputedStyle(refreshLabel).display !== "none",
+        refreshStatusText: document.querySelector(".refresh-indicator").textContent.trim().replace(/\s+/g, " "),
+        imageLogoVisible: logo instanceof HTMLImageElement && logo.complete && logo.naturalWidth > 0 && logo.getBoundingClientRect().width > 0,
+        imageLogoUnfiltered: logo instanceof HTMLImageElement && getComputedStyle(logo).filter === "none",
+        textFallbackAbsent: document.querySelector(".brand-logo-fallback") === null,
+        currencyIds: currencyPills.map((pill) => pill.dataset.currencyId),
+        currencyColors: currencyPills.map((pill) => getComputedStyle(pill).color),
+        currencyClusterScrollSafe: document.querySelector(".currency-cluster").scrollWidth >= document.querySelector(".currency-cluster").clientWidth,
         matchingShellEdges: Math.abs(top.left - screen.left) < .1 && Math.abs(top.right - screen.right) < .1,
         noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
       };
@@ -80,8 +114,11 @@ try {
   const combatFailures = combatResults.filter((result) => {
     const expectedColumns = result.width > 960 ? 3 : 1;
     const expectedRollcaster = result.width > 960;
+    const expectedRefreshLabel = result.width > 600;
     const fillsViewport = result.screen.left <= Math.max(52, result.width * .03);
-    return !(result.battlefieldColumns === expectedColumns && result.rollcasterVisible === expectedRollcaster && result.headerItemsSeparate && result.matchingShellEdges && fillsViewport && result.noHorizontalOverflow);
+    const currenciesCorrect = result.currencyIds.join(",") === "coins,prismite,moonstone,embers" &&
+      result.currencyColors.join(",") === "rgb(255, 214, 90),rgb(125, 232, 255),rgb(198, 168, 255),rgb(255, 155, 98)";
+    return !(result.battlefieldColumns === expectedColumns && result.rollcasterVisible === expectedRollcaster && result.headerItemsSeparate && result.refreshSeparate && result.accountBelowBrand && result.refreshOnBrandRow && result.refreshAnimated && result.refreshLabelVisible === expectedRefreshLabel && result.refreshStatusText === "Refreshing game data" && result.imageLogoVisible && result.imageLogoUnfiltered && result.textFallbackAbsent && currenciesCorrect && result.currencyClusterScrollSafe && result.matchingShellEdges && fillsViewport && result.noHorizontalOverflow);
   });
 
   const modalResults = [];
@@ -104,6 +141,9 @@ try {
 
   const modalFailures = modalResults.filter((result) => !(result.withinViewport && result.noHorizontalOverflow && result.columns >= 1));
   const failures = [...combatFailures.map((result) => ({ surface: "combat", ...result })), ...modalFailures.map((result) => ({ surface: "modal", ...result }))];
+  if (/\{loading\s*&&\s*<div\s+className="notice"/.test(appSource)) {
+    failures.push({ surface: "app", issue: "Page-width loading notice is still rendered." });
+  }
   if (failures.length) throw new Error(`Responsive shell layout failures:\n${JSON.stringify(failures, null, 2)}`);
   console.log(JSON.stringify({ combat: combatResults, modals: modalResults }, null, 2));
 } finally {

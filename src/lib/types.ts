@@ -1,4 +1,112 @@
-export type View = "auth" | "starter" | "home" | "collection" | "play" | "combat" | "rewards";
+export type View = "auth" | "starter" | "home" | "collection" | "shop" | "play" | "combat" | "rewards";
+
+export type CollectibleType = "critter" | "rollcaster" | "relic";
+export type CollectibleChallengeType =
+  | "own_collectible"
+  | "level_up_critter"
+  | "knock_out_critters"
+  | "deal_damage"
+  | "take_damage"
+  | "use_skill"
+  | "shop_shards"
+  | "shop_relic";
+
+export type CurrencyDef = {
+  id: string;
+  name: string;
+  description: string;
+  asset_path: string | null;
+  text_color: string | null;
+  is_default: boolean;
+  is_system: boolean;
+  sort_order: number;
+  is_active: boolean;
+  is_archived: boolean;
+};
+
+export type CollectibleUnlockRequirement = {
+  collectible_type: CollectibleType;
+  collectible_id: string;
+  required_challenges: number;
+};
+
+export type CollectibleUnlockChallenge = {
+  id: string;
+  collectible_type: CollectibleType;
+  collectible_id: string;
+  challenge_type: CollectibleChallengeType;
+  target_category: CollectibleType | null;
+  target_id: string | null;
+  target_mode: "species" | "element" | "skill" | null;
+  any_target: boolean;
+  target_ids: string[];
+  required_amount: string | null;
+  required_level: number | null;
+  sort_order: number;
+};
+
+export type ShopEntry = {
+  id: string;
+  shop_type: "shard" | "relic";
+  name: string;
+  description: string;
+  target_category: CollectibleType;
+  target_id: string;
+  quantity: number;
+  currency_id: string;
+  price: string;
+  sort_order: number;
+  is_active: boolean;
+  is_archived: boolean;
+};
+
+export type UserCurrency = { currency_id: string; balance: string };
+export type UserCollectibleShard = { collectible_type: CollectibleType; collectible_id: string; quantity: string };
+export type UserCollectibleChallengeProgress = {
+  challenge_id: string;
+  current: string;
+  goal: string;
+  completed: boolean;
+};
+export type UserTrackedCollectibleChallenge = { challenge_id: string; slot_order: number };
+export type CollectibleUnlockEvent = {
+  id: string;
+  collectible_type: CollectibleType;
+  collectible_id: string;
+  created_at: string;
+};
+
+export type CollectiblePlayerSnapshot = {
+  currencies: UserCurrency[];
+  shards: UserCollectibleShard[];
+  progress: UserCollectibleChallengeProgress[];
+  tracked: UserTrackedCollectibleChallenge[];
+  unlock_events: CollectibleUnlockEvent[];
+};
+
+export type ShopPurchaseReceipt = {
+  request_id: string;
+  entry_id: string;
+  shop_type: "shard" | "relic";
+  target_category: CollectibleType;
+  target_id: string;
+  currency_id: string;
+  price: string;
+  balance: string;
+  granted: string;
+  discarded: string;
+  unlock_event_id: string | null;
+  created_at: string;
+};
+
+export type CombatProgressEvent = {
+  event_key: string;
+  event_type: "knock_out_critters" | "deal_damage" | "take_damage" | "use_skill";
+  source_critter_id: string | null;
+  target_critter_id: string | null;
+  skill_id: string | null;
+  amount: number;
+};
 
 export type ElementDef = {
   id: string;
@@ -98,6 +206,8 @@ export type Critter = {
   asset_path: string | null;
   description: string | null;
   sort_order: number;
+  is_active?: boolean;
+  is_archived?: boolean;
 };
 
 export type CritterProgression = {
@@ -131,6 +241,8 @@ export type Rollcaster = {
   asset_path: string | null;
   description: string | null;
   sort_order: number;
+  is_active?: boolean;
+  is_archived?: boolean;
 };
 
 export type RollcasterProgression = {
@@ -164,6 +276,8 @@ export type Relic = {
   max_owned: number;
   asset_path: string | null;
   sort_order: number;
+  is_active?: boolean;
+  is_archived?: boolean;
 };
 
 export type Dungeon = {
@@ -290,6 +404,10 @@ export type UserRelicSlot = {
 };
 
 export type Catalog = {
+  currencies: CurrencyDef[];
+  collectibleUnlockRequirements: CollectibleUnlockRequirement[];
+  collectibleUnlockChallenges: CollectibleUnlockChallenge[];
+  shopEntries: ShopEntry[];
   elements: ElementDef[];
   skills: Skill[];
   critters: Critter[];
@@ -324,6 +442,7 @@ export type PlayerState = {
   unlockedSkillIdsByCritter: Record<string, string[]>;
   unlockedAbilityIdsByRollcaster: Record<string, string[]>;
   dungeonProgress: UserDungeonProgress[];
+  collectibleSnapshot: CollectiblePlayerSnapshot;
 };
 
 export type AppData = {

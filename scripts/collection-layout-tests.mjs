@@ -8,15 +8,19 @@ const outputDir = path.join(root, "output", "collection-layout");
 const css = await readFile(path.join(root, "src", "styles.css"), "utf8");
 const card = (id, name) => {
   const owned = id === "004" || id === "005" || id === "009";
+  const unlockable = name === "Critter" ? Number(id) % 4 !== 0 : Number(id) % 2 === 0;
+  const challengeState = unlockable
+    ? '<div class="challenge-rows compact"><div class="challenge-row"><span>Complete an unlock challenge</span><strong>0 / 1</strong></div></div>'
+    : '<p class="collection-status challenge-empty">Not currently unlockable</p>';
   const progression = name === "Critter"
-    ? `<div class="collection-progression critter-progression">${owned
-      ? '<p>Level 2</p><div class="xp-progress"><div class="xp-bar"><span style="width:20%"></span></div><p>20 / 100 XP</p></div>'
-      : '<p class="collection-status">Locked</p><div class="locked-xp-space"></div>'}</div>`
+    ? `<div class="collection-card-state">${owned
+      ? '<div class="collection-progression critter-progression"><p>Level 2</p><div class="xp-progress"><div class="xp-bar"><span style="width:20%"></span></div><p>20 / 100 XP</p></div></div>'
+      : challengeState}</div>`
     : name === "Rollcaster"
       ? `<div class="collection-progression">${owned ? '<p>Level 1</p>' : '<p class="collection-status">Locked</p>'}<div class="xp-progress"><div class="xp-bar"><span style="width:0%"></span></div><p>0 / 120 XP</p></div></div>`
-      : owned ? '<p>Owned 1 / 5</p>' : '<p class="collection-status">Locked</p>';
+      : `<div class="collection-card-state">${owned ? '<p>Owned 1 / 5</p>' : challengeState}</div>`;
   return `
-  <button class="catalog-card ${name.toLowerCase()}-card ${owned ? "" : "locked"}">
+  <button class="catalog-card ${name.toLowerCase()}-card ${owned ? "" : `locked ${name === "Critter" ? "challenge-locked" : ""}`}" data-state="${owned ? "owned" : unlockable ? "unlockable" : "not-unlockable"}">
     <span class="collectible-id">${id}</span>
     <span class="card-sprite-frame ${name === "Rollcaster" ? "rollcaster-sprite-frame" : ""}"><span class="sprite"></span></span>
     <span class="card-name-row"><strong>${name}</strong></span>
@@ -76,13 +80,14 @@ try {
       const points = [...document.querySelectorAll(".point-counter")];
       const critterStatOffsets = [...document.querySelectorAll(".critter-card")].map((entry) => entry.querySelector(".stat-grid").getBoundingClientRect().top - entry.getBoundingClientRect().top);
       const critterStatWidths = [...document.querySelectorAll(".critter-card")].map((entry) => [...entry.querySelectorAll(".stat-grid > span")].map((cell) => cell.getBoundingClientRect().width));
+      const relicEffectOffsets = [...document.querySelectorAll(".relic-card")].map((entry) => entry.querySelector(".effect-list-row").getBoundingClientRect().top - entry.getBoundingClientRect().top);
       const critterSpacing = [...document.querySelectorAll(".critter-card")].map((entry) => {
         const cardRect = entry.getBoundingClientRect();
-        const progressionRect = entry.querySelector(".collection-progression").getBoundingClientRect();
+        const stateRect = entry.querySelector(".collection-card-state").getBoundingClientRect();
         const statsRect = entry.querySelector(".stat-grid").getBoundingClientRect();
         const pointsRect = entry.querySelector(".point-counter").getBoundingClientRect();
         return {
-          progressionToStats: statsRect.top - progressionRect.bottom,
+          stateToStats: statsRect.top - stateRect.bottom,
           statsToPoints: pointsRect.top - statsRect.bottom,
           pointsToBottom: cardRect.bottom - pointsRect.bottom,
         };
@@ -148,6 +153,7 @@ try {
         pointsVisible: points.every((entry) => entry.getBoundingClientRect().bottom <= entry.closest(".catalog-card").getBoundingClientRect().bottom),
         critterStatOffsets,
         critterStatWidths,
+        relicEffectOffsets,
         critterSpacing,
         stableScrollbarGutter: getComputedStyle(document.documentElement).scrollbarGutter.includes("stable"),
         statuses: statuses.map((entry) => ({
@@ -217,8 +223,9 @@ try {
     const pointCountersVisible = viewport.pointCount === 6 && viewport.pointsVisible;
     const critterStatsAligned = viewport.critterStatOffsets.every((offset) => Math.abs(offset - viewport.critterStatOffsets[0]) < 0.1);
     const critterStatsEqualWidth = viewport.critterStatWidths.every((widths) => widths.every((width) => Math.abs(width - widths[0]) < .1));
+    const relicEffectsAligned = viewport.relicEffectOffsets.every((offset) => Math.abs(offset - viewport.relicEffectOffsets[0]) < 0.1);
     const minimumGap = viewport.name === "mobile" ? 10 : 13;
-    const critterSpacingMatches = viewport.critterSpacing.every((spacing) => spacing.progressionToStats >= minimumGap && spacing.statsToPoints >= minimumGap && spacing.pointsToBottom >= 0);
+    const critterSpacingMatches = viewport.critterSpacing.every((spacing) => spacing.stateToStats >= minimumGap && spacing.statsToPoints >= minimumGap && spacing.pointsToBottom >= 0);
     const statusesMatch = viewport.statuses.every((entry) => entry.align === "center" && entry.transform === "uppercase" && entry.weight >= 700);
     const anchorsStable = JSON.stringify(viewport.beforeFilter) === JSON.stringify(viewport.anchors);
     const expectedColumns = { reference: 4, wide: 4, desktop: 3, "ipad-landscape": 2, "ipad-portrait": 2, mobile: 1 }[viewport.name];
@@ -236,9 +243,9 @@ try {
     const cardsAreWide = firstCard.width >= minimumCardWidth;
     const compactGap = Math.abs(viewport.gridColumnGap - 12) < .1;
     const layoutMatches = viewport.documentScrollable && viewport.noHorizontalOverflow && viewport.pageScrollY > 0 && viewport.gridColumns === expectedColumns && fillsViewport && !viewport.nestedGridScrollable && anchorsStable && viewport.stableScrollbarGutter;
-    return sameCards && responsiveCards && tabCardsMatch && gridEdgesMatch && columnEdgesMatch && tracksFillWidth && cardsAreWide && compactGap && manaFits && effectsVisible && pointCountersVisible && critterStatsAligned && critterStatsEqualWidth && critterSpacingMatches && statusesMatch && layoutMatches
+    return sameCards && responsiveCards && tabCardsMatch && gridEdgesMatch && columnEdgesMatch && tracksFillWidth && cardsAreWide && compactGap && manaFits && effectsVisible && pointCountersVisible && critterStatsAligned && critterStatsEqualWidth && relicEffectsAligned && critterSpacingMatches && statusesMatch && layoutMatches
       ? []
-      : [{ viewport: viewport.name, sameCards, responsiveCards, cards: viewport.cards, tabCardsMatch, gridEdgesMatch, columnEdgesMatch, tracksFillWidth, availableTrackWidth, cardsAreWide, minimumCardWidth, compactGap, gridColumnGap: viewport.gridColumnGap, manaFits, mana: viewport.mana, effectsVisible, pointCountersVisible, critterStatsAligned, critterStatsEqualWidth, critterSpacingMatches, critterSpacing: viewport.critterSpacing, statusesMatch, anchorsStable, fillsViewport, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, expectedColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
+      : [{ viewport: viewport.name, sameCards, responsiveCards, cards: viewport.cards, tabCardsMatch, gridEdgesMatch, columnEdgesMatch, tracksFillWidth, availableTrackWidth, cardsAreWide, minimumCardWidth, compactGap, gridColumnGap: viewport.gridColumnGap, manaFits, mana: viewport.mana, effectsVisible, pointCountersVisible, critterStatsAligned, critterStatsEqualWidth, relicEffectsAligned, relicEffectOffsets: viewport.relicEffectOffsets, critterSpacingMatches, critterSpacing: viewport.critterSpacing, statusesMatch, anchorsStable, fillsViewport, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, expectedColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
   });
 
   if (failures.length) throw new Error(`Collection layout failures:\n${JSON.stringify(failures, null, 2)}`);

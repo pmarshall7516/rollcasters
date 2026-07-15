@@ -1,6 +1,7 @@
 import type {
   Catalog,
   CombatAction,
+  CombatProgressEvent,
   Critter,
   CritterProgression,
   Dungeon,
@@ -125,6 +126,7 @@ export type CombatState = {
   statusRegistry: Record<string, Status>;
   rngState: number;
   snapshot: RunEffectSnapshot;
+  turnEvents: CombatProgressEvent[];
 };
 
 export function byId<T extends { id: string }>(items: T[], id: string | null | undefined): T | undefined {
@@ -377,6 +379,7 @@ export function createInitialCombatState(
           version: status.version ?? 1,
         })),
     },
+    turnEvents: [],
   };
   initialState = recomputeCombatStats(initialState);
   return initialState;
@@ -533,7 +536,7 @@ export function roundHalfUp(value: number): number {
 }
 
 export function startTurn(state: CombatState): CombatState {
-  let next = resolveTimedEffects(state, "start_of_turn");
+  let next = resolveTimedEffects({ ...state, turnEvents: [] }, "start_of_turn");
   let rngState = next.rngState;
   const playerUnits = next.playerUnits.map((unit) =>
     unit.active && unit.hp > 0
@@ -676,11 +679,22 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
       if (skill.skill_type === "attack") {
         const damage = calculateDamage(actor, target, skill);
         const finalDamage = target.blocking ? Math.max(1, Math.floor(damage * 0.1)) : damage;
-        damageDone += Math.min(target.hp, finalDamage);
-        return updateUnit(current, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - finalDamage) }), `${actor.name} used ${skill.name} on ${target.name} for ${finalDamage} damage.`);
+        const actualDamage = Math.min(target.hp, finalDamage);
+        damageDone += actualDamage;
+        const updated = updateUnit(current, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - finalDamage) }), `${actor.name} used ${skill.name} on ${target.name} for ${finalDamage} damage.`);
+        return appendDamageProgressEvents(updated, actor, target, actualDamage, target.hp - actualDamage <= 0);
       }
       return { ...current, log: [`${actor.name} used ${skill.name} on ${target.name}.`, ...current.log] };
     }, state);
+    if (actor.side === "player") {
+      next = appendProgressEvent(next, {
+        event_type: "use_skill",
+        source_critter_id: actor.critter.id,
+        target_critter_id: null,
+        skill_id: skill.id,
+        amount: 1,
+      });
+    }
     next = recomputeCombatStats(next);
     const effects = next.runEffects.skill[skill.id] ?? [];
     if (effects.length) {
@@ -897,7 +911,10 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
           ? target.maxHp * Number(effect.parameters.amount ?? 0)
           : Number(effect.parameters.amount ?? 0);
         const damage = Math.max(0, roundHalfUp(raw));
+        const actualDamage = Math.min(target.hp, damage);
         next = updateUnit(next, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - damage) }), `${target.name} took ${damage} damage from ${effect.name}.`);
+        const source = instance.sourceCritterKey ? findUnit(next, instance.sourceCritterKey) : undefined;
+        if (source) next = appendDamageProgressEvents(next, source, target, actualDamage, target.hp - actualDamage <= 0);
       }
     }
   }
@@ -978,6 +995,55 @@ function updateUnit(state: CombatState, key: string, updater: (unit: CombatUnit)
     opponentUnits: state.opponentUnits.map(update),
     log: [log, ...state.log],
   };
+}
+
+function appendProgressEvent(state: CombatState, event: Omit<CombatProgressEvent, "event_key">): CombatState {
+  const sequence = state.turnEvents.length + 1;
+  return {
+    ...state,
+    turnEvents: [...state.turnEvents, {
+      ...event,
+      event_key: `turn:${state.turn}:${sequence}:${event.event_type}`,
+    }],
+  };
+}
+
+function appendDamageProgressEvents(
+  state: CombatState,
+  source: CombatUnit,
+  target: CombatUnit,
+  actualDamage: number,
+  knockedOut: boolean,
+): CombatState {
+  if (actualDamage <= 0 || source.side === target.side) return state;
+  let next = state;
+  if (source.side === "player" && target.side === "opponent") {
+    next = appendProgressEvent(next, {
+      event_type: "deal_damage",
+      source_critter_id: source.critter.id,
+      target_critter_id: target.critter.id,
+      skill_id: null,
+      amount: actualDamage,
+    });
+    if (knockedOut) {
+      next = appendProgressEvent(next, {
+        event_type: "knock_out_critters",
+        source_critter_id: source.critter.id,
+        target_critter_id: target.critter.id,
+        skill_id: null,
+        amount: 1,
+      });
+    }
+  } else if (source.side === "opponent" && target.side === "player") {
+    next = appendProgressEvent(next, {
+      event_type: "take_damage",
+      source_critter_id: source.critter.id,
+      target_critter_id: target.critter.id,
+      skill_id: null,
+      amount: actualDamage,
+    });
+  }
+  return next;
 }
 
 function findUnit(state: CombatState, key: string): CombatUnit | undefined {
