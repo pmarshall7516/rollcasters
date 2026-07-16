@@ -324,6 +324,9 @@ export const setActiveRollcaster = (userRollcasterId: string) =>
 export const unlockCritterSkill = (userCritterId: string, skillId: string) =>
   callLoadoutRpc("unlock_critter_skill", { p_user_critter_id: userCritterId, p_skill_id: skillId });
 
+export const unlockRollcasterAbility = (userRollcasterId: string, abilityId: string) =>
+  callLoadoutRpc("unlock_rollcaster_ability", { p_user_rollcaster_id: userRollcasterId, p_ability_id: abilityId });
+
 export async function loadAppData(): Promise<AppData> {
   const [catalog, player] = await Promise.all([loadCatalog(), loadPlayerState()]);
   return { catalog, player };

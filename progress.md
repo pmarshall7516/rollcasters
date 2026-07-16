@@ -1,5 +1,27 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Skill and Ability point unlocks (2026-07-16)
+
+- Current request: fix the collection-popup `unlock_critter_skill` schema-cache failure and make both Skill points and Ability points spendable on their authored unlocks.
+- Confirmed the live schema had neither `unlock_critter_skill(uuid,text)` nor `unlock_rollcaster_ability(uuid,text)`. The Critter popup called the missing Skill RPC, while the Rollcaster popup had no Ability unlock action at all.
+- Added secure transactional RPCs that lock the owned character row, validate the authenticated owner, authored character/Skill or Rollcaster/Ability association, level gate, point balance, and duplicate state, then atomically deduct the exact cost and persist the unlock. Anonymous execution is explicitly revoked.
+- Added the missing Rollcaster Ability API call and collection-popup purchase action with busy/error states, point preflight copy, immediate refresh, and matching locked/unlockable presentation.
+- Per user direction, migration 014 adds no Skill, Ability, or unlock-mapping catalog rows. Database and browser tests use a disposable Ability mapping only when no paid authored Ability exists, then remove it.
+- Applied only migration 014 to the configured development database. Both functions are present in the live schema cache and the real signed-in popup flow successfully unlocked Headbutt with Skill points and a temporary-fixture Harden with Ability points, leaving 1 point in each balance.
+- Added rollback-only database coverage for function privileges, cross-user ownership, authored association, level gates, insufficient balances, exact deductions, persistence, and retry safety. Added a disposable-user browser fixture that exercises both popup buttons, verifies database persistence, captures pre/post states, checks browser errors, and audits cleanup.
+- Passed `npm run test:point-unlocks:db` before and after live application, `npm run test:point-unlocks:browser`, `npm run test:collection-interaction-ui`, `npm run test:collection-ui`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app web-game smoke client. Visually inspected both unlock controls, both unlocked popup states, and the smoke render; the final audit found zero temporary Ability mappings and zero disposable users.
+- No outstanding TODOs for the unlock mechanism. Paid Ability mappings will become player-visible as the user authors them.
+
+## Level progression point rewards (2026-07-16)
+
+- Current request: ensure Critters receive authored Skill point grants and Rollcasters receive authored Ability point grants as they level, including already-saved level progression that missed rewards.
+- Confirmed live Ramber is level 3 with 0 Skill points and a level-1 processed cursor despite authored level-2/3 grants of 1 + 2; live Roland has the equivalent missing Rollcaster rewards (2 + 2 Ability points).
+- Added migration 013 with idempotent processed-level triggers for single/multi-level jumps and an additive backfill that preserves already-spent points.
+- Added rollback-only database coverage for historic backfill, multi-level jumps, repeated level writes, later milestone rewards, point spending, and down-level/re-level idempotency.
+- Applied only migration 013 to the configured development database. Ramber now persists 3 Skill points at level 3, Roland persists 4 Ability points at level 3, and both processed-level cursors are 3.
+- Added a disposable-user signed-in browser fixture that levels Ramber/Roland through the real database triggers, reloads Collection, asserts the exact point-counter text, captures both cards, and cleans up the user.
+- Passed `npm run test:progression-points:db` both before and after live application, `npm run test:progression-points:browser`, `npm run test:collection-ui`, `npm run test:collection-interaction-ui`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app web-game client smoke. Visually inspected the live-backed Ramber/Roland Collection cards and the real app auth render; zero progression-browser errors and zero disposable users remained.
+
 ## Gate challenge runtime (2026-07-15)
 
 - Current request: review `docs/11-gate-challenges.md` and limit challenge tracking, progress, effective completion, and collectible unlocking until authored Gate Challenges are complete.
@@ -575,3 +597,88 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - Kept all eight stat cells identical in width and changed every cell to a left-aligned label with a right-aligned value.
 - Added responsive 4×2, 2×4, and 1×8 stat matrices so the shared width remains readable on narrow loadout slots.
 - Visually inspected wide desktop, desktop, iPad landscape, mobile, narrow-mobile, Skill equip parity, combat-shell, and real-app smoke screenshots. Final verification passes `test:home-loadout-layout`, `test:skill-equip-layout`, `test:responsive-shell-layout`, `build`, and `git diff --check`; the real-app browser client rendered the expected authentication state with matching text output and no console errors.
+
+## Compact gated-challenge collection cards (2026-07-16)
+
+- Current request: remove compact collection-card Gate pills, prevent large challenge lists from being clipped while preserving card/section height, update the ungated blocker copy, and render challenges Gate 1 → Gate 2 → ungated regardless of Content Studio insertion order.
+- Removed Gate pills only from compact collection-grid challenge rows; the detail popup retains Gate pills where the extra hierarchy is useful.
+- Changed shared challenge ordering to sort gated challenges by ascending `gate_order`, then by authored `sort_order`/ID within a gate, with all ungated challenges last. Updated the blocked ungated copy to `Complete all above challenges first` everywhere.
+- Converted the fixed collection-card state track from clipped overflow to a bounded vertical scroll pane with wheel/touch support, scroll snapping, contained overscroll, and hidden scrollbars in WebKit, Firefox, and legacy Edge. Card heights, Critter stat offsets, and lower content alignment remain unchanged.
+- Expanded unit coverage for shuffled gate/sort input, the responsive collection fixture with eight wrapping challenges and real wheel input, and the live disposable-user gate fixture with compact-card pill absence, row order, updated copy, loaded artwork, popup state, tracking eligibility, and cleanup.
+- Passed `npm run test:collectibles-shop`, `npm run test:collection-layout` across six responsive viewports, `npm run test:gate-challenges:browser` with zero browser errors, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app web-game smoke client. Visually inspected the compact live gated Critter card, blocked/eligible popup states, tracking HUD, full grids, top/bottom challenge-pane states on desktop/mobile, and the unauthenticated smoke render.
+- No outstanding TODOs for this UI change.
+
+## Collection-card challenge tracking (2026-07-16)
+
+- Current request: allow eligible Trackable challenges to be tracked directly from collection grid cards.
+- Added compact Track/Untrack actions to locked collectible challenge rows. Actions honor gate eligibility, effective completion, the three-slot global limit, one-tracked-challenge-per-collectible replacement behavior, busy states, and the same safe RPC error messages as the detail popup.
+- Replaced collection grid cards' outer button elements with semantic article containers so challenge actions are valid standalone buttons rather than nested controls. Whole-card pointer navigation remains intact, and every card now has a small keyboard-accessible details button.
+- Wrapped Rollcaster card progression/challenges in the same fixed scroll track used by Critters and Relics, preserving card height and hidden-scrollbar behavior across all collection tabs.
+- Expanded the responsive collection fixture to cover article semantics, zero nested buttons, details controls, Track/Untrack pressed states, containment, and eight-action scrolling at six viewports.
+- Expanded the disposable live gate scenario to prove blocked rows expose no action, final-gate completion reveals an enabled grid Track action, tracking does not open the modal, the card refreshes to Untrack, the detail popup reflects Slot 1, and the home HUD receives the challenge. The run completed with zero browser errors and cleaned up its disposable user/content.
+- Passed `npm run test:collectibles-shop`, `npm run test:collection-layout`, `npm run test:gate-challenges:browser`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app web-game smoke client. Visually inspected desktop/mobile action grids, scrolled panes, blocked/trackable/tracked live card states, popup synchronization, the tracking HUD, and the clean authentication smoke render.
+- No outstanding TODOs for this interaction.
+
+## Collection-card challenge row alignment (2026-07-16)
+
+- Current request: keep every compact challenge description and its progress value on the same row, without allowing progress from a blocked challenge to rise beside the `Complete all above challenges first` message.
+- Split blocker/status copy, challenge description, progress, and tracking action into explicit grid areas. Blocker copy now owns a full-width row above its challenge, while the description and progress share the next row and the Track/Untrack action remains below the progress value.
+- Added responsive geometry assertions that require description/progress top-edge alignment and require the blocker row to remain above both. The live gated-content browser scenario now verifies the same layout against real challenge data.
+- Passed the six-viewport `npm run test:collection-layout` suite and the disposable-user `npm run test:gate-challenges:browser` scenario with zero browser errors. Visually inspected desktop/mobile wrapping, the scrolled hidden-scrollbar pane, and blocked, trackable, and tracked live collection-card states.
+- No outstanding TODOs for this alignment fix.
+
+## Single moving challenge-gate boundary (2026-07-16)
+
+- Current request: show `Complete all above challenges first` only once before the currently locked portion of an ordered challenge list, move it below each newly completed gate, and remove it after the final gate completes.
+- Replaced per-row compact blocker copy with one shared boundary inserted before the first challenge whose player snapshot reports `eligible === false`. Blocked rows retain their muted state and tracking restrictions without repeating the message.
+- Applied the same single-boundary behavior to the challenge detail panel while retaining Gate badges on individual gated rows.
+- Expanded the responsive fixture to assert exactly one boundary before a contiguous locked group and preserved description/progress row alignment.
+- The live disposable fixture now contains Gate 1, Gate 2, and two ungated challenges. It proves the single boundary starts between Gate 1/Gate 2, moves between Gate 2/ungated after Gate 1 completes, disappears after Gate 2 completes, and then exposes grid-card tracking. Grid and detail rows never duplicate the blocker copy, description/progress alignment remains exact, and the run reports zero browser errors.
+- Passed `npm run test:collection-layout` across six viewports, `npm run test:gate-challenges:browser`, `npm run test:collectibles-shop`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app smoke client. Visually inspected initial, moved, and removed boundary states, the blocked and eligible detail panels, desktop/mobile scroll panes, and the clean auth smoke render.
+- No outstanding TODOs for this boundary behavior.
+
+## Slim collection challenge scrollbar (2026-07-16)
+
+- Current request: when a collectible card has more challenges than its fixed-height pane can show, display a very slim, sleek oval scrollbar to the right of the challenge progress values.
+- Replaced platform-dependent native overlay scrollbars—which macOS can auto-hide even when authored—with a measured in-card scrollbar that renders only when `scrollHeight` exceeds the fixed pane height.
+- Added a subtle 2px oval track and a visible 4px violet-to-cyan pill thumb inside a 10px interaction area. Challenge panes reserve 10px to the right of progress values, so the thumb never overlaps numbers or Track/Untrack controls.
+- The thumb follows wheel/touch scrolling, supports track clicks and pointer dragging, exposes current/max values through an accessible scrollbar role, and supports Arrow, Page, Home, and End keys. Resize observation keeps thumb size and overflow visibility synchronized as challenge data changes.
+- Expanded the six-viewport regression to require overflow-only rendering, exact track/thumb geometry, 999px rounding, progress clearance, hidden native scrollbars, real wheel movement, and synchronized top/bottom captures. The disposable live gate scenario verifies the same geometry with real challenge data plus thumb movement and Home/End behavior, and reports zero browser errors.
+- Passed `npm run test:collection-layout`, `npm run test:gate-challenges:browser`, `npm run test:collectibles-shop`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app smoke client. Visually inspected desktop/mobile top and bottom states, the real gated card and moving gate boundary, and the clean auth smoke render.
+- No outstanding TODOs for this scrollbar behavior.
+
+## Inline compact challenge tracking action (2026-07-16)
+
+- Current request: keep collection-grid Track buttons small and place them on the same row as their challenge description.
+- Changed compact challenge rows to one three-column grid: flexible description, tabular progress, and a fixed 46×20px Track/Untrack action at the far right. Long descriptions may wrap within their own column without pushing progress or the action onto a staggered second row.
+- Expanded responsive and live gated-card geometry checks to require identical description/progress/action top positions, rightward action order, exact compact button dimensions, card containment, and preserved scrollbar clearance.
+- The six-viewport collection suite and disposable live gate scenario pass. Visual inspection confirms Track and Untrack remain inline and small on desktop/mobile and with real challenge copy, while gate boundaries, wrapped descriptions, progress alignment, fixed card heights, and the slim overflow scrollbar remain clean. The live interaction refreshes to Untrack without opening the detail modal and reports zero browser errors.
+- Passed `npm run test:collection-layout`, `npm run test:gate-challenges:browser`, `npm run test:collectibles-shop`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app smoke client.
+- No outstanding TODOs for this inline action layout.
+
+## Consistent locked-card challenge scrollbar (2026-07-16)
+
+- Current request: show the slim challenge scrollbar on every locked collectible grid card, using a full-height thumb when the challenge pane does not need to scroll.
+- Added an explicit locked-card scrollbar state to Rollcaster, Critter, and Relic collection cards. Overflowing panes retain the proportional moving thumb; non-overflowing panes render the same 4px thumb across the full track and expose it as disabled/non-interactive. Owned cards remain scrollbar-free.
+- Changed scrollbar clearance to follow the locked-card state rather than challenge-row presence, so `Not currently unlockable` and short challenge panes receive the same consistent right-side treatment without overlap.
+- Expanded responsive and disposable live-card coverage to require one scrollbar on every locked card, no scrollbar on owned cards, exact track/thumb widths, full-height disabled thumbs for non-overflow, and proportional enabled thumbs for overflow.
+- Passed `npm run test:collection-layout` across six responsive viewports and `npm run test:gate-challenges:browser` with zero browser errors. Visual inspection confirms full-height pills on non-overflowing locked cards, proportional pills on scrolling challenge panes, consistent treatment across locked collectible types, and no scrollbar on owned cards.
+- Passed `npm run test:collectibles-shop`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app web-game smoke client. The fresh app rendered its clean unauthenticated state successfully.
+- No outstanding TODOs for this consistency change.
+
+## Collection-card Track button placement (2026-07-16)
+
+- Current request: place compact collection-grid Track/Untrack controls to the left of challenge progress values and vertically center them with the challenge description and progress.
+- Reordered the compact challenge grid to description → action → progress and changed row alignment from top-aligned to vertically centered.
+- Updated responsive and live gate-challenge geometry coverage to compare vertical centers and enforce that every compact action ends before its progress value begins.
+- Passed `npm run test:collection-layout` across six responsive viewports, `npm run typecheck`, `npm run build`, and the required real-app web-game smoke client. Visually inspected desktop/mobile collection renders, the scrolled challenge panes, and the clean unauthenticated smoke render.
+- No outstanding TODOs for this layout change.
+
+## Light-purple compact tracking buttons (2026-07-16)
+
+- Current request: make compact collection-card Track buttons light purple and ensure both `Track` and `Untrack` fit completely.
+- Changed the compact control to a high-contrast light-lavender treatment with a brighter hover/focus state and a distinct light-purple tracked state.
+- Increased the fixed width from 46px to 60px, added explicit nowrap behavior, and preserved the existing 20px compact height and vertical alignment.
+- Expanded responsive and live gate-challenge coverage to assert both button colors, exact width, nowrap behavior, and full label containment.
+- Passed `npm run test:collection-layout` across six responsive viewports, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app web-game smoke client. Desktop/mobile collection screenshots confirm the complete Track/Untrack labels remain visible; the smoke render and text state show a clean unauthenticated app with no captured errors.
+- No outstanding TODOs for this button treatment.

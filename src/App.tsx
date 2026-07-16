@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -43,6 +43,7 @@ import {
   trackCollectibleChallenge,
   untrackCollectibleChallenge,
   unlockCritterSkill,
+  unlockRollcasterAbility,
 } from "./lib/supabase";
 import {
   byId,
@@ -60,7 +61,6 @@ import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression
 import {
   challengeDescription,
   challengeGateBadge,
-  challengeGateBlockMessage,
   challengesFor,
   collectibleAssetPath,
   collectibleIsOwned,
@@ -1154,9 +1154,9 @@ function CollectionScreen({
         </div>
       </div>
       <div className="collection-grid-content">
-        {tab === "rollcasters" && <RollcasterGrid data={data} rollcasters={rollcasters} setDetail={setDetail} />}
-        {tab === "critters" && <CritterGrid data={data} critters={critters} setDetail={setDetail} />}
-        {tab === "relics" && <RelicGrid data={data} relics={relics} setDetail={setDetail} />}
+        {tab === "rollcasters" && <RollcasterGrid data={data} rollcasters={rollcasters} setDetail={setDetail} onRefresh={onRefresh} />}
+        {tab === "critters" && <CritterGrid data={data} critters={critters} setDetail={setDetail} onRefresh={onRefresh} />}
+        {tab === "relics" && <RelicGrid data={data} relics={relics} setDetail={setDetail} onRefresh={onRefresh} />}
         {displayedCount === 0 && <p className="collection-empty">No {tab} match the current filters.</p>}
       </div>
       {detail && <DetailModal data={data} detail={detail} onRefresh={onRefresh} onClose={() => setDetail(null)} />}
@@ -1320,28 +1320,196 @@ function ElementIcon({ data, elementId }: { data: AppData; elementId: string }) 
   return <AssetIcon path={path} alt={`${element?.name ?? elementId} element`} fallback={<Sparkles size={16} />} />;
 }
 
-function CollectibleChallengeRows({ data, type, id, compact = true }: { data: AppData; type: CollectibleType; id: string; compact?: boolean }) {
+function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }: { data: AppData; type: CollectibleType; id: string; onRefresh: () => Promise<void>; compact?: boolean }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [trackingError, setTrackingError] = useState<string | null>(null);
   const challenges = challengesFor(data, type, id);
   if (!challenges.length) return <p className="collection-status challenge-empty">Not currently unlockable</p>;
+  const tracked = data.player!.collectibleSnapshot.tracked;
+  const sameCollectibleTracked = tracked.some((row) => {
+    const challenge = data.catalog.collectibleUnlockChallenges.find((candidate) => candidate.id === row.challenge_id);
+    return challenge?.collectible_type === type && challenge.collectible_id === id;
+  });
+  const trackingFull = tracked.length >= 3 && !sameCollectibleTracked;
+  const firstBlockedChallengeId = challenges.find((challenge) => progressFor(data, challenge.id).eligible === false)?.id ?? null;
+
+  async function changeTracking(challenge: CollectibleUnlockChallenge, currentlyTracked: boolean) {
+    setBusyId(challenge.id);
+    setTrackingError(null);
+    try {
+      if (currentlyTracked) await untrackCollectibleChallenge(challenge.id);
+      else await trackCollectibleChallenge(challenge.id);
+      await onRefresh();
+    } catch (error) {
+      const raw = errorMessage(error, "Unable to update challenge tracking.");
+      setTrackingError(
+        raw.includes("CHALLENGE_GATED")
+          ? "Complete the required Gate Challenges before tracking this challenge."
+          : raw.includes("TRACKING_LIMIT_REACHED")
+            ? "3 challenge limit reached"
+            : raw,
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className={`challenge-rows ${compact ? "compact" : ""}`.trim()} aria-label={`${collectibleName(data, type, id)} unlock challenges`}>
+      {trackingError && <p className="grid-challenge-error" role="alert">{trackingError}</p>}
       {challenges.map((challenge) => {
         const progress = progressFor(data, challenge.id);
-        const gateBadge = challengeGateBadge(challenge);
-        const blockedMessage = challengeGateBlockMessage(challenge, progress);
+        const blocked = progress.eligible === false;
+        const slot = trackedSlotFor(data, challenge.id);
+        const trackedFamily = isTrackableChallenge(challenge);
+        const trackable = trackedFamily && progress.trackable !== false;
         return (
-          <div className={`challenge-row ${progress.completed ? "complete" : ""} ${blockedMessage ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()} key={challenge.id}>
-            <span className="challenge-row-copy">
-              {(gateBadge || blockedMessage) && <span className="challenge-state-line">
-                {gateBadge && <span className="gate-badge">{gateBadge}</span>}
-                {blockedMessage && <span className="gate-blocked"><Lock size={11} />{blockedMessage}</span>}
-              </span>}
-              <span>{challengeDescription(data, challenge)}</span>
-            </span>
-            <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
-          </div>
+          <Fragment key={challenge.id}>
+            {challenge.id === firstBlockedChallengeId && <div className="challenge-gate-boundary">
+              <span className="gate-blocked"><Lock size={11} />Complete all above challenges first</span>
+            </div>}
+            <div className={`challenge-row ${progress.completed ? "complete" : ""} ${blocked ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()}>
+              <span className="challenge-row-description">{challengeDescription(data, challenge)}</span>
+              <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
+              {trackedFamily && (trackable || slot !== null) && <button
+                type="button"
+                className="grid-challenge-track"
+                aria-label={`${slot ? "Untrack" : "Track"} ${challengeDescription(data, challenge)}`}
+                aria-pressed={slot !== null}
+                disabled={busyId === challenge.id || (!slot && trackingFull)}
+                title={!slot && trackingFull ? "3 challenge limit reached" : slot ? `Tracked in Slot ${slot}` : undefined}
+                onClick={() => changeTracking(challenge, slot !== null)}
+              >{busyId === challenge.id ? "…" : slot ? "Untrack" : "Track"}</button>}
+            </div>
+          </Fragment>
         );
       })}
+    </div>
+  );
+}
+
+type CollectionScrollMetrics = {
+  overflow: boolean;
+  scrollTop: number;
+  maxScroll: number;
+  thumbHeight: number;
+  thumbTop: number;
+};
+
+function CollectionCardState({ children, showScrollbar = false }: { children: React.ReactNode; showScrollbar?: boolean }) {
+  const scrollId = useId();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
+  const [metrics, setMetrics] = useState<CollectionScrollMetrics>({ overflow: false, scrollTop: 0, maxScroll: 0, thumbHeight: 0, thumbTop: 0 });
+
+  function syncScrollMetrics() {
+    const pane = scrollRef.current;
+    if (!pane) return;
+    const maxScroll = Math.max(0, pane.scrollHeight - pane.clientHeight);
+    const overflow = maxScroll > 1;
+    const trackHeight = Math.max(0, pane.clientHeight - 4);
+    const thumbHeight = showScrollbar
+      ? overflow ? Math.min(trackHeight, Math.max(22, trackHeight * pane.clientHeight / pane.scrollHeight)) : trackHeight
+      : 0;
+    const thumbTravel = Math.max(0, trackHeight - thumbHeight);
+    const thumbTop = maxScroll > 0 ? thumbTravel * pane.scrollTop / maxScroll : 0;
+    const next = { overflow, scrollTop: pane.scrollTop, maxScroll, thumbHeight, thumbTop };
+    setMetrics((current) => Object.keys(next).every((key) => current[key as keyof CollectionScrollMetrics] === next[key as keyof CollectionScrollMetrics]) ? current : next);
+  }
+
+  useLayoutEffect(() => {
+    const pane = scrollRef.current;
+    if (!pane) return;
+    syncScrollMetrics();
+    const resizeObserver = new ResizeObserver(syncScrollMetrics);
+    resizeObserver.observe(pane);
+    if (pane.firstElementChild) resizeObserver.observe(pane.firstElementChild);
+    return () => resizeObserver.disconnect();
+  }, [children, showScrollbar]);
+
+  function handleScrollbarPointerDown(event: React.PointerEvent<HTMLSpanElement>) {
+    if (event.target !== event.currentTarget) return;
+    const pane = scrollRef.current;
+    if (!pane || metrics.maxScroll <= 0) return;
+    const track = event.currentTarget.getBoundingClientRect();
+    const thumbTravel = Math.max(0, track.height - metrics.thumbHeight);
+    const nextThumbTop = Math.min(thumbTravel, Math.max(0, event.clientY - track.top - metrics.thumbHeight / 2));
+    pane.scrollTop = thumbTravel > 0 ? metrics.maxScroll * nextThumbTop / thumbTravel : 0;
+  }
+
+  function handleThumbPointerDown(event: React.PointerEvent<HTMLSpanElement>) {
+    const pane = scrollRef.current;
+    if (!pane) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { pointerId: event.pointerId, startY: event.clientY, startScrollTop: pane.scrollTop };
+  }
+
+  function handleThumbPointerMove(event: React.PointerEvent<HTMLSpanElement>) {
+    const pane = scrollRef.current;
+    const drag = dragRef.current;
+    if (!pane || !drag || drag.pointerId !== event.pointerId) return;
+    const trackHeight = Math.max(0, pane.clientHeight - 4);
+    const thumbTravel = Math.max(1, trackHeight - metrics.thumbHeight);
+    pane.scrollTop = drag.startScrollTop + (event.clientY - drag.startY) * metrics.maxScroll / thumbTravel;
+  }
+
+  function stopThumbDrag(event: React.PointerEvent<HTMLSpanElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function handleScrollbarKeyDown(event: React.KeyboardEvent<HTMLSpanElement>) {
+    const pane = scrollRef.current;
+    if (!pane) return;
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      pane.scrollTop = event.key === "Home" ? 0 : metrics.maxScroll;
+      return;
+    }
+    const increments: Partial<Record<string, number>> = {
+      ArrowUp: -32,
+      ArrowDown: 32,
+      PageUp: -pane.clientHeight * .85,
+      PageDown: pane.clientHeight * .85,
+    };
+    const increment = increments[event.key];
+    if (increment == null) return;
+    event.preventDefault();
+    pane.scrollTop += increment;
+  }
+
+  return (
+    <div className={`collection-card-state ${showScrollbar ? "with-scrollbar" : ""} ${metrics.overflow ? "scrollable" : ""}`.trim()}>
+      <div
+        id={scrollId}
+        ref={scrollRef}
+        className="collection-card-state-scroll"
+        tabIndex={metrics.overflow ? 0 : undefined}
+        onScroll={syncScrollMetrics}
+      >{children}</div>
+      {showScrollbar && <span
+        className="collection-card-scrollbar"
+        role="scrollbar"
+        tabIndex={metrics.overflow ? 0 : -1}
+        aria-label="Scroll collectible challenges"
+        aria-controls={scrollId}
+        aria-orientation="vertical"
+        aria-valuemin={0}
+        aria-valuemax={Math.round(metrics.maxScroll)}
+        aria-valuenow={Math.round(metrics.scrollTop)}
+        aria-disabled={!metrics.overflow}
+        onKeyDown={handleScrollbarKeyDown}
+        onPointerDown={handleScrollbarPointerDown}
+      ><span
+        className="collection-card-scrollbar-thumb"
+        style={{ height: metrics.thumbHeight, transform: `translateY(${metrics.thumbTop}px)` }}
+        onPointerDown={handleThumbPointerDown}
+        onPointerMove={handleThumbPointerMove}
+        onPointerUp={stopThumbDrag}
+        onPointerCancel={stopThumbDrag}
+      /></span>}
     </div>
   );
 }
@@ -1350,10 +1518,12 @@ function RollcasterGrid({
   data,
   rollcasters,
   setDetail,
+  onRefresh,
 }: {
   data: AppData;
   rollcasters: AppData["catalog"]["rollcasters"];
   setDetail: (detail: { type: "rollcaster"; id: string }) => void;
+  onRefresh: () => Promise<void>;
 }) {
   return (
     <div className="collection-grid">
@@ -1365,12 +1535,19 @@ function RollcasterGrid({
           owned?.xp ?? 0,
         );
         return (
-          <button key={rollcaster.id} className={`catalog-card rollcaster-card ${!owned ? "locked" : ""}`} onClick={() => setDetail({ type: "rollcaster", id: rollcaster.id })}>
+          <article key={rollcaster.id} className={`catalog-card rollcaster-card ${!owned ? "locked" : ""}`} onClick={(event) => {
+            if ((event.target as HTMLElement).closest("button")) return;
+            setDetail({ type: "rollcaster", id: rollcaster.id });
+          }}>
+            <button type="button" className="catalog-card-details" aria-label={`View ${rollcaster.name} details`} onClick={() => setDetail({ type: "rollcaster", id: rollcaster.id })}><Search size={14} aria-hidden="true" /></button>
             <span className="collectible-id">{rollcaster.id}</span>
             <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} size="hero" fit="portrait" /></CardSprite>
             <CardName data={data} name={rollcaster.name} />
-            {owned ? <><div className="collection-progression"><p>Level {owned.level}</p><ProgressBar progress={progress} /></div><PointCounter kind="ability" points={owned.ability_points} /></> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} />}
-          </button>
+            <CollectionCardState showScrollbar={!owned}>
+              {owned ? <div className="collection-progression"><p>Level {owned.level}</p><ProgressBar progress={progress} /></div> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} onRefresh={onRefresh} />}
+            </CollectionCardState>
+            <PointCounter kind="ability" points={owned?.ability_points ?? 0} />
+          </article>
         );
       })}
     </div>
@@ -1381,10 +1558,12 @@ function CritterGrid({
   data,
   critters,
   setDetail,
+  onRefresh,
 }: {
   data: AppData;
   critters: Critter[];
   setDetail: (detail: { type: "critter"; id: string }) => void;
+  onRefresh: () => Promise<void>;
 }) {
   return (
     <div className="collection-grid">
@@ -1392,11 +1571,15 @@ function CritterGrid({
         const owned = data.player!.critters.find((row) => row.critter_id === critter.id);
         const stats = critterStats(data.catalog, critter, owned?.level ?? 1);
         return (
-          <button
+          <article
             key={critter.id}
             className={`catalog-card critter-card ${!owned ? "locked challenge-locked" : ""}`}
-            onClick={() => setDetail({ type: "critter", id: critter.id })}
+            onClick={(event) => {
+              if ((event.target as HTMLElement).closest("button")) return;
+              setDetail({ type: "critter", id: critter.id });
+            }}
           >
+            <button type="button" className="catalog-card-details" aria-label={`View ${critter.name} details`} onClick={() => setDetail({ type: "critter", id: critter.id })}><Search size={14} aria-hidden="true" /></button>
             <span className="collectible-id">{critter.id}</span>
             <CardSprite><Sprite
               name={critter.name}
@@ -1405,41 +1588,45 @@ function CritterGrid({
               size="large"
             /></CardSprite>
             <CardName data={data} name={critter.name} elementId={critter.element_id} />
-            <div className="collection-card-state">
-              {owned ? <div className="collection-progression critter-progression"><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} />}
-            </div>
+            <CollectionCardState showScrollbar={!owned}>
+              {owned ? <div className="collection-progression critter-progression"><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} onRefresh={onRefresh} />}
+            </CollectionCardState>
             <StatGrid stats={stats} compact />
             <PointCounter kind="skill" points={owned?.skill_points ?? 0} />
-          </button>
+          </article>
         );
       })}
     </div>
   );
 }
 
-function RelicGrid({ data, relics, setDetail }: { data: AppData; relics: Relic[]; setDetail: (detail: { type: "relic"; id: string }) => void }) {
+function RelicGrid({ data, relics, setDetail, onRefresh }: { data: AppData; relics: Relic[]; setDetail: (detail: { type: "relic"; id: string }) => void; onRefresh: () => Promise<void> }) {
   return (
     <div className="collection-grid">
       {relics.map((relic) => {
         const inventory = data.player!.relicInventory.find((row) => row.relic_id === relic.id);
-        return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} unlocked={inventory?.discovered_at != null} onClick={() => setDetail({ type: "relic", id: relic.id })} />;
+        return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} unlocked={inventory?.discovered_at != null} onClick={() => setDetail({ type: "relic", id: relic.id })} onRefresh={onRefresh} />;
       })}
     </div>
   );
 }
 
-function RelicCard({ data, relic, quantity, unlocked, onClick }: { data: AppData; relic: Relic; quantity: number; unlocked: boolean; onClick: () => void }) {
+function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh }: { data: AppData; relic: Relic; quantity: number; unlocked: boolean; onClick: () => void; onRefresh: () => Promise<void> }) {
   const effects = data.catalog.effectsByRelic[relic.id] ?? [];
   return (
-    <button className={`catalog-card relic-card ${!unlocked ? "locked" : ""}`} onClick={onClick}>
+    <article className={`catalog-card relic-card ${!unlocked ? "locked" : ""}`} onClick={(event) => {
+      if ((event.target as HTMLElement).closest("button")) return;
+      onClick();
+    }}>
+      <button type="button" className="catalog-card-details" aria-label={`View ${relic.name} details`} onClick={onClick}><Search size={14} aria-hidden="true" /></button>
       <span className="collectible-id">{relic.id}</span>
       <CardSprite><Sprite name={relic.name} element="metal" assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} size="large" /></CardSprite>
       <CardName data={data} name={relic.name} />
-      <div className="collection-card-state">
-        {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} />}
-      </div>
+      <CollectionCardState showScrollbar={!unlocked}>
+        {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} onRefresh={onRefresh} />}
+      </CollectionCardState>
       <EffectList effects={effects} className="relic-card-effects" />
-    </button>
+    </article>
   );
 }
 
@@ -1475,6 +1662,7 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
     return challenge?.collectible_type === type && challenge.collectible_id === id;
   });
   const trackingFull = tracked.length >= 3 && !sameCollectibleTracked;
+  const firstBlockedChallengeId = challenges.find((challenge) => progressFor(data, challenge.id).eligible === false)?.id ?? null;
 
   async function changeTracking(challenge: CollectibleUnlockChallenge, currentlyTracked: boolean) {
     setBusyId(challenge.id); setPanelError(null);
@@ -1511,24 +1699,28 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
           const trackedFamily = isTrackableChallenge(challenge);
           const trackable = trackedFamily && progress.trackable !== false;
           const gateBadge = challengeGateBadge(challenge);
-          const blockedMessage = challengeGateBlockMessage(challenge, progress);
+          const blocked = progress.eligible === false;
           return (
-            <article className={`challenge-detail-row ${progress.completed ? "complete" : ""} ${blockedMessage ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()} key={challenge.id}>
-              <span className="challenge-detail-copy">
-                {(gateBadge || blockedMessage) && <span className="challenge-state-line">
-                  {gateBadge && <span className="gate-badge">{gateBadge}</span>}
-                  {blockedMessage && <span className="gate-blocked"><Lock size={12} />{blockedMessage}</span>}
-                </span>}
-                <span>{challengeDescription(data, challenge)}</span>
-              </span>
-              <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
-              {!unlocked && trackedFamily && (trackable || slot !== null) && <button
-                className={slot ? "secondary-button" : "primary-button"}
-                disabled={busyId === challenge.id || (!slot && trackingFull)}
-                title={!slot && trackingFull ? "3 challenge limit reached" : undefined}
-                onClick={() => changeTracking(challenge, slot !== null)}
-              >{slot ? `Untrack · Slot ${slot}` : "Track"}</button>}
-            </article>
+            <Fragment key={challenge.id}>
+              {challenge.id === firstBlockedChallengeId && <div className="challenge-gate-boundary challenge-detail-gate-boundary">
+                <span className="gate-blocked"><Lock size={12} />Complete all above challenges first</span>
+              </div>}
+              <article className={`challenge-detail-row ${progress.completed ? "complete" : ""} ${blocked ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()}>
+                <span className="challenge-detail-copy">
+                  {gateBadge && <span className="challenge-state-line">
+                    <span className="gate-badge">{gateBadge}</span>
+                  </span>}
+                  <span>{challengeDescription(data, challenge)}</span>
+                </span>
+                <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
+                {!unlocked && trackedFamily && (trackable || slot !== null) && <button
+                  className={slot ? "secondary-button" : "primary-button"}
+                  disabled={busyId === challenge.id || (!slot && trackingFull)}
+                  title={!slot && trackingFull ? "3 challenge limit reached" : undefined}
+                  onClick={() => changeTracking(challenge, slot !== null)}
+                >{slot ? `Untrack · Slot ${slot}` : "Track"}</button>}
+              </article>
+            </Fragment>
           );
         })}
       </div>
@@ -1563,6 +1755,23 @@ function DetailModal({
       await onRefresh();
     } catch (error) {
       setDetailError(errorMessage(error, "Unable to unlock this skill."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function purchaseAbility(owned: UserRollcaster, abilityId: string, cost: number) {
+    if (owned.ability_points < cost) {
+      setDetailError(`Not enough ability points. This ability costs ${cost}.`);
+      return;
+    }
+    setSaving(true);
+    setDetailError(null);
+    try {
+      await unlockRollcasterAbility(owned.id, abilityId);
+      await onRefresh();
+    } catch (error) {
+      setDetailError(errorMessage(error, "Unable to unlock this ability."));
     } finally {
       setSaving(false);
     }
@@ -1622,6 +1831,7 @@ function DetailModal({
   const abilityIds = owned ? data.player!.unlockedAbilityIdsByRollcaster[owned.id] ?? [] : [];
   return (
     <Modal title={rollcaster.name} onClose={onClose}>
+      {detailError && <p className="notice error" role="alert">{detailError}</p>}
       <CollectibleDetailHero data={data} id={rollcaster.id} name={rollcaster.name} assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} assetElement="basic" />
       <p className="detail-level">{owned ? `Level ${owned.level}` : "Locked"}</p>
       <CollectibleChallengePanel data={data} type="rollcaster" id={rollcaster.id} unlocked={Boolean(owned)} onRefresh={onRefresh} />
@@ -1635,14 +1845,16 @@ function DetailModal({
           .map((unlock) => {
             const ability = byId(data.catalog.rollcasterAbilities, unlock.ability_id)!;
             const unlocked = abilityIds.includes(ability.id);
+            const canPurchase = Boolean(owned && owned.level >= unlock.unlock_level && !unlocked);
             return (
-              <div key={ability.id} className={`detail-ability-tile ${unlocked ? "unlocked" : "locked"}`}>
+              <div key={ability.id} className={`detail-ability-tile ${unlocked ? "unlocked" : "locked"} ${canPurchase ? "unlockable" : "level-locked"}`}>
                 <article className={`detail-ability-card ${unlocked ? "unlocked" : "locked"}`}>
                   <span className="detail-ability-heading"><strong>{ability.name}</strong></span>
                   <span>{ability.description}</span>
                   <EffectList effects={data.catalog.effectsByAbility[ability.id] ?? []} />
                 </article>
                 <span className="unlock-requirement">Unlock level {unlock.unlock_level} · {unlock.unlock_cost} ability point{unlock.unlock_cost === 1 ? "" : "s"}</span>
+                {canPurchase && owned && <button className="primary-button ability-unlock-button" disabled={saving} onClick={() => purchaseAbility(owned, ability.id, unlock.unlock_cost)}>Unlock · {unlock.unlock_cost}</button>}
               </div>
             );
           })}

@@ -101,7 +101,7 @@ Delete a development user by email:
 DEV_ENABLE_USER_DELETE=true npm run db:delete-user -- --email test@example.com --yes
 ```
 
-This removes the matching row from `auth.users` through Supabase Auth Admin. Game save rows are configured to cascade from `auth.users(id)`. The command refuses to run unless `DEV_ENABLE_USER_DELETE=true`, `SUPABASE_SERVICE_ROLE_KEY`, and `--yes` are present.
+This removes the matching row from `auth.users` through Supabase Auth Admin. Game save rows are configured to cascade from `auth.users(id)`, catalog authorship is cleared, and historical audit actor IDs are retained. Apply `supabase/migrations/015_auth_user_delete_audit_fks.sql` before using the command. The command refuses to run unless `DEV_ENABLE_USER_DELETE=true`, `SUPABASE_SERVICE_ROLE_KEY`, and `--yes` are present.
 
 Direct database deletion is available only when explicitly requested and the DB certificate chain is configured:
 

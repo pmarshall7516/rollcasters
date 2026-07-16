@@ -2,6 +2,7 @@ import {
   challengeGateBadge,
   challengeGateBlockMessage,
   challengeDescription,
+  challengesFor,
   formatAmount,
   orderedCurrencies,
   safeBigInt,
@@ -121,6 +122,16 @@ check(shopAvailability(data({ balance: "100", relicQuantity: 2 }), relicEntry).c
 check(challengeDescription(data(), shardChallenge) === "Unlock Cragram shards", "Shard challenge copy must use the collectible name.");
 const laterGate = { ...shardChallenge, gate_order: 2 };
 check(challengeGateBadge(laterGate) === "Gate 2", "Gated rows must expose their authored Gate number.");
+const challengeOrderData = data();
+challengeOrderData.catalog.collectibleUnlockChallenges = [
+  { ...shardChallenge, id: "ungated", sort_order: 0 },
+  { ...shardChallenge, id: "gate-two", gate_order: 2, sort_order: 0 },
+  { ...shardChallenge, id: "gate-one", gate_order: 1, sort_order: 99 },
+];
+check(
+  challengesFor(challengeOrderData, "critter", "002").map((challenge) => challenge.id).join(",") === "gate-one,gate-two,ungated",
+  "Challenge display order must be Gate 1, then Gate 2, then ungated regardless of authored sort order or payload order.",
+);
 check(
   challengeGateBlockMessage(laterGate, {
     challenge_id: laterGate.id,
@@ -144,8 +155,8 @@ check(
     completed: false,
     blocked_by_gate_order: 1,
     trackable: false,
-  }) === "Complete all gates first",
-  "A blocked ungated row must explain that the full gate sequence is required.",
+  }) === "Complete all above challenges first",
+  "A blocked ungated row must explain that the challenges above it are required.",
 );
 check(shopErrorMessage(new Error("RPC failed: INSUFFICIENT_FUNDS")) === "You do not have enough currency for this purchase.", "RPC error codes must map to safe player-facing messages.");
 

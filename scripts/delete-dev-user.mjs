@@ -35,10 +35,10 @@ if (!email || !email.includes("@")) {
   throw new Error("Pass a valid email with --email user@example.com.");
 }
 
-if (env.SUPABASE_SERVICE_ROLE_KEY) {
-  await deleteViaAuthAdmin();
-} else if (args["direct-db"]) {
+if (args["direct-db"]) {
   await deleteViaDirectDb();
+} else if (env.SUPABASE_SERVICE_ROLE_KEY) {
+  await deleteViaAuthAdmin();
 } else {
   throw new Error(
     "Set SUPABASE_SERVICE_ROLE_KEY to delete via Supabase Auth Admin, or pass --direct-db with SUPABASE_DB_CA_CERT_PATH for verified direct database deletion.",
@@ -97,7 +97,7 @@ async function authAdminRequest(path, options = {}) {
       throw new Error(
         [
           `Supabase refused to delete the Auth user because a public table still has a restrictive foreign key: ${message}`,
-          "Apply supabase/migrations/002_auth_user_delete_audit_fks.sql, then rerun this command.",
+          "Apply supabase/migrations/015_auth_user_delete_audit_fks.sql, then rerun this command.",
         ].join("\n"),
       );
     }

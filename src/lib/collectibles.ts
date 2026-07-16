@@ -55,7 +55,11 @@ export function collectibleIsOwned(data: AppData, type: CollectibleType, id: str
 export function challengesFor(data: AppData, type: CollectibleType, id: string): CollectibleUnlockChallenge[] {
   return data.catalog.collectibleUnlockChallenges
     .filter((row) => row.collectible_type === type && row.collectible_id === id)
-    .sort((left, right) => left.sort_order - right.sort_order || left.id.localeCompare(right.id));
+    .sort((left, right) =>
+      (left.gate_order ?? Number.MAX_SAFE_INTEGER) - (right.gate_order ?? Number.MAX_SAFE_INTEGER) ||
+      left.sort_order - right.sort_order ||
+      left.id.localeCompare(right.id),
+    );
 }
 
 export function progressFor(data: AppData, challengeId: string): UserCollectibleChallengeProgress {
@@ -95,7 +99,7 @@ export function challengeGateBlockMessage(
   if (challenge.gate_order != null && progress.blocked_by_gate_order != null) {
     return `Waiting for Gate ${progress.blocked_by_gate_order}`;
   }
-  return "Complete all gates first";
+  return "Complete all above challenges first";
 }
 
 export function requirementFor(data: AppData, type: CollectibleType, id: string): number {
