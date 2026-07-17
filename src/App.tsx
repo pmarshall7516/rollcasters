@@ -33,6 +33,7 @@ import {
   setRollcasterAbilitySlot,
   setSquadSlot,
   selectStarterCritter,
+  selectStarterRollcaster,
   signIn,
   signOut,
   signUp,
@@ -90,6 +91,7 @@ import type {
   PlayerState,
   Relic,
   ResolvedEffectRef,
+  Rollcaster,
   Skill,
   ShopEntry,
   UserCritter,
@@ -125,6 +127,12 @@ function viewUrl(view: View, shopTab: ShopTab): string {
   return "/";
 }
 
+function requiredStarterView(player: PlayerState | null | undefined): View | null {
+  if (!player?.profile.starter_rollcaster_selected_at) return "starter-rollcaster";
+  if (!player.profile.starter_selected_at) return "starter";
+  return null;
+}
+
 export function App() {
   const [sessionReady, setSessionReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
@@ -155,12 +163,15 @@ export function App() {
       await ensureUserGameState();
       const loaded = await loadAppData();
       setData(loaded);
-      if (nextView) {
+      const requiredView = requiredStarterView(loaded.player);
+      if (requiredView) {
+        setView(requiredView);
+      } else if (nextView) {
         setView(nextView);
       } else {
         const route = routeFromLocation();
         setShopTab(route.shopTab);
-        setView(loaded.player?.profile.starter_selected_at ? route.view : "starter");
+        setView(route.view);
       }
     } catch (err) {
       console.error("Unable to load game data.", err);
@@ -199,14 +210,23 @@ export function App() {
 
   useEffect(() => {
     function popstate() {
-      if (!isAuthed || !data?.player?.profile.starter_selected_at) return;
+      if (!isAuthed || !data?.player) return;
+      const requiredView = requiredStarterView(data.player);
+      if (requiredView) {
+        setView(requiredView);
+        return;
+      }
       const route = routeFromLocation();
       setShopTab(route.shopTab);
       setView(route.view);
     }
     window.addEventListener("popstate", popstate);
     return () => window.removeEventListener("popstate", popstate);
-  }, [isAuthed, data?.player?.profile.starter_selected_at]);
+  }, [
+    isAuthed,
+    data?.player?.profile.starter_rollcaster_selected_at,
+    data?.player?.profile.starter_selected_at,
+  ]);
 
   const pendingUnlockIds = data?.player?.collectibleSnapshot.unlock_events.map((event) => event.id).join("|") ?? "";
   useEffect(() => {
@@ -228,7 +248,19 @@ export function App() {
         view,
         loading,
         authed: isAuthed,
+        starterRollcasterSelected: data?.player?.profile.starter_rollcaster_selected_at != null,
         starterSelected: data?.player?.profile.starter_selected_at != null,
+        onboarding: view === "starter-rollcaster"
+          ? {
+              stage: "rollcaster",
+              options: data?.catalog.starterRollcasterOptions.map((option) => option.rollcaster_id) ?? [],
+            }
+          : view === "starter"
+            ? {
+                stage: "critter",
+                options: data?.catalog.starterOptions.map((option) => option.critter_id) ?? [],
+              }
+            : null,
         coins: data?.player?.profile.coins ?? 0,
         currencies: data?.player?.collectibleSnapshot.currencies ?? [],
         trackedChallenges: data?.player?.collectibleSnapshot.tracked ?? [],
@@ -277,13 +309,29 @@ export function App() {
         data={data}
         player={data.player}
         refreshing={loading}
-        onHome={() => navigate(data.player?.profile.starter_selected_at ? "home" : "starter")}
+        onHome={() => navigate(requiredStarterView(data.player) ?? "home")}
         onSignOut={async () => {
           await signOut();
           setIsAuthed(false);
         }}
       />
       {error && <div className="notice error">{error}</div>}
+      {view === "starter-rollcaster" && (
+        <StarterRollcasterScreen
+          data={data}
+          onSelect={async (rollcasterId) => {
+            setLoading(true);
+            try {
+              await selectStarterRollcaster(rollcasterId);
+              await refresh("starter");
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Starter Rollcaster selection failed.");
+            } finally {
+              setLoading(false);
+            }
+          }}
+        />
+      )}
       {view === "starter" && (
         <StarterScreen
           data={data}
@@ -616,6 +664,71 @@ function BrandLogo({ compact = false }: { compact?: boolean }) {
   </span>;
 }
 
+function StarterRollcasterScreen({ data, onSelect }: { data: AppData; onSelect: (rollcasterId: string) => void }) {
+  const starterRollcasters = data.catalog.starterRollcasterOptions
+    .filter((option) => option.is_active)
+    .sort((left, right) => left.sort_order - right.sort_order)
+    .map((option) => byId(data.catalog.rollcasters, option.rollcaster_id))
+    .filter((rollcaster): rollcaster is Rollcaster => Boolean(rollcaster));
+
+  return (
+    <section className="screen-stack starter-selection-screen">
+      <div className="screen-heading">
+        <p className="eyebrow">Step 1 of 2</p>
+        <h1>Choose your starting Rollcaster</h1>
+        <p>Your Rollcaster leads the squad. Review each starter Ability before making your one-time choice.</p>
+      </div>
+      <div className="starter-rollcaster-row">
+        {starterRollcasters.map((rollcaster) => {
+          const starterUnlock = data.catalog.rollcasterAbilityUnlocks
+            .filter((unlock) =>
+              unlock.rollcaster_id === rollcaster.id &&
+              unlock.unlock_level === 1 &&
+              unlock.unlock_cost === 0
+            )
+            .sort((left, right) =>
+              Number(right.is_default) - Number(left.is_default) ||
+              left.sort_order - right.sort_order ||
+              left.ability_id.localeCompare(right.ability_id)
+            )[0];
+          const ability = starterUnlock
+            ? byId(data.catalog.rollcasterAbilities, starterUnlock.ability_id)
+            : undefined;
+          const effects = ability ? data.catalog.effectsByAbility[ability.id] ?? [] : [];
+          return (
+            <button
+              key={rollcaster.id}
+              className="catalog-card starter-rollcaster-card"
+              onClick={() => onSelect(rollcaster.id)}
+              aria-label={`Choose ${rollcaster.name} as your starting Rollcaster`}
+            >
+              <span className="collectible-id">{rollcaster.id}</span>
+              <CardSprite className="rollcaster-sprite-frame starter-rollcaster-sprite">
+                <Sprite
+                  name={rollcaster.name}
+                  element="basic"
+                  assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)}
+                  size="large"
+                  fit="portrait"
+                />
+              </CardSprite>
+              <CardName data={data} name={rollcaster.name} />
+              <p className="starter-rollcaster-description">{rollcaster.description}</p>
+              <span className="starter-ability-card">
+                <span className="eyebrow">Starter Ability</span>
+                <strong>{ability?.name ?? "No starter Ability authored"}</strong>
+                <span>{ability?.description ?? "This Rollcaster needs a level-1 starter Ability."}</span>
+                {effects.length > 0 && <EffectList effects={effects} className="starter-ability-effects" />}
+              </span>
+              <span className="primary-button full-width">Choose {rollcaster.name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function StarterScreen({ data, onSelect }: { data: AppData; onSelect: (critterId: string) => void }) {
   const starterCritters = data.catalog.starterOptions
     .filter((option) => option.is_active)
@@ -625,6 +738,7 @@ function StarterScreen({ data, onSelect }: { data: AppData; onSelect: (critterId
   return (
     <section className="screen-stack">
       <div className="screen-heading">
+        <p className="eyebrow">Step 2 of 2</p>
         <h1>Choose your starter critter</h1>
         <p>This choice creates your first squad member and cannot be repeated.</p>
       </div>

@@ -176,6 +176,12 @@ export async function selectStarterCritter(critterId: string): Promise<void> {
   if (error) throw error;
 }
 
+export async function selectStarterRollcaster(rollcasterId: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client.rpc("select_starter_rollcaster", { p_rollcaster_id: rollcasterId });
+  if (error) throw error;
+}
+
 export function getGameAssetUrl(assetPath: string | null | undefined): string | null {
   if (!assetPath) return null;
   if (/^https?:\/\//i.test(assetPath)) return assetPath;
@@ -198,6 +204,7 @@ export async function loadCatalog(): Promise<Catalog> {
     relics,
     dungeons,
     dungeonOpponents,
+    starterRollcasterOptions,
     starterOptions,
     gameAssets,
     statuses,
@@ -217,6 +224,7 @@ export async function loadCatalog(): Promise<Catalog> {
     selectAll("relics"),
     selectAll("dungeons"),
     selectAll("dungeon_opponents", "sequence_index"),
+    selectAll("starter_rollcaster_options"),
     selectAll("starter_options"),
     selectAllOptional("game_assets"),
     selectAll("statuses"),
@@ -248,6 +256,7 @@ export async function loadCatalog(): Promise<Catalog> {
     relics,
     dungeons,
     dungeonOpponents,
+    starterRollcasterOptions,
     starterOptions,
     gameAssets,
     statuses,

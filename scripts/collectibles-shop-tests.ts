@@ -83,7 +83,7 @@ function data(options: { balance?: string; shards?: string; ownsCritter?: boolea
       skills: [],
     } as AppData["catalog"],
     player: {
-      profile: { user_id: "user", username: "Tester", coins: 0, starter_selected_at: "now", active_rollcaster_id: null },
+      profile: { user_id: "user", username: "Tester", coins: 0, starter_rollcaster_selected_at: "now", starter_selected_at: "now", active_rollcaster_id: null },
       rollcasters: [],
       critters: options.ownsCritter ? [{ id: "owned", user_id: "user", critter_id: "002", level: 1, xp: 0, skill_points: 0 }] : [],
       relicInventory: options.relicQuantity === undefined ? [] : [{ user_id: "user", relic_id: "relic-001", quantity: options.relicQuantity, discovered_at: "now" }],

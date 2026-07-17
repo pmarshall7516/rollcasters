@@ -162,6 +162,8 @@ try {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "starter-rollcaster");
+  await page.locator(".starter-rollcaster-card").first().click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "starter");
   await page.locator('.starter-card:has(> .collectible-id:text-is("001"))').click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");

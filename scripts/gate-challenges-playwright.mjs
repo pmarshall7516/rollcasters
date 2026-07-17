@@ -229,6 +229,8 @@ try {
   userId = created.id;
 
   let page = await openSignedInPage();
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "starter-rollcaster");
+  await page.locator(".starter-rollcaster-card").first().click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "starter");
   await page.locator(".starter-card").first().click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");

@@ -2130,3 +2130,83 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Two-step starter selection */
+.starter-selection-screen {
+  width: 100%;
+}
+
+.starter-rollcaster-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--layout-gap);
+  width: 100%;
+}
+
+.starter-rollcaster-card {
+  grid-template-rows: auto auto auto minmax(48px, auto) 1fr auto;
+  justify-items: center;
+  min-height: 540px;
+  text-align: center;
+}
+
+.starter-rollcaster-card > .collectible-id {
+  justify-self: start;
+}
+
+.starter-rollcaster-card .starter-rollcaster-sprite {
+  width: 176px !important;
+  max-width: 58%;
+}
+
+.starter-rollcaster-card .card-name-row {
+  font-size: 24px;
+}
+
+.starter-rollcaster-description {
+  max-width: 34ch;
+  color: var(--text-secondary) !important;
+  line-height: 1.45;
+  text-wrap: balance;
+}
+
+.starter-ability-card {
+  display: grid;
+  align-self: stretch;
+  align-content: start;
+  gap: 7px;
+  width: 100%;
+  min-height: 132px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 13px;
+  background: linear-gradient(145deg, rgb(27 34 66 / 95%), rgb(11 15 34 / 96%));
+  color: var(--text-secondary);
+  line-height: 1.4;
+  text-align: left;
+}
+
+.starter-ability-card > strong {
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.starter-ability-card > .eyebrow {
+  color: var(--accent-cyan);
+}
+
+.starter-ability-effects {
+  padding-top: 7px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .starter-rollcaster-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .starter-rollcaster-card {
+    min-height: 0;
+  }
+}

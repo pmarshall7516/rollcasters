@@ -65,7 +65,7 @@ const catalog = {
   ], rollcasterAbilityUnlocks: [], relics: [
     { id: "guard", name: "Guard Charm", description: "Guard Charm", max_owned: 1, asset_path: null, sort_order: 1 },
     { id: "ally-aura", name: "Ally Aura", description: "Ally Aura", max_owned: 1, asset_path: null, sort_order: 2 },
-  ], dungeons: [], dungeonOpponents: [], starterOptions: [], gameAssets: [], statuses: [],
+  ], dungeons: [], dungeonOpponents: [], starterRollcasterOptions: [], starterOptions: [], gameAssets: [], statuses: [],
   effectsBySkill: {},
   effectsByAbility: {
     "high-roll": [
@@ -84,7 +84,7 @@ const catalog = {
 } as Catalog;
 
 const player = {
-  profile: { user_id: "user", username: "Test", coins: 0, starter_selected_at: "now", active_rollcaster_id: "owned-rollcaster" },
+  profile: { user_id: "user", username: "Test", coins: 0, starter_rollcaster_selected_at: "now", starter_selected_at: "now", active_rollcaster_id: "owned-rollcaster" },
   rollcasters: [{ id: "owned-rollcaster", user_id: "user", rollcaster_id: "001", level: 1, xp: 0, ability_points: 0 }],
   critters: [
     { id: "owned-hero", user_id: "user", critter_id: "hero", level: 1, xp: 0, skill_points: 0 },

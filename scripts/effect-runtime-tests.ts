@@ -71,6 +71,7 @@ function makeCatalog(): Catalog {
       { id: "opp1", dungeon_id: "d", pool_type: "regular_pool", sequence_index: 0, probability: 1, critter_id: "o1", critter_level: 1, skill_ids: [], relic_ids: [], rollcaster_xp_reward: 0, critter_xp_reward: 0, currency_reward: 0, drops: [] },
       { id: "opp2", dungeon_id: "d", pool_type: "regular_pool", sequence_index: 1, probability: 1, critter_id: "o2", critter_level: 1, skill_ids: [], relic_ids: [], rollcaster_xp_reward: 0, critter_xp_reward: 0, currency_reward: 0, drops: [] },
     ],
+    starterRollcasterOptions: [],
     starterOptions: [],
     gameAssets: [],
     statuses: [
@@ -88,7 +89,7 @@ function makeCatalog(): Catalog {
 
 function makePlayer(): PlayerState {
   return {
-    profile: { user_id: "u", username: "u", coins: 0, starter_selected_at: "now", active_rollcaster_id: "ur" },
+    profile: { user_id: "u", username: "u", coins: 0, starter_rollcaster_selected_at: "now", starter_selected_at: "now", active_rollcaster_id: "ur" },
     rollcasters: [{ id: "ur", user_id: "u", rollcaster_id: "rc", level: 1, xp: 0, ability_points: 0 }],
     critters: [
       { id: "up1", user_id: "u", critter_id: "p1", level: 1, xp: 0, skill_points: 0 },

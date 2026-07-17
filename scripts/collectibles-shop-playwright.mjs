@@ -157,6 +157,8 @@ try {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "starter-rollcaster");
+  await page.locator(".starter-rollcaster-card").first().click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "starter");
   const selectedStarterCard = page.locator(".starter-card").first();
   const selectedStarterId = (await selectedStarterCard.locator(".collectible-id").textContent())?.trim();

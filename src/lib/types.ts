@@ -1,4 +1,4 @@
-export type View = "auth" | "starter" | "home" | "collection" | "shop" | "play" | "combat" | "rewards";
+export type View = "auth" | "starter-rollcaster" | "starter" | "home" | "collection" | "shop" | "play" | "combat" | "rewards";
 
 export type CollectibleType = "critter" | "rollcaster" | "relic";
 export type CollectibleChallengeType =
@@ -327,6 +327,12 @@ export type StarterOption = {
   is_active: boolean;
 };
 
+export type StarterRollcasterOption = {
+  rollcaster_id: string;
+  sort_order: number;
+  is_active: boolean;
+};
+
 export type GameAsset = {
   id: string;
   bucket_id: string;
@@ -348,6 +354,7 @@ export type Profile = {
   user_id: string;
   username: string;
   coins: number;
+  starter_rollcaster_selected_at: string | null;
   starter_selected_at: string | null;
   active_rollcaster_id: string | null;
 };
@@ -426,6 +433,7 @@ export type Catalog = {
   relics: Relic[];
   dungeons: Dungeon[];
   dungeonOpponents: DungeonOpponent[];
+  starterRollcasterOptions: StarterRollcasterOption[];
   starterOptions: StarterOption[];
   gameAssets: GameAsset[];
   statuses: Status[];
