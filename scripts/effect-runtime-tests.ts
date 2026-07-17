@@ -1,5 +1,5 @@
 import { groupCombatEffectRows } from "../src/lib/effects.js";
-import { createInitialCombatState, resolveTurn, roundHalfUp } from "../src/lib/game.js";
+import { createInitialCombatState, critterElementIds, critterHasElement, matchesSelectedElements, resolveTurn, roundHalfUp } from "../src/lib/game.js";
 import type { Catalog, CombatAction, EffectOwnerType, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -34,6 +34,7 @@ function makeCatalog(): Catalog {
     elements: [
       { id: "basic", name: "Basic", description: null, asset_path: null, sort_order: 0 },
       { id: "bloom", name: "Bloom", description: null, asset_path: null, sort_order: 1 },
+      { id: "aqua", name: "Aqua", description: null, asset_path: null, sort_order: 2 },
     ],
     skills: [
       { id: "strike", name: "Strike", element_id: "basic", skill_type: "attack", power: 50, mana_cost: 5, targeting: "single_enemy", description: "Strike.", sort_order: 0 },
@@ -42,11 +43,11 @@ function makeCatalog(): Catalog {
       { id: "wave", name: "Wave", element_id: "basic", skill_type: "attack", power: 1, mana_cost: 0, targeting: "all_enemies", description: "Wave.", sort_order: 3 },
     ],
     critters: [
-      { id: "p1", name: "Player One", element_id: "basic", base_hp: 100, base_atk: 25, base_def: 25, base_spd: 30, base_dice_min: 2, base_dice_max: 4, base_block_cost: 3, base_swap_cost: 4, asset_path: null, description: null, sort_order: 0 },
-      { id: "p2", name: "Player Two", element_id: "bloom", base_hp: 80, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 3, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 1 },
-      { id: "p3", name: "Player Three", element_id: "basic", base_hp: 90, base_atk: 22, base_def: 22, base_spd: 15, base_dice_min: 1, base_dice_max: 5, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 2 },
-      { id: "o1", name: "Opponent One", element_id: "basic", base_hp: 100, base_atk: 24, base_def: 25, base_spd: 12, base_dice_min: 1, base_dice_max: 4, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 3 },
-      { id: "o2", name: "Opponent Two", element_id: "bloom", base_hp: 120, base_atk: 26, base_def: 20, base_spd: 10, base_dice_min: 2, base_dice_max: 5, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 4 },
+      { id: "p1", name: "Player One", element_1_id: "basic", element_2_id: null, base_hp: 100, base_atk: 25, base_def: 25, base_spd: 30, base_dice_min: 2, base_dice_max: 4, base_block_cost: 3, base_swap_cost: 4, asset_path: null, description: null, sort_order: 0 },
+      { id: "p2", name: "Player Two", element_1_id: "bloom", element_2_id: "aqua", base_hp: 80, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 3, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 1 },
+      { id: "p3", name: "Player Three", element_1_id: "basic", element_2_id: null, base_hp: 90, base_atk: 22, base_def: 22, base_spd: 15, base_dice_min: 1, base_dice_max: 5, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 2 },
+      { id: "o1", name: "Opponent One", element_1_id: "basic", element_2_id: null, base_hp: 100, base_atk: 24, base_def: 25, base_spd: 12, base_dice_min: 1, base_dice_max: 4, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 3 },
+      { id: "o2", name: "Opponent Two", element_1_id: "bloom", element_2_id: "aqua", base_hp: 120, base_atk: 26, base_def: 20, base_spd: 10, base_dice_min: 2, base_dice_max: 5, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 4 },
     ],
     critterProgression: [],
     critterSkillUnlocks: [],
@@ -124,6 +125,11 @@ function takeTurn(state: ReturnType<typeof battle>, actions: CombatAction[], man
 }
 
 const eventCatalog = makeCatalog();
+check(critterElementIds(eventCatalog.critters[0]).join(",") === "basic", "A one-type Critter must expose only Element 1.");
+check(critterElementIds(eventCatalog.critters[1]).join(",") === "bloom,aqua", "A two-type Critter must preserve Element 1 then Element 2.");
+check(critterHasElement(eventCatalog.critters[1], "bloom") && critterHasElement(eventCatalog.critters[1], "aqua"), "Element membership must match either Critter slot.");
+check(matchesSelectedElements(eventCatalog.critters[1], new Set(["aqua"])), "Flat filters must match Element 2.");
+check(!matchesSelectedElements(eventCatalog.critters[1], new Set(["basic"])), "Flat filters must reject Critters with neither selected Element.");
 let eventBattle = battle(eventCatalog, makePlayer(), "progress-events");
 eventBattle.opponentMana = 0;
 const eventTarget = eventBattle.opponentUnits[0];
@@ -169,7 +175,7 @@ let passive = battle(passiveCatalog, passivePlayer, "passives");
 check(passive.playerUnits[0].maxHp === 110, "equipped_critter must affect only the active Relic carrier.");
 check(passive.playerUnits[0].stats.def === 28 && passive.playerUnits[1].stats.def === 22, "Ability all_friendlies percentage modifiers must use half-up delta rounding per recipient.");
 check(passive.playerUnits[1].stats.atk === 23 && passive.playerUnits[0].stats.atk === 25, "equipped_allies must exclude the Relic carrier.");
-check(passive.playerUnits[0].stats.diceMin === 3 && passive.playerUnits[1].stats.diceMin === 3 && passive.playerUnits[1].stats.diceMax === 6, "Relic friendlies and element-filtered Ability Mana modifiers must recompute together.");
+check(passive.playerUnits[0].stats.diceMin === 3 && passive.playerUnits[1].stats.diceMin === 3 && passive.playerUnits[1].stats.diceMax === 6, "Existing primary-Element Ability targeting must remain unchanged for a dual-type Critter.");
 check(passive.opponentUnits[0].stats.atk === 22 && passive.opponentUnits[1].stats.atk === 24, "Ability all_enemies must affect every active opponent.");
 check(passive.opponentUnits[0].stats.spd === 10 && passive.opponentUnits[1].stats.spd === 8, "Relic all_enemies must resolve relative to its carrier.");
 check(passive.opponentUnits[0].stats.diceMin === 1 && passive.opponentUnits[1].stats.diceMin === 4 && passive.opponentUnits[1].stats.diceMax === 8, "Ability element enemy targeting must filter active opponents by element.");

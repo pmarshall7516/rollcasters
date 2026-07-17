@@ -199,7 +199,8 @@ export type Skill = {
 export type Critter = {
   id: string;
   name: string;
-  element_id: string;
+  element_1_id: string;
+  element_2_id: string | null;
   base_hp: number;
   base_atk: number;
   base_def: number;

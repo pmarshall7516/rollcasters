@@ -48,8 +48,10 @@ import {
 import {
   byId,
   createInitialCombatState,
+  critterElementIds,
   critterStats,
   isSingleTarget,
+  matchesSelectedElements,
   resolveTurn,
   skillTargets,
   squadCritters,
@@ -240,6 +242,7 @@ export function App() {
               opponentMana: combat.opponentMana,
               player: combat.playerUnits.map((unit) => ({
                 name: unit.name,
+                elementIds: critterElementIds(unit.critter),
                 hp: unit.hp,
                 maxHp: unit.maxHp,
                 active: unit.active,
@@ -248,6 +251,7 @@ export function App() {
               })),
               opponents: combat.opponentUnits.map((unit) => ({
                 name: unit.name,
+                elementIds: critterElementIds(unit.critter),
                 hp: unit.hp,
                 maxHp: unit.maxHp,
                 active: unit.active,
@@ -628,8 +632,8 @@ function StarterScreen({ data, onSelect }: { data: AppData; onSelect: (critterId
         {starterCritters.map((critter) => (
           <button key={critter.id} className="catalog-card starter-card" onClick={() => onSelect(critter.id)}>
             <span className="collectible-id">{critter.id}</span>
-            <CardSprite><Sprite name={critter.name} element={critter.element_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="large" /></CardSprite>
-            <CardName data={data} name={critter.name} elementId={critter.element_id} />
+            <CardSprite><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="large" /></CardSprite>
+            <CardName data={data} name={critter.name} critter={critter} />
             <StatGrid stats={critterStats(data.catalog, critter, 1)} compact />
             <span className="primary-button full-width">Choose {critter.name}</span>
           </button>
@@ -822,7 +826,7 @@ function ChallengeTracking({ data, onRefresh }: { data: AppData; onRefresh: () =
 function CollectibleSprite({ data, type, id, size = "sm", shard = false }: { data: AppData; type: CollectibleType; id: string; size?: "xs" | "sm" | "md"; shard?: boolean }) {
   const name = collectibleName(data, type, id);
   const critter = type === "critter" ? byId(data.catalog.critters, id) : undefined;
-  const element = critter?.element_id ?? (type === "relic" ? "metal" : "basic");
+  const element = critter?.element_1_id ?? (type === "relic" ? "metal" : "basic");
   const content = <Sprite name={name} element={element} assetPath={catalogAssetPath(data, type, id, collectibleAssetPath(data, type, id))} size="small" fit={type === "rollcaster" ? "portrait" : "contain"} />;
   return shard
     ? <span className="shard-sprite-glow" role="img" aria-label={`${name} shards`}><svg className="shard-sprite-outline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon className="shard-outline-glow shard-outline-glow-wide" points="1,50 50,1 99,50 50,99" /><polygon className="shard-outline-glow shard-outline-glow-mid" points="1,50 50,1 99,50 50,99" /><polygon className="shard-outline-border" points="1,50 50,1 99,50 50,99" /></svg><span className="shard-sprite-frame" aria-hidden="true">{content}</span></span>
@@ -852,7 +856,7 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
     <article className="loadout-slot">
       <div className="loadout-critter-summary">
         <button className="slot-topline slot-button loadout-critter-header" onClick={() => onEquip({ type: "critter", slotIndex })} aria-label={`Change ${critter.name} in squad slot ${slotIndex}`}>
-          <SpriteFrame size="md" className="loadout-critter-frame"><Sprite name={critter.name} element={critter.element_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="small" /></SpriteFrame>
+          <SpriteFrame size="md" className="loadout-critter-frame"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="small" /></SpriteFrame>
           <div className="loadout-critter-content">
             <div className="loadout-critter-identity">
               <CritterName data={data} critter={critter} />
@@ -893,9 +897,7 @@ function SpriteFrame({ children, size = "md", className = "", selected = false }
 }
 
 function CritterName({ data, critter, unknown = false }: { data: AppData; critter: Critter; unknown?: boolean }) {
-  const element = byId(data.catalog.elements, critter.element_id);
-  const path = catalogAssetPath(data, "element", critter.element_id, element?.asset_path, "icon");
-  return <span className="critter-name">{!unknown && <AssetIcon path={path} alt={`${element?.name ?? critter.element_id} element`} fallback={<Sparkles size={18} />} />}<strong>{unknown ? "???" : critter.name}</strong></span>;
+  return <span className="critter-name">{!unknown && <CritterElementLogos data={data} critter={critter} />}<strong>{unknown ? "???" : critter.name}</strong></span>;
 }
 
 function GameTooltip({ label, content, children }: { label: string; content: React.ReactNode; children: React.ReactNode }) {
@@ -1022,7 +1024,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
       const inSquad = assigned.has(owned.id);
       const disabled = saving || (inSquad && !selected) || (selected && !canRemoveCurrent);
       return <button className={`candidate-card ${selected ? "selected" : ""} ${inSquad && !selected ? "in-squad" : ""}`} key={owned.id} disabled={disabled} onClick={() => onEquip(() => setSquadSlot(target.slotIndex, selected ? null : owned.id))}>
-        <SpriteFrame size="md" selected={selected}><Sprite name={critter.name} element={critter.element_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
+        <SpriteFrame size="md" selected={selected}><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
         <CritterName data={data} critter={critter} /><span>Level {owned.level}</span>{selected ? <span className="state-badge remove-badge">Select again to remove</span> : inSquad && <span className="state-badge"><Check size={14} /> In squad</span>}
       </button>;
     })}</div> : <p className="empty-state">No critters available</p>;
@@ -1111,11 +1113,12 @@ function CollectionScreen({
   const [searchQuery, setSearchQuery] = useState("");
   const [elementId, setElementId] = useState<string | null>(null);
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+  const selectedElementIds = new Set(elementId ? [elementId] : []);
   const matchesSearch = (entry: { id: string; name: string }) =>
     !normalizedQuery || entry.id.toLocaleLowerCase().includes(normalizedQuery) || entry.name.toLocaleLowerCase().includes(normalizedQuery);
   const rollcasters = sortByCollectibleId(data.catalog.rollcasters).filter(matchesSearch);
   const critters = sortByCollectibleId(data.catalog.critters).filter(
-    (critter) => matchesSearch(critter) && (!elementId || critter.element_id === elementId),
+    (critter) => matchesSearch(critter) && matchesSelectedElements(critter, selectedElementIds),
   );
   const relics = sortByCollectibleId(data.catalog.relics).filter(matchesSearch);
   const displayedCount = tab === "rollcasters" ? rollcasters.length : tab === "critters" ? critters.length : relics.length;
@@ -1244,6 +1247,9 @@ function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry
   const soldOut = availability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || availability.code === "RELIC_MAX_OWNED_REACHED";
   const currency = currencyFor(data, entry.currency_id)!;
   const targetName = collectibleName(data, entry.target_category, entry.target_id);
+  const targetCritter = entry.target_category === "critter"
+    ? byId(data.catalog.critters, entry.target_id)
+    : undefined;
   const description = entry.description?.trim();
   const showDescription = Boolean(description && !/\bshop offer for\b/i.test(description));
   const inventory = entry.target_category === "relic" ? data.player!.relicInventory.find((row) => row.relic_id === entry.target_id) : undefined;
@@ -1257,7 +1263,7 @@ function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry
     <article className={`shop-entry-card ${soldOut ? "sold-out" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"}>
       <span className="shop-entry-category">{entry.target_category}</span>
       <CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="md" shard={entry.shop_type === "shard"} />
-      <div className="shop-entry-copy"><h3>{entry.name}</h3><p className="shop-target">{targetName} ({entry.target_id})</p>{showDescription && <p>{description}</p>}</div>
+      <div className="shop-entry-copy"><h3>{entry.name}</h3><p className="shop-target">{targetCritter ? <><CritterName data={data} critter={targetCritter} /> <span>({entry.target_id})</span></> : <>{targetName} ({entry.target_id})</> }</p>{showDescription && <p>{description}</p>}</div>
       <div className="shop-entry-meta">
         <strong>{formatAmount(entry.quantity)} × {entry.shop_type === "shard" ? "Shards" : targetName}</strong>
         <span className="shop-price"><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} />{formatAmount(entry.price)}</span>
@@ -1583,11 +1589,11 @@ function CritterGrid({
             <span className="collectible-id">{critter.id}</span>
             <CardSprite><Sprite
               name={critter.name}
-              element={critter.element_id}
+              element={critter.element_1_id}
               assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)}
               size="large"
             /></CardSprite>
-            <CardName data={data} name={critter.name} elementId={critter.element_id} />
+            <CardName data={data} name={critter.name} critter={critter} />
             <CollectionCardState showScrollbar={!owned}>
               {owned ? <div className="collection-progression critter-progression"><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} onRefresh={onRefresh} />}
             </CollectionCardState>
@@ -1638,13 +1644,33 @@ function CardSprite({ children, className = "" }: { children: React.ReactNode; c
   return <span className={`card-sprite-frame ${className}`.trim()}>{children}</span>;
 }
 
-function CardName({ data, name, elementId }: { data: AppData; name: string; elementId?: string }) {
-  const element = elementId ? byId(data.catalog.elements, elementId) : null;
-  const path = elementId ? catalogAssetPath(data, "element", elementId, element?.asset_path, "icon") : null;
+function CardName({ data, name, critter }: { data: AppData; name: string; critter?: Critter }) {
   return (
     <span className="card-name-row">
-      {elementId && <AssetIcon path={path} alt={`${element?.name ?? elementId} element`} fallback={null} />}
+      {critter && <CritterElementLogos data={data} critter={critter} />}
       <strong>{name}</strong>
+    </span>
+  );
+}
+
+function CritterElementLogos({ data, critter }: { data: AppData; critter: Critter }) {
+  const elements = critterElementIds(critter).map((elementId) => ({
+    id: elementId,
+    record: byId(data.catalog.elements, elementId),
+  }));
+  const label = elements
+    .map(({ id, record }, index) => `Element ${index + 1}: ${record?.name ?? id}`)
+    .join("; ");
+  return (
+    <span className="critter-element-logos" aria-label={label}>
+      {elements.map(({ id, record }) => (
+        <AssetIcon
+          key={id}
+          path={catalogAssetPath(data, "element", id, record?.asset_path, "icon")}
+          alt=""
+          fallback={<Sparkles size={18} />}
+        />
+      ))}
     </span>
   );
 }
@@ -1785,7 +1811,7 @@ function DetailModal({
     return (
       <Modal title={critter.name} onClose={onClose}>
         {detailError && <p className="notice error" role="alert">{detailError}</p>}
-        <CollectibleDetailHero data={data} id={critter.id} name={critter.name} elementId={critter.element_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} assetElement={critter.element_id} />
+        <CollectibleDetailHero data={data} id={critter.id} name={critter.name} critter={critter} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} assetElement={critter.element_1_id} />
         <p className="detail-level">{owned ? `Level ${owned.level}` : "Locked"}</p>
         <CollectibleChallengePanel data={data} type="critter" id={critter.id} unlocked={Boolean(owned)} onRefresh={onRefresh} />
         <StatGrid stats={stats} />
@@ -1863,12 +1889,12 @@ function DetailModal({
   );
 }
 
-function CollectibleDetailHero({ data, id, name, elementId, assetPath, assetElement }: { data: AppData; id: string; name: string; elementId?: string; assetPath: string | null; assetElement: string }) {
+function CollectibleDetailHero({ data, id, name, critter, assetPath, assetElement }: { data: AppData; id: string; name: string; critter?: Critter; assetPath: string | null; assetElement: string }) {
   return (
     <div className="collectible-detail-hero">
       <span className="collectible-id">{id}</span>
-      <CardSprite className={assetElement === "basic" && !elementId ? "rollcaster-sprite-frame" : ""}><Sprite name={name} element={assetElement} assetPath={assetPath} size="hero" fit={assetElement === "basic" && !elementId ? "portrait" : "contain"} /></CardSprite>
-      <CardName data={data} name={name} elementId={elementId} />
+      <CardSprite className={assetElement === "basic" && !critter ? "rollcaster-sprite-frame" : ""}><Sprite name={name} element={assetElement} assetPath={assetPath} size="hero" fit={assetElement === "basic" && !critter ? "portrait" : "contain"} /></CardSprite>
+      <CardName data={data} name={name} critter={critter} />
     </div>
   );
 }
@@ -1922,7 +1948,7 @@ function RewardScreen({ data, combat, onContinue }: { data: AppData; combat: Com
       <article className="reward-card"><Coins size={30} /><strong>{opponent?.currency_reward ?? 0}</strong><span>Coins</span></article>
       <article className="reward-card"><Sparkles size={30} /><strong>{opponent?.rollcaster_xp_reward ?? 0}</strong><span>Rollcaster XP</span></article>
       <article className="reward-card"><Gem size={30} /><strong>{opponent?.critter_xp_reward ?? 0}</strong><span>Critter XP</span></article>
-      {defeated && <article className="reward-card reward-preview"><SpriteFrame size="md"><Sprite name={defeated.name} element={defeated.element_id} assetPath={catalogAssetPath(data, "critter", defeated.id, defeated.asset_path)} /></SpriteFrame><CritterName data={data} critter={defeated} /><span>Encounter logged</span></article>}
+      {defeated && <article className="reward-card reward-preview"><SpriteFrame size="md"><Sprite name={defeated.name} element={defeated.element_1_id} assetPath={catalogAssetPath(data, "critter", defeated.id, defeated.asset_path)} /></SpriteFrame><CritterName data={data} critter={defeated} /><span>Encounter logged</span></article>}
     </div>
     <button className="primary-button reward-continue" onClick={onContinue}>Return to camp</button>
   </section>;
@@ -2035,7 +2061,7 @@ function CombatScreen({
 
       {targeting && <section className={`target-picker ${targeting.mode}`} aria-label={targeting.mode === "preview" ? "Preview affected critters" : "Choose a skill target"}>
         <div><p className="eyebrow">{targeting.mode === "preview" ? "Affected Critters" : "Choose target"}</p><h2>{targeting.skill.name}</h2><p>{targetingDescription(targeting.skill)}</p></div>
-        <div className="target-options">{skillTargets(combat, targeting.actorKey, targeting.skill).map((unit) => targeting.mode === "select" ? <button key={unit.key} onClick={() => setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost })}><SpriteFrame size="xs"><Sprite name={unit.name} element={unit.critter.element_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" /></SpriteFrame><span><CritterName data={data} critter={unit.critter} /><small>{unit.side === "player" ? "Friendly" : "Enemy"} · {unit.hp}/{unit.maxHp} HP</small></span></button> : <article key={unit.key} className={`target-preview-card ${targeting.skill.skill_type}`}><SpriteFrame size="xs"><Sprite name={unit.name} element={unit.critter.element_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" /></SpriteFrame><span><CritterName data={data} critter={unit.critter} /><small>{unit.side === "player" ? "Friendly" : "Enemy"} · {unit.hp}/{unit.maxHp} HP</small></span></article>)}</div>
+        <div className="target-options">{skillTargets(combat, targeting.actorKey, targeting.skill).map((unit) => targeting.mode === "select" ? <button key={unit.key} onClick={() => setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost })}><SpriteFrame size="xs"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" /></SpriteFrame><span><CritterName data={data} critter={unit.critter} /><small>{unit.side === "player" ? "Friendly" : "Enemy"} · {unit.hp}/{unit.maxHp} HP</small></span></button> : <article key={unit.key} className={`target-preview-card ${targeting.skill.skill_type}`}><SpriteFrame size="xs"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" /></SpriteFrame><span><CritterName data={data} critter={unit.critter} /><small>{unit.side === "player" ? "Friendly" : "Enemy"} · {unit.hp}/{unit.maxHp} HP</small></span></article>)}</div>
         <div className="target-picker-actions">{targeting.mode === "preview" && <button className="primary-button" onClick={() => setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, cost: targeting.skill.mana_cost })}>{targeting.skill.skill_type === "attack" ? "Confirm area attack" : "Confirm support effect"}</button>}<button className="secondary-button" onClick={() => setTargeting(null)}>Cancel</button></div>
       </section>}
 
@@ -2120,7 +2146,7 @@ function BattleUnit({
       <span className="combat-sprite-stack">
         <span className="combat-sprite-frame critter-combat-frame"><Sprite
           name={unit.name}
-          element={unit.critter.element_id}
+          element={unit.critter.element_1_id}
           assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)}
           size="medium"
           flipped={opponent}
@@ -2191,12 +2217,15 @@ function StatusIconRow({ data, statuses }: { data: AppData; statuses: CombatStat
 
 function UnlockNotification({ data, event, onClose }: { data: AppData; event: CollectibleUnlockEvent; onClose: () => void }) {
   const name = collectibleName(data, event.collectible_type, event.collectible_id);
+  const critter = event.collectible_type === "critter"
+    ? byId(data.catalog.critters, event.collectible_id)
+    : undefined;
   return (
     <Modal title="Collection Updated" description={`${name} unlocked`} onClose={onClose}>
       <div className="unlock-notification">
         <CollectibleSprite data={data} type={event.collectible_type} id={event.collectible_id} size="md" />
         <Sparkles size={28} />
-        <h2>{name} unlocked!</h2>
+        <h2>{critter ? <><CritterName data={data} critter={critter} /> <span>unlocked!</span></> : `${name} unlocked!`}</h2>
         <p>Your new {event.collectible_type} is ready in the Collection.</p>
         <button className="primary-button" onClick={onClose}>Continue</button>
       </div>

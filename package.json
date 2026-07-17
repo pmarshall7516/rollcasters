@@ -25,6 +25,8 @@
     "test:progression-points:browser": "RUN_LIVE_PROGRESSION_POINTS_TEST=true node scripts/progression-point-rewards-playwright.mjs",
     "test:point-unlocks:db": "node scripts/skill-ability-unlock-db-tests.mjs",
     "test:point-unlocks:browser": "RUN_LIVE_POINT_UNLOCK_TEST=true node scripts/skill-ability-unlock-playwright.mjs",
+    "test:two-critter-elements:db": "node scripts/two-critter-elements-db-tests.mjs",
+    "test:two-critter-elements:browser": "RUN_LIVE_TWO_CRITTER_ELEMENTS_TEST=true node scripts/two-critter-elements-playwright.mjs",
     "test:starter-selection:browser": "RUN_LIVE_STARTER_SELECTION_TEST=true node scripts/starter-selection-playwright.mjs",
     "test:collection-interaction-ui": "node scripts/collection-interaction-ui-tests.mjs",
     "test:sprite-containment": "node scripts/sprite-containment-tests.mjs",

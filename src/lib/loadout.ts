@@ -113,7 +113,7 @@ export function calculateLoadoutStats(data: AppData, owned: UserCritter): Calcul
 
   for (const source of passiveSources(data)) {
     for (const effect of source.effects) {
-      if (!targetsCritter(source, effect, owned, critter.element_id)) continue;
+      if (!targetsCritter(source, effect, owned, critter.element_1_id)) continue;
       if (effect.runtimeKind === "stat_modifier") {
         const key = String(effect.parameters.stat) as "hp" | "atk" | "def" | "spd";
         if (!["hp", "atk", "def", "spd"].includes(key)) continue;

@@ -53,8 +53,8 @@ const catalog = {
   elements: [{ id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 }],
   skills: [],
   critters: [
-    { id: "hero", name: "Hero", element_id: "ember", base_hp: 30, base_atk: 25, base_def: 20, base_spd: 15, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 1 },
-    { id: "ally", name: "Ally", element_id: "ember", base_hp: 20, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 2 },
+    { id: "hero", name: "Hero", element_1_id: "ember", element_2_id: null, base_hp: 30, base_atk: 25, base_def: 20, base_spd: 15, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 1 },
+    { id: "ally", name: "Ally", element_1_id: "ember", element_2_id: null, base_hp: 20, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 2 },
   ],
   critterProgression: [
     { critter_id: "hero", level: 1, total_required_xp: 0, grant_skill_points: 0, hp_delta: 0, atk_delta: 0, def_delta: 0, spd_delta: 0, dice_min_delta: 0, dice_max_delta: 0, block_cost_delta: 0, swap_cost_delta: 0, total_unlocked_relic_slots: 1 },

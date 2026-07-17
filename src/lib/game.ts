@@ -138,6 +138,29 @@ export function elementName(catalog: Catalog, elementId: string): string {
   return byId<ElementDef>(catalog.elements, elementId)?.name ?? elementId;
 }
 
+export function critterElementIds(
+  critter: Pick<Critter, "element_1_id" | "element_2_id">,
+): string[] {
+  return critter.element_2_id
+    ? [critter.element_1_id, critter.element_2_id]
+    : [critter.element_1_id];
+}
+
+export function critterHasElement(
+  critter: Pick<Critter, "element_1_id" | "element_2_id">,
+  elementId: string,
+): boolean {
+  return critter.element_1_id === elementId || critter.element_2_id === elementId;
+}
+
+export function matchesSelectedElements(
+  critter: Pick<Critter, "element_1_id" | "element_2_id">,
+  selectedIds: Set<string>,
+): boolean {
+  return selectedIds.size === 0
+    || critterElementIds(critter).some((elementId) => selectedIds.has(elementId));
+}
+
 export function progressionFor(
   rows: CritterProgression[],
   critterId: string,
@@ -779,7 +802,7 @@ function effectTargets(state: CombatState, target: string, context: RuntimeConte
     case "all_element_enemies": {
       const elements = new Set(context.elementIds ?? []);
       const candidates = target === "all_element_friendlies" ? friendlies : enemies;
-      return candidates.filter((unit) => active(unit) && elements.has(unit.critter.element_id));
+      return candidates.filter((unit) => active(unit) && elements.has(unit.critter.element_1_id));
     }
     case "equipped_critter": {
       if (!source) throw new Error(`Missing equipped Critter for relic effect from ${context.sourceOwnerId}.`);
@@ -983,7 +1006,7 @@ function resolvePostTurn(state: CombatState): CombatState {
 
 function calculateDamage(attacker: CombatUnit, defender: CombatUnit, skill: Skill): number {
   const base = Math.floor(((((2 * attacker.level) / 5 + 2) * skill.power * attacker.stats.atk) / defender.stats.def) / 50 + 2);
-  const sameElementBonus = skill.element_id === attacker.critter.element_id ? 1.2 : 1;
+  const sameElementBonus = skill.element_id === attacker.critter.element_1_id ? 1.2 : 1;
   return Math.max(1, Math.floor(base * sameElementBonus));
 }
 

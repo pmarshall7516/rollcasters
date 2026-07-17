@@ -556,6 +556,18 @@ button:disabled {
   height: 26px;
 }
 
+.critter-element-logos {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.critter-element-logos .asset-icon {
+  flex: 0 0 auto;
+}
+
 button.catalog-card:hover,
 .dungeon-card:hover {
   transform: translateY(-1px);
@@ -1128,6 +1140,8 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .loadout-critter-xp-progress { flex: 0 1 260px; width: min(260px, 100%); min-width: 0; }
 .critter-name, .card-name-row { display: inline-flex; align-items: center; gap: 7px; min-height: 28px; color: var(--text-primary); font-size: 18px; }
 .critter-name .asset-icon { width: 22px; height: 22px; }
+.shop-target .critter-name { display: inline-flex; min-height: 0; font-size: inherit; }
+.unlock-notification h2 .critter-name { font-size: inherit; }
 .stat-grid > span { border: 1px solid rgb(52 61 104 / 58%); background: rgb(8 10 24 / 48%); color: var(--text-secondary); }
 .stat-cell { position: relative; }
 .stat-cell.modified { cursor: help; border-color: rgb(121 136 216 / 78%); }

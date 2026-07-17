@@ -118,12 +118,12 @@ async function seedContent() {
 
     await db.query(`
       insert into public.critters(
-        id,name,element_id,base_hp,base_atk,base_def,base_spd,base_dice_max,
+        id,name,element_1_id,element_2_id,base_hp,base_atk,base_def,base_spd,base_dice_max,
         base_block_cost,base_swap_cost,asset_path,description,sort_order,base_dice_min,
         is_active,is_archived,version
       )
       select
-        $1,$2,element_id,base_hp,base_atk,base_def,base_spd,base_dice_max,
+        $1,$2,element_1_id,element_2_id,base_hp,base_atk,base_def,base_spd,base_dice_max,
         base_block_cost,base_swap_cost,asset_path,'Disposable Gate Challenge browser fixture.',
         (select coalesce(max(sort_order),0)+1 from public.critters),base_dice_min,
         true,false,1

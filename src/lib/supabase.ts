@@ -6,7 +6,9 @@ import type {
   CollectiblePlayerSnapshot,
   CombatEffectRow,
   CombatProgressEvent,
+  Critter,
   DungeonOpponent,
+  ElementDef,
   PlayerState,
   ShopPurchaseReceipt,
   UserAbilitySlot,
@@ -64,6 +66,29 @@ async function selectActiveAll<T>(table: string, order = "sort_order"): Promise<
     .order(order, { ascending: true });
   if (error) throw error;
   return (data ?? []) as T[];
+}
+
+function normalizeCritter(row: Record<string, unknown>): Critter {
+  const element1Id = typeof row.element_1_id === "string"
+    ? row.element_1_id
+    : typeof row.element_id === "string"
+      ? row.element_id
+      : "";
+  if (!element1Id) {
+    throw new Error(`Critter ${String(row.id ?? "(unknown)")} is missing Element 1.`);
+  }
+  const element2Id = typeof row.element_2_id === "string" && row.element_2_id
+    ? row.element_2_id
+    : null;
+  if (element2Id === element1Id) {
+    throw new Error(`Critter ${String(row.id ?? "(unknown)")} repeats Element 1 in Element 2.`);
+  }
+  const { element_id: _deprecatedElementId, ...canonicalRow } = row;
+  return {
+    ...canonicalRow,
+    element_1_id: element1Id,
+    element_2_id: element2Id,
+  } as Critter;
 }
 
 function emptyCollectibleSnapshot(): CollectiblePlayerSnapshot {
@@ -163,7 +188,7 @@ export async function loadCatalog(): Promise<Catalog> {
     collectibleShopCatalog,
     elements,
     skills,
-    critters,
+    rawCritters,
     critterProgression,
     critterSkillUnlocks,
     rollcasters,
@@ -182,7 +207,7 @@ export async function loadCatalog(): Promise<Catalog> {
     loadCollectibleShopCatalog(),
     selectAll("elements"),
     selectAll("skills"),
-    selectAll("critters"),
+    selectAll<Record<string, unknown>>("critters"),
     selectAll("critter_level_progression", "level"),
     selectAll("critter_skill_unlocks"),
     selectAll("rollcasters"),
@@ -200,6 +225,15 @@ export async function loadCatalog(): Promise<Catalog> {
   ]);
 
   const groupedEffects = groupCombatEffectRows(combatEffects);
+  const critters = rawCritters.map(normalizeCritter);
+  const elementIds = new Set((elements as ElementDef[]).map((element) => element.id));
+  for (const critter of critters) {
+    for (const elementId of [critter.element_1_id, critter.element_2_id]) {
+      if (elementId && !elementIds.has(elementId)) {
+        throw new Error(`Unknown Critter Element: ${elementId} (${critter.id}).`);
+      }
+    }
+  }
   return {
     ...collectibleShopCatalog,
     elements,

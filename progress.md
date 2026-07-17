@@ -682,3 +682,16 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - Expanded responsive and live gate-challenge coverage to assert both button colors, exact width, nowrap behavior, and full label containment.
 - Passed `npm run test:collection-layout` across six responsive viewports, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required real-app web-game smoke client. Desktop/mobile collection screenshots confirm the complete Track/Untrack labels remain visible; the smoke render and text state show a clean unauthenticated app with no captured errors.
 - No outstanding TODOs for this button treatment.
+
+## Critter two-Element types (2026-07-16)
+
+- Current request: fully implement `docs/13-two-types.md` so every Critter has required ordered Element 1 plus optional distinct Element 2.
+- Restored the missing idempotent `009_two_critter_elements.sql` contract: canonical columns, generated deprecated alias, cascading foreign keys, distinct-slot constraint, slot indexes, dual-slot aggregate save validation, and dual-slot Element usage.
+- Replaced the player model's deprecated `element_id` with canonical `element_1_id`/`element_2_id`, added mixed-schema boundary normalization plus unknown/duplicate diagnostics, and exposed ordered membership/filter helpers.
+- Added one accessible reusable ordered logo group and applied it to starter cards, home/loadout and equip views, collection cards/details, Shop Critter targets, combat/target/reward presentation, and unlock notifications. One-type Critters reserve no second gap; compact/mobile views retain both; Skill logos remain single-type.
+- Collection Element filtering now matches either slot and flat results remain unique. `render_game_to_text` exposes ordered Element IDs for combat units.
+- Preserved existing combat results by continuing to use Element 1 anywhere the pre-change runtime used the legacy primary alias; Element 2 is classification/presentation data until a later combat contract.
+- Added rollback-only database coverage for idempotency, schema metadata, alias compatibility, constraints, validation, persistence, cascading foreign keys, and secondary-slot usage. Added a disposable-user live browser fixture for starter, home, Collection, Element-2 filtering, details, mobile, Skill-logo isolation, browser errors, and cleanup.
+- Passed `npm run test:two-critter-elements:db`, `npm run test:two-critter-elements:browser`, `npm run test:effect-runtime`, `npm run test:collection-ui`, `npm run test:collectibles-shop`, `npm run test:home-loadout-layout`, `npm run test:collection-layout`, `npm run test:collection-interaction-ui`, `npm run build`, script syntax checks, `git diff --check`, and the required web-game smoke client.
+- Visually inspected dual-logo home, filtered Collection, detail, and mobile states plus responsive regressions and the final auth smoke render. The live cleanup audit confirmed Critter 001 was restored to its original one-type state and zero disposable users remained.
+- No outstanding TODOs for two-Element Critter support.
