@@ -121,6 +121,12 @@ export type ElementDef = {
   sort_order: number;
 };
 
+export type ElementEffectiveness = {
+  attacking_element_id: string;
+  defending_element_id: string;
+  multiplier: number;
+};
+
 export type SkillTargeting =
   | "single_enemy"
   | "all_enemies"
@@ -286,17 +292,53 @@ export type Relic = {
   is_archived?: boolean;
 };
 
+export type BattleFormat =
+  | "1v1"
+  | "1v2"
+  | "1v3"
+  | "2v1"
+  | "2v2"
+  | "2v3"
+  | "3v1"
+  | "3v2"
+  | "3v3";
+
 export type Dungeon = {
   id: string;
   name: string;
+  description: string;
   dungeon_type: "regular" | "boss";
   difficulty: number;
-  battle_format: "1v1" | "2v1" | "3v1" | "2v2" | "3v3";
+  battle_format: BattleFormat;
+  battle_count: number;
   player_active_count: number;
   opponent_active_count: number;
   encounter_count: number;
   next_dungeon_id: string | null;
+  regular_logo_path: string | null;
+  boss_logo_path: string | null;
   sort_order: number;
+  is_active: boolean;
+  is_archived: boolean;
+  version: number;
+};
+
+export type DungeonDropKind = "currency" | "shard" | "relic";
+
+export type DungeonDrop = {
+  id: string;
+  kind: DungeonDropKind;
+  targetCategory?: CollectibleType;
+  targetId: string;
+  minAmount: number;
+  maxAmount: number;
+  probability: number;
+  dupeCurrencyId?: string;
+  dupeCurrencyAmount?: number;
+};
+
+export type DungeonCompletionDrop = DungeonDrop & {
+  phase: "first_time" | "regular";
 };
 
 export type DungeonOpponent = {
@@ -313,12 +355,80 @@ export type DungeonOpponent = {
   critter_xp_reward: number;
   currency_reward: number;
   drops: Array<Record<string, unknown>>;
+  currencyDrops: DungeonDrop[];
+  itemDrops: DungeonDrop[];
+  overrides: Partial<{
+    hp: number;
+    atk: number;
+    def: number;
+    spd: number;
+    diceMin: number;
+    diceMax: number;
+    block: number;
+    swap: number;
+    relicSlots: number;
+  }>;
 };
 
 export type DungeonOpponentStatOverride = {
   opponent_id: string;
-  stat_key: "hp" | "atk" | "def" | "spd" | "dice_min" | "dice_max" | "block_cost" | "swap_cost";
+  stat_key: "hp" | "atk" | "def" | "spd" | "dice_min" | "dice_max" | "block_cost" | "swap_cost" | "relic_slots";
   value: number;
+};
+
+export type DungeonRunStatus = "started" | "won" | "lost" | "abandoned";
+
+export type DungeonRunSnapshot = {
+  id: string;
+  dungeonId: string;
+  dungeonVersion: number;
+  effectiveMode: "regular" | "boss";
+  battleFormat: BattleFormat;
+  battleCount: number;
+  battleIndex: number;
+  selectedOpponents: Array<DungeonOpponent & {
+    instanceId: string;
+    battleIndex: number;
+    battlefieldSlot: number;
+  }>;
+  randomSeed: string;
+  randomCursor: number;
+  status: DungeonRunStatus;
+  version: number;
+  rewards: DungeonRewardSummary;
+};
+
+export type DungeonRewardEntry = {
+  id: string;
+  source: "opponent" | "completion" | "duplicate_conversion";
+  kind: "currency" | "shard" | "relic" | "critter_xp" | "rollcaster_xp";
+  targetCategory?: CollectibleType;
+  targetId: string;
+  amount: number;
+  convertedAmount?: number;
+  convertedCurrencyId?: string;
+  recipientId?: string;
+};
+
+export type DungeonRewardSummary = {
+  entries: DungeonRewardEntry[];
+  defeatedOpponentInstanceIds: string[];
+  critterXp: Record<string, number>;
+  rollcasterXp: number;
+  completionPhase?: "first_time" | "regular";
+};
+
+export type DungeonBattleResult = {
+  run: DungeonRunSnapshot;
+  battleRewards: DungeonRewardSummary;
+  dungeonRewards?: DungeonRewardSummary;
+  nextDungeonId?: string | null;
+};
+
+export type ActiveDungeonRun = {
+  run: DungeonRunSnapshot;
+  combatState: unknown;
+  effectSnapshot: unknown;
 };
 
 export type StarterOption = {
@@ -422,6 +532,7 @@ export type Catalog = {
   collectibleUnlockChallenges: CollectibleUnlockChallenge[];
   shopEntries: ShopEntry[];
   elements: ElementDef[];
+  elementEffectiveness: ElementEffectiveness[];
   skills: Skill[];
   critters: Critter[];
   critterProgression: CritterProgression[];
@@ -433,6 +544,7 @@ export type Catalog = {
   relics: Relic[];
   dungeons: Dungeon[];
   dungeonOpponents: DungeonOpponent[];
+  dungeonCompletionDrops: DungeonCompletionDrop[];
   starterRollcasterOptions: StarterRollcasterOption[];
   starterOptions: StarterOption[];
   gameAssets: GameAsset[];

@@ -1,9 +1,13 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   Check,
+  ChevronLeft,
   ChevronDown,
+  ChevronRight,
   Coins,
+  Dices,
   Gem,
+  Info,
   Lock,
   LogOut,
   Play,
@@ -12,6 +16,7 @@ import {
   Search,
   Shield,
   ShoppingBag,
+  Skull,
   Sparkles,
   Swords,
   Target,
@@ -21,12 +26,14 @@ import {
 import {
   acknowledgeCollectibleUnlockEvent,
   ensureUserGameState,
+  getActiveDungeonRun,
   getGameAssetUrl,
   getSession,
   hasSupabaseConfig,
   loadAppData,
   purchaseShopEntry,
-  resolveDungeonRun,
+  recordDungeonBattleResult,
+  saveDungeonRunState,
   setActiveRollcaster,
   setCritterRelicSlot,
   setCritterSkillSlot,
@@ -48,19 +55,41 @@ import {
 } from "./lib/supabase";
 import {
   byId,
-  createInitialCombatState,
   critterElementIds,
   critterStats,
   isSingleTarget,
   matchesSelectedElements,
-  resolveTurn,
   skillTargets,
   squadCritters,
-  startTurn,
   type CombatState,
 } from "./lib/game";
+import {
+  advanceDungeonEvent,
+  applyDungeonBattleResult,
+  confirmDungeonLeads,
+  continueAfterEncounterRewards,
+  continueAfterRoll,
+  createDungeonRunState,
+  currentDungeonEvent,
+  dungeonBattleSubmission,
+  restoreDungeonRunState,
+  rollDungeonDice,
+  serializeDungeonRunState,
+  submitDungeonActions,
+  toggleDungeonLead,
+  type DungeonRunState,
+} from "./lib/dungeon-run";
+import {
+  dropAmountLabel,
+  effectiveDungeon,
+  effectiveDungeons,
+  formatProbability,
+  opponentsForBattle,
+  type EffectiveDungeon,
+} from "./lib/dungeons";
 import { calculateLoadoutStats, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
 import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
+import { createRequestId } from "./lib/uuid";
 import {
   challengeDescription,
   challengeGateBadge,
@@ -88,6 +117,8 @@ import type {
   CollectibleUnlockChallenge,
   Critter,
   Dungeon,
+  DungeonDrop,
+  DungeonRewardSummary,
   PlayerState,
   Relic,
   ResolvedEffectRef,
@@ -143,9 +174,12 @@ export function App() {
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("critters");
   const [shopTab, setShopTab] = useState<ShopTab>(() => routeFromLocation().shopTab);
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
-  const [combat, setCombat] = useState<CombatState | null>(null);
+  const [combat, setCombat] = useState<DungeonRunState | null>(null);
   const [unlockQueue, setUnlockQueue] = useState<CollectibleUnlockEvent[]>([]);
   const seenUnlockEvents = useRef(new Set<string>());
+  const combatRef = useRef<DungeonRunState | null>(null);
+  const combatSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const lastPersistedCombat = useRef("");
 
   function navigate(nextView: View, nextShopTab = shopTab, replace = false) {
     if (nextView === "shop") setShopTab(nextShopTab);
@@ -171,11 +205,46 @@ export function App() {
       } else {
         const route = routeFromLocation();
         setShopTab(route.shopTab);
+        if (route.view === "play") {
+          const active = await getActiveDungeonRun();
+          if (active) {
+            const dungeon = loaded.catalog.dungeons.find((candidate) => candidate.id === active.run.dungeonId);
+            if (dungeon) {
+              const persisted = restoreDungeonRunState(active.combatState, loaded.catalog, active.run);
+              const resumed = persisted
+                ?? createDungeonRunState(loaded.catalog, loaded.player!, dungeon, active.run);
+              lastPersistedCombat.current = persisted
+                ? JSON.stringify(serializeDungeonRunState(persisted))
+                : "";
+              setCombat(resumed);
+              setView("combat");
+              return;
+            }
+          }
+        }
         setView(route.view);
       }
     } catch (err) {
       console.error("Unable to load game data.", err);
       setError(errorMessage(err, "Unable to load game data."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function beginDungeon(dungeon: Dungeon) {
+    if (!data?.player) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const run = await startDungeonRun(dungeon.id);
+      const initialCombat = createDungeonRunState(data.catalog, data.player, dungeon, run);
+      await snapshotDungeonRunEffects(run.id, initialCombat.battle.snapshot);
+      lastPersistedCombat.current = "";
+      setCombat(initialCombat);
+      setView("combat");
+    } catch (err) {
+      setError(errorMessage(err, "Unable to start dungeon."));
     } finally {
       setLoading(false);
     }
@@ -243,6 +312,48 @@ export function App() {
   }, [pendingUnlockIds]);
 
   useEffect(() => {
+    combatRef.current = combat;
+    if (
+      !combat
+      || combat.run.status !== "started"
+      || combat.phase === "battle_result"
+      || combat.phase === "dungeon_complete"
+      || combat.phase === "dungeon_failed"
+    ) return;
+    const serialized = serializeDungeonRunState(combat);
+    const signature = JSON.stringify(serialized);
+    if (signature === lastPersistedCombat.current) return;
+
+    combatSaveQueue.current = combatSaveQueue.current
+      .then(async () => {
+        const latest = combatRef.current;
+        if (
+          !latest
+          || latest.run.status !== "started"
+          || latest.phase === "battle_result"
+          || latest.phase === "dungeon_complete"
+          || latest.phase === "dungeon_failed"
+        ) return;
+        const latestSerialized = serializeDungeonRunState(latest);
+        const latestSignature = JSON.stringify(latestSerialized);
+        if (latestSignature === lastPersistedCombat.current) return;
+        const saved = await saveDungeonRunState(latest.run, latestSerialized);
+        lastPersistedCombat.current = latestSignature;
+        const latestCurrent = combatRef.current;
+        if (latestCurrent?.run.id === latest.run.id) {
+          combatRef.current = { ...latestCurrent, run: saved.run };
+        }
+        setCombat((current) => current?.run.id === latest.run.id
+          ? { ...current, run: saved.run }
+          : current);
+      })
+      .catch((saveError) => {
+        console.error("Unable to persist Dungeon combat state.", saveError);
+        setError(errorMessage(saveError, "Unable to save Dungeon progress."));
+      });
+  }, [combat]);
+
+  useEffect(() => {
     window.render_game_to_text = () =>
       JSON.stringify({
         view,
@@ -269,10 +380,19 @@ export function App() {
         combat: combat
           ? {
               phase: combat.phase,
-              turn: combat.turn,
-              playerMana: combat.playerMana,
-              opponentMana: combat.opponentMana,
-              player: combat.playerUnits.map((unit) => ({
+              coordinateSystem: "Fixed battlefield slots run top-to-bottom from 0 to 2 on each side.",
+              dungeonId: combat.dungeon.id,
+              effectiveMode: combat.run.effectiveMode,
+              encounter: combat.run.battleIndex,
+              encounterCount: combat.run.battleCount,
+              turn: combat.battle.turn,
+              playerMana: combat.battle.playerMana,
+              opponentMana: combat.battle.opponentMana,
+              requiredLeadCount: combat.requiredLeadCount,
+              selectedLeadIds: combat.selectedLeadIds,
+              narration: currentDungeonEvent(combat)?.message ?? null,
+              player: combat.battle.playerUnits.map((unit) => ({
+                id: unit.userCritter?.id,
                 name: unit.name,
                 elementIds: critterElementIds(unit.critter),
                 hp: unit.hp,
@@ -281,17 +401,19 @@ export function App() {
                 roll: unit.manaRoll,
                 stats: unit.stats,
               })),
-              opponents: combat.opponentUnits.map((unit) => ({
-                name: unit.name,
-                elementIds: critterElementIds(unit.critter),
-                hp: unit.hp,
-                maxHp: unit.maxHp,
-                active: unit.active,
-                roll: unit.manaRoll,
-                stats: unit.stats,
-              })),
-              statuses: combat.statuses.map((status) => ({ statusId: status.statusId, holder: status.holderKey, duration: status.duration })),
-              rngState: combat.rngState,
+              opponents: combat.phase === "lead_selection"
+                ? combat.battle.opponentUnits.map((_unit, slot) => ({ slot, hidden: true }))
+                : combat.battle.opponentUnits.map((unit) => ({
+                    name: unit.name,
+                    elementIds: critterElementIds(unit.critter),
+                    hp: unit.hp,
+                    maxHp: unit.maxHp,
+                    active: unit.active,
+                    roll: unit.manaRoll,
+                    stats: unit.stats,
+                  })),
+              statuses: combat.battle.statuses.map((status) => ({ statusId: status.statusId, holder: status.holderKey, duration: status.duration })),
+              rngState: combat.battle.rngState,
             }
           : null,
       });
@@ -381,20 +503,7 @@ export function App() {
         <PlayScreen
           data={data}
           onBack={() => navigate("home")}
-          onStart={async (dungeon) => {
-            setLoading(true);
-            try {
-              const run = await startDungeonRun(dungeon.id);
-              const initialCombat = createInitialCombatState(data.catalog, data.player!, dungeon, run.id, run.selectedOpponents);
-              await snapshotDungeonRunEffects(run.id, initialCombat.snapshot);
-              setCombat(initialCombat);
-              setView("combat");
-            } catch (err) {
-              setError(err instanceof Error ? err.message : "Unable to start dungeon.");
-            } finally {
-              setLoading(false);
-            }
-          }}
+          onStart={beginDungeon}
         />
       )}
       {view === "combat" && combat && (
@@ -403,32 +512,42 @@ export function App() {
           combat={combat}
           setCombat={setCombat}
           onTurnResolved={async (resolved) => {
-            setCombat(resolved);
-            if (!resolved.runId || resolved.turnEvents.length === 0) return;
+            const turn = resolved.pendingBattle ?? resolved.battle;
+            if (turn.turnEvents.length === 0) return;
             try {
-              await submitCollectibleCombatEvents(resolved.runId, combat.turn, resolved.turnEvents);
+              await submitCollectibleCombatEvents(resolved.run.id, resolved.battle.turn, turn.turnEvents);
               await refresh("combat");
             } catch (progressError) {
               console.error("Unable to submit collectible combat progress.", progressError);
               setError(errorMessage(progressError, "Unable to update challenge progress."));
             }
           }}
-          onBack={() => navigate("play")}
-          onWin={async () => {
-            if (!combat.runId) return;
+          onBattleResult={async (resolved) => {
             setLoading(true);
+            setError(null);
             try {
-              await resolveDungeonRun(combat.runId);
-              await refresh("rewards");
-            } catch (err) {
-              setError(err instanceof Error ? err.message : "Unable to apply rewards.");
+              const result = await recordDungeonBattleResult(
+                resolved.run,
+                dungeonBattleSubmission(resolved),
+              );
+              const loaded = await loadAppData();
+              setData(loaded);
+              setCombat(applyDungeonBattleResult(resolved, result, loaded.catalog, loaded.player!));
+            } catch (resultError) {
+              setError(errorMessage(resultError, "Unable to record the encounter result."));
             } finally {
               setLoading(false);
             }
           }}
+          onBack={() => navigate("play")}
+          onHome={() => { setCombat(null); navigate("home"); }}
+          onReplay={() => beginDungeon(combat.dungeon)}
+          onNextDungeon={(dungeonId) => {
+            const next = data.catalog.dungeons.find((dungeon) => dungeon.id === dungeonId);
+            if (next) void beginDungeon(next);
+          }}
         />
       )}
-      {view === "rewards" && combat && <RewardScreen data={data} combat={combat} onContinue={() => { setCombat(null); navigate("home"); }} />}
       {unlockQueue[0] && <UnlockNotification data={data} event={unlockQueue[0]} onClose={() => setUnlockQueue((current) => current.slice(1))} />}
     </Shell>
   );
@@ -1302,7 +1421,7 @@ function ShopScreen({ data, tab, setTab, onBack, onRefresh }: { data: AppData; t
 
   async function purchase(entry: ShopEntry) {
     setBusyEntry(entry.id); setFeedback(null);
-    const requestId = requestIds.current.get(entry.id) ?? crypto.randomUUID();
+    const requestId = requestIds.current.get(entry.id) ?? createRequestId();
     requestIds.current.set(entry.id, requestId);
     try {
       const receipt = await purchaseShopEntry(entry.id, requestId);
@@ -2022,50 +2141,131 @@ function PlayScreen({
   onBack: () => void;
   onStart: (dungeon: Dungeon) => void;
 }) {
-  const unlockedIds = data.player!.dungeonProgress.filter((row) => row.is_unlocked).map((row) => row.dungeon_id);
-  const progress = new Map(data.player!.dungeonProgress.map((row) => [row.dungeon_id, row]));
-  const dungeons = data.catalog.dungeons;
+  const [infoDungeon, setInfoDungeon] = useState<EffectiveDungeon | null>(null);
+  const dungeons = effectiveDungeons(data.player!, data.catalog.dungeons, data.catalog.dungeonOpponents);
   return (
-    <section className="screen-stack">
+    <section className="screen-stack dungeon-select-screen">
       <div className="screen-heading row">
         <div>
           <h1>Dungeons</h1>
-          <p>Select an unlocked dungeon. Your squad starts fully healed.</p>
+          <p>Choose an expedition. Your squad begins each run at full HP, then carries its wounds between encounters.</p>
         </div>
         <button className="secondary-button" onClick={onBack}>Back</button>
       </div>
-      <div className="dungeon-list">
-        {dungeons.map((dungeon) => (
-          <article key={dungeon.id} className={`dungeon-card ${!unlockedIds.includes(dungeon.id) ? "locked" : ""} ${progress.get(dungeon.id)?.completed_at ? "completed" : ""}`}>
-            <div>
-              <p className="eyebrow">{dungeon.dungeon_type} dungeon</p>
-              <h2>{dungeon.id} - {dungeon.name}</h2>
-              <p>Difficulty {dungeon.difficulty} · {dungeon.battle_format} · {dungeon.encounter_count} encounter</p>
-              <div className="dungeon-badges"><span>{progress.get(dungeon.id)?.completed_at ? `Completed · ${progress.get(dungeon.id)?.clear_count} clears` : unlockedIds.includes(dungeon.id) ? "Ready" : "Locked"}</span><span>Coins + XP</span></div>
+      <div className="dungeon-grid">
+        {dungeons.map((entry) => (
+          <article
+            key={entry.dungeon.id}
+            className={`dungeon-card dungeon-grid-card ${!entry.enterable ? "locked" : ""} ${(entry.progress?.clear_count ?? 0) > 0 ? "completed" : ""}`}
+          >
+            <span className="collectible-id">{entry.dungeon.id}</span>
+            <button
+              type="button"
+              className="catalog-card-details dungeon-info-button"
+              aria-label={`View ${entry.dungeon.name} information`}
+              onClick={() => setInfoDungeon(entry)}
+            >
+              <Info size={16} aria-hidden="true" />
+            </button>
+            <span className={`dungeon-logo-frame ${entry.mode}`} role="img" aria-label={`${entry.mode === "boss" ? "Boss" : "Regular"} Dungeon`}>
+              {entry.logoPath
+                ? <AssetIcon path={entry.logoPath} alt="" fallback={entry.mode === "boss" ? <Skull /> : <Swords />} />
+                : entry.mode === "boss" ? <Skull /> : <Swords />}
+            </span>
+            <h2>{entry.dungeon.name}</h2>
+            {entry.dungeon.description && <p className="dungeon-description">{entry.dungeon.description}</p>}
+            <div className="dungeon-stat-grid">
+              <span><small>Difficulty</small><strong>{entry.difficulty}</strong></span>
+              <span><small>Format</small><strong>{entry.dungeon.battle_format}</strong></span>
+              <span><small>Encounters</small><strong>{entry.battleCount}</strong></span>
+              <span><small>Clears</small><strong>{entry.progress?.clear_count ?? 0}</strong></span>
             </div>
-            <button className="primary-button" disabled={!unlockedIds.includes(dungeon.id)} onClick={() => onStart(dungeon)}>
-              {unlockedIds.includes(dungeon.id) ? "Enter dungeon" : "Locked"}
+            <p className={`dungeon-entry-state ${entry.enterable ? "ready" : "locked"}`}>
+              {entry.enterable ? "Ready to enter" : entry.lockedReason}
+            </p>
+            <button className="primary-button dungeon-enter-button" disabled={!entry.enterable} onClick={() => onStart(entry.dungeon)}>
+              {entry.enterable ? "Enter Dungeon" : <><Lock size={15} /> Locked</>}
             </button>
           </article>
         ))}
       </div>
+      {infoDungeon && <DungeonInfoDialog data={data} entry={infoDungeon} onClose={() => setInfoDungeon(null)} />}
     </section>
   );
 }
 
-function RewardScreen({ data, combat, onContinue }: { data: AppData; combat: CombatState; onContinue: () => void }) {
-  const opponent = data.catalog.dungeonOpponents.find((row) => row.dungeon_id === combat.dungeon.id);
-  const defeated = combat.opponentUnits[0]?.critter;
-  return <section className="reward-screen screen-stack">
-    <div className="reward-banner"><Sparkles size={28} /><p className="eyebrow">Dungeon complete</p><h1>Victory rewards</h1><p>{combat.dungeon.name} has been cleared.</p></div>
-    <div className="reward-grid">
-      <article className="reward-card"><Coins size={30} /><strong>{opponent?.currency_reward ?? 0}</strong><span>Coins</span></article>
-      <article className="reward-card"><Sparkles size={30} /><strong>{opponent?.rollcaster_xp_reward ?? 0}</strong><span>Rollcaster XP</span></article>
-      <article className="reward-card"><Gem size={30} /><strong>{opponent?.critter_xp_reward ?? 0}</strong><span>Critter XP</span></article>
-      {defeated && <article className="reward-card reward-preview"><SpriteFrame size="md"><Sprite name={defeated.name} element={defeated.element_1_id} assetPath={catalogAssetPath(data, "critter", defeated.id, defeated.asset_path)} /></SpriteFrame><CritterName data={data} critter={defeated} /><span>Encounter logged</span></article>}
+function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: EffectiveDungeon; onClose: () => void }) {
+  return (
+    <Modal
+      eyebrow="Dungeon briefing"
+      title={`${entry.dungeon.id} · ${entry.dungeon.name}`}
+      description={`${entry.dungeon.battle_format} · ${entry.battleCount} encounter${entry.battleCount === 1 ? "" : "s"} · Difficulty ${entry.difficulty}`}
+      onClose={onClose}
+    >
+      <div className="dungeon-info-summary">
+        <span className={`dungeon-logo-frame ${entry.mode}`}>
+          {entry.logoPath
+            ? <AssetIcon path={entry.logoPath} alt="" fallback={entry.mode === "boss" ? <Skull /> : <Swords />} />
+            : entry.mode === "boss" ? <Skull /> : <Swords />}
+        </span>
+        <div>
+          <p className="eyebrow">{entry.mode === "boss" ? "First-clear lineup" : "Regular encounter pool"}</p>
+          <h3>{entry.pool.length} authored opponent{entry.pool.length === 1 ? "" : "s"}</h3>
+          <p>{entry.mode === "boss" ? "Opponents arrive in fixed Boss Order." : "Every enemy slot draws independently with replacement."}</p>
+        </div>
+      </div>
+      <div className="dungeon-opponent-list">
+        {entry.pool.map((opponent, index) => {
+          const critter = byId(data.catalog.critters, opponent.critter_id);
+          if (!critter) return null;
+          return (
+            <details className="dungeon-opponent-entry" key={opponent.id}>
+              <summary>
+                <SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
+                <span className="dungeon-opponent-identity">
+                  <span className="collectible-id">{critter.id}</span>
+                  <CritterName data={data} critter={critter} />
+                  <small>Level {opponent.critter_level}</small>
+                </span>
+                <strong className="dungeon-opponent-rate">
+                  {entry.mode === "boss" ? `Boss position ${index + 1}` : formatProbability(opponent.probability ?? 0)}
+                </strong>
+                <ChevronDown aria-hidden="true" />
+              </summary>
+              <div className="dungeon-opponent-drop-panel">
+                <div className="dungeon-xp-drops">
+                  <span><Sparkles size={16} /> {opponent.critter_xp_reward} Critter XP</span>
+                  <span><UserRound size={16} /> {opponent.rollcaster_xp_reward} Rollcaster XP</span>
+                </div>
+                {[...opponent.currencyDrops, ...opponent.itemDrops].length
+                  ? <div className="dungeon-drop-list">{[...opponent.currencyDrops, ...opponent.itemDrops].map((drop) => <DungeonDropRow key={drop.id} data={data} drop={drop} />)}</div>
+                  : <p className="dungeon-no-drops">No item or Currency drops.</p>}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
+function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
+  const currency = drop.kind === "currency" ? currencyFor(data, drop.targetId) : undefined;
+  const targetName = drop.kind === "currency"
+    ? currency?.name ?? drop.targetId
+    : collectibleName(data, drop.targetCategory ?? "relic", drop.targetId);
+  return (
+    <div className="dungeon-drop-row">
+      {drop.kind === "currency"
+        ? <AssetIcon path={currency?.asset_path} alt="" fallback={<Coins size={17} />} />
+        : <CollectibleSprite data={data} type={drop.targetCategory ?? "relic"} id={drop.targetId} size="xs" shard={drop.kind === "shard"} />}
+      <span>
+        <strong>{dropAmountLabel(drop.minAmount, drop.maxAmount)} {drop.kind === "shard" ? `${targetName} Shards` : targetName}</strong>
+        <small>{Math.round(drop.probability * 10000) / 100}% chance</small>
+        {drop.kind !== "currency" && drop.dupeCurrencyId && <small>Duplicates convert to {drop.dupeCurrencyAmount ?? 0} {currencyFor(data, drop.dupeCurrencyId)?.name ?? drop.dupeCurrencyId} each.</small>}
+      </span>
     </div>
-    <button className="primary-button reward-continue" onClick={onContinue}>Return to camp</button>
-  </section>;
+  );
 }
 
 function CombatScreen({
@@ -2073,66 +2273,126 @@ function CombatScreen({
   combat,
   setCombat,
   onTurnResolved,
+  onBattleResult,
   onBack,
-  onWin,
+  onHome,
+  onReplay,
+  onNextDungeon,
 }: {
   data: AppData;
-  combat: CombatState;
-  setCombat: (state: CombatState) => void;
-  onTurnResolved: (state: CombatState) => Promise<void>;
+  combat: DungeonRunState;
+  setCombat: (state: DungeonRunState) => void;
+  onTurnResolved: (state: DungeonRunState) => Promise<void>;
+  onBattleResult: (state: DungeonRunState) => Promise<void>;
   onBack: () => void;
-  onWin: () => void;
+  onHome: () => void;
+  onReplay: () => void;
+  onNextDungeon: (dungeonId: string) => void;
 }) {
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
-  const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill; mode: "select" | "preview" } | null>(null);
+  const [menu, setMenu] = useState<"actions" | "skills" | "swap">("actions");
+  const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill } | null>(null);
   const [submittingProgress, setSubmittingProgress] = useState(false);
-  const activePlayer = combat.playerUnits.filter((unit) => unit.active && unit.hp > 0);
+  const [recordingResult, setRecordingResult] = useState(false);
+  const [resultAttempt, setResultAttempt] = useState(0);
+  const [diceSettled, setDiceSettled] = useState(true);
+  const battle = combat.battle;
+  const activePlayer = battle.playerUnits.filter((unit) => unit.active && unit.hp > 0);
   const totalCost = Object.values(actions).reduce((sum, action) => sum + action.cost, 0);
   const manaAssetPath = findAssetPath(data, "mana", "mana");
   const activeOwnedRollcaster = data.player!.rollcasters.find((row) => row.id === data.player!.profile.active_rollcaster_id) ?? data.player!.rollcasters[0];
   const activeRollcaster = byId(data.catalog.rollcasters, activeOwnedRollcaster?.rollcaster_id);
-  const previewTargets = targeting?.mode === "preview" ? skillTargets(combat, targeting.actorKey, targeting.skill) : [];
-  const previewTargetKeys = new Set(previewTargets.map((unit) => unit.key));
+  const activeAbilities = data.player!.abilitySlots
+    .filter((slot) => slot.user_rollcaster_id === activeOwnedRollcaster?.id && slot.ability_id)
+    .sort((left, right) => left.slot_index - right.slot_index)
+    .map((slot) => byId(data.catalog.rollcasterAbilities, slot.ability_id))
+    .filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
+  const legalTargets = targeting ? skillTargets(battle, targeting.actorKey, targeting.skill) : [];
+  const legalTargetKeys = new Set(legalTargets.map((unit) => unit.key));
+  const queuedSwapIds = new Set(Object.values(actions).map((action) => action.swapToId).filter(Boolean));
+  const currentActor = activePlayer.find((unit) => !actions[unit.key]);
+  const currentActorIndex = currentActor ? activePlayer.findIndex((unit) => unit.key === currentActor.key) : activePlayer.length;
+  const event = currentDungeonEvent(combat);
 
   useEffect(() => {
     setActions({});
     setTargeting(null);
-  }, [combat.turn]);
+    setMenu("actions");
+  }, [combat.run.battleIndex, battle.turn, combat.phase === "select_player_actions"]);
+
+  useEffect(() => {
+    if (combat.phase !== "battle_result" || recordingResult) return;
+    setRecordingResult(true);
+    void onBattleResult(combat).finally(() => setRecordingResult(false));
+  }, [combat.phase, combat.run.battleIndex, resultAttempt]);
+
+  useEffect(() => {
+    if (combat.phase !== "roll_result") {
+      setDiceSettled(true);
+      return;
+    }
+    setDiceSettled(false);
+    const timer = window.setTimeout(() => setDiceSettled(true), 650);
+    return () => window.clearTimeout(timer);
+  }, [combat.phase, battle.turn, combat.rollSummary?.player, combat.rollSummary?.opponent]);
 
   function setAction(action: CombatAction) {
     setActions((current) => ({ ...current, [action.actorKey]: action }));
     setTargeting(null);
+    setMenu("actions");
   }
 
   function chooseSkill(actorKey: string, skill: Skill) {
-    const targets = skillTargets(combat, actorKey, skill);
+    const targets = skillTargets(battle, actorKey, skill);
     if (isSingleTarget(skill) && targets.length > 1) {
-      setTargeting({ actorKey, skill, mode: "select" });
-      return;
-    }
-    if (!isSingleTarget(skill) && targets.length > 0) {
-      setTargeting({ actorKey, skill, mode: "preview" });
+      setTargeting({ actorKey, skill });
       return;
     }
     setAction({ actorKey, type: "skill", skillId: skill.id, targetKey: isSingleTarget(skill) ? targets[0]?.key : undefined, cost: skill.mana_cost });
   }
 
+  function backToPreviousActor() {
+    if (currentActorIndex < 1) {
+      setMenu("actions");
+      setTargeting(null);
+      return;
+    }
+    const previousIndex = currentActorIndex - 1;
+    setActions((current) => Object.fromEntries(
+      Object.entries(current).filter(([actorKey]) => activePlayer.findIndex((unit) => unit.key === actorKey) < previousIndex),
+    ));
+    setMenu("actions");
+    setTargeting(null);
+  }
+
+  if (combat.phase === "dungeon_complete" || combat.phase === "dungeon_failed") {
+    const complete = combat.phase === "dungeon_complete";
+    return (
+      <DungeonOutcomeScreen
+        data={data}
+        combat={combat}
+        complete={complete}
+        onHome={onHome}
+        onReplay={onReplay}
+        onNextDungeon={onNextDungeon}
+      />
+    );
+  }
+
   return (
     <section className="combat-screen">
       <div className="combat-header">
-        <button className="secondary-button" onClick={onBack}>Back</button>
+        <button className="secondary-button" onClick={onBack}><ChevronLeft size={16} /> Dungeons</button>
         <div>
+          <p className="eyebrow">{combat.run.effectiveMode === "boss" ? "Boss expedition" : "Dungeon expedition"}</p>
           <h1>{combat.dungeon.name}</h1>
-          <p>Turn {combat.turn} / {combat.dungeon.battle_format}</p>
+          <p>Encounter {combat.run.battleIndex} / {combat.run.battleCount} · Turn {battle.turn} · {combat.run.battleFormat}</p>
         </div>
-        <div className="mana-readout">
-          <span><AssetIcon path={manaAssetPath} alt="Mana" fallback={null} />Player Mana {combat.playerMana}</span>
-          <span><AssetIcon path={manaAssetPath} alt="Mana" fallback={null} />Enemy Mana {combat.opponentMana}</span>
-        </div>
+        <span className="combat-phase-badge">{combat.phase.replace(/_/g, " ")}</span>
       </div>
 
-      <div className="battlefield">
-        <aside className="battle-rollcaster">
+      <div className="combat-board">
+        <aside className="combat-mana-panel rollcaster-mana-panel">
           <span className="combat-sprite-frame rollcaster-combat-frame"><Sprite
             name={activeRollcaster?.name ?? "Rollcaster"}
             element="basic"
@@ -2145,119 +2405,230 @@ function CombatScreen({
             size="large"
             fit="portrait"
           /></span>
-          <p>{activeRollcaster?.name ?? "Rollcaster"}</p>
+          <h3>{activeRollcaster?.name ?? "Rollcaster"}</h3>
+          <strong className="combat-mana-total"><AssetIcon path={manaAssetPath} alt="Player Mana" fallback={<Gem />} /> {battle.playerMana}</strong>
+          <div className="combat-ability-list">
+            {activeAbilities.length
+              ? activeAbilities.map((ability) => (
+                <GameTooltip
+                  key={ability.id}
+                  label={`${ability.name}. ${ability.description} ${attachmentText(data.catalog.effectsByAbility[ability.id] ?? [])}`}
+                  content={<><strong>{ability.name}</strong><span>{ability.description}</span>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [])}</>}
+                >
+                  <span className="combat-ability-slot">{ability.name}</span>
+                </GameTooltip>
+              ))
+              : <span className="combat-ability-slot empty">No Ability equipped</span>}
+          </div>
         </aside>
-        <div className="battle-column">
-          {combat.playerUnits.map((unit) => (
-            <BattleUnit
+        <div className="battle-column player-column">
+          {[0, 1, 2].map((slot) => {
+            const unit = battle.playerUnits[slot];
+            if (!unit) return <CombatEmptySlot key={slot} label="Empty squad slot" />;
+            const ownedId = unit.userCritter?.id;
+            const choosingLeads = combat.phase === "lead_selection" || combat.phase === "forced_replacements";
+            const selectedLead = Boolean(ownedId && combat.selectedLeadIds.includes(ownedId));
+            return <BattleUnit
               key={unit.key}
               unit={unit}
-              skills={unit.skills}
               data={data}
+              allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
               action={actions[unit.key]}
-              canAct={combat.phase === "selecting" && unit.active && unit.hp > 0}
-              bench={combat.playerUnits.filter((candidate) => !candidate.active && candidate.hp > 0)}
-              availableMana={combat.playerMana - (totalCost - (actions[unit.key]?.cost ?? 0))}
+              interactive={combat.phase === "select_player_actions" && currentActor?.key === unit.key && !targeting}
+              waiting={combat.phase === "select_player_actions" && unit.active && unit.hp > 0 && currentActor?.key !== unit.key && !actions[unit.key]}
+              menu={currentActor?.key === unit.key ? menu : "actions"}
+              setMenu={setMenu}
+              bench={battle.playerUnits.filter((candidate) => !candidate.active && candidate.hp > 0 && !queuedSwapIds.has(candidate.userCritter?.id))}
+              availableMana={battle.playerMana - totalCost}
               onAction={setAction}
               onChooseSkill={chooseSkill}
-              previewed={previewTargetKeys.has(unit.key)}
-              previewKind={targeting?.skill.skill_type}
-              statuses={combat.statuses.filter((status) => status.holderKey === unit.key)}
-            />
-          ))}
+              onBack={backToPreviousActor}
+              canGoBack={currentActorIndex > 0 || menu !== "actions"}
+              selected={selectedLead}
+              selectable={choosingLeads && unit.hp > 0 && !combat.fixedLeadIds.includes(ownedId ?? "")}
+              onSelect={() => ownedId && setCombat(toggleDungeonLead(combat, ownedId))}
+              targetable={legalTargetKeys.has(unit.key)}
+              onTarget={() => targeting && setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost })}
+              statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
+              manaAssetPath={manaAssetPath}
+            />;
+          })}
         </div>
         <div className="battle-column opponent-column">
-          {combat.opponentUnits.map((unit) => (
-            <BattleUnit key={unit.key} unit={unit} skills={unit.skills} data={data} opponent previewed={previewTargetKeys.has(unit.key)} previewKind={targeting?.skill.skill_type} statuses={combat.statuses.filter((status) => status.holderKey === unit.key)} />
-          ))}
+          {[0, 1, 2].map((slot) => {
+            const unit = battle.opponentUnits[slot];
+            if (combat.phase === "lead_selection") {
+              return <CombatHiddenOpponentSlot key={slot} />;
+            }
+            return unit
+              ? <BattleUnit
+                  key={unit.key}
+                  unit={unit}
+                  data={data}
+                  allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
+                  opponent
+                  targetable={legalTargetKeys.has(unit.key)}
+                  onTarget={() => targeting && setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost })}
+                  statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
+                  manaAssetPath={manaAssetPath}
+                />
+              : <CombatEmptySlot key={slot} label="Inactive enemy slot" opponent />;
+          })}
         </div>
+        <aside className="combat-mana-panel enemy-mana-panel">
+          <span className="enemy-mana-emblem"><Skull size={44} /></span>
+          <h3>Enemy Mana</h3>
+          <strong className="combat-mana-total"><AssetIcon path={manaAssetPath} alt="Enemy Mana" fallback={<Gem />} /> {battle.opponentMana}</strong>
+          <p>The opposing lineup follows the same Mana and affordability rules.</p>
+        </aside>
       </div>
 
-      {targeting && <section className={`target-picker ${targeting.mode}`} aria-label={targeting.mode === "preview" ? "Preview affected critters" : "Choose a skill target"}>
-        <div><p className="eyebrow">{targeting.mode === "preview" ? "Affected Critters" : "Choose target"}</p><h2>{targeting.skill.name}</h2><p>{targetingDescription(targeting.skill)}</p></div>
-        <div className="target-options">{skillTargets(combat, targeting.actorKey, targeting.skill).map((unit) => targeting.mode === "select" ? <button key={unit.key} onClick={() => setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost })}><SpriteFrame size="xs"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" /></SpriteFrame><span><CritterName data={data} critter={unit.critter} /><small>{unit.side === "player" ? "Friendly" : "Enemy"} · {unit.hp}/{unit.maxHp} HP</small></span></button> : <article key={unit.key} className={`target-preview-card ${targeting.skill.skill_type}`}><SpriteFrame size="xs"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" /></SpriteFrame><span><CritterName data={data} critter={unit.critter} /><small>{unit.side === "player" ? "Friendly" : "Enemy"} · {unit.hp}/{unit.maxHp} HP</small></span></article>)}</div>
-        <div className="target-picker-actions">{targeting.mode === "preview" && <button className="primary-button" onClick={() => setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, cost: targeting.skill.mana_cost })}>{targeting.skill.skill_type === "attack" ? "Confirm area attack" : "Confirm support effect"}</button>}<button className="secondary-button" onClick={() => setTargeting(null)}>Cancel</button></div>
-      </section>}
+      <CombatDiceRow data={data} combat={combat} manaAssetPath={manaAssetPath} rolling={!diceSettled} />
 
-      <div className="turn-panel">
-        {combat.phase === "ready" && (
-          <button className="primary-button" onClick={() => setCombat(startTurn(combat))}>
-            Roll Dice
+      <button
+        type="button"
+        className={`combat-narration ${combat.phase === "event_playback" || combat.phase === "roll_result" ? "advanceable" : ""}`}
+        disabled={
+          (combat.phase !== "event_playback" && combat.phase !== "roll_result")
+          || (combat.phase === "roll_result" && !diceSettled)
+          || (combat.phase === "event_playback" && submittingProgress)
+        }
+        onClick={() => setCombat(combat.phase === "event_playback" ? advanceDungeonEvent(combat) : continueAfterRoll(combat))}
+      >
+        <span>
+          {combat.phase === "lead_selection" && `Choose ${combat.requiredLeadCount} healthy lead Critter${combat.requiredLeadCount === 1 ? "" : "s"} before revealing the enemy lineup.`}
+          {combat.phase === "forced_replacements" && `Choose ${combat.requiredLeadCount - combat.fixedLeadIds.length} replacement${combat.requiredLeadCount - combat.fixedLeadIds.length === 1 ? "" : "s"} for the knocked-out active slot${combat.requiredLeadCount - combat.fixedLeadIds.length === 1 ? "" : "s"}.`}
+          {combat.phase === "await_roll" && `Roll the Dice to start Turn ${battle.turn}.`}
+          {combat.phase === "roll_result" && (!diceSettled
+            ? "Rolling…"
+            : `User rolled ${combat.rollSummary?.player ?? 0} mana and enemy rolled ${combat.rollSummary?.opponent ?? 0} mana.`)}
+          {combat.phase === "select_player_actions" && (targeting ? `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")}
+          {combat.phase === "event_playback" && (submittingProgress ? "Saving the resolved turn…" : event?.message)}
+          {combat.phase === "battle_result" && (recordingResult ? "Committing encounter rewards…" : "Encounter resolved.")}
+          {combat.phase === "encounter_rewards" && `Encounter ${combat.run.battleIndex - 1} cleared.`}
+        </span>
+        {(combat.phase === "event_playback" || combat.phase === "roll_result") && <ChevronRight size={24} aria-label="Next" />}
+      </button>
+
+      <div className="combat-command-row">
+        {(combat.phase === "lead_selection" || combat.phase === "forced_replacements") && (
+          <button
+            className="primary-button"
+            disabled={combat.selectedLeadIds.length !== combat.requiredLeadCount}
+            onClick={() => setCombat(confirmDungeonLeads(combat))}
+          >
+            Start Encounter
           </button>
         )}
-        {combat.phase === "selecting" && (
+        {combat.phase === "await_roll" && (
+          <button className="primary-button roll-dice-button" onClick={() => {
+            setDiceSettled(false);
+            setCombat(rollDungeonDice(combat));
+          }}>
+            <Dices size={20} /> Roll Dice
+          </button>
+        )}
+        {combat.phase === "select_player_actions" && (
           <>
-            <div className="selection-summary">
-              <strong>Selected Actions</strong>
-              {activePlayer.map((unit) => (
-                <span key={unit.key}>
-                  {unit.name}: {actions[unit.key]?.type ?? "skip"} ({actions[unit.key]?.cost ?? 0} mana)
-                </span>
-              ))}
-              <strong>Total {totalCost} / {combat.playerMana}</strong>
-            </div>
+            <span className="mana-reservation"><AssetIcon path={manaAssetPath} alt="Mana reserved" fallback={<Gem />} /> {totalCost} reserved · {battle.playerMana - totalCost} available</span>
             <button
               className="primary-button"
-              disabled={submittingProgress || Boolean(targeting) || totalCost > combat.playerMana}
+              disabled={submittingProgress || Boolean(targeting) || totalCost > battle.playerMana || Object.keys(actions).length !== activePlayer.length}
               onClick={async () => {
-                const submitted = activePlayer.map(
-                  (unit) => actions[unit.key] ?? { actorKey: unit.key, type: "skip", cost: 0 },
-                );
-                const resolved = resolveTurn(combat, submitted);
+                const resolved = submitDungeonActions(combat, activePlayer.map((unit) => actions[unit.key]));
+                setCombat(resolved);
                 setSubmittingProgress(true);
                 try { await onTurnResolved(resolved); } finally { setSubmittingProgress(false); }
               }}
             >
-              {submittingProgress ? "Recording turn…" : "Continue"}
+              {submittingProgress ? "Submitting…" : "Submit Actions"}
             </button>
           </>
         )}
-        {combat.phase === "won" && <button className="primary-button" onClick={onWin}>Claim Rewards</button>}
-        {combat.phase === "lost" && <button className="secondary-button" onClick={onBack}>Return</button>}
+        {combat.phase === "battle_result" && !recordingResult && (
+          <button className="primary-button" onClick={() => setResultAttempt((attempt) => attempt + 1)}>
+            <RefreshCw size={17} /> Retry Save
+          </button>
+        )}
       </div>
-
-      <div className="combat-log">
-        {combat.log.slice(0, 8).map((entry, index) => (
-          <p key={`${entry}-${index}`}>{entry}</p>
-        ))}
-      </div>
+      {combat.phase === "encounter_rewards" && combat.lastBattleRewards && (
+        <CombatResultDialog
+          data={data}
+          title={`Encounter ${combat.run.battleIndex - 1} / ${combat.run.battleCount} cleared`}
+          rewards={combat.lastBattleRewards}
+          actionLabel="Next Encounter"
+          onAction={() => setCombat(continueAfterEncounterRewards(combat))}
+        />
+      )}
     </section>
   );
 }
 
 function BattleUnit({
   unit,
-  skills,
   data,
+  allUnits = [],
   action,
-  canAct,
+  interactive = false,
+  waiting = false,
+  menu = "actions",
+  setMenu,
   bench = [],
   onAction,
   onChooseSkill,
+  onBack,
+  canGoBack = false,
   opponent = false,
   availableMana = 0,
-  previewed = false,
-  previewKind,
+  selected = false,
+  selectable = false,
+  onSelect,
+  targetable = false,
+  onTarget,
   statuses = [],
+  manaAssetPath,
 }: {
   unit: CombatState["playerUnits"][number];
-  skills: Skill[];
   data: AppData;
+  allUnits?: CombatState["playerUnits"];
   action?: CombatAction;
-  canAct?: boolean;
+  interactive?: boolean;
+  waiting?: boolean;
+  menu?: "actions" | "skills" | "swap";
+  setMenu?: (menu: "actions" | "skills" | "swap") => void;
   bench?: CombatState["playerUnits"];
   onAction?: (action: CombatAction) => void;
   onChooseSkill?: (actorKey: string, skill: Skill) => void;
+  onBack?: () => void;
+  canGoBack?: boolean;
   opponent?: boolean;
   availableMana?: number;
-  previewed?: boolean;
-  previewKind?: Skill["skill_type"];
+  selected?: boolean;
+  selectable?: boolean;
+  onSelect?: () => void;
+  targetable?: boolean;
+  onTarget?: () => void;
   statuses?: CombatState["statuses"];
+  manaAssetPath: string | null;
 }) {
   const pct = Math.max(0, Math.round((unit.hp / unit.maxHp) * 100));
+  const healthTone = pct > 65 ? "healthy" : pct > 35 ? "wounded" : "critical";
+  const summary = action ? combatActionSummary(data, allUnits, unit, action) : null;
   return (
-    <article className={`battle-unit ${!unit.active ? "bench" : ""} ${opponent ? "opponent" : ""} ${previewed ? `target-preview ${previewKind ?? "attack"}-preview` : ""}`}>
-      <span className="combat-sprite-stack">
+    <article
+      className={`battle-unit ${!unit.active ? "bench" : ""} ${unit.hp <= 0 ? "knocked-out" : ""} ${opponent ? "opponent" : ""} ${selected ? "selected-lead" : ""} ${selectable ? "selectable" : ""} ${targetable ? "legal-target" : ""} ${waiting ? "waiting-turn" : ""}`}
+      onClick={targetable ? onTarget : selectable ? onSelect : undefined}
+      role={targetable || selectable ? "button" : undefined}
+      tabIndex={targetable || selectable ? 0 : undefined}
+      onKeyDown={(event) => {
+        if ((targetable || selectable) && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          (targetable ? onTarget : onSelect)?.();
+        }
+      }}
+    >
+      <div className="combat-unit-top">
+        <span className="combat-sprite-stack">
         <span className="combat-sprite-frame critter-combat-frame"><Sprite
           name={unit.name}
           element={unit.critter.element_1_id}
@@ -2266,49 +2637,201 @@ function BattleUnit({
           flipped={opponent}
         /></span>
         {unit.active && unit.hp > 0 && <StatusIconRow data={data} statuses={statuses} />}
-      </span>
-      <div className="battle-unit-info">
-        <CritterName data={data} critter={unit.critter} />
-        <p>Lv {unit.level} / Mana {unit.stats.diceMin}–{unit.stats.diceMax}: {unit.manaRoll || "-"}</p>
-        <div className="hp-bar"><span style={{ width: `${pct}%` }} /></div>
-        <p>{unit.hp} / {unit.maxHp} HP {unit.blocking ? "/ blocking" : ""}</p>
-      </div>
-      {canAct && onAction && (
-        <div className="action-grid">
-          <button className={action?.type === "block" ? "selected-action" : ""} disabled={unit.stats.blockCost > availableMana} onClick={() => onAction({ actorKey: unit.key, type: "block", cost: unit.stats.blockCost })}>
-            Block {unit.stats.blockCost}
-          </button>
-          <button className={action?.type === "skip" ? "selected-action" : ""} onClick={() => onAction({ actorKey: unit.key, type: "skip", cost: 0 })}>Skip 0</button>
-          {skills.map((skill) => (
-            <SkillTile
-              key={skill.id}
-              data={data}
-              skill={skill}
-              selected={action?.type === "skill" && action.skillId === skill.id}
-              disabled={skill.mana_cost > availableMana}
-              disabledReason={skill.mana_cost > availableMana ? "Insufficient mana." : undefined}
-              onClick={() => onChooseSkill?.(unit.key, skill)}
-            />
-          ))}
-          {bench.map((candidate) => (
-            <button
-              key={candidate.key}
-              onClick={() =>
-                onAction({
-                  actorKey: unit.key,
-                  type: "swap",
-                  swapToId: candidate.userCritter?.id,
-                  cost: unit.stats.swapCost,
-                })
-              }
-            >
-              Swap {candidate.name} {unit.stats.swapCost}
-            </button>
-          ))}
+        </span>
+        <div className="battle-unit-info">
+          <CritterName data={data} critter={unit.critter} />
+          <span className="combat-unit-meta"><strong>Lv {unit.level}</strong><span className="mana-roll-stat"><AssetIcon path={manaAssetPath} alt="Mana Roll" fallback={<Gem />} /> {unit.stats.diceMin}–{unit.stats.diceMax}</span></span>
+          <div className={`hp-bar ${healthTone}`} role="progressbar" aria-label={`${unit.name} health`} aria-valuemin={0} aria-valuemax={unit.maxHp} aria-valuenow={unit.hp} aria-valuetext={`${unit.hp} of ${unit.maxHp} HP`}><span style={{ width: `${pct}%` }} /></div>
+          <p>{unit.hp} / {unit.maxHp} HP {unit.blocking ? "· Blocking" : ""}</p>
         </div>
-      )}
-      {action && <span className="action-badge">{action.type}</span>}
+      </div>
+      <div className="combat-action-space">
+        {interactive && onAction && (
+          <>
+            <button className="combat-back-row" disabled={!canGoBack} onClick={(event) => { event.stopPropagation(); onBack?.(); }}>
+              <ChevronLeft size={14} /> {menu === "actions" ? "Back to previous Critter" : "Back to Action Menu"}
+            </button>
+            {menu === "actions" && <div className="combat-primary-actions">
+              <button onClick={(event) => { event.stopPropagation(); setMenu?.("skills"); }}><Swords size={16} /> Skill</button>
+              <button disabled={unit.stats.blockCost > availableMana} onClick={(event) => { event.stopPropagation(); onAction({ actorKey: unit.key, type: "block", cost: unit.stats.blockCost }); }}><Shield size={16} /> Block <ManaCost path={manaAssetPath} amount={unit.stats.blockCost} /></button>
+              <button disabled={bench.length === 0 || unit.stats.swapCost > availableMana} onClick={(event) => { event.stopPropagation(); setMenu?.("swap"); }}><RefreshCw size={16} /> Swap <ManaCost path={manaAssetPath} amount={unit.stats.swapCost} /></button>
+              <button onClick={(event) => { event.stopPropagation(); onAction({ actorKey: unit.key, type: "skip", cost: 0 }); }}><ChevronRight size={16} /> Skip <ManaCost path={manaAssetPath} amount={0} /></button>
+            </div>}
+            {menu === "skills" && <div className="combat-skill-actions">
+              {[0, 1, 2, 3].map((slot) => {
+                const skill = unit.skills[slot];
+                return skill
+                  ? <SkillTile
+                      key={skill.id}
+                      data={data}
+                      skill={skill}
+                      disabled={skill.mana_cost > availableMana}
+                      disabledReason={skill.mana_cost > availableMana ? "Insufficient Mana." : undefined}
+                      onClick={(event) => { event.stopPropagation(); onChooseSkill?.(unit.key, skill); }}
+                    />
+                  : <button key={slot} className="combat-empty-skill" disabled>-----</button>;
+              })}
+            </div>}
+            {menu === "swap" && <div className="combat-swap-actions">
+              {bench.map((candidate) => <button key={candidate.key} onClick={(event) => {
+                event.stopPropagation();
+                onAction({ actorKey: unit.key, type: "swap", swapToId: candidate.userCritter?.id, cost: unit.stats.swapCost });
+              }}>
+                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
+                <span>Swap to <strong>{candidate.name}</strong></span>
+              </button>)}
+            </div>}
+          </>
+        )}
+        {!interactive && <span className={`combat-action-summary ${summary?.tone ?? ""}`}>{summary?.content ?? (opponent ? "Enemy intent hidden" : unit.active ? "Awaiting action" : "Inactive")}</span>}
+      </div>
+      {selected && <span className="combat-selection-label"><Check size={14} /> Selected</span>}
+      {targetable && <span className="combat-selection-label target"><Target size={14} /> Legal target</span>}
     </article>
+  );
+}
+
+function CombatEmptySlot({ label, opponent = false }: { label: string; opponent?: boolean }) {
+  return (
+    <article className={`battle-unit combat-empty-slot ${opponent ? "opponent" : ""}`} aria-label={label}>
+      <Lock size={28} />
+      <strong>{label}</strong>
+      <div className="combat-action-space"><span className="combat-action-summary">Unavailable</span></div>
+    </article>
+  );
+}
+
+function CombatHiddenOpponentSlot() {
+  return (
+    <article className="battle-unit combat-empty-slot combat-hidden-opponent opponent" aria-label="Hidden enemy slot">
+      <span className="hidden-opponent-mark">?</span>
+      <strong>Enemy hidden</strong>
+      <div className="combat-action-space"><span className="combat-action-summary">Revealed after lead selection</span></div>
+    </article>
+  );
+}
+
+function ManaCost({ path, amount }: { path: string | null; amount: number }) {
+  return <span className="combat-mana-cost"><AssetIcon path={path} alt="Mana" fallback={<Gem />} /> {amount}</span>;
+}
+
+function combatActionSummary(
+  data: AppData,
+  allUnits: CombatState["playerUnits"],
+  actor: CombatState["playerUnits"][number],
+  action: CombatAction,
+): { tone: string; content: React.ReactNode } {
+  if (action.type === "block") return { tone: "friendly", content: "Blocking" };
+  if (action.type === "skip") return { tone: "", content: "Skipping" };
+  if (action.type === "swap") {
+    const target = data.player!.critters.find((owned) => owned.id === action.swapToId);
+    const critter = byId(data.catalog.critters, target?.critter_id);
+    return { tone: "friendly", content: <>Swapping to <strong>{critter?.name ?? "Critter"}</strong></> };
+  }
+  const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
+  const target = action.targetKey ? allUnits.find((unit) => unit.key === action.targetKey) : null;
+  return {
+    tone: skill?.skill_type === "support" ? "friendly" : "enemy",
+    content: <><strong>{skill?.name ?? "Skill"}</strong>{target ? <> → <strong>{target.name}</strong></> : ` → ${skill ? targetingDescription(skill) : "target"}`}</>,
+  };
+}
+
+function CombatDiceRow({ data, combat, manaAssetPath, rolling }: { data: AppData; combat: DungeonRunState; manaAssetPath: string | null; rolling: boolean }) {
+  const playerDice = combat.battle.playerUnits.filter((unit) => unit.active && unit.hp > 0);
+  const enemiesHidden = combat.phase === "lead_selection";
+  const opponentDice = enemiesHidden
+    ? []
+    : combat.battle.opponentUnits.filter((unit) => unit.active && unit.hp > 0);
+  return (
+    <div className="combat-dice-row">
+      <div className="combat-dice-side player">
+        {playerDice.map((unit) => <CombatDie key={unit.key} data={data} unit={unit} rolling={rolling} manaAssetPath={manaAssetPath} />)}
+      </div>
+      <span className="combat-dice-center"><Dices size={24} /><strong>Turn {combat.battle.turn}</strong></span>
+      <div className="combat-dice-side opponent">
+        {enemiesHidden
+          ? <span className="combat-dice-hidden"><Lock size={15} /> Enemy dice hidden</span>
+          : opponentDice.map((unit) => <CombatDie key={unit.key} data={data} unit={unit} rolling={rolling} manaAssetPath={manaAssetPath} opponent />)}
+      </div>
+    </div>
+  );
+}
+
+function CombatDie({ data, unit, rolling, manaAssetPath, opponent = false }: { data: AppData; unit: CombatState["playerUnits"][number]; rolling: boolean; manaAssetPath: string | null; opponent?: boolean }) {
+  return (
+    <span className={`combat-die ${rolling ? "rolling" : "landed"}`}>
+      <span className="combat-die-label"><CritterElementLogos data={data} critter={unit.critter} /><small>{opponent ? "Enemy " : ""}{unit.name}</small></span>
+      <strong>{rolling ? "?" : unit.manaRoll || "–"}</strong>
+      <AssetIcon path={manaAssetPath} alt="" fallback={<Gem />} />
+    </span>
+  );
+}
+
+function CombatResultDialog({ data, title, rewards, actionLabel, onAction }: { data: AppData; title: string; rewards: DungeonRewardSummary; actionLabel: string; onAction: () => void }) {
+  return (
+    <div className="combat-result-overlay" role="dialog" aria-modal="true" aria-label={title}>
+      <section className="combat-result-dialog">
+        <Sparkles size={28} />
+        <p className="eyebrow">Encounter rewards committed</p>
+        <h2>{title}</h2>
+        <RewardSummary data={data} rewards={rewards} />
+        <button className="primary-button" onClick={onAction}>{actionLabel} <ChevronRight size={16} /></button>
+      </section>
+    </div>
+  );
+}
+
+function RewardSummary({ data, rewards }: { data: AppData; rewards: DungeonRewardSummary }) {
+  if (!rewards.entries.length) return <p className="dungeon-no-drops">No rewards were earned.</p>;
+  return (
+    <div className="combat-reward-list">
+      {rewards.entries.map((entry) => {
+        const label = entry.kind === "critter_xp"
+          ? `${entry.amount} Critter XP`
+          : entry.kind === "rollcaster_xp"
+            ? `${entry.amount} Rollcaster XP`
+            : entry.kind === "currency"
+              ? `${entry.amount} ${currencyFor(data, entry.targetId)?.name ?? entry.targetId}`
+              : `${entry.amount} ${entry.kind === "shard" ? `${collectibleName(data, entry.targetCategory ?? "relic", entry.targetId)} Shards` : collectibleName(data, "relic", entry.targetId)}`;
+        return <span key={entry.id}><RewardEntryIcon data={data} entry={entry} /><strong>{label}</strong>{entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}</span>;
+      })}
+    </div>
+  );
+}
+
+function RewardEntryIcon({ data, entry }: { data: AppData; entry: DungeonRewardSummary["entries"][number] }) {
+  if (entry.kind === "currency") {
+    const currency = currencyFor(data, entry.targetId);
+    return <AssetIcon path={currency?.asset_path} alt="" fallback={<Coins size={15} />} />;
+  }
+  if (entry.kind === "critter_xp") return <Sparkles size={15} />;
+  if (entry.kind === "rollcaster_xp") return <UserRound size={15} />;
+  return <CollectibleSprite
+    data={data}
+    type={entry.targetCategory ?? "relic"}
+    id={entry.targetId}
+    size="xs"
+    shard={entry.kind === "shard"}
+  />;
+}
+
+function DungeonOutcomeScreen({ data, combat, complete, onHome, onReplay, onNextDungeon }: { data: AppData; combat: DungeonRunState; complete: boolean; onHome: () => void; onReplay: () => void; onNextDungeon: (id: string) => void }) {
+  return (
+    <section className={`combat-screen dungeon-outcome-screen ${complete ? "victory" : "failure"}`}>
+      <div className="dungeon-outcome-emblem">{complete ? <Sparkles size={42} /> : <Skull size={42} />}</div>
+      <p className="eyebrow">{complete ? "Dungeon complete" : "Expedition failed"}</p>
+      <h1>{complete ? `${combat.dungeon.name} cleared!` : "Your squad has fallen."}</h1>
+      <p>{complete ? `All ${combat.run.battleCount} encounters are complete. Rewards below are already saved.` : "Rewards from defeated opponents are saved. Retrying starts a fresh run at full HP."}</p>
+      <div className="dungeon-outcome-rewards">
+        {combat.lastBattleRewards && <section><h2>Final Encounter</h2><RewardSummary data={data} rewards={combat.lastBattleRewards} /></section>}
+        {combat.dungeonRewards && <section><h2>{combat.dungeonRewards.completionPhase === "first_time" ? "First-clear Rewards" : "Completion Rewards"}</h2><RewardSummary data={data} rewards={combat.dungeonRewards} /></section>}
+      </div>
+      <div className="dungeon-outcome-actions">
+        <button className="secondary-button" onClick={onHome}>Back to Home</button>
+        <button className="primary-button" onClick={onReplay}><RefreshCw size={16} /> {complete ? "Replay Dungeon" : "Retry Dungeon"}</button>
+        {complete && combat.nextDungeonId && <button className="primary-button next-dungeon-button" onClick={() => onNextDungeon(combat.nextDungeonId!)}>Next Dungeon <ChevronRight size={16} /></button>}
+      </div>
+    </section>
   );
 }
 
@@ -2347,7 +2870,19 @@ function UnlockNotification({ data, event, onClose }: { data: AppData; event: Co
   );
 }
 
-function Modal({ title, description = "Item details", children, onClose }: { title: string; description?: string; children: React.ReactNode; onClose: () => void }) {
+function Modal({
+  eyebrow = "Loadout & collection",
+  title,
+  description = "Item details",
+  children,
+  onClose,
+}: {
+  eyebrow?: string;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
   const modalRef = useRef<HTMLDivElement>(null);
   const titleId = `modal-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   useEffect(() => {
@@ -2371,7 +2906,7 @@ function Modal({ title, description = "Item details", children, onClose }: { tit
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modal" ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={`${titleId}-description`}>
         <div className="modal-header">
-          <div><p className="eyebrow">Loadout & collection</p><h2 id={titleId}>{title}</h2><p id={`${titleId}-description`}>{description}</p></div>
+          <div><p className="eyebrow">{eyebrow}</p><h2 id={titleId}>{title}</h2><p id={`${titleId}-description`}>{description}</p></div>
           <button className="icon-button" onClick={onClose} aria-label="Close">
             <X size={18} />
           </button>

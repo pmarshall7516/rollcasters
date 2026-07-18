@@ -8,6 +8,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build",
     "test:effect-runtime": "tsc scripts/effect-runtime-tests.ts src/lib/game.ts src/lib/types.ts --outDir /tmp/rollcasters-effect-runtime-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-effect-runtime-tests/scripts/effect-runtime-tests.js",
+    "test:dungeons:db": "node scripts/dungeon-runtime-db-tests.mjs",
+    "test:dungeons:browser": "RUN_LIVE_DUNGEON_BROWSER_TEST=true node scripts/dungeon-combat-playwright.mjs",
     "test:effect-ui": "node scripts/effect-ui-tests.mjs",
     "test:effect-browser": "RUN_LIVE_EFFECT_BROWSER_TEST=true node scripts/effect-combat-playwright.mjs",
     "test:collection-layout": "node scripts/collection-layout-tests.mjs",
