@@ -1,5 +1,48 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Promo Code uses per player (2026-07-19)
+
+- Current request: honor the Content Studio's new finite/infinite Uses per Player settings in actual game claims.
+- Inspected the completed adjacent Content Studio migration 012 and aligned the game to its canonical fields, `PROMO_CODE_PLAYER_LIMIT_REACHED` token, and `playerUses` / `playerUsesRemaining` / `globalUsesRemaining` response counters. Global Infinite Use/Redemption Limit remains independent.
+- Added additive migration 018 to preserve existing codes at one use per player, remove the obsolete unique redemption constraint, clean up the transitional duplicate constraint, normalize/validate the new fields, round-trip them through the admin save RPC, and enforce the personal count under the existing locked Promo row before every atomic reward grant.
+- Added bigint-safe response normalization, player-facing account-limit copy, and success-summary usage text so repeatable claims clearly show the current claim number plus personal/global uses remaining.
+- Expanded rollback-only database coverage for default authoring compatibility, a two-use personal cap, a global cap after multiple accounts, unlimited repeat claims with distinct snapshots, returned usage counters, immutable repeated history, schema/index contract, security policies, and invalid codes.
+- Expanded the real-game browser fixture to claim a two-use code twice, verify both reward grants/history records and counters, reject the third claim, and reload both immutable entries.
+- Applied only migration 018 to the connected development database. The final audit found only the canonical player-use constraint, the canonical error/counter RPC contract, zero disposable Promo Codes, and zero disposable Auth users.
+- Passed `npm run test:promo-codes`, `npm run test:promo-codes:db`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, the live signed-in Promo Code browser flow under the bundled Node 24 runtime, and the required generic web-game smoke client.
+- Visually inspected the first and repeated desktop claims, both-entry mobile history, and clean authentication smoke. The second claim showed 250 Coins, two history cards, and `Claim 2 · Account claim limit reached · 8 total claims remaining`; no horizontal overflow or browser errors were present.
+- No outstanding TODOs for the per-player redemption limit fix.
+
+## Promo code player feature (2026-07-18)
+
+- Current request: implement the game-facing Promo Code feature from `docs/16-promo-codes.md`.
+- Confirmed the shared development database already exposes `redeem_promo_code(text)` and `promo_code_redemption_history()` from the Content Studio implementation, so this game change consumes the existing secured contract rather than duplicating its server migration.
+- Added typed Promo redemption/history API adapters, stable player-facing error mapping, reward outcome labels, and a routed Promo Codes Shop tab after the disabled Lootbox Shop tab.
+- Added the accessible claim form, lost-response history reconciliation, success reward reveal, immutable snapshot-based reward art, newest-first history, loading/retry/empty states, and responsive one-column behavior.
+- Added focused business-rule tests, a rollback-only shared-database contract suite, and a disposable-user real-app browser scenario covering routing, lowercase paste/Enter submission, focus, balances, outcome labels, safe errors, history reload, non-enumeration, accessibility, and mobile layout.
+- The database suite passed case-insensitive atomic grants, one-use/global-limit enforcement, immutable code/reward snapshots, function privileges, and RLS policy presence. The browser fixture cleanup audit found zero disposable Promo Codes and zero test users.
+- Passed `npm run test:promo-codes`, `npm run test:promo-codes:db`, `npm run test:promo-codes:browser`, `npm run test:collectibles-shop`, `npm run test:responsive-shell-layout`, `npm run typecheck`, `npm run build`, script syntax checks, `git diff --check`, and the required web-game smoke client.
+- Visually inspected the claimed desktop page, reloaded mobile history, and clean real-app authentication smoke. No outstanding TODOs for the game-facing Promo Code feature.
+
+## Pre-action knockout Mana refunds (2026-07-18)
+
+- Current request: do not spend a Critter's queued action Mana when that Critter is knocked out before it can act.
+- Updated the shared turn resolver to return the exact reserved action cost to the owning side when resolution reaches an already-knocked-out actor; the Critter still does not act.
+- Added deterministic runtime regressions for both player and opponent Critters, including speed ordering, no outgoing damage, exact Mana restoration, and refund narration.
+- Passed `npm run test:effect-runtime`, `npm run typecheck`, `npm run build`, `git diff --check`, and the required real-app web-game smoke with no captured browser errors.
+- Visually inspected the clean authentication smoke plus signed-in live Dungeon dice/action-selection captures. The broader disposable-user Dungeon scenario reached real combat, then stopped on an unrelated short-wide viewport-fit assertion before action resolution; its `finally` cleanup removed the temporary user.
+- No outstanding TODOs for the Mana refund rule.
+
+## Compact collectible unlock banner (2026-07-18)
+
+- Current request: replace the blocking center-screen collectible unlock popup with a simple, non-interactive top-left banner that overlays any current UI for five seconds without changing layout.
+- Reused the existing durable unlock-event queue shared by combat, Shard collection, Shop purchases, and other challenge completion paths.
+- Replaced the modal/backdrop, focus trap, and Continue button with a fixed, pointer-transparent, live-region banner; each queued unlock now automatically advances after exactly five seconds.
+- Added a compact slide-in/fade-out treatment and updated the live collectibles browser scenario to assert placement, dimensions, stacking, lack of modal/interactivity, animation, accessibility, and automatic dismissal.
+- Added a local-only desktop/mobile visual regression after the external Supabase test was blocked by environment policy. It measured a 360x70 banner at (12,12), z-index 1000, zero interactive descendants, successful click-through, unchanged underlying layout, and clean browser errors at 1280x720 and 390x844.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:collectibles-shop`, `npm run test:unlock-notification-ui`, `npm run test:responsive-shell-layout`, `npm run test:collection-interaction-ui`, script syntax checks, `git diff --check`, and the required real-app web-game smoke client. Visually inspected desktop/mobile banner captures, existing modal captures, and the clean unauthenticated app render.
+- No outstanding TODOs for this change.
+
 ## Skill and Ability point unlocks (2026-07-16)
 
 - Current request: fix the collection-popup `unlock_critter_skill` schema-cache failure and make both Skill points and Ability points spendable on their authored unlocks.
@@ -739,3 +782,112 @@ Original prompt: Now, I want you to use all of these refined implementation docu
 - The disposable live scenario completed Dungeon 001, committed six reward entries, and reported zero console, page, or network errors. Visually inspected the active-run Home screen, restored event-playback screen, and unauthenticated real-app smoke render.
 - Passed the request-ID native/fallback shape check, `npm run typecheck`, `npm run build`, `npm run test:effect-runtime`, `npm run test:collectibles-shop`, browser-script syntax checking, `git diff --check`, the live Dungeon browser scenario, and the required web-game client.
 - No outstanding TODOs for this fix.
+
+## Dungeon/combat UI cleanup (2026-07-18)
+
+- Current request: standardize Dungeon cards and pool details, move lead selection into a popup with format-specific fixed battlefield slots, fit combat into the viewport, refine dice/unit metadata, add staged combat animation/effect playback, and add animated Critter/Rollcaster XP results.
+- Implemented the foundational formation rule: one active Critter uses the center slot, two use top/bottom, and three use all slots on either side. Lead selection now skips automatically whenever every healthy equipped Critter fits in the authored active count.
+- Moved manual lead/replacement choice into a dedicated equipped-party dialog and changed unused battlefield positions to text-free inset slots.
+- Standardized Dungeon card tracks/sizing, removed the redundant ready text, simplified briefing copy/probabilities, and moved opponent entries to a narrower two-column grid.
+- Reworked the combat shell to fit the complete battlefield, Mana, dice, narration, and actions into the viewport down through 390x844 without document scrolling. Tooltips now measure and clamp themselves to the visible window.
+- Centered Roll Dice in the dice bar, placed each die's Mana result above its Critter identity, and consolidated Critter Element, name, level, and Mana range into one stable identity row.
+- Added structured staged combat presentation events: the acting Critter animates with the Skill announcement first, then a click advances to damage, healing, or status feedback while the affected HP bar animates. Reloading during narration preserves the correct pre-effect state.
+- Added a Party XP section beneath encounter drops and final rewards. Every equipped Critter and the active Rollcaster render with artwork, level progress, gain totals, and a slow animated XP fill, including party members that gained no XP.
+- Expanded runtime and disposable-user browser coverage for fixed formations, automatic lead skipping, popup selection, card alignment, briefing copy, dice presentation, tooltip containment, viewport fit, staged effects, XP cards, result-save ordering, and a complete two-encounter Dungeon clear. The live run finished with zero browser errors and also verified automatic top/bottom placement in a 2v2 Dungeon.
+- Passed `npm run test:dungeons:browser`, `npm run test:effect-runtime`, `npm run test:effect-ui`, `npm run test:collection-ui`, `npm run test:collection-interaction-ui`, `npm run test:collectibles-shop`, `npm run test:responsive-shell-layout`, `npm run test:home-loadout-layout`, `npm run typecheck`, `npm run build`, `git diff --check`, and the required real-app web-game smoke client. Visually inspected desktop/mobile Dungeon cards, briefing, lead choice, battle phases, staged damage, encounter rewards, and completion.
+- No outstanding TODOs for this cleanup.
+
+## Dungeon card centering correction (2026-07-18)
+
+- Current follow-up: the live Dungeon grid still shows internally left-shifted logos, titles, descriptions, stat boxes, and buttons, making otherwise equal card shells appear inconsistent.
+- Root cause: the renovated grid retained the earlier flex card's `justify-content: space-between`; on a one-column CSS grid this left-aligned a max-content-width implicit track instead of filling the card.
+- Added an explicit full-width grid column, stretch alignment, centered component anchors, and exact 550px minimum/maximum card sizing. Expanded the browser regression to measure every component's horizontal center at the reported 960px viewport as well as equal card dimensions and vertical anchors.
+- The compatible Node 24 signed-in browser scenario completed both encounters with zero browser errors after confirming two equal 330x550 cards, exact horizontal center offsets, identical vertical anchors, and overflow-safe mobile sizing. Visually inspected the corrected 960px and 390px Dungeon grids.
+- Passed `npm run typecheck`, `npm run build`, script syntax checking, `git diff --check`, and the required real-app web-game smoke client. The ordinary npm browser command currently selects the machine's Node 20 runtime, which the installed Supabase client no longer supports; the identical scenario passes under the repository's bundled Node 24 runtime.
+- No outstanding TODOs for the card correction.
+
+## Combat action-space follow-up (2026-07-18)
+
+- Current follow-up: keep Submit Actions visible throughout Dungeon combat but disabled until every active Critter has an action; enlarge Critter slots and their four action/Skill controls; tighten vertical dice padding and the board-to-dice gap.
+- Made Submit Actions a persistent combat-row control with phase/readiness gating, rebalanced Critter cards toward the action area, made all four combat Skill tiles explicitly fill a two-by-two grid, and allocated reclaimed dice/gap height back to the three battlefield slots.
+- Added adaptive compact-desktop row sizing: at short intermediate windows the currently actionable player row and matching enemy row receive the tall track while non-action rows compress, retaining the authored top/center/bottom formation and preventing slot/dice overlap.
+- Expanded the signed-in browser regression across 1440x1000, 960x720, and 390x844. It asserts persistent disabled Submit states before readiness, activation after all actions, four contained Action and Skill controls, 36px/29px minimum control heights, 196px/150px primary Critter cards, 2px dice padding, 5px/3px board gaps, and no viewport overflow.
+- The complete two-encounter Dungeon scenario passed with zero browser errors. Visually inspected desktop, compact-desktop, mobile Action menus, mobile/desktop four-Skill menus, the final real-app smoke render, and the text-game state.
+- Passed `npm run test:responsive-shell-layout`, `npm run typecheck`, `npm run build`, script syntax checking, `git diff --check`, the compatible Node 24 Dungeon browser scenario, and the required web-game smoke client.
+- No outstanding TODOs for this follow-up.
+
+## Combat panel and dice-track correction (2026-07-18)
+
+- Current follow-up: remove the divider overlapping the HP/action boundary, make Critter cards taller again, remove every pixel between the battlefield and dice row, and make the dice row hug its inner die cards vertically.
+- Removed the action area's top border, disabled automatic combat-grid row stretching, changed the board-to-dice track gap to zero, removed dice-row vertical padding/minimum height, and increased wide/mobile Critter height caps with the reclaimed space.
+- Expanded browser geometry coverage for the absent divider, taller cards, zero board gap, zero dice padding, and a dice container no more than its border thickness taller than the tallest die card.
+- The signed-in scenario verified 216px wide and 164px mobile actionable cards, a computed 0px action divider, a literal 0px board-to-dice gap, 0px vertical dice padding, and a dice row exactly 2px taller than its tallest inner die for the outer border.
+- Completed both Dungeon encounters with zero browser errors and visually inspected desktop, 960x720 compact desktop, mobile, and roll-result layouts. The battlefield now meets the dice row directly without overlap at every tested size.
+- Passed `npm run test:responsive-shell-layout`, `npm run typecheck`, `npm run build`, script syntax checking, `git diff --check`, the compatible Node 24 Dungeon browser scenario, and the required web-game smoke client.
+- No outstanding TODOs for this correction.
+
+## Party XP ordering and color (2026-07-18)
+
+- Current follow-up: encounter XP cards must use a two-by-two grid for a Rollcaster plus three equipped Critters, with the Rollcaster first and blue Critter XP bars.
+- Moved the active Rollcaster card before squad Critters, replaced the responsive auto-fit grid with an explicit two-column grid, styled Critter XP fills blue, and kept the Rollcaster fill visually distinct in purple.
+- Expanded the disposable signed-in fixture to three equipped Critters and added exact DOM order, two-row/two-column alignment, computed blue-gradient, artwork, and final-outcome persistence assertions.
+- Added phone-specific compact card internals so the fixed two-by-two grid remains readable at 390px without identity or XP text crossing card boundaries.
+- Completed both Dungeon encounters with zero browser errors and verified Rollcaster-first ordering, three following Critters, two columns/two rows, blue Critter bars, purple Rollcaster bar, artwork, and contained mobile content. Visually inspected desktop encounter, mobile encounter, and final outcome XP sections.
+- Passed `npm run typecheck`, `npm run build`, script syntax checking, `git diff --check`, the compatible Node 24 Dungeon browser scenario, and the required web-game smoke client.
+- No outstanding TODOs for this correction.
+
+## Contextual combat submission and action reselection (2026-07-18)
+
+- Current follow-up: add small gaps around the dice track, give its die cards exactly 5px vertical padding, replace the center Roll Dice control with Submit Actions during action selection, keep selected-action status on one row, color only its target, and retain a back arrow for action changes.
+- The dice track now sits 5px below the battlefield, uses 5px top/bottom padding around its die cards, and sits 5px above narration. Its center position switches exclusively between Roll Dice and readiness-gated Submit Actions, with no duplicate bottom submission control.
+- Selected actions now use a single non-wrapping status row. Skill and action text retain the normal muted treatment while only target names/descriptions use red for opponents or green for friendlies.
+- Added a persistent reselect arrow to every queued player action. Reselecting an earlier Critter removes that action and any later queued actions, restores the correct action menu, and disables submission until the sequence is complete again.
+- Expanded the live browser regression for contextual control visibility, exact desktop/mobile gap and padding geometry, one-line selected status, enabled submission after readiness, and functional action reselection.
+- The compatible Node 24 signed-in scenario completed both Dungeon encounters with zero browser errors. Visually inspected the desktop action menu, selected-action state, and 390x844 mobile action layout.
+- Passed `npm run build`, `git diff --check`, and the complete compatible Node 24 Dungeon browser scenario.
+- No outstanding TODOs for this follow-up.
+
+## Combat Mana-panel identity grouping (2026-07-18)
+
+- Current follow-up: place each combat Rollcaster portrait immediately above its name instead of leaving a large flexible gap between them.
+- Bottom-aligned the Rollcaster portrait within the wide Mana panel's flexible artwork track so it sits directly over the name while retaining the existing centered panel balance. Applied the same treatment to the enemy emblem and label for side-to-side symmetry; compact horizontal panels remain unchanged.
+- Added wide-layout browser geometry checks requiring both artwork-to-label gaps to remain between 0px and 16px.
+- Passed `npm run build`, browser-script syntax checking, the required web-game client smoke run, and the complete compatible Node 24 Dungeon browser scenario. The signed-in run cleared both encounters with zero browser errors, and the updated combat capture was visually inspected.
+- No outstanding TODOs for this follow-up.
+
+## Compact Dungeon failure outcome and shared logo sizing (2026-07-18)
+
+- Current follow-up: reduce the “Your squad has fallen” heading, stop the failure pane from stretching to the bottom of the viewport, center a lone Final Encounter drops pane, and keep the shared Rollcasters logo at its normal signed-in size throughout Dungeon screens.
+- Removed the Dungeon-only desktop/mobile logo size caps, reserved the shared header’s actual height above combat, made outcome panes content-height, reduced failure-only title/emblem sizing, and centered a single reward pane on the same bounded track as Party XP.
+- Expanded the responsive shell regression with an exact failure-outcome fixture at 1330x1236 and 390x844. It verifies the normal-page and Dungeon logo dimensions match (360x88 desktop, 116x47.67 mobile), the failure title stays at or below 46px, the lone reward pane is centered and no wider than 620px, and the panel ends within 36px of its action row.
+- Passed `npm run build`, `npm run test:responsive-shell-layout`, browser-script syntax checking, `git diff --check`, the required real-app web-game client, and the complete compatible Node 24 Dungeon browser scenario. The live scenario cleared two encounters with zero browser errors and retained overflow-safe combat at 1440x1000, 960x720, and 390x844. Visually inspected the desktop/mobile failure fixtures, the live compact combat screens, the real completion pane, and the unauthenticated app smoke render.
+- No outstanding TODOs for this follow-up.
+
+## Anchored Dungeon combat heading (2026-07-18)
+
+- Current follow-up: keep the Dungeon expedition/name/encounter text anchored to the true horizontal center while combat phases change, and add a little breathing room below the Rollcasters logo.
+- Replaced the unequal auto-width header sides with equal flexible tracks, fixed the heading to the dedicated center track, anchored the back control and phase badge to the outer edges, and reserved the added logo gap in the combat viewport height.
+- Expanded the live Dungeon fixture to measure the heading before rolling and after entering action selection. It requires the heading to match both the combat-header center and the Rollcasters logo center within 0.6px, remain on the exact same x-coordinate across the phase-badge change, and retain at least 8px below the logo; the live render measured a 12px vertical gap.
+- Passed `npm run build`, `npm run test:responsive-shell-layout`, browser-script syntax checking, `git diff --check`, the required real-app web-game client, and the complete compatible Node 24 Dungeon browser scenario. The disposable run cleared both encounters with zero browser errors, and the centered 1440x1000 and 960x720 action-selection captures were visually inspected.
+- No outstanding TODOs for this follow-up.
+
+## Proportional short-monitor combat fit (2026-07-18)
+
+- Current follow-up: on wide but shorter monitors, keep the complete combat screen visible by shrinking its established composition proportionally instead of clipping the narration at the viewport bottom.
+- Added a measured viewport-fit layer around the combat header, battlefield, dice, narration, and contextual command row. It retains scale 1 when the composition already fits and applies one centered uniform scale only when its natural height exceeds the remaining viewport.
+- Kept fixed lead-selection and result overlays outside the transformed layer so their viewport anchoring is unchanged.
+- Added a 1912x953 live-browser regression matching the reported monitor shape; it requires a slight sub-1 scale, equal side gutters, unchanged logo centering, a fully visible narration panel, and no document overflow.
+- The disposable signed-in run completed both encounters with zero console/page/network errors and passed the reported short-wide monitor case plus the existing 1440x1000, 960x720, and 390x844 combat cases. Visually inspected the 1912x953 action-selection capture: the complete narration box is visible, the original formation is preserved, and the centered side gutters are balanced.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:responsive-shell-layout`, browser-script syntax checking, `git diff --check`, the compatible Node 24 Dungeon browser scenario, and the required web-game client. Visually inspected the final generic smoke render and confirmed its text state matches the clean unauthenticated screen.
+- No outstanding TODOs for this viewport-fit correction.
+
+## Staged combat Swap handoff (2026-07-18)
+
+- Current follow-up: when the Swap resolution step occurs, animate the outgoing Critter toward the player Rollcaster slot, reveal the incoming Critter and all of its slot information in the same battlefield position, and prevent later combat steps from progressing until that reveal is complete.
+- Added explicit Swap presentation metadata for outgoing/incoming combat keys and the preserved battlefield slot. Event playback now commits the active-unit handoff and recomputes active effects at the reveal boundary; advancing directly to a later event also commits the handoff defensively.
+- Added backward-compatible metadata reconstruction for already-saved Swap playback events created before this animation contract.
+- Added a measured Rollcaster-directed motion vector that remains correct under the combat viewport scale, a 720ms outgoing sprite/status animation, a complete incoming-card reveal, and a locked narration control until the new slot has remained visible through the 1.18s staged handoff.
+- Extended `render_game_to_text` with combat-unit keys plus Swap details and a `revealed` flag, and expanded the signed-in Dungeon browser scenario to cover the complete outgoing → incoming → later-event sequence when remote disposable-user testing is explicitly permitted.
+- Added deterministic runtime coverage for metadata, reveal-time active/stat recomputation, later-event ordering, and legacy playback. Added a local-only Playwright visual regression that verifies the Rollcaster-directed vector, locked narration, incoming sprite/name/level/Mana range/HP, and reveal animation.
+- Passed `npm run test:effect-runtime`, `npm run test:combat-swap-ui`, `npm run test:responsive-shell-layout`, `npm run typecheck`, `npm run build`, browser-script syntax checks, `git diff --check`, and the required local web-game client smoke. Visually inspected the outgoing-at-Rollcaster and fully populated incoming-slot captures plus the clean authentication smoke render.
+- The remote disposable-user `npm run test:dungeons:browser` execution was not run because the environment safety reviewer rejected service-role mutations without explicit user authorization. The test scenario itself now contains the Swap assertions and remains ready for an explicitly approved development-database run.

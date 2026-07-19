@@ -10,7 +10,13 @@ import {
   resolveTurn,
   roundHalfUp,
 } from "../src/lib/game.js";
-import { effectiveDungeon, parseBattleFormat, sortDungeonsNaturally } from "../src/lib/dungeons.js";
+import {
+  advanceDungeonEvent,
+  currentDungeonEvent,
+  revealDungeonSwapEvent,
+  type DungeonRunState,
+} from "../src/lib/dungeon-run.js";
+import { battlefieldSlotsForCount, effectiveDungeon, parseBattleFormat, sortDungeonsNaturally } from "../src/lib/dungeons.js";
 import type { BattleFormat, Catalog, CombatAction, DungeonOpponent, EffectOwnerType, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -162,6 +168,86 @@ check(eventResult.turnEvents.some((event) => event.event_type === "use_skill" &&
 check(eventResult.turnEvents.some((event) => event.event_type === "deal_damage" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit a positive deal_damage progress event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
 
+const knockoutCatalog = makeCatalog();
+knockoutCatalog.dungeonOpponents[0].skill_ids = ["strike"];
+let playerKnockoutBattle = battle(knockoutCatalog, makePlayer(), "player-knockout-refund");
+playerKnockoutBattle = {
+  ...playerKnockoutBattle,
+  opponentMana: 5,
+  playerUnits: playerKnockoutBattle.playerUnits.map((unit) => (
+    unit.key === "p1"
+      ? {
+          ...unit,
+          hp: 1,
+          baseStats: { ...unit.baseStats, spd: 1 },
+          persistentStats: { ...unit.persistentStats, spd: 1 },
+          stats: { ...unit.stats, spd: 1 },
+        }
+      : unit
+  )),
+  opponentUnits: playerKnockoutBattle.opponentUnits.map((unit) => (
+    unit.key === "o1"
+      ? {
+          ...unit,
+          baseStats: { ...unit.baseStats, spd: 100 },
+          persistentStats: { ...unit.persistentStats, spd: 100 },
+          stats: { ...unit.stats, spd: 100 },
+        }
+      : unit
+  )),
+};
+const playerKnockoutResult = takeTurn(
+  playerKnockoutBattle,
+  [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }],
+  10,
+);
+check(
+  playerKnockoutResult.playerUnits[0].hp === 0
+    && playerKnockoutResult.playerMana === 10
+    && playerKnockoutResult.opponentUnits[0].hp === playerKnockoutBattle.opponentUnits[0].hp
+    && playerKnockoutResult.log.some((line) => line === "Player One was knocked out before acting; 5 reserved mana was refunded."),
+  "A player Critter knocked out before its queued action must not act and must recover that action's reserved Mana.",
+);
+
+let opponentKnockoutBattle = battle(knockoutCatalog, makePlayer(), "opponent-knockout-refund");
+opponentKnockoutBattle = {
+  ...opponentKnockoutBattle,
+  opponentMana: 5,
+  playerUnits: opponentKnockoutBattle.playerUnits.map((unit) => (
+    unit.key === "p1"
+      ? {
+          ...unit,
+          baseStats: { ...unit.baseStats, spd: 100 },
+          persistentStats: { ...unit.persistentStats, spd: 100 },
+          stats: { ...unit.stats, spd: 100 },
+        }
+      : unit
+  )),
+  opponentUnits: opponentKnockoutBattle.opponentUnits.map((unit) => (
+    unit.key === "o1"
+      ? {
+          ...unit,
+          hp: 1,
+          baseStats: { ...unit.baseStats, spd: 1 },
+          persistentStats: { ...unit.persistentStats, spd: 1 },
+          stats: { ...unit.stats, spd: 1 },
+        }
+      : unit
+  )),
+};
+const opponentKnockoutResult = takeTurn(
+  opponentKnockoutBattle,
+  [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }],
+  10,
+);
+check(
+  opponentKnockoutResult.opponentUnits[0].hp === 0
+    && opponentKnockoutResult.opponentMana === 5
+    && opponentKnockoutResult.playerUnits[0].hp === opponentKnockoutBattle.playerUnits[0].hp
+    && opponentKnockoutResult.log.some((line) => line === "Opponent One was knocked out before acting; 5 reserved mana was refunded."),
+  "An opposing Critter knocked out before its queued action must not act and must recover that action's reserved Mana.",
+);
+
 check(roundHalfUp(2.5) === 3 && roundHalfUp(-2.5) === -3, "Shared half-up rounding must round exact halves away from zero.");
 
 const allBattleFormats: BattleFormat[] = ["1v1", "1v2", "1v3", "2v1", "2v2", "2v3", "3v1", "3v2", "3v3"];
@@ -232,6 +318,13 @@ check(
     && repeatDungeon.battleCount === 4
     && repeatDungeon.difficulty === 7,
   "A cleared Boss Dungeon must switch to its authored regular pool while preserving authored Battle Count.",
+);
+
+check(
+  battlefieldSlotsForCount(1).join(",") === "1"
+    && battlefieldSlotsForCount(2).join(",") === "0,2"
+    && battlefieldSlotsForCount(3).join(",") === "0,1,2",
+  "One-active formations must use center, two-active formations top/bottom, and three-active formations every slot.",
 );
 
 check(
@@ -307,9 +400,75 @@ check(passive.playerUnits[0].stats.diceMin === 3 && passive.playerUnits[1].stats
 check(passive.opponentUnits[0].stats.atk === 22 && passive.opponentUnits[1].stats.atk === 24, "Ability all_enemies must affect every active opponent.");
 check(passive.opponentUnits[0].stats.spd === 10 && passive.opponentUnits[1].stats.spd === 8, "Relic all_enemies must resolve relative to its carrier.");
 check(passive.opponentUnits[0].stats.diceMin === 1 && passive.opponentUnits[1].stats.diceMin === 4 && passive.opponentUnits[1].stats.diceMax === 8, "Ability element enemy targeting must filter active opponents by element.");
+const passiveSwapSlot = passive.playerUnits[0].battlefieldSlot;
 passive = takeTurn(passive, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }]);
 check(passive.playerUnits[0].maxHp === 100 && passive.playerUnits[1].stats.atk === 20, "Every Relic effect must disappear when its carrier leaves active play.");
 check(passive.playerUnits[2].stats.def === 24, "Active Rollcaster Ability effects must recompute for the Critter entering an active slot.");
+const passiveSwapEvent = passive.presentationEvents.find((event) => event.kind === "swap" && event.actorKey === "p1");
+check(
+  passiveSwapEvent?.swap?.outgoingKey === "p1"
+    && passiveSwapEvent.swap.incomingKey === "p3"
+    && passiveSwapEvent.swap.battlefieldSlot === passiveSwapSlot,
+  "Swap presentation must identify the outgoing Critter, incoming Critter, and preserved battlefield slot.",
+);
+const swapPlaybackBefore = {
+  ...battle(passiveCatalog, passivePlayer, "swap-playback"),
+  phase: "selecting" as const,
+  playerMana: 50,
+  opponentMana: 0,
+};
+const swapPlaybackResolved = resolveTurn(
+  swapPlaybackBefore,
+  [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }],
+);
+const swapPlaybackEvents = swapPlaybackResolved.presentationEvents.map((event, index) => ({
+  ...event,
+  id: `swap-playback:${index}`,
+  turn: 1,
+  phase: "resolution",
+  requiresAdvance: true,
+}));
+check(
+  swapPlaybackEvents[0]?.kind === "swap" && swapPlaybackEvents.length > 1,
+  "The staged Swap regression requires a Swap followed by another combat event.",
+);
+const swapPlayback = {
+  phase: "event_playback",
+  battle: swapPlaybackBefore,
+  pendingBattle: swapPlaybackResolved,
+  events: swapPlaybackEvents,
+  eventCursor: 0,
+} as unknown as DungeonRunState;
+check(
+  swapPlayback.battle.playerUnits.find((unit) => unit.key === "p1")?.active
+    && !swapPlayback.battle.playerUnits.find((unit) => unit.key === "p3")?.active,
+  "Swap playback must begin with the outgoing Critter visible and the incoming Critter benched.",
+);
+const revealedSwapPlayback = revealDungeonSwapEvent(swapPlayback);
+check(
+  !revealedSwapPlayback.battle.playerUnits.find((unit) => unit.key === "p1")?.active
+    && revealedSwapPlayback.battle.playerUnits.find((unit) => unit.key === "p3")?.active
+    && revealedSwapPlayback.battle.playerUnits.find((unit) => unit.key === "p3")?.battlefieldSlot === passiveSwapSlot,
+  "Revealing the Swap event must place the incoming Critter and its recomputed information in the outgoing battlefield slot.",
+);
+const advancedSwapPlayback = advanceDungeonEvent(swapPlayback);
+check(
+  advancedSwapPlayback.eventCursor === 1
+    && !advancedSwapPlayback.battle.playerUnits.find((unit) => unit.key === "p1")?.active
+    && advancedSwapPlayback.battle.playerUnits.find((unit) => unit.key === "p3")?.active,
+  "Advancing to a later combat event must commit the Swap first, even if the visual reveal helper was not called.",
+);
+const legacySwapPlayback = {
+  ...swapPlayback,
+  events: swapPlayback.events.map((event, index) => index === 0 ? { ...event, swap: undefined } : event),
+};
+const legacySwapEvent = currentDungeonEvent(legacySwapPlayback);
+check(
+  legacySwapEvent?.swap?.outgoingKey === "p1"
+    && legacySwapEvent.swap.incomingKey === "p3"
+    && legacySwapEvent.swap.battlefieldSlot === passiveSwapSlot,
+  "Restored pre-animation Swap events must reconstruct their handoff metadata for backward-compatible playback.",
+);
 
 const skillCatalog = makeCatalog();
 skillCatalog.effectsBySkill = {
@@ -359,9 +518,28 @@ let healing = battle(healingCatalog, makePlayer(), "healing");
 healing = { ...healing, playerUnits: healing.playerUnits.map((unit) => ({ ...unit, hp: unit.key === "p1" ? 50 : unit.key === "p2" ? 40 : unit.hp })) };
 healing = takeTurn(healing, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
 check(healing.playerUnits[0].hp === 57 && healing.playerUnits[1].hp === 42, "Flat and maximum-HP healing must execute in order, round half-up, and cap independently per target.");
+const ritualSkillEventIndex = healing.presentationEvents.findIndex((event) => event.kind === "skill" && event.actorKey === "p1" && event.skillId === "ritual");
+const ritualHealEventIndexes = healing.presentationEvents
+  .map((event, index) => event.kind === "heal" && event.actorKey === "p1" ? index : -1)
+  .filter((index) => index >= 0);
+check(
+  ritualSkillEventIndex >= 0
+    && ritualHealEventIndexes.length >= 2
+    && ritualHealEventIndexes.every((index) => index > ritualSkillEventIndex)
+    && healing.presentationEvents.filter((event) => event.kind === "heal" && event.actorKey === "p1").every((event) => event.message.includes("healed") && event.hpChanges.length === 1),
+  "Healing Skills must stage the user animation before numeric healing messages and per-target HP changes.",
+);
 const beforeVampire = healing.playerUnits[0].hp;
 healing = takeTurn(healing, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }]);
 check(healing.playerUnits[0].hp === beforeVampire + 3, "percent_damage_done healing must use the Skill's actual final damage and shared half-up rounding.");
+const vampireKinds = healing.presentationEvents
+  .filter((event) => event.actorKey === "p1")
+  .map((event) => event.kind)
+  .join(",");
+check(
+  vampireKinds.includes("skill,damage,heal"),
+  "Damage-drain Skills must present skill use, damage, and healing in that order.",
+);
 
 const dotCatalog = makeCatalog();
 dotCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "apply-aura", "apply_status", { status_id: "aura", chance: 1, target: "self", indefinite: true })];

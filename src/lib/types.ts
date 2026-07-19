@@ -104,6 +104,30 @@ export type ShopPurchaseReceipt = {
   created_at: string;
 };
 
+export type PromoCodeRewardType = "currency" | "shard" | "critter" | "rollcaster" | "relic";
+
+export type PromoCodeReward = {
+  type: PromoCodeRewardType;
+  targetCategory: CollectibleType | null;
+  targetId: string;
+  name: string;
+  assetPath: string | null;
+  quantity: string;
+  configuredQuantity: string;
+  discardedQuantity: string;
+  didUnlock: boolean;
+};
+
+export type PromoCodeRedemption = {
+  redemptionId: string;
+  code: string;
+  redeemedAt: string;
+  playerUses: string | null;
+  playerUsesRemaining: string | null;
+  globalUsesRemaining: string | null;
+  rewards: PromoCodeReward[];
+};
+
 export type CombatProgressEvent = {
   event_key: string;
   event_type: "knock_out_critters" | "deal_damage" | "take_damage" | "use_skill";

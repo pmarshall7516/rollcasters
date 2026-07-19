@@ -1,10 +1,11 @@
 import {
   createInitialCombatState,
+  recomputeCombatStats,
   resolveTurn,
   startTurn,
   type CombatState,
 } from "./game.js";
-import { opponentsForBattle, parseBattleFormat } from "./dungeons.js";
+import { battlefieldSlotsForCount, opponentsForBattle, parseBattleFormat } from "./dungeons.js";
 import type {
   Catalog,
   CombatAction,
@@ -33,6 +34,20 @@ export type DungeonCombatEvent = {
   phase: string;
   message: string;
   requiresAdvance: boolean;
+  kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other";
+  actorKey?: string;
+  targetKeys: string[];
+  skillId?: string;
+  swap?: {
+    outgoingKey: string;
+    incomingKey: string;
+    battlefieldSlot: number;
+  };
+  hpChanges: Array<{
+    unitKey: string;
+    before: number;
+    after: number;
+  }>;
 };
 
 export type DungeonRunState = {
@@ -81,6 +96,7 @@ function createEncounterBattle(
     opponentsForBattle(run),
     `${run.randomSeed}:${run.battleIndex}`,
   );
+  const opponentSlots = battlefieldSlotsForCount(parseBattleFormat(run.battleFormat).opponentActiveCount);
   return {
     ...battle,
     playerUnits: battle.playerUnits.map((unit) => ({
@@ -92,7 +108,7 @@ function createEncounterBattle(
     opponentUnits: battle.opponentUnits.map((unit, index) => ({
       ...unit,
       active: index < parseBattleFormat(run.battleFormat).opponentActiveCount,
-      battlefieldSlot: index,
+      battlefieldSlot: opponentSlots[index] ?? null,
     })),
     phase: "ready",
     playerMana: 0,
@@ -121,8 +137,9 @@ export function createDungeonRunState(
 ): DungeonRunState {
   const battle = createEncounterBattle(catalog, player, dungeon, run);
   const requiredLeadCount = leadRequirement(battle, run);
-  const automatic = requiredLeadCount === 0
-    || parseBattleFormat(run.battleFormat).playerActiveCount === 3;
+  const healthyCount = battle.playerUnits.filter((unit) => unit.hp > 0).length;
+  const automatic = requiredLeadCount > 0
+    && healthyCount <= parseBattleFormat(run.battleFormat).playerActiveCount;
   const selectedLeadIds = automatic ? defaultLeadIds(battle, requiredLeadCount) : [];
   const initial: DungeonRunState = {
     run,
@@ -149,13 +166,32 @@ export function createDungeonRunState(
 
 function activateSelectedLeads(state: DungeonRunState, selectedLeadIds: string[]): DungeonRunState {
   const selected = new Set(selectedLeadIds);
-  let battlefieldSlot = 0;
+  const configuredSlots = battlefieldSlotsForCount(parseBattleFormat(state.run.battleFormat).playerActiveCount);
+  const fixedSlots = new Map(
+    state.battle.playerUnits
+      .filter((unit) =>
+        unit.userCritter
+        && state.fixedLeadIds.includes(unit.userCritter.id)
+        && selected.has(unit.userCritter.id)
+        && unit.battlefieldSlot !== null
+        && configuredSlots.includes(unit.battlefieldSlot),
+      )
+      .map((unit) => [unit.userCritter!.id, unit.battlefieldSlot!] as const),
+  );
+  const occupiedSlots = new Set(fixedSlots.values());
+  const availableSlots = configuredSlots.filter((slot) => !occupiedSlots.has(slot));
+  const assignedSlots = new Map<string, number>(fixedSlots);
+  for (const id of selectedLeadIds) {
+    if (assignedSlots.has(id)) continue;
+    const slot = availableSlots.shift();
+    if (slot !== undefined) assignedSlots.set(id, slot);
+  }
   const playerUnits = state.battle.playerUnits.map((unit) => {
     const active = Boolean(unit.userCritter && selected.has(unit.userCritter.id) && unit.hp > 0);
     return {
       ...unit,
       active,
-      battlefieldSlot: active ? battlefieldSlot++ : null,
+      battlefieldSlot: active && unit.userCritter ? assignedSlots.get(unit.userCritter.id) ?? null : null,
     };
   });
   const participants = new Set(state.participatedUserCritterIds);
@@ -217,21 +253,65 @@ function resolvedMessages(before: CombatState, after: CombatState): string[] {
   return after.log.slice(0, addedCount).reverse();
 }
 
+function applyEventHp(battle: CombatState, event: DungeonCombatEvent | undefined): CombatState {
+  if (!event?.hpChanges.length) return battle;
+  const hpByKey = new Map(event.hpChanges.map((change) => [change.unitKey, change.after]));
+  const update = (unit: CombatState["playerUnits"][number]) => hpByKey.has(unit.key)
+    ? { ...unit, hp: hpByKey.get(unit.key)! }
+    : unit;
+  return {
+    ...battle,
+    playerUnits: battle.playerUnits.map(update),
+    opponentUnits: battle.opponentUnits.map(update),
+  };
+}
+
+function applyEventSwap(battle: CombatState, event: DungeonCombatEvent | undefined): CombatState {
+  const swap = event?.swap;
+  if (!swap) return battle;
+  const outgoing = battle.playerUnits.find((unit) => unit.key === swap.outgoingKey);
+  const incoming = battle.playerUnits.find((unit) => unit.key === swap.incomingKey);
+  if (!outgoing || !incoming || incoming.hp <= 0) return battle;
+  if (
+    !outgoing.active
+    && outgoing.battlefieldSlot === null
+    && incoming.active
+    && incoming.battlefieldSlot === swap.battlefieldSlot
+  ) return battle;
+  return recomputeCombatStats({
+    ...battle,
+    playerUnits: battle.playerUnits.map((unit) => {
+      if (unit.key === swap.outgoingKey) return { ...unit, active: false, battlefieldSlot: null };
+      if (unit.key === swap.incomingKey) return { ...unit, active: true, battlefieldSlot: swap.battlefieldSlot };
+      return unit;
+    }),
+  });
+}
+
 export function submitDungeonActions(state: DungeonRunState, actions: CombatAction[]): DungeonRunState {
   if (state.phase !== "select_player_actions") return state;
   const resolved = resolveTurn(state.battle, actions);
-  const messages = resolvedMessages(state.battle, resolved)
-    .filter((message) => !message.startsWith("Submitted actions") && message !== "Post-turn effects resolved.");
-  const events = messages.map((message, index): DungeonCombatEvent => ({
+  const presentationEvents = resolved.presentationEvents.length
+    ? resolved.presentationEvents
+    : resolvedMessages(state.battle, resolved)
+      .filter((message) => !message.startsWith("Submitted actions") && message !== "Post-turn effects resolved.")
+      .map((message) => ({
+        kind: "other" as const,
+        message,
+        targetKeys: [],
+        hpChanges: [],
+      }));
+  const events = presentationEvents.map((presentation, index): DungeonCombatEvent => ({
+    ...presentation,
     id: `${state.run.id}:${state.run.battleIndex}:${state.battle.turn}:${index + 1}`,
     turn: state.battle.turn,
     phase: "resolution",
-    message,
     requiresAdvance: true,
   }));
   if (events.length === 0) return finishResolvedTurn({ ...state, battle: resolved });
   return {
     ...state,
+    battle: applyEventHp(state.battle, events[0]),
     pendingBattle: resolved,
     phase: "event_playback",
     events,
@@ -240,13 +320,45 @@ export function submitDungeonActions(state: DungeonRunState, actions: CombatActi
 }
 
 export function currentDungeonEvent(state: DungeonRunState): DungeonCombatEvent | null {
-  return state.phase === "event_playback" ? state.events[state.eventCursor] ?? null : null;
+  if (state.phase !== "event_playback") return null;
+  const event = state.events[state.eventCursor];
+  if (!event || event.kind !== "swap" || event.swap || !event.actorKey || !event.targetKeys[0]) {
+    return event ?? null;
+  }
+  const outgoing = state.battle.playerUnits.find((unit) => unit.key === event.actorKey);
+  const incoming = state.battle.playerUnits.find((unit) => unit.key === event.targetKeys[0]);
+  const battlefieldSlot = outgoing?.battlefieldSlot ?? incoming?.battlefieldSlot;
+  if (!outgoing || !incoming || battlefieldSlot === null || battlefieldSlot === undefined) return event;
+  return {
+    ...event,
+    swap: {
+      outgoingKey: outgoing.key,
+      incomingKey: incoming.key,
+      battlefieldSlot,
+    },
+  };
+}
+
+export function revealDungeonSwapEvent(state: DungeonRunState): DungeonRunState {
+  if (state.phase !== "event_playback") return state;
+  const event = currentDungeonEvent(state);
+  if (!event?.swap) return state;
+  return {
+    ...state,
+    battle: applyEventSwap(state.battle, event),
+  };
 }
 
 export function advanceDungeonEvent(state: DungeonRunState): DungeonRunState {
   if (state.phase !== "event_playback" || !state.pendingBattle) return state;
   if (state.eventCursor < state.events.length - 1) {
-    return { ...state, eventCursor: state.eventCursor + 1 };
+    const nextCursor = state.eventCursor + 1;
+    const revealed = revealDungeonSwapEvent(state);
+    return {
+      ...revealed,
+      battle: applyEventHp(revealed.battle, state.events[nextCursor]),
+      eventCursor: nextCursor,
+    };
   }
   return finishResolvedTurn({
     ...state,
@@ -344,7 +456,9 @@ export function applyDungeonBattleResult(
     .map((unit) => [unit.userCritter!.id, unit.hp]));
   const battle = createEncounterBattle(catalog, player, state.dungeon, result.run, persistentHp);
   const requiredLeadCount = leadRequirement(battle, result.run);
-  const automatic = parseBattleFormat(result.run.battleFormat).playerActiveCount === 3;
+  const healthyCount = battle.playerUnits.filter((unit) => unit.hp > 0).length;
+  const automatic = requiredLeadCount > 0
+    && healthyCount <= parseBattleFormat(result.run.battleFormat).playerActiveCount;
   const selectedLeadIds = automatic ? defaultLeadIds(battle, requiredLeadCount) : [];
   const next: DungeonRunState = {
     ...state,
@@ -414,9 +528,17 @@ export function restoreDungeonRunState(
   return {
     ...(persisted as DungeonRunState),
     run,
-    battle: { ...persisted.battle, catalog } as CombatState,
+    battle: {
+      ...persisted.battle,
+      catalog,
+      presentationEvents: persisted.battle.presentationEvents ?? [],
+    } as CombatState,
     pendingBattle: persisted.pendingBattle
-      ? { ...persisted.pendingBattle, catalog } as CombatState
+      ? {
+          ...persisted.pendingBattle,
+          catalog,
+          presentationEvents: persisted.pendingBattle.presentationEvents ?? [],
+        } as CombatState
       : null,
   };
 }

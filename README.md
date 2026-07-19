@@ -24,15 +24,13 @@ SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 postgres_password=YOUR_DATABASE_PASSWORD
 ```
 
-Apply the SQL files in this order in the Supabase SQL editor or with your preferred migration tool:
+Apply the single source-of-truth migration in the Supabase SQL editor or with your preferred migration tool:
 
-1. `supabase/migrations/001_initial_schema.sql`
-2. `supabase/migrations/002_seed_catalog.sql`
-3. `supabase/migrations/003_asset_storage_and_starter_seen.sql`
+1. `supabase/migrations/20260719000000_rollcasters_baseline.sql`
 
-The seed migration only creates catalog content: Shanks, Toxichick, Spreagle, Congua, Slam, Copper Shield, starter options, elements, statuses, and dungeons. It does not create user accounts or user-owned save data.
+The baseline was generated from the live database's current `public` schema. It creates the complete game schema, functions, triggers, RLS policies, grants, the public-read `game-assets` Storage bucket, and the current reusable game catalog/configuration.
 
-`003_asset_storage_and_starter_seen.sql` creates a public-read Supabase Storage bucket named `game-assets`, a `public.game_assets` registry table, asset paths on starter catalog rows, and performance indexes for common game-state reads. The player client no longer uses the legacy `user_seen_critters` state: every catalog Critter displays its artwork and name, while ownership alone determines whether its card is unlocked.
+It intentionally does not copy Auth users, player-owned state, audit history, dungeon runs or commands, purchase receipts, redemption history, or operational promo-code definitions. Storage object files are also not embedded in SQL and must be uploaded separately.
 
 Recommended `game-assets` object layout:
 
@@ -66,13 +64,13 @@ To preview which migrations will run:
 npm run db:migrate:dry
 ```
 
-To run only selected migration files, pass a comma-separated list by basename or path:
+To run only the baseline migration, pass its basename or path:
 
 ```bash
-npm run db:migrate -- --files 001_initial_schema.sql
-npm run db:migrate -- --files 001_initial_schema.sql,002_seed_catalog.sql
-npm run db:migrate -- --files 003_asset_storage_and_starter_seen.sql
+npm run db:migrate -- --files 20260719000000_rollcasters_baseline.sql
 ```
+
+The baseline is for a fresh Supabase database and must not be executed over the existing Rollcasters schema. The linked production database already has this shape. Before using `supabase db push` against that database, reconcile its migration ledger by marking legacy versions `001` and `002` reverted and version `20260719000000` applied; migration repair changes history only and does not execute the baseline SQL.
 
 If the local runner reports `SELF_SIGNED_CERT_IN_CHAIN`, use the Supabase SQL editor for the migration files or download the Supabase database CA certificate and set `SUPABASE_DB_CA_CERT_PATH` to that file path. Do not disable TLS verification for migrations.
 
@@ -91,7 +89,7 @@ npm run game:revoke:rollcaster --user=player@example.com --id=001
 
 Relic `--count` values default to `1`. Granting cannot exceed the catalog Relic's `max_owned`, and revoking cannot reduce inventory below the number of equipped copies. Reducing a Relic to zero removes its inventory row and locks it again. Critters and Rollcasters are whole collectibles, so their commands reject `--count`; a grant initializes their level-one default Skill or Ability unlocks and equipment slots. Revoking an active Rollcaster selects the user's oldest remaining Rollcaster as active, or clears the active selection if none remain.
 
-The commands require `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the database function in `supabase/migrations/005_dev_collectible_commands.sql`. They return a concise success message and exit nonzero with a specific failure message for missing users or catalog IDs, duplicate ownership, missing ownership, invalid counts, maximum-count violations, and equipped-copy conflicts. The service-role key stays server-side and must never use a `VITE_` prefix.
+The commands require `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the database function in `supabase/migrations/20260719000000_rollcasters_baseline.sql`. They return a concise success message and exit nonzero with a specific failure message for missing users or catalog IDs, duplicate ownership, missing ownership, invalid counts, maximum-count violations, and equipped-copy conflicts. The service-role key stays server-side and must never use a `VITE_` prefix.
 
 The no-separator form above is supported as requested. Current npm versions may print an npm-owned `Unknown cli config` warning for those flags; add the standard argument separator (`npm run game:grant:relic -- --user=... --id=...`) to avoid that warning and remain compatible with the next npm major version.
 
@@ -101,7 +99,7 @@ Delete a development user by email:
 DEV_ENABLE_USER_DELETE=true npm run db:delete-user -- --email test@example.com --yes
 ```
 
-This removes the matching row from `auth.users` through Supabase Auth Admin. Game save rows are configured to cascade from `auth.users(id)`, catalog authorship is cleared, and historical audit actor IDs are retained. Apply `supabase/migrations/015_auth_user_delete_audit_fks.sql` before using the command. The command refuses to run unless `DEV_ENABLE_USER_DELETE=true`, `SUPABASE_SERVICE_ROLE_KEY`, and `--yes` are present.
+This removes the matching row from `auth.users` through Supabase Auth Admin. Game save rows are configured to cascade from `auth.users(id)`, catalog authorship is cleared, and historical audit actor IDs are retained. Apply the baseline migration before using the command. The command refuses to run unless `DEV_ENABLE_USER_DELETE=true`, `SUPABASE_SERVICE_ROLE_KEY`, and `--yes` are present.
 
 Direct database deletion is available only when explicitly requested and the DB certificate chain is configured:
 

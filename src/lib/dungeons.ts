@@ -40,6 +40,13 @@ export function parseBattleFormat(format: BattleFormat): {
   };
 }
 
+export function battlefieldSlotsForCount(activeCount: number): number[] {
+  if (activeCount === 1) return [1];
+  if (activeCount === 2) return [0, 2];
+  if (activeCount === 3) return [0, 1, 2];
+  throw new Error(`Unsupported active battlefield count: ${activeCount}.`);
+}
+
 export function sortDungeonsNaturally(dungeons: Dungeon[]): Dungeon[] {
   return [...dungeons].sort((left, right) => dungeonIdCollator.compare(left.id, right.id));
 }
@@ -119,10 +126,9 @@ export function opponentsForBattle(run: DungeonRunSnapshot, battleIndex = run.ba
 export function formatProbability(probability: number): string {
   const percent = probability * 100;
   const digits = Number.isInteger(percent) ? 0 : 2;
-  return `${probability.toFixed(Math.min(6, Math.max(1, digits + 1)))} · ${percent.toFixed(digits)}%`;
+  return `${percent.toFixed(digits)}%`;
 }
 
 export function dropAmountLabel(minAmount: number, maxAmount: number): string {
   return minAmount === maxAmount ? `${minAmount}` : `${minAmount}–${maxAmount}`;
 }
-

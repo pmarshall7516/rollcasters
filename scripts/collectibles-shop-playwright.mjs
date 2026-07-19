@@ -263,8 +263,43 @@ try {
   await page.screenshot({ path: path.join(outputDir, "shop-shards-progress.png"), fullPage: true });
   await shardOffer.getByRole("button", { name: "Purchase" }).click();
   await page.getByRole("heading", { name: `${critterTarget.name} unlocked!` }).waitFor();
+  const unlockBanner = page.locator(".unlock-notification");
+  const unlockPresentation = await unlockBanner.evaluate((banner) => {
+    const bounds = banner.getBoundingClientRect();
+    const style = getComputedStyle(banner);
+    return {
+      bounds: { top: bounds.top, left: bounds.left, width: bounds.width, height: bounds.height },
+      position: style.position,
+      pointerEvents: style.pointerEvents,
+      zIndex: Number(style.zIndex),
+      animationName: style.animationName,
+      live: banner.getAttribute("aria-live"),
+      interactiveDescendants: banner.querySelectorAll("button, a, input, [tabindex]").length,
+      modalBackdrops: document.querySelectorAll(".modal-backdrop").length,
+    };
+  });
+  check(
+    unlockPresentation.position === "fixed"
+      && unlockPresentation.bounds.top <= 16
+      && unlockPresentation.bounds.left <= 16
+      && unlockPresentation.bounds.width <= 360
+      && unlockPresentation.bounds.height <= 90,
+    `The unlock notification must be a compact top-left fixed banner: ${JSON.stringify(unlockPresentation)}`,
+  );
+  check(
+    unlockPresentation.pointerEvents === "none"
+      && unlockPresentation.interactiveDescendants === 0
+      && unlockPresentation.modalBackdrops === 0,
+    `The unlock banner must not intercept interaction or open a modal: ${JSON.stringify(unlockPresentation)}`,
+  );
+  check(
+    unlockPresentation.zIndex > 50
+      && unlockPresentation.live === "polite"
+      && unlockPresentation.animationName.includes("unlock-banner-in"),
+    `The unlock banner must announce politely, animate in, and layer above other UI: ${JSON.stringify(unlockPresentation)}`,
+  );
   await page.screenshot({ path: path.join(outputDir, "unlock-notification.png"), fullPage: true });
-  await page.getByRole("button", { name: "Continue" }).click();
+  await unlockBanner.waitFor({ state: "hidden", timeout: 6_000 });
   await page.waitForFunction((targetId) => {
     const card = [...document.querySelectorAll(".shop-entry-card")].find((candidate) => candidate.textContent?.includes(targetId));
     return card?.getAttribute("data-availability-code") === "COLLECTIBLE_ALREADY_UNLOCKED";

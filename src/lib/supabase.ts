@@ -17,6 +17,8 @@ import type {
   ElementDef,
   ElementEffectiveness,
   PlayerState,
+  PromoCodeRedemption,
+  PromoCodeReward,
   ShopPurchaseReceipt,
   UserAbilitySlot,
   UserRelicSlot,
@@ -708,6 +710,55 @@ export async function purchaseShopEntry(entryId: string, requestId: string): Pro
   });
   if (error) throw error;
   return data as ShopPurchaseReceipt;
+}
+
+function normalizePromoCodeReward(value: unknown): PromoCodeReward {
+  const reward = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    type: reward.type as PromoCodeReward["type"],
+    targetCategory: typeof reward.targetCategory === "string"
+      ? reward.targetCategory as PromoCodeReward["targetCategory"]
+      : null,
+    targetId: String(reward.targetId ?? ""),
+    name: String(reward.name ?? reward.targetId ?? "Reward"),
+    assetPath: typeof reward.assetPath === "string" && reward.assetPath ? reward.assetPath : null,
+    quantity: String(reward.quantity ?? 0),
+    configuredQuantity: String(reward.configuredQuantity ?? 0),
+    discardedQuantity: String(reward.discardedQuantity ?? 0),
+    didUnlock: reward.didUnlock === true,
+  };
+}
+
+function normalizePromoCodeRedemption(value: unknown): PromoCodeRedemption {
+  const redemption = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const normalizedCount = (count: unknown) => (
+    typeof count === "string" || typeof count === "number" ? String(count) : null
+  );
+  return {
+    redemptionId: String(redemption.redemptionId ?? ""),
+    code: String(redemption.code ?? ""),
+    redeemedAt: String(redemption.redeemedAt ?? ""),
+    playerUses: normalizedCount(redemption.playerUses),
+    playerUsesRemaining: normalizedCount(redemption.playerUsesRemaining),
+    globalUsesRemaining: normalizedCount(redemption.globalUsesRemaining),
+    rewards: Array.isArray(redemption.rewards)
+      ? redemption.rewards.map(normalizePromoCodeReward)
+      : [],
+  };
+}
+
+export async function redeemPromoCode(code: string): Promise<PromoCodeRedemption> {
+  const { data, error } = await requireClient().rpc("redeem_promo_code", {
+    p_code: code.trim(),
+  });
+  if (error) throw error;
+  return normalizePromoCodeRedemption(data);
+}
+
+export async function getPromoCodeRedemptionHistory(): Promise<PromoCodeRedemption[]> {
+  const { data, error } = await requireClient().rpc("promo_code_redemption_history");
+  if (error) throw error;
+  return Array.isArray(data) ? data.map(normalizePromoCodeRedemption) : [];
 }
 
 export async function submitCollectibleCombatEvents(

@@ -45,6 +45,49 @@ const combatHtml = `<!doctype html><html><head><style>${css}</style></head><body
   </section>
 </main></body></html>`;
 
+const outcomeHeader = `<header class="top-bar">
+  <button class="brand-home-button" aria-label="Rollcasters home"><span class="brand-lockup"><img class="brand-logo signed-in" src="${logoUrl}" alt="Rollcasters"></span></button>
+  <div class="account-cluster">
+    <div class="currency-cluster" aria-label="Currency balances">
+      <span class="coin-pill currency-pill" data-currency-id="coins" style="color:#FFD65A">◆ <span>999</span></span>
+      <span class="coin-pill currency-pill" data-currency-id="prismite" style="color:#7DE8FF">♦ <span>14</span></span>
+    </div>
+    <span class="user-pill">Player</span>
+    <button class="icon-button">×</button>
+  </div>
+</header>`;
+
+const homeHeaderHtml = `<!doctype html><html><head><style>${css}</style></head><body><main class="app-shell">
+  ${outcomeHeader}
+</main></body></html>`;
+
+const outcomeXpCards = ["Shanks", "Chance", "Spreagle", "Cragram"].map((name, index) => `<article class="combat-xp-card ${index === 0 ? "rollcaster" : ""}">
+  <span class="sprite-frame sprite-frame-sm"><span class="sprite"></span></span>
+  <div class="combat-xp-card-copy">
+    <span class="combat-xp-identity"><strong>${name}</strong><small>Lv 2</small></span>
+    <div class="combat-xp-bar xp-bar"><span style="width:${25 + index * 15}%"></span></div>
+    <span class="combat-xp-values"><small>20 / 100 XP</small><strong>No XP gained</strong></span>
+  </div>
+</article>`).join("");
+
+const outcomeHtml = `<!doctype html><html><head><style>${css}</style></head><body><main class="app-shell combat-shell">
+  ${outcomeHeader}
+  <section class="combat-screen dungeon-outcome-screen failure">
+    <div class="dungeon-outcome-emblem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="9" r="7"/><path d="M9 14v4m6-4v4M9 9h.01M15 9h.01"/></svg></div>
+    <p class="eyebrow">Expedition failed</p>
+    <h1>Your squad has fallen.</h1>
+    <p>Rewards from defeated opponents are saved. Retrying starts a fresh run at full HP.</p>
+    <div class="dungeon-outcome-rewards">
+      <section><h2>Final Encounter</h2><p class="dungeon-no-drops">No encounter drops were earned.</p></section>
+    </div>
+    <section class="combat-xp-section" aria-label="Party experience">
+      <div class="combat-xp-heading"><h3>Party XP</h3></div>
+      <div class="combat-xp-grid">${outcomeXpCards}</div>
+    </section>
+    <div class="dungeon-outcome-actions"><button class="secondary-button">Back to Home</button><button class="primary-button">Retry Dungeon</button></div>
+  </section>
+</main></body></html>`;
+
 const modalHtml = `<!doctype html><html><head><style>${css}</style></head><body><main class="app-shell">
   <div class="modal-backdrop"><section class="modal">
     <div class="modal-header"><div><h2>Choose a Critter</h2><p>Choose an eligible item for this loadout slot.</p></div><button class="icon-button">×</button></div>
@@ -140,12 +183,63 @@ try {
   }
 
   const modalFailures = modalResults.filter((result) => !(result.withinViewport && result.noHorizontalOverflow && result.columns >= 1));
-  const failures = [...combatFailures.map((result) => ({ surface: "combat", ...result })), ...modalFailures.map((result) => ({ surface: "modal", ...result }))];
+  const outcomeResults = [];
+  const outcomeViewports = [
+    { name: "desktop", width: 1330, height: 1236 },
+    { name: "mobile", width: 390, height: 844 },
+  ];
+  for (const viewport of outcomeViewports) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.setContent(homeHeaderHtml);
+    await page.waitForFunction(() => document.querySelector(".brand-logo")?.complete);
+    const homeLogo = await page.locator(".brand-logo").evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    });
+    await page.setContent(outcomeHtml);
+    await page.waitForFunction(() => document.querySelector(".brand-logo")?.complete);
+    const metrics = await page.evaluate(() => {
+      const panel = document.querySelector(".dungeon-outcome-screen").getBoundingClientRect();
+      const logo = document.querySelector(".brand-logo").getBoundingClientRect();
+      const title = document.querySelector(".dungeon-outcome-screen h1").getBoundingClientRect();
+      const reward = document.querySelector(".dungeon-outcome-rewards > section").getBoundingClientRect();
+      const actions = document.querySelector(".dungeon-outcome-actions").getBoundingClientRect();
+      return {
+        panel: { top: panel.top, bottom: panel.bottom, width: panel.width, height: panel.height },
+        logo: { width: logo.width, height: logo.height },
+        titleFontSize: Number.parseFloat(getComputedStyle(document.querySelector(".dungeon-outcome-screen h1")).fontSize),
+        titleContained: title.left >= panel.left && title.right <= panel.right,
+        rewardWidth: reward.width,
+        rewardCenterDelta: Math.abs((reward.left + reward.width / 2) - (panel.left + panel.width / 2)),
+        bottomInset: panel.bottom - actions.bottom,
+        noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      };
+    });
+    const screenshot = path.join(outputDir, `dungeon-failure-${viewport.name}.png`);
+    await page.screenshot({ path: screenshot, fullPage: false, animations: "disabled" });
+    outcomeResults.push({ ...viewport, screenshot, homeLogo, ...metrics });
+  }
+
+  const outcomeFailures = outcomeResults.filter((result) => !(
+    Math.abs(result.logo.width - result.homeLogo.width) < .1
+      && Math.abs(result.logo.height - result.homeLogo.height) < .1
+      && result.titleFontSize <= 46
+      && result.titleContained
+      && result.rewardWidth <= 620.1
+      && result.rewardCenterDelta < .6
+      && result.bottomInset <= 36
+      && result.noHorizontalOverflow
+  ));
+  const failures = [
+    ...combatFailures.map((result) => ({ surface: "combat", ...result })),
+    ...modalFailures.map((result) => ({ surface: "modal", ...result })),
+    ...outcomeFailures.map((result) => ({ surface: "dungeon-outcome", ...result })),
+  ];
   if (/\{loading\s*&&\s*<div\s+className="notice"/.test(appSource)) {
     failures.push({ surface: "app", issue: "Page-width loading notice is still rendered." });
   }
   if (failures.length) throw new Error(`Responsive shell layout failures:\n${JSON.stringify(failures, null, 2)}`);
-  console.log(JSON.stringify({ combat: combatResults, modals: modalResults }, null, 2));
+  console.log(JSON.stringify({ combat: combatResults, modals: modalResults, outcomes: outcomeResults }, null, 2));
 } finally {
   await browser.close();
 }
