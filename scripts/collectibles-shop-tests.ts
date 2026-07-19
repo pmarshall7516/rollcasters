@@ -8,6 +8,7 @@ import {
   safeBigInt,
   shopAvailability,
   shopErrorMessage,
+  sortByCollectibleId,
 } from "../src/lib/collectibles.js";
 import type { AppData, CollectibleUnlockChallenge, ShopEntry } from "../src/lib/types.js";
 
@@ -110,6 +111,14 @@ check(formatAmount("9007199254740993") === "9,007,199,254,740,993", "Currency di
 check(
   orderedCurrencies(data()).map((currency) => currency.id).join(",") === "coins,prismite",
   "The header currency order must keep default Coins first, include zero-balance active currencies, and omit archived currencies.",
+);
+check(
+  sortByCollectibleId([
+    { ownershipId: "owned-c", collectibleId: "010" },
+    { ownershipId: "owned-a", collectibleId: "001" },
+    { ownershipId: "owned-b", collectibleId: "002" },
+  ], (owned) => owned.collectibleId).map((owned) => owned.collectibleId).join(",") === "001,002,010",
+  "Owned collectibles must sort by their catalog collectible ID rather than ownership or payload order.",
 );
 
 const shardReady = shopAvailability(data(), shardEntry);

@@ -1,5 +1,56 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+## Equip popup collectible ID order (2026-07-19)
+
+- Current request: list every owned Rollcaster, Relic, and Critter in natural collectible ID order in their equip popups while retaining the current equipped selection treatment.
+- Moved the existing natural numeric collectible-ID sorter into the shared collectible utilities and applied it to owned Critters by `critter_id`, owned Rollcasters by `rollcaster_id`, and owned Relics by catalog `id`.
+- The Relic popup now lists every owned Relic. A Relic whose copies are fully committed to other slots remains visible with `Available 0` and is disabled; the currently equipped Relic remains selected.
+- Preserved the existing green selected candidate and SpriteFrame borders for the active Rollcaster.
+- Added business-rule coverage for sorting by catalog ID rather than ownership UUID/payload order, plus a focused disposable-user browser regression covering all three dialogs, the active Rollcaster selection styling, and a fully committed Relic.
+- Passed `npm run typecheck`, `npm run build`, `npm run test:collectibles-shop`, browser-script syntax checks, and `git diff --check`.
+- The focused signed-in browser run was blocked at its initial read-only catalog request by the environment's exhausted external-access approval quota, before any disposable user was created. The required web-game client was also blocked from launching Chromium by the macOS sandbox, and its escalation hit the same quota; the in-app browser then rejected the local URL by policy. No visual captures were produced in this run.
+- TODO: when external/browser execution is available, run `npm run test:equip-collectible-order:browser` and inspect the three screenshots in `output/equip-collectible-order-browser`.
+
+## Latest-only rapid Shop reward banners (2026-07-19)
+
+- Current request: prevent a long banner backlog when the player makes many Shop purchases in succession; skip older purchase banners and show the latest reward.
+- Shop reward notifications now coalesce in the shared banner queue. A new purchase replaces every older queued Shop reward, including the currently visible Shop banner, while preserving collectible-unlock and Promo notifications.
+- Updated the focused signed-in Shop flow to purchase a Critter Shard and Relic back-to-back, require the Relic banner to replace the Shard banner immediately, and reject any stale Shop reward reappearing after dismissal.
+- Passed `npm run build`, `npm run test:collectibles-shop`, browser-script syntax checks, `git diff --check`, the focused bundled-Node signed-in rapid-purchase flow, and the required web-game smoke client against the requested LAN route.
+- Visually inspected both purchase captures: the initial Spreagle reward is replaced by the latest Copper Shield reward, only one Shop reward banner is present, and no stale reward returns after five seconds.
+- Final cleanup found zero disposable Auth users. No outstanding TODOs for rapid-purchase banner coalescing.
+
+## Critter Shard identity color (2026-07-19)
+
+- Current request: make Critter names on Shard Shop cards use the same color as their collectible ID.
+- Applied the existing Shop target cyan directly to the Critter-name identity and expanded browser coverage to compare the computed name/ID colors.
+- Passed `npm run build`, browser-script syntax checks, `git diff --check`, the focused bundled-Node signed-in Shard/Relic Shop flow, and the required web-game smoke client against the requested LAN route.
+- Visually inspected the signed-in Shard Shop: active Critter names and IDs use the same cyan while sold-out cards retain their muted treatment. Final cleanup found zero disposable Auth users.
+- No outstanding TODOs for this color refinement.
+
+## Left-aligned compact Promo history (2026-07-19)
+
+- Current request: return the Promo claim card and Claim history to the Shop content's left edge, and replace square redemption cards with tighter horizontal rectangles.
+- Left-anchored the bounded Promo panel and claim card so the claim card, history heading, and history grid share the exact Shop tab/card starting edge.
+- Removed forced square sizing and nested card scrolling. Redemption cards now size to their actual header/reward content while the stable outer history grid remains the sole scrolling surface.
+- Updated the signed-in Promo browser regression to verify shared Shop-edge alignment, compact landscape card geometry, stable claim/history anchors, and non-overlapping mobile scrolling.
+- Passed `npm run build`, `npm run test:promo-codes`, script syntax checks, `git diff --check`, the bundled-Node signed-in Promo claim/repeat/mobile flow, and the required web-game smoke client against the requested LAN URL.
+- Visually inspected the left-aligned first/repeated desktop claims and compact mobile history pane. The claim/history left edges match the Shop tabs exactly, repeated cards flow across the row, and no excessive square-card whitespace remains.
+- Final cleanup found zero disposable Auth users and zero disposable Promo Codes. No outstanding TODOs for this refinement.
+
+## Static Shop and Promo reward UI (2026-07-19)
+
+- Current request: center the Promo Code claim pane with `Enter code...`, keep Claim history anchored as a borderless scrolling grid of square cards, replace promo and Shop inline success messages with the existing top-left collectible banner presentation, and align Critter Shard names/IDs on one row.
+- Replaced the unlock-only queue with one shared five-second fixed banner queue for collectible unlocks, Shop rewards, and promo rewards while preserving the collectible outbox acknowledgement flow and text-state compatibility.
+- Removed the inserted `Rewards claimed!` and `Purchase complete.` success regions. Promo claims retain input focus and update the anchored history grid; Shop errors remain inline.
+- Centered the claim card, added the requested placeholder, fixed the history viewport height, made its pane borderless/scrollable, and rendered each redemption as a square card with its own bounded reward list.
+- Added an explicit single-line Critter target identity wrapper so the element icon, name, and collectible ID share one centered baseline on Shard cards.
+- Updated the live Promo and collectibles-Shop browser scenarios to cover the new banners, static geometry, square scroll grid, placeholder, absent inline success UI, and Critter name/ID alignment.
+- Added a focused disposable-user Shop reward browser scenario that purchases both an existing Critter Shard offer and an existing Relic offer without changing the shared catalog. The older broad collectibles-Shop fixture could not seed its unrelated isolated-Critter setup because every current Critter now has Shop/challenge coverage.
+- Passed `npm run build`, `npm run typecheck`, `npm run test:promo-codes`, `npm run test:collectibles-shop`, `npm run test:unlock-notification-ui`, `npm run test:responsive-shell-layout`, script syntax checks, `git diff --check`, the bundled-Node live Promo flow, the focused live Shard/Relic purchase flow, and the required web-game smoke client against the requested LAN URL.
+- Visually inspected the claimed/repeated desktop Promo layout, the non-overlapping mobile history pane, Shard and Relic reward banners, Critter Shard identity rows, desktop/mobile unlock banners, responsive-shell captures, and the unauthenticated LAN smoke. Final cleanup found zero disposable Auth users and zero disposable Promo Codes.
+- No outstanding TODOs for this Shop/Promo UI refinement.
+
 ## Promo Code uses per player (2026-07-19)
 
 - Current request: honor the Content Studio's new finite/infinite Uses per Player settings in actual game claims.

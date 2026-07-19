@@ -229,10 +229,35 @@ try {
   );
 
   const input = page.getByRole("textbox", { name: "Promo Code", exact: true });
+  check(await input.getAttribute("placeholder") === "Enter code...", "The empty Promo Code field must show the requested default prompt.");
+  const initialPromoLayout = await page.evaluate(() => {
+    const claim = document.querySelector(".promo-claim-card").getBoundingClientRect();
+    const history = document.querySelector(".promo-history-section").getBoundingClientRect();
+    const tabs = document.querySelector(".shop-tabs").getBoundingClientRect();
+    const pane = document.querySelector(".promo-history-pane");
+    const paneStyle = getComputedStyle(pane);
+    return {
+      tabs: { left: tabs.left, width: tabs.width },
+      claim: { top: claim.top, left: claim.left, width: claim.width, height: claim.height },
+      history: { top: history.top, left: history.left, width: history.width, height: history.height },
+      paneBorderWidths: [paneStyle.borderTopWidth, paneStyle.borderRightWidth, paneStyle.borderBottomWidth, paneStyle.borderLeftWidth],
+      paneOverflow: paneStyle.overflow,
+    };
+  });
+  check(
+    Math.abs(initialPromoLayout.claim.left - initialPromoLayout.tabs.left) < 1
+      && Math.abs(initialPromoLayout.history.left - initialPromoLayout.tabs.left) < 1,
+    `The Promo Code claim and history panes must share the Shop content's left edge: ${JSON.stringify(initialPromoLayout)}.`,
+  );
+  check(
+    initialPromoLayout.paneBorderWidths.every((width) => width === "0px") && initialPromoLayout.paneOverflow === "hidden",
+    `The Claim history viewport must be borderless and internally scrollable: ${JSON.stringify(initialPromoLayout)}.`,
+  );
   await input.fill(`  ${code.toLowerCase()}  `);
   check(await input.inputValue() === `  ${code}  `, "Lowercase pasted input must remain accepted with an uppercase visual value.");
   await input.press("Enter");
-  await page.getByRole("heading", { name: "Rewards claimed!" }).waitFor();
+  const rewardBanner = page.locator(".unlock-notification.reward-notification");
+  await rewardBanner.getByRole("heading", { name: "3 rewards added!" }).waitFor();
   await page.waitForFunction((expectedCode) => {
     const state = JSON.parse(window.render_game_to_text());
     return state.shop?.promo?.claimedCode === expectedCode
@@ -244,32 +269,79 @@ try {
   }, code);
   check(await input.inputValue() === "", "A successful claim must clear the Promo Code field.");
   check(
-    await page.getByRole("heading", { name: "Rewards claimed!" }).evaluate((heading) => document.activeElement === heading),
-    "Successful claims must move focus to the reward summary heading.",
+    await input.evaluate((field) => document.activeElement === field),
+    "The fixed reward banner must not move focus away from the Promo Code field.",
   );
-
-  const success = page.locator(".promo-success-card");
-  check(await success.locator(".promo-reward-row").count() === 3, "The success reveal must render every returned reward.");
-  check(await success.getByText("Coins", { exact: true }).isVisible(), "The Currency reward snapshot must render.");
-  check(await success.getByText(`${shardTarget.name} Shards`, { exact: true }).isVisible(), "The Shard reward snapshot must render.");
-  check(await success.getByText(relicTarget.name, { exact: true }).isVisible(), "The Relic reward snapshot must render.");
+  check(await page.locator(".promo-success-card").count() === 0, "Promo claims must not insert the old Rewards claimed panel.");
+  const rewardBannerPresentation = await rewardBanner.evaluate((banner) => {
+    const bounds = banner.getBoundingClientRect();
+    const style = getComputedStyle(banner);
+    return {
+      bounds: { top: bounds.top, left: bounds.left, width: bounds.width, height: bounds.height },
+      position: style.position,
+      pointerEvents: style.pointerEvents,
+      zIndex: Number(style.zIndex),
+      live: banner.getAttribute("aria-live"),
+      animationName: style.animationName,
+    };
+  });
   check(
-    await success.getByText("Claim 1 · 1 account use remaining · 9 total claims remaining", { exact: true }).isVisible(),
-    "The success reveal must report the server-authoritative personal and global uses remaining.",
+    rewardBannerPresentation.position === "fixed"
+      && rewardBannerPresentation.bounds.top <= 16
+      && rewardBannerPresentation.bounds.left <= 16
+      && rewardBannerPresentation.bounds.width <= 360
+      && rewardBannerPresentation.pointerEvents === "none"
+      && rewardBannerPresentation.zIndex > 50
+      && rewardBannerPresentation.live === "polite"
+      && rewardBannerPresentation.animationName.includes("unlock-banner-in"),
+    `Promo rewards must reuse the compact top-left banner presentation: ${JSON.stringify(rewardBannerPresentation)}.`,
   );
   check(
-    await success.getByText("Goal reached · 2 excess not added", { exact: true }).isVisible(),
-    "Capped Shards must display their excess outcome.",
-  );
-  check(await success.getByText("Unlocked", { exact: true }).isVisible(), "A newly discovered Relic must display Unlocked.");
-  check(
-    await success.locator(".promo-reward-row img").evaluateAll((images) => images.every((image) => image.getAttribute("alt") === "")),
-    "Reward images must use empty alt text when the adjacent reward name supplies the label.",
+    await rewardBanner.getByText("Claim 1 · 1 account use remaining · 9 total claims remaining", { exact: true }).isVisible(),
+    "The reward banner must report the server-authoritative personal and global uses remaining.",
   );
 
   const historyCard = page.locator(".promo-redemption-card");
   check(await historyCard.count() === 1, "A successful claim must prepend one history card.");
+  check(await historyCard.locator(".promo-reward-row").count() === 3, "The redemption card must render every returned reward.");
+  check(await historyCard.getByText("Coins", { exact: true }).isVisible(), "The Currency reward snapshot must render.");
+  check(await historyCard.getByText(`${shardTarget.name} Shards`, { exact: true }).isVisible(), "The Shard reward snapshot must render.");
+  check(await historyCard.getByText(relicTarget.name, { exact: true }).isVisible(), "The Relic reward snapshot must render.");
+  check(
+    await historyCard.getByText("Goal reached · 2 excess not added", { exact: true }).isVisible(),
+    "Capped Shards must display their excess outcome.",
+  );
+  check(await historyCard.getByText("Unlocked", { exact: true }).isVisible(), "A newly discovered Relic must display Unlocked.");
+  check(
+    await historyCard.locator(".promo-reward-row img").evaluateAll((images) => images.every((image) => image.getAttribute("alt") === "")),
+    "Reward images must use empty alt text when the adjacent reward name supplies the label.",
+  );
+
   check((await historyCard.locator("header code").textContent())?.trim() === code, "History must display the canonical code snapshot.");
+  const claimedPromoLayout = await page.evaluate(() => {
+    const claim = document.querySelector(".promo-claim-card").getBoundingClientRect();
+    const history = document.querySelector(".promo-history-section").getBoundingClientRect();
+    const list = document.querySelector(".promo-history-list");
+    const card = document.querySelector(".promo-redemption-card").getBoundingClientRect();
+    return {
+      claim: { top: claim.top, left: claim.left, width: claim.width, height: claim.height },
+      history: { top: history.top, left: history.left, width: history.width, height: history.height },
+      listOverflowY: getComputedStyle(list).overflowY,
+      card: { width: card.width, height: card.height },
+    };
+  });
+  check(
+    Math.abs(claimedPromoLayout.claim.top - initialPromoLayout.claim.top) < 1
+      && Math.abs(claimedPromoLayout.claim.left - initialPromoLayout.claim.left) < 1
+      && Math.abs(claimedPromoLayout.history.top - initialPromoLayout.history.top) < 1
+      && Math.abs(claimedPromoLayout.history.height - initialPromoLayout.history.height) < 1,
+    `Claiming rewards must not shift the claim or history panes: ${JSON.stringify({ initialPromoLayout, claimedPromoLayout })}.`,
+  );
+  check(
+    claimedPromoLayout.listOverflowY === "auto"
+      && claimedPromoLayout.card.width > claimedPromoLayout.card.height + 20,
+    `Redemption history must use a scrollable grid of compact rectangular cards: ${JSON.stringify(claimedPromoLayout)}.`,
+  );
   check(await page.locator('.currency-pill[data-currency-id="coins"]').getAttribute("aria-label") === `Coins: ${currencyAmount}`, "Affected balances must refresh after a claim.");
 
   const db = createDbClient();
@@ -354,14 +426,33 @@ try {
   const mobileLayout = await page.evaluate(() => ({
     viewport: window.innerWidth,
     scrollWidth: document.documentElement.scrollWidth,
-    columns: getComputedStyle(document.querySelector(".promo-reward-grid")).gridTemplateColumns.split(" ").length,
+    columns: getComputedStyle(document.querySelector(".promo-history-list")).gridTemplateColumns.split(" ").length,
     inputWidth: document.querySelector(".promo-code-input").getBoundingClientRect().width,
     buttonWidth: document.querySelector(".promo-claim-button").getBoundingClientRect().width,
+    cardBounds: [...document.querySelectorAll(".promo-redemption-card")].map((card) => {
+      const bounds = card.getBoundingClientRect();
+      return { top: bounds.top, bottom: bounds.bottom, width: bounds.width, height: bounds.height };
+    }),
+    list: (() => {
+      const list = document.querySelector(".promo-history-list");
+      return { clientHeight: list.clientHeight, scrollHeight: list.scrollHeight, overflowY: getComputedStyle(list).overflowY };
+    })(),
   }));
   check(mobileLayout.scrollWidth <= mobileLayout.viewport, "The Promo Codes page must not overflow horizontally on mobile.");
-  check(mobileLayout.columns === 1, "Mobile reward history must remain one column.");
+  check(mobileLayout.columns === 1, "Mobile redemption history must remain one column.");
+  check(
+    mobileLayout.cardBounds.every((bounds) => bounds.width > bounds.height + 20),
+    `Mobile redemption history cards must remain compact rectangles: ${JSON.stringify(mobileLayout.cardBounds)}.`,
+  );
+  check(
+    mobileLayout.cardBounds.every((bounds, index, cards) => index === 0 || bounds.top >= cards[index - 1].bottom + 13)
+      && mobileLayout.list.overflowY === "auto"
+      && mobileLayout.list.scrollHeight > mobileLayout.list.clientHeight,
+    `Mobile redemption cards must form a non-overlapping scrollable grid: ${JSON.stringify(mobileLayout)}.`,
+  );
   check(Math.abs(mobileLayout.inputWidth - mobileLayout.buttonWidth) < 1, "The mobile Claim button must stack at full input width.");
   await page.screenshot({ path: path.join(outputDir, "promo-code-history-mobile.png"), fullPage: true });
+  await page.locator(".promo-history-section").screenshot({ path: path.join(outputDir, "promo-code-history-pane-mobile.png") });
 
   const unexpectedBrowserErrors = browserErrors.filter(
     (message) => !message.includes("Failed to load resource: the server responded with a status of 400"),

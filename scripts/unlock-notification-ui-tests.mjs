@@ -13,9 +13,9 @@ function check(condition, message) {
 }
 
 check(
-  appSource.includes("const UNLOCK_NOTIFICATION_DURATION_MS = 5_000;")
-    && appSource.includes("}, UNLOCK_NOTIFICATION_DURATION_MS);"),
-  "The production unlock queue must advance on a five-second timer.",
+  appSource.includes("const BANNER_NOTIFICATION_DURATION_MS = 5_000;")
+    && appSource.includes("}, BANNER_NOTIFICATION_DURATION_MS);"),
+  "The shared production banner queue must advance on a five-second timer.",
 );
 check(
   !appSource.includes("<Modal title=\"Collection Updated\"")

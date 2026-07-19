@@ -113,6 +113,7 @@ import {
   requirementFor,
   shopAvailability,
   shopErrorMessage,
+  sortByCollectibleId,
   trackedSlotFor,
 } from "./lib/collectibles";
 import {
@@ -158,13 +159,28 @@ type PromoRenderState = {
   claimedPlayerUsesRemaining: string | null;
   claimedGlobalUsesRemaining: string | null;
 };
+type BannerNotification =
+  | {
+      id: string;
+      kind: "collectible-unlock";
+      event: CollectibleUnlockEvent;
+    }
+  | {
+      id: string;
+      kind: "shop-reward";
+      targetCategory: CollectibleType;
+      targetId: string;
+      shard: boolean;
+      granted: string;
+      discarded: string;
+    }
+  | {
+      id: string;
+      kind: "promo-reward";
+      redemption: PromoCodeRedemption;
+    };
 
-const collectibleIdCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
-const UNLOCK_NOTIFICATION_DURATION_MS = 5_000;
-
-function sortByCollectibleId<T extends { id: string }>(items: T[]): T[] {
-  return [...items].sort((left, right) => collectibleIdCollator.compare(left.id, right.id));
-}
+const BANNER_NOTIFICATION_DURATION_MS = 5_000;
 
 function routeFromLocation(): { view: View; shopTab: ShopTab } {
   const params = new URLSearchParams(window.location.search);
@@ -202,7 +218,7 @@ export function App() {
   const [shopTab, setShopTab] = useState<ShopTab>(() => routeFromLocation().shopTab);
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
   const [combat, setCombat] = useState<DungeonRunState | null>(null);
-  const [unlockQueue, setUnlockQueue] = useState<CollectibleUnlockEvent[]>([]);
+  const [notificationQueue, setNotificationQueue] = useState<BannerNotification[]>([]);
   const [promoState, setPromoState] = useState<PromoRenderState>({
     historyStatus: "idle",
     historyCount: 0,
@@ -218,6 +234,24 @@ export function App() {
   const combatRef = useRef<DungeonRunState | null>(null);
   const combatSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const lastPersistedCombat = useRef("");
+
+  function enqueueNotification(notification: BannerNotification) {
+    setNotificationQueue((current) => {
+      if (current.some((queued) => queued.id === notification.id)) return current;
+      if (notification.kind !== "shop-reward") return [...current, notification];
+
+      const firstShopRewardIndex = current.findIndex((queued) => queued.kind === "shop-reward");
+      if (firstShopRewardIndex === -1) return [...current, notification];
+
+      const withoutOlderShopRewards = current.filter((queued) => queued.kind !== "shop-reward");
+      const insertionIndex = Math.min(firstShopRewardIndex, withoutOlderShopRewards.length);
+      return [
+        ...withoutOlderShopRewards.slice(0, insertionIndex),
+        notification,
+        ...withoutOlderShopRewards.slice(insertionIndex),
+      ];
+    });
+  }
 
   function navigate(nextView: View, nextShopTab = shopTab, replace = false) {
     if (nextView === "shop") setShopTab(nextShopTab);
@@ -341,7 +375,16 @@ export function App() {
     const additions = pending.filter((event) => !seenUnlockEvents.current.has(event.id));
     if (!additions.length) return;
     additions.forEach((event) => seenUnlockEvents.current.add(event.id));
-    setUnlockQueue((current) => [...current, ...additions]);
+    setNotificationQueue((current) => [
+      ...current,
+      ...additions
+        .filter((event) => !current.some((queued) => queued.id === `unlock:${event.id}`))
+        .map((event): BannerNotification => ({
+          id: `unlock:${event.id}`,
+          kind: "collectible-unlock",
+          event,
+        })),
+    ]);
     additions.forEach((event) => {
       void acknowledgeCollectibleUnlockEvent(event.id).catch((ackError) => {
         console.error("Unable to acknowledge collectible unlock event.", ackError);
@@ -349,14 +392,14 @@ export function App() {
     });
   }, [pendingUnlockIds]);
 
-  const activeUnlockId = unlockQueue[0]?.id;
+  const activeNotificationId = notificationQueue[0]?.id;
   useEffect(() => {
-    if (!activeUnlockId) return;
+    if (!activeNotificationId) return;
     const timeout = window.setTimeout(() => {
-      setUnlockQueue((current) => current[0]?.id === activeUnlockId ? current.slice(1) : current);
-    }, UNLOCK_NOTIFICATION_DURATION_MS);
+      setNotificationQueue((current) => current[0]?.id === activeNotificationId ? current.slice(1) : current);
+    }, BANNER_NOTIFICATION_DURATION_MS);
     return () => window.clearTimeout(timeout);
-  }, [activeUnlockId]);
+  }, [activeNotificationId]);
 
   useEffect(() => {
     combatRef.current = combat;
@@ -429,7 +472,24 @@ export function App() {
               promo: shopTab === "promo" ? promoState : null,
             }
           : null,
-        unlockNotification: unlockQueue[0] ?? null,
+        unlockNotification: notificationQueue[0]?.kind === "collectible-unlock"
+          ? notificationQueue[0].event
+          : null,
+        rewardNotification: notificationQueue[0]?.kind === "shop-reward"
+          ? {
+              kind: "shop",
+              targetCategory: notificationQueue[0].targetCategory,
+              targetId: notificationQueue[0].targetId,
+              granted: notificationQueue[0].granted,
+              discarded: notificationQueue[0].discarded,
+            }
+          : notificationQueue[0]?.kind === "promo-reward"
+            ? {
+                kind: "promo",
+                code: notificationQueue[0].redemption.code,
+                rewards: notificationQueue[0].redemption.rewards.length,
+              }
+            : null,
         combat: combat
           ? {
               phase: combat.phase,
@@ -493,7 +553,7 @@ export function App() {
           : null,
       });
     window.advanceTime = () => undefined;
-  }, [view, shopTab, loading, isAuthed, data, combat, unlockQueue, promoState]);
+  }, [view, shopTab, loading, isAuthed, data, combat, notificationQueue, promoState]);
 
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
@@ -579,6 +639,7 @@ export function App() {
           onBack={() => navigate("home")}
           onRefresh={() => refresh("shop")}
           onPromoStateChange={setPromoState}
+          onNotify={enqueueNotification}
         />
       )}
       {view === "play" && (
@@ -631,7 +692,13 @@ export function App() {
           }}
         />
       )}
-      {unlockQueue[0] && <UnlockNotification key={unlockQueue[0].id} data={data} event={unlockQueue[0]} />}
+      {notificationQueue[0] && (
+        <BannerNotificationView
+          key={notificationQueue[0].id}
+          data={data}
+          notification={notificationQueue[0]}
+        />
+      )}
     </Shell>
   );
 }
@@ -1422,7 +1489,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
 
   if (target.type === "critter") {
     const assigned = new Set(player.squadSlots.map((row) => row.user_critter_id).filter(Boolean));
-    const eligible = player.critters;
+    const eligible = sortByCollectibleId(player.critters, (owned) => owned.critter_id);
     const current = player.squadSlots.find((row) => row.slot_index === target.slotIndex)?.user_critter_id;
     const canRemoveCurrent = player.squadSlots.filter((row) => row.user_critter_id).length > 1;
     content = eligible.length ? <div className="candidate-grid">{eligible.map((owned) => {
@@ -1459,16 +1526,16 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
     })}</SkillTileGrid> : <p className="empty-state">No skills available</p>;
   } else if (target.type === "relic") {
     const current = player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id;
-    const eligible = data.catalog.relics.filter((relic) => {
-      const owned = player.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0;
-      const used = player.relicSlots.filter((row) => row.relic_id === relic.id && !(row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)).length;
-      return owned - used > 0;
-    });
+    const eligible = sortByCollectibleId(data.catalog.relics).filter(
+      (relic) => (player.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0) > 0,
+    );
     content = eligible.length ? <div className="candidate-grid">{eligible.map((relic) => {
       const owned = player.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0;
       const used = player.relicSlots.filter((row) => row.relic_id === relic.id).length;
-      return <button className={`candidate-card ${current === relic.id ? "selected" : ""}`} key={relic.id} disabled={saving || current === relic.id} onClick={() => onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id))}>
-        <SpriteFrame size="md" selected={current === relic.id}><Sprite name={relic.name} element="metal" assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [])}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {owned - used}</span>
+      const selected = current === relic.id;
+      const available = owned - used;
+      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={relic.id} disabled={saving || selected || available <= 0} onClick={() => onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id))}>
+        <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [])}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {available}</span>
       </button>;
     })}</div> : <p className="empty-state">No relics available</p>;
   } else if (target.type === "ability") {
@@ -1483,7 +1550,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
       return <button className={`ability-candidate ${selected ? "selected" : ""} ${equipped ? "equipped" : ""}`} key={ability.id} disabled={saving || equippedElsewhere.has(ability.id)} onClick={() => onEquip(() => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, selected ? null : ability.id))}><span><strong>{ability.name}</strong><small>{ability.description}</small>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [])}</span>{equipped && <Check size={18} />}</button>;
     })}</div> : <p className="empty-state">No abilities available</p>;
   } else {
-    content = <div className="candidate-grid">{player.rollcasters.map((owned) => {
+    content = <div className="candidate-grid">{sortByCollectibleId(player.rollcasters, (owned) => owned.rollcaster_id).map((owned) => {
       const entry = byId(data.catalog.rollcasters, owned.rollcaster_id)!;
       const selected = player.profile.active_rollcaster_id === owned.id;
       return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", entry.id, entry.asset_path)} size="large" fit="portrait" /></SpriteFrame><strong>{entry.name}</strong><span>Level {owned.level}</span></button>;
@@ -1581,6 +1648,7 @@ function ShopScreen({
   onBack,
   onRefresh,
   onPromoStateChange,
+  onNotify,
 }: {
   data: AppData;
   tab: ShopTab;
@@ -1588,10 +1656,11 @@ function ShopScreen({
   onBack: () => void;
   onRefresh: () => Promise<void>;
   onPromoStateChange: (state: PromoRenderState) => void;
+  onNotify: (notification: BannerNotification) => void;
 }) {
   const [query, setQuery] = useState("");
   const [busyEntry, setBusyEntry] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const requestIds = useRef(new Map<string, string>());
   const normalized = query.trim().toLocaleLowerCase();
   const authoredEntries = data.catalog.shopEntries.filter((entry) => (
@@ -1610,22 +1679,24 @@ function ShopScreen({
   }, [authoredEntries.map((entry) => entry.id).join("|"), validEntries.map((entry) => entry.id).join("|")]);
 
   async function purchase(entry: ShopEntry) {
-    setBusyEntry(entry.id); setFeedback(null);
+    setBusyEntry(entry.id); setPurchaseError(null);
     const requestId = requestIds.current.get(entry.id) ?? createRequestId();
     requestIds.current.set(entry.id, requestId);
     try {
       const receipt = await purchaseShopEntry(entry.id, requestId);
       requestIds.current.delete(entry.id);
-      const hasDiscarded = receipt.discarded !== "0";
-      setFeedback({
-        tone: "success",
-        message: hasDiscarded
-          ? `Purchase complete. ${formatAmount(receipt.granted)} granted and ${formatAmount(receipt.discarded)} overflow discarded.`
-          : `Purchase complete. ${formatAmount(receipt.granted)} granted.`,
+      onNotify({
+        id: `shop:${receipt.request_id}`,
+        kind: "shop-reward",
+        targetCategory: receipt.target_category,
+        targetId: receipt.target_id,
+        shard: receipt.shop_type === "shard",
+        granted: receipt.granted,
+        discarded: receipt.discarded,
       });
       await onRefresh();
     } catch (error) {
-      setFeedback({ tone: "error", message: shopErrorMessage(error) });
+      setPurchaseError(shopErrorMessage(error));
     } finally {
       setBusyEntry(null);
     }
@@ -1647,11 +1718,12 @@ function ShopScreen({
         <button role="tab" aria-selected={tab === "promo"} className={tab === "promo" ? "active" : ""} onClick={() => setTab("promo")}><Ticket size={17} aria-hidden="true" /> Promo Codes</button>
       </div>
       {(tab === "shard" || tab === "relic") && <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or collectible ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, collectible name, or ID" /></label>}
-      {(tab === "shard" || tab === "relic") && feedback && <p className={`notice ${feedback.tone === "error" ? "error" : "success"}`} role="status">{feedback.message}</p>}
+      {(tab === "shard" || tab === "relic") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
       {tab === "promo" ? (
         <PromoCodesPanel
           onRefresh={onRefresh}
           onStateChange={onPromoStateChange}
+          onNotify={onNotify}
         />
       ) : tab === "lootbox" ? <div className="shop-empty"><ShoppingBag size={38} /><h2>Lootbox Shop</h2><p>Coming later. Lootboxes, rolls, pity rules, and awards are intentionally reserved for a separate system.</p></div> : tab === "shard" ? (
         <div className="shop-groups">
@@ -1670,9 +1742,11 @@ function ShopScreen({
 function PromoCodesPanel({
   onRefresh,
   onStateChange,
+  onNotify,
 }: {
   onRefresh: () => Promise<void>;
   onStateChange: (state: PromoRenderState) => void;
+  onNotify: (notification: BannerNotification) => void;
 }) {
   const [code, setCode] = useState("");
   const [history, setHistory] = useState<PromoCodeRedemption[]>([]);
@@ -1680,8 +1754,8 @@ function PromoCodesPanel({
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<PromoCodeRedemption | null>(null);
-  const successHeadingRef = useRef<HTMLHeadingElement>(null);
+  const [lastClaim, setLastClaim] = useState<PromoCodeRedemption | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function loadHistory() {
     setHistoryStatus("loading");
@@ -1722,11 +1796,11 @@ function PromoCodesPanel({
       historyCount: history.length,
       claiming,
       error: claimError ?? historyError,
-      claimedCode: success?.code ?? null,
-      claimedRewards: success?.rewards.length ?? 0,
-      claimedPlayerUses: success?.playerUses ?? null,
-      claimedPlayerUsesRemaining: success?.playerUsesRemaining ?? null,
-      claimedGlobalUsesRemaining: success?.globalUsesRemaining ?? null,
+      claimedCode: lastClaim?.code ?? null,
+      claimedRewards: lastClaim?.rewards.length ?? 0,
+      claimedPlayerUses: lastClaim?.playerUses ?? null,
+      claimedPlayerUsesRemaining: lastClaim?.playerUsesRemaining ?? null,
+      claimedGlobalUsesRemaining: lastClaim?.globalUsesRemaining ?? null,
     });
   }, [
     historyStatus,
@@ -1734,18 +1808,26 @@ function PromoCodesPanel({
     claiming,
     claimError,
     historyError,
-    success?.redemptionId,
+    lastClaim?.redemptionId,
     onStateChange,
   ]);
 
+  useEffect(() => {
+    if (!claiming && lastClaim) inputRef.current?.focus();
+  }, [claiming, lastClaim?.redemptionId]);
+
   function revealClaim(redemption: PromoCodeRedemption) {
-    setSuccess(redemption);
+    setLastClaim(redemption);
     setCode("");
     setHistory((current) => [
       redemption,
       ...current.filter((row) => row.redemptionId !== redemption.redemptionId),
     ]);
-    window.requestAnimationFrame(() => successHeadingRef.current?.focus());
+    onNotify({
+      id: `promo:${redemption.redemptionId}`,
+      kind: "promo-reward",
+      redemption,
+    });
   }
 
   async function claim(event: React.FormEvent<HTMLFormElement>) {
@@ -1755,7 +1837,6 @@ function PromoCodesPanel({
     const knownRedemptionIds = new Set(history.map((redemption) => redemption.redemptionId));
     setClaiming(true);
     setClaimError(null);
-    setSuccess(null);
     try {
       const redemption = await redeemPromoCode(enteredCode);
       revealClaim(redemption);
@@ -1808,6 +1889,7 @@ function PromoCodesPanel({
           <label htmlFor="promo-code-input">Promo Code</label>
           <div className="promo-claim-controls">
             <input
+              ref={inputRef}
               id="promo-code-input"
               className="promo-code-input"
               value={code}
@@ -1816,7 +1898,7 @@ function PromoCodesPanel({
               autoCapitalize="characters"
               autoComplete="off"
               spellCheck={false}
-              placeholder="UNL0CKM3"
+              placeholder="Enter code..."
             />
             <button className="primary-button promo-claim-button" disabled={claiming || code.trim().length === 0}>
               {claiming ? <><RefreshCw className="promo-spinner" size={17} aria-hidden="true" /> Claiming…</> : "Claim"}
@@ -1826,22 +1908,6 @@ function PromoCodesPanel({
         {claimError && <p className="promo-message promo-error" role="alert">{claimError}</p>}
       </section>
 
-      {success && (
-        <section className="promo-success-card" aria-live="polite">
-          <div className="promo-success-heading">
-            <span aria-hidden="true"><Gift /></span>
-            <div>
-              <h2 ref={successHeadingRef} tabIndex={-1}>Rewards claimed!</h2>
-              <p>Code: <code>{success.code}</code></p>
-              {success.playerUses !== null && (
-                <p className="promo-success-usage">{promoClaimUsageLabel(success)}</p>
-              )}
-            </div>
-          </div>
-          <PromoRewardGrid rewards={success.rewards} />
-        </section>
-      )}
-
       <section className="promo-history-section" aria-labelledby="redeemed-codes-heading">
         <div className="promo-history-heading">
           <div>
@@ -1850,18 +1916,20 @@ function PromoCodesPanel({
           </div>
           {historyStatus === "error" && <button className="secondary-button" onClick={() => void loadHistory()}>Retry</button>}
         </div>
-        {historyError && <p className="promo-message promo-history-error" role="alert">{historyError}</p>}
-        {historyStatus === "loading" ? <PromoHistorySkeleton /> : history.length > 0 ? (
-          <div className="promo-history-list">
-            {history.map((redemption) => <PromoRedemptionCard key={redemption.redemptionId} redemption={redemption} />)}
-          </div>
-        ) : historyStatus === "loaded" ? (
-          <div className="promo-history-empty">
-            <Gift size={34} aria-hidden="true" />
-            <h3>No redeemed codes yet</h3>
-            <p>Your claimed rewards will appear here.</p>
-          </div>
-        ) : null}
+        <div className="promo-history-pane">
+          {historyError && <p className="promo-message promo-history-error" role="alert">{historyError}</p>}
+          {historyStatus === "loading" ? <PromoHistorySkeleton /> : history.length > 0 ? (
+            <div className="promo-history-list">
+              {history.map((redemption) => <PromoRedemptionCard key={redemption.redemptionId} redemption={redemption} />)}
+            </div>
+          ) : historyStatus === "loaded" ? (
+            <div className="promo-history-empty">
+              <Gift size={34} aria-hidden="true" />
+              <h3>No redeemed codes yet</h3>
+              <p>Your claimed rewards will appear here.</p>
+            </div>
+          ) : null}
+        </div>
       </section>
     </div>
   );
@@ -1904,12 +1972,12 @@ function PromoRedemptionCard({ redemption }: { redemption: PromoCodeRedemption }
         <div><Ticket size={18} aria-hidden="true" /><code>{redemption.code}</code></div>
         <time dateTime={redemption.redeemedAt}>{formattedDate}</time>
       </header>
-      <PromoRewardGrid rewards={redemption.rewards} code={redemption.code} />
+      <PromoRewardGrid rewards={redemption.rewards} />
     </article>
   );
 }
 
-function PromoRewardGrid({ rewards, code }: { rewards: PromoCodeReward[]; code?: string }) {
+function PromoRewardGrid({ rewards }: { rewards: PromoCodeReward[] }) {
   return (
     <div className="promo-reward-grid">
       {rewards.map((reward, index) => {
@@ -1924,7 +1992,6 @@ function PromoRewardGrid({ rewards, code }: { rewards: PromoCodeReward[]; code?:
             <div className="promo-reward-copy">
               <h3>{reward.name}</h3>
               <span>{outcome}</span>
-              {code && <small>Code: <code>{code}</code></small>}
             </div>
             <strong>×{formatAmount(reward.quantity)}</strong>
           </article>
@@ -1984,7 +2051,20 @@ function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry
     <article className={`shop-entry-card ${soldOut ? "sold-out" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"}>
       <span className="shop-entry-category">{entry.target_category}</span>
       <CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="md" shard={entry.shop_type === "shard"} />
-      <div className="shop-entry-copy"><h3>{entry.name}</h3><p className="shop-target">{targetCritter ? <><CritterName data={data} critter={targetCritter} /> <span>({entry.target_id})</span></> : <>{targetName} ({entry.target_id})</> }</p>{showDescription && <p>{description}</p>}</div>
+      <div className="shop-entry-copy">
+        <h3>{entry.name}</h3>
+        <p className="shop-target">
+          {targetCritter
+            ? (
+                <span className="shop-target-identity">
+                  <CritterName data={data} critter={targetCritter} />
+                  <span className="shop-target-id">({entry.target_id})</span>
+                </span>
+              )
+            : <>{targetName} ({entry.target_id})</>}
+        </p>
+        {showDescription && <p>{description}</p>}
+      </div>
       <div className="shop-entry-meta">
         <strong>{formatAmount(entry.quantity)} × {entry.shop_type === "shard" ? "Shards" : targetName}</strong>
         <span className="shop-price"><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} />{formatAmount(entry.price)}</span>
@@ -3684,17 +3764,51 @@ function StatusIconRow({ data, statuses }: { data: AppData; statuses: CombatStat
   })}</span>;
 }
 
-function UnlockNotification({ data, event }: { data: AppData; event: CollectibleUnlockEvent }) {
-  const name = collectibleName(data, event.collectible_type, event.collectible_id);
-  const critter = event.collectible_type === "critter"
-    ? byId(data.catalog.critters, event.collectible_id)
-    : undefined;
+function BannerNotificationView({ data, notification }: { data: AppData; notification: BannerNotification }) {
+  if (notification.kind === "collectible-unlock") {
+    const event = notification.event;
+    const name = collectibleName(data, event.collectible_type, event.collectible_id);
+    const critter = event.collectible_type === "critter"
+      ? byId(data.catalog.critters, event.collectible_id)
+      : undefined;
+    return (
+      <aside className="unlock-notification" role="status" aria-live="polite" aria-atomic="true">
+        <CollectibleSprite data={data} type={event.collectible_type} id={event.collectible_id} size="xs" />
+        <div className="unlock-notification-copy">
+          <span className="unlock-notification-label"><Sparkles size={14} aria-hidden="true" /> Collectible unlocked</span>
+          <h2>{critter ? <><CritterName data={data} critter={critter} /> <span>unlocked!</span></> : `${name} unlocked!`}</h2>
+        </div>
+      </aside>
+    );
+  }
+
+  if (notification.kind === "shop-reward") {
+    const name = collectibleName(data, notification.targetCategory, notification.targetId);
+    const rewardName = notification.shard ? `${name} Shards` : name;
+    return (
+      <aside className="unlock-notification reward-notification" role="status" aria-live="polite" aria-atomic="true">
+        <CollectibleSprite data={data} type={notification.targetCategory} id={notification.targetId} size="xs" />
+        <div className="unlock-notification-copy">
+          <span className="unlock-notification-label"><ShoppingBag size={14} aria-hidden="true" /> Shop reward</span>
+          <h2>×{formatAmount(notification.granted)} {rewardName} added</h2>
+          {notification.discarded !== "0" && (
+            <p className="unlock-notification-detail">×{formatAmount(notification.discarded)} overflow discarded</p>
+          )}
+        </div>
+      </aside>
+    );
+  }
+
+  const rewardCount = notification.redemption.rewards.length;
   return (
-    <aside className="unlock-notification" role="status" aria-live="polite" aria-atomic="true">
-      <CollectibleSprite data={data} type={event.collectible_type} id={event.collectible_id} size="xs" />
+    <aside className="unlock-notification reward-notification" role="status" aria-live="polite" aria-atomic="true">
+      <span className="notification-banner-icon" aria-hidden="true"><Gift size={25} /></span>
       <div className="unlock-notification-copy">
-        <span className="unlock-notification-label"><Sparkles size={14} aria-hidden="true" /> Collectible unlocked</span>
-        <h2>{critter ? <><CritterName data={data} critter={critter} /> <span>unlocked!</span></> : `${name} unlocked!`}</h2>
+        <span className="unlock-notification-label"><Ticket size={14} aria-hidden="true" /> Promo code {notification.redemption.code}</span>
+        <h2>{rewardCount} {rewardCount === 1 ? "reward" : "rewards"} added!</h2>
+        {notification.redemption.playerUses !== null && (
+          <p className="unlock-notification-detail">{promoClaimUsageLabel(notification.redemption)}</p>
+        )}
       </div>
     </aside>
   );

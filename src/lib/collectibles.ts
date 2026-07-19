@@ -7,6 +7,15 @@ import type {
   UserCollectibleChallengeProgress,
 } from "./types.js";
 
+const collectibleIdCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+export function sortByCollectibleId<T extends { id: string }>(items: readonly T[]): T[];
+export function sortByCollectibleId<T>(items: readonly T[], getId: (item: T) => string): T[];
+export function sortByCollectibleId<T>(items: readonly T[], getId?: (item: T) => string): T[] {
+  const resolveId = getId ?? ((item: T) => (item as T & { id: string }).id);
+  return [...items].sort((left, right) => collectibleIdCollator.compare(resolveId(left), resolveId(right)));
+}
+
 export const TRACKED_CHALLENGE_TYPES = new Set([
   "knock_out_critters",
   "deal_damage",
