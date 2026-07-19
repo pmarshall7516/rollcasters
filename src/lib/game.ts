@@ -15,6 +15,7 @@ import type {
   UserCritter,
 } from "./types.js";
 import { assertEffectContract } from "./effects.js";
+import { battlefieldSlotsForCount } from "./dungeons.js";
 
 export type StatBlock = {
   hp: number;
@@ -65,6 +66,24 @@ export type CombatModifier = {
   sourceOwnerId: string;
   sourceCritterKey?: string;
   effect: ResolvedEffectRef;
+};
+
+export type CombatPresentationEvent = {
+  kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other";
+  message: string;
+  actorKey?: string;
+  targetKeys: string[];
+  skillId?: string;
+  swap?: {
+    outgoingKey: string;
+    incomingKey: string;
+    battlefieldSlot: number;
+  };
+  hpChanges: Array<{
+    unitKey: string;
+    before: number;
+    after: number;
+  }>;
 };
 
 type SetupEffectSource = {
@@ -127,6 +146,22 @@ export type CombatState = {
   rngState: number;
   snapshot: RunEffectSnapshot;
   turnEvents: CombatProgressEvent[];
+  presentationEvents: CombatPresentationEvent[];
+};
+
+export type EffectivenessClass =
+  | "extra-effective"
+  | "effective"
+  | "neutral"
+  | "resisted"
+  | "extra-resisted";
+
+export type SkillDamage = {
+  damage: number;
+  effectiveness: number;
+  classification: EffectivenessClass;
+  suffix: string;
+  stab: boolean;
 };
 
 export function byId<T extends { id: string }>(items: T[], id: string | null | undefined): T | undefined {
@@ -236,8 +271,10 @@ export function createInitialCombatState(
   dungeon: Dungeon,
   runId: string,
   selectedOpponents?: DungeonOpponent[],
+  seedKey = runId,
 ): CombatState {
   const squad = squadCritters(player);
+  const playerBattlefieldSlots = battlefieldSlotsForCount(dungeon.player_active_count);
   let playerUnits: CombatUnit[] = squad.map((owned, index) => {
     const critter = byId(catalog.critters, owned.critter_id)!;
     const stats = critterStats(catalog, critter, owned.level);
@@ -259,13 +296,14 @@ export function createInitialCombatState(
       maxHp: stats.hp,
       skills,
       active: index < dungeon.player_active_count,
-      battlefieldSlot: index < dungeon.player_active_count ? index : null,
+      battlefieldSlot: index < dungeon.player_active_count ? playerBattlefieldSlots[index] : null,
       blocking: false,
       manaRoll: 0,
     };
   });
 
   const opponentRows = selectedOpponents?.length ? structuredClone(selectedOpponents) : pickOpponents(catalog, dungeon);
+  const opponentBattlefieldSlots = battlefieldSlotsForCount(dungeon.opponent_active_count);
   let opponentUnits: CombatUnit[] = opponentRows.map((opponent, index) => {
     const critter = byId(catalog.critters, opponent.critter_id)!;
     const stats = applyDungeonOverrides(
@@ -289,7 +327,7 @@ export function createInitialCombatState(
       maxHp: stats.hp,
       skills,
       active: index < dungeon.opponent_active_count,
-      battlefieldSlot: index < dungeon.opponent_active_count ? index : null,
+      battlefieldSlot: index < dungeon.opponent_active_count ? opponentBattlefieldSlots[index] : null,
       blocking: false,
       manaRoll: 0,
     };
@@ -328,7 +366,7 @@ export function createInitialCombatState(
   }
   setupSources.sort((a, b) => (a.ownerType === b.ownerType ? a.sourceOrder - b.sourceOrder : a.ownerType === "relic" ? -1 : 1));
 
-  const seed = hashSeed(runId);
+  const seed = hashSeed(seedKey);
   const snapshotEffects = setupSources.flatMap((source) => source.effects.map((effect) => ({
     id: effect.id,
     name: effect.name,
@@ -403,6 +441,7 @@ export function createInitialCombatState(
         })),
     },
     turnEvents: [],
+    presentationEvents: [],
   };
   initialState = recomputeCombatStats(initialState);
   return initialState;
@@ -481,9 +520,12 @@ function applyDungeonOverrides(stats: StatBlock, rows: Catalog["dungeonOpponentS
   const next = { ...stats };
   const keys: Record<string, keyof StatBlock> = {
     hp: "hp", atk: "atk", def: "def", spd: "spd", dice_min: "diceMin", dice_max: "diceMax",
-    block_cost: "blockCost", swap_cost: "swapCost",
+    block_cost: "blockCost", swap_cost: "swapCost", relic_slots: "relicSlots",
   };
-  for (const row of rows) next[keys[row.stat_key]] = row.value;
+  for (const row of rows) {
+    const key = keys[row.stat_key];
+    if (key) next[key] = row.value;
+  }
   next.hp = Math.max(1, next.hp);
   next.atk = Math.max(1, next.atk);
   next.def = Math.max(1, next.def);
@@ -503,7 +545,7 @@ function activeSetupSources(state: CombatState): SetupEffectSource[] {
   });
 }
 
-function recomputeCombatStats(state: CombatState): CombatState {
+export function recomputeCombatStats(state: CombatState): CombatState {
   const effectsByTarget = new Map<string, ResolvedEffectRef[]>();
   for (const source of activeSetupSources(state)) {
     for (const effect of source.effects) {
@@ -600,6 +642,7 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
     ...state,
     playerMana: state.playerMana - cost,
     log: [`Submitted actions for ${cost} mana.`, ...state.log],
+    presentationEvents: [],
   };
 
   const enemyActions = chooseEnemyActions(next);
@@ -648,11 +691,24 @@ function chooseEnemyActions(state: CombatState): CombatAction[] {
 }
 
 function resolveActionStage(state: CombatState, actions: CombatAction[], stage: CombatAction["type"]): CombatState {
+  let rngState = state.rngState;
   const ordered = actions
     .filter((action) => action.type === stage)
-    .sort((a, b) => speedFor(state, b.actorKey) - speedFor(state, a.actorKey));
+    .map((action) => {
+      const tieRoll = nextRandom(rngState);
+      rngState = tieRoll.state;
+      return { action, tieBreaker: tieRoll.value };
+    })
+    .sort((left, right) =>
+      speedFor(state, right.action.actorKey) - speedFor(state, left.action.actorKey)
+      || right.tieBreaker - left.tieBreaker,
+    )
+    .map(({ action }) => action);
 
-  return ordered.reduce((current, action) => recomputeCombatStats(resolveAction(current, action)), state);
+  return ordered.reduce(
+    (current, action) => recomputeCombatStats(resolveAction(current, action)),
+    { ...state, rngState },
+  );
 }
 
 function prepareActionTarget(state: CombatState, action: CombatAction): CombatAction {
@@ -664,23 +720,50 @@ function prepareActionTarget(state: CombatState, action: CombatAction): CombatAc
 
 function resolveAction(state: CombatState, action: CombatAction): CombatState {
   const actor = findUnit(state, action.actorKey);
-  if (!actor || actor.hp <= 0 || !actor.active) return state;
+  if (!actor) return state;
+  if (actor.hp <= 0) {
+    const refund = Math.max(0, action.cost);
+    const refundedState = refund === 0
+      ? state
+      : actor.side === "player"
+        ? { ...state, playerMana: state.playerMana + refund }
+        : { ...state, opponentMana: state.opponentMana + refund };
+    const message = refund > 0
+      ? `${actor.name} was knocked out before acting; ${refund} reserved mana was refunded.`
+      : `${actor.name} was knocked out before acting; no mana was spent.`;
+    return appendPresentationEvent(
+      { ...refundedState, log: [message, ...refundedState.log] },
+      { kind: "other", message, actorKey: actor.key, targetKeys: [], hpChanges: [] },
+    );
+  }
+  if (!actor.active) return state;
 
   if (action.type !== "skip") {
     const skip = resolveSkipCheck(state, actor.key, action.type);
     state = skip.state;
     if (skip.skipped) {
-      const refunded = refundActionCost(state, actor.side, action.cost);
-      return { ...refunded, log: [`${actor.name}'s ${action.type} was skipped by ${skip.effectName}; ${action.cost} mana was refunded.`, ...refunded.log] };
+      const message = `${actor.name}'s ${action.type} was skipped by ${skip.effectName}; the reserved mana was spent.`;
+      return appendPresentationEvent(
+        { ...state, log: [message, ...state.log] },
+        { kind: "status", message, actorKey: actor.key, targetKeys: [actor.key], hpChanges: [] },
+      );
     }
   }
 
   if (action.type === "skip") {
-    return { ...state, log: [`${actor.name} waits.`, ...state.log] };
+    const message = `${actor.name} waits.`;
+    return appendPresentationEvent(
+      { ...state, log: [message, ...state.log] },
+      { kind: "wait", message, actorKey: actor.key, targetKeys: [], hpChanges: [] },
+    );
   }
 
   if (action.type === "block") {
-    return updateUnit(state, action.actorKey, (unit) => ({ ...unit, blocking: true }), `${actor.name} blocks.`);
+    const message = `${actor.name} blocks.`;
+    return appendPresentationEvent(
+      updateUnit(state, action.actorKey, (unit) => ({ ...unit, blocking: true }), message),
+      { kind: "block", message, actorKey: actor.key, targetKeys: [actor.key], hpChanges: [] },
+    );
   }
 
   if (action.type === "swap" && action.swapToId) {
@@ -694,21 +777,52 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
       ? { side: action.targetSlotSide, index: action.targetSlotIndex }
       : undefined;
     const targets = skillTargets(state, actor.key, skill, action.targetKey, targetSlot);
-    if (!targets.length) return state;
+    if (!targets.length) {
+      const message = `${actor.name}'s ${skill.name} had no valid target; the reserved mana was spent.`;
+      return appendPresentationEvent(
+        { ...state, log: [message, ...state.log] },
+        { kind: "other", message, actorKey: actor.key, targetKeys: [], skillId: skill.id, hpChanges: [] },
+      );
+    }
+    const skillMessage = `${actor.name} used ${skill.name}!`;
+    const actionState = appendPresentationEvent(state, {
+      kind: "skill",
+      message: skillMessage,
+      actorKey: actor.key,
+      targetKeys: targets.map((target) => target.key),
+      skillId: skill.id,
+      hpChanges: [],
+    });
     let damageDone = 0;
     let next = targets.reduce((current, originalTarget) => {
       const target = findUnit(current, originalTarget.key);
       if (!target || target.hp <= 0) return current;
       if (skill.skill_type === "attack") {
-        const damage = calculateDamage(actor, target, skill);
-        const finalDamage = target.blocking ? Math.max(1, Math.floor(damage * 0.1)) : damage;
+        const resolvedDamage = calculateSkillDamage(current.catalog, actor, target, skill);
+        const finalDamage = target.blocking && resolvedDamage.damage > 0
+          ? Math.max(1, Math.floor(resolvedDamage.damage * 0.1))
+          : resolvedDamage.damage;
         const actualDamage = Math.min(target.hp, finalDamage);
         damageDone += actualDamage;
-        const updated = updateUnit(current, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - finalDamage) }), `${actor.name} used ${skill.name} on ${target.name} for ${finalDamage} damage.`);
-        return appendDamageProgressEvents(updated, actor, target, actualDamage, target.hp - actualDamage <= 0);
+        const afterHp = Math.max(0, target.hp - finalDamage);
+        const updated = updateUnit(
+          current,
+          target.key,
+          (unit) => ({ ...unit, hp: afterHp }),
+          `${actor.name} used ${skill.name} on ${target.name} for ${finalDamage} damage.${resolvedDamage.suffix ? ` ${resolvedDamage.suffix}` : ""}`,
+        );
+        const withPresentation = appendPresentationEvent(updated, {
+          kind: "damage",
+          message: `${target.name} took ${actualDamage} damage.${resolvedDamage.suffix ? ` ${resolvedDamage.suffix}` : ""}`,
+          actorKey: actor.key,
+          targetKeys: [target.key],
+          skillId: skill.id,
+          hpChanges: [{ unitKey: target.key, before: target.hp, after: afterHp }],
+        });
+        return appendDamageProgressEvents(withPresentation, actor, target, actualDamage, target.hp - actualDamage <= 0);
       }
       return { ...current, log: [`${actor.name} used ${skill.name} on ${target.name}.`, ...current.log] };
-    }, state);
+    }, actionState);
     if (actor.side === "player") {
       next = appendProgressEvent(next, {
         event_type: "use_skill",
@@ -733,13 +847,6 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
   }
 
   return state;
-}
-
-function refundActionCost(state: CombatState, side: CombatUnit["side"], cost: number): CombatState {
-  if (cost <= 0) return state;
-  return side === "player"
-    ? { ...state, playerMana: state.playerMana + cost }
-    : { ...state, opponentMana: state.opponentMana + cost };
 }
 
 export function isSingleTarget(skill: Skill): boolean {
@@ -844,7 +951,25 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
           : Number(effect.parameters.amount ?? 0);
       const amount = Math.max(0, roundHalfUp(raw));
       const restored = Math.min(amount, target.maxHp - target.hp);
-      return updateUnit(current, target.key, (unit) => ({ ...unit, hp: unit.hp + restored }), `${effect.name} restored ${restored} HP to ${target.name}.`);
+      const source = context.sourceCritterKey ? findUnit(current, context.sourceCritterKey) : undefined;
+      const message = source
+        ? `${source.name} healed ${target.name} by ${restored} HP.`
+        : `${target.name} healed ${restored} HP from ${effect.name}.`;
+      const updated = updateUnit(
+        current,
+        target.key,
+        (unit) => ({ ...unit, hp: unit.hp + restored }),
+        message,
+      );
+      return restored > 0
+        ? appendPresentationEvent(updated, {
+            kind: "heal",
+            message,
+            actorKey: source?.key,
+            targetKeys: [target.key],
+            hpChanges: [{ unitKey: target.key, before: target.hp, after: target.hp + restored }],
+          })
+        : updated;
     }, next);
   }
   if (key === "apply_status@1") {
@@ -863,11 +988,18 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       sourceCritterKey: context.sourceCritterKey,
       effect: cloneEffect(effect),
     }));
-    return recomputeCombatStats({
+    const modified = recomputeCombatStats({
       ...next,
       modifiers: [...next.modifiers, ...modifiers],
       log: [...targets.map((target) => `${effect.name} affected ${target.name}.`).reverse(), ...next.log],
     });
+    return targets.reduce((current, target) => appendPresentationEvent(current, {
+      kind: "status",
+      message: `${effect.name} affected ${target.name}.`,
+      actorKey: context.sourceCritterKey,
+      targetKeys: [target.key],
+      hpChanges: [],
+    }), modified);
   }
   throw new Error(`Unsupported effect runtime: ${key}`);
 }
@@ -909,7 +1041,17 @@ function applyStatus(
     });
   }
   const holder = findUnit(state, holderKey);
-  return recomputeCombatStats({ ...state, statuses, log: [`${holder?.name ?? holderKey} received ${status.name}.`, ...state.log] });
+  const message = `${holder?.name ?? holderKey} received ${status.name}.`;
+  return appendPresentationEvent(
+    recomputeCombatStats({ ...state, statuses, log: [message, ...state.log] }),
+    {
+      kind: "status",
+      message,
+      actorKey: context.sourceCritterKey,
+      targetKeys: [holderKey],
+      hpChanges: [],
+    },
+  );
 }
 
 function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_of_turn"): CombatState {
@@ -935,7 +1077,18 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
           : Number(effect.parameters.amount ?? 0);
         const damage = Math.max(0, roundHalfUp(raw));
         const actualDamage = Math.min(target.hp, damage);
-        next = updateUnit(next, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - damage) }), `${target.name} took ${damage} damage from ${effect.name}.`);
+        const afterHp = Math.max(0, target.hp - damage);
+        const message = `${target.name} took ${actualDamage} damage from ${effect.name}.`;
+        next = appendPresentationEvent(
+          updateUnit(next, target.key, (unit) => ({ ...unit, hp: afterHp }), message),
+          {
+            kind: "damage",
+            message,
+            actorKey: instance.sourceCritterKey,
+            targetKeys: [target.key],
+            hpChanges: [{ unitKey: target.key, before: target.hp, after: afterHp }],
+          },
+        );
         const source = instance.sourceCritterKey ? findUnit(next, instance.sourceCritterKey) : undefined;
         if (source) next = appendDamageProgressEvents(next, source, target, actualDamage, target.hp - actualDamage <= 0);
       }
@@ -983,6 +1136,7 @@ function swapPlayerUnit(state: CombatState, actorKey: string, swapToId: string):
   const benchIndex = state.playerUnits.findIndex((unit) => unit.userCritter?.id === swapToId && !unit.active && unit.hp > 0);
   if (activeIndex < 0 || benchIndex < 0) return state;
   const battlefieldSlot = state.playerUnits[activeIndex].battlefieldSlot;
+  if (battlefieldSlot === null) return state;
 
   const units = state.playerUnits.map((unit, index) => {
     if (index === activeIndex) return { ...unit, active: false, battlefieldSlot: null };
@@ -990,13 +1144,25 @@ function swapPlayerUnit(state: CombatState, actorKey: string, swapToId: string):
     return unit;
   });
 
+  const message = `${state.playerUnits[activeIndex].name} swapped with ${state.playerUnits[benchIndex].name}.`;
   let next: CombatState = {
     ...state,
     playerUnits: units,
-    log: [`${state.playerUnits[activeIndex].name} swapped with ${state.playerUnits[benchIndex].name}.`, ...state.log],
+    log: [message, ...state.log],
   };
   next = recomputeCombatStats(next);
-  return next;
+  return appendPresentationEvent(next, {
+    kind: "swap",
+    message,
+    actorKey,
+    targetKeys: [state.playerUnits[benchIndex].key],
+    swap: {
+      outgoingKey: state.playerUnits[activeIndex].key,
+      incomingKey: state.playerUnits[benchIndex].key,
+      battlefieldSlot,
+    },
+    hpChanges: [],
+  });
 }
 
 function resolvePostTurn(state: CombatState): CombatState {
@@ -1004,10 +1170,82 @@ function resolvePostTurn(state: CombatState): CombatState {
   return { ...next, log: ["Post-turn effects resolved.", ...next.log] };
 }
 
-function calculateDamage(attacker: CombatUnit, defender: CombatUnit, skill: Skill): number {
-  const base = Math.floor(((((2 * attacker.level) / 5 + 2) * skill.power * attacker.stats.atk) / defender.stats.def) / 50 + 2);
-  const sameElementBonus = skill.element_id === attacker.critter.element_1_id ? 1.2 : 1;
-  return Math.max(1, Math.floor(base * sameElementBonus));
+export function elementEffectiveness(
+  catalog: Pick<Catalog, "elementEffectiveness">,
+  attackingElementId: string,
+  defender: Pick<Critter, "element_1_id" | "element_2_id">,
+): number {
+  const multiplierFor = (defendingElementId: string) => {
+    const cell = catalog.elementEffectiveness.find(
+      (row) => row.attacking_element_id === attackingElementId
+        && row.defending_element_id === defendingElementId,
+    );
+    if (!cell) {
+      throw new Error(`Element Chart is missing ${attackingElementId} → ${defendingElementId}.`);
+    }
+    return Number(cell.multiplier);
+  };
+  return multiplierFor(defender.element_1_id)
+    * (defender.element_2_id ? multiplierFor(defender.element_2_id) : 1);
+}
+
+export function classifyEffectiveness(multiplier: number): {
+  classification: EffectivenessClass;
+  suffix: string;
+} {
+  if (Math.abs(multiplier - 1) <= 1e-6) return { classification: "neutral", suffix: "" };
+  if (multiplier >= 2) {
+    return {
+      classification: "extra-effective",
+      suffix: "It was an extra effective skill!",
+    };
+  }
+  if (multiplier > 1) {
+    return {
+      classification: "effective",
+      suffix: "It was an effective skill!",
+    };
+  }
+  if (multiplier > 0.5) {
+    return {
+      classification: "resisted",
+      suffix: "It was a resisted skill.",
+    };
+  }
+  return {
+    classification: "extra-resisted",
+    suffix: "It was an extra resisted skill.",
+  };
+}
+
+export function calculateSkillDamage(
+  catalog: Pick<Catalog, "elementEffectiveness">,
+  attacker: CombatUnit,
+  defender: CombatUnit,
+  skill: Skill,
+): SkillDamage {
+  if (skill.skill_type !== "attack" || skill.power <= 0) {
+    return {
+      damage: 0,
+      effectiveness: 1,
+      classification: "neutral",
+      suffix: "",
+      stab: false,
+    };
+  }
+  const stab = critterHasElement(attacker.critter, skill.element_id);
+  const effectivePower = skill.power * (stab ? 1.5 : 1);
+  const effectiveness = elementEffectiveness(catalog, skill.element_id, defender.critter);
+  const rawDamage = (((((2 * attacker.level) / 5 + 2) * effectivePower * attacker.stats.atk) / defender.stats.def) / 50 + 2)
+    * effectiveness;
+  const minimum = effectiveness === 0 ? 0 : 1;
+  const damage = Math.max(minimum, Math.floor(rawDamage));
+  return {
+    damage,
+    effectiveness,
+    ...classifyEffectiveness(effectiveness),
+    stab,
+  };
 }
 
 function updateUnit(state: CombatState, key: string, updater: (unit: CombatUnit) => CombatUnit, log: string): CombatState {
@@ -1017,6 +1255,16 @@ function updateUnit(state: CombatState, key: string, updater: (unit: CombatUnit)
     playerUnits: state.playerUnits.map(update),
     opponentUnits: state.opponentUnits.map(update),
     log: [log, ...state.log],
+  };
+}
+
+function appendPresentationEvent(
+  state: CombatState,
+  event: CombatPresentationEvent,
+): CombatState {
+  return {
+    ...state,
+    presentationEvents: [...state.presentationEvents, event],
   };
 }
 

@@ -224,6 +224,27 @@ try {
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "shop");
   check(await page.getByText(/Shop offer for/i).count() === 0, "Generated Shard Shop offer descriptions must be hidden.");
   const shardOffer = page.locator(".shop-entry-card").filter({ hasText: critterTarget.id });
+  const shardIdentity = await shardOffer.locator(".shop-target-identity").evaluate((identity) => {
+    const nameNode = identity.querySelector(".critter-name");
+    const idNode = identity.querySelector(".shop-target-id");
+    const name = nameNode.getBoundingClientRect();
+    const id = idNode.getBoundingClientRect();
+    const style = getComputedStyle(identity);
+    return {
+      nameCenter: name.top + name.height / 2,
+      idCenter: id.top + id.height / 2,
+      nameColor: getComputedStyle(nameNode).color,
+      idColor: getComputedStyle(idNode).color,
+      whiteSpace: style.whiteSpace,
+      height: identity.getBoundingClientRect().height,
+    };
+  });
+  check(
+    Math.abs(shardIdentity.nameCenter - shardIdentity.idCenter) < 1
+      && shardIdentity.nameColor === shardIdentity.idColor
+      && shardIdentity.whiteSpace === "nowrap",
+    `Critter name and ID must share one vertically aligned row: ${JSON.stringify(shardIdentity)}.`,
+  );
   await page.screenshot({ path: path.join(outputDir, "shop-shards.png"), fullPage: true });
   await shardOffer.hover();
   await page.waitForTimeout(250);
@@ -242,8 +263,40 @@ try {
       const card = [...document.querySelectorAll(".shop-entry-card")].find((candidate) => candidate.textContent?.includes(offerName));
       return card?.textContent?.includes(`Owned: ${expected} / ${maximum}`);
     }, { offerName: relicOfferName, expected: quantity, maximum: relicTarget.max_owned });
-    const unlockContinue = page.getByRole("button", { name: "Continue" });
-    if (await unlockContinue.isVisible().catch(() => false)) await unlockContinue.click();
+    const shopRewardBanner = page.locator(".reward-notification").filter({ hasText: "Shop reward" });
+    await shopRewardBanner.waitFor();
+    check(await page.getByText("Purchase complete.", { exact: false }).count() === 0, "Shop purchases must not insert the old Purchase complete notice.");
+    check(await page.locator(".notice.success").count() === 0, "Shop purchases must not render an inline success region.");
+    const shopRewardPresentation = await shopRewardBanner.evaluate((banner) => {
+      const bounds = banner.getBoundingClientRect();
+      const style = getComputedStyle(banner);
+      return {
+        position: style.position,
+        top: bounds.top,
+        left: bounds.left,
+        width: bounds.width,
+        pointerEvents: style.pointerEvents,
+        zIndex: Number(style.zIndex),
+        live: banner.getAttribute("aria-live"),
+        animationName: style.animationName,
+      };
+    });
+    check(
+      shopRewardPresentation.position === "fixed"
+        && shopRewardPresentation.top <= 16
+        && shopRewardPresentation.left <= 16
+        && shopRewardPresentation.width <= 360
+        && shopRewardPresentation.pointerEvents === "none"
+        && shopRewardPresentation.zIndex > 50
+        && shopRewardPresentation.live === "polite"
+        && shopRewardPresentation.animationName.includes("unlock-banner-in"),
+      `Shop rewards must reuse the compact top-left banner: ${JSON.stringify(shopRewardPresentation)}.`,
+    );
+    await shopRewardBanner.waitFor({ state: "hidden", timeout: 6_000 });
+    const queuedUnlock = page.locator(".unlock-notification").filter({ hasText: "Collectible unlocked" });
+    if (await queuedUnlock.isVisible().catch(() => false)) {
+      await queuedUnlock.waitFor({ state: "hidden", timeout: 6_000 });
+    }
     if (quantity < relicTarget.max_owned) {
       check(await relicOffer.getByRole("button", { name: "Purchase" }).isEnabled(), "An owned Relic below max_owned must remain purchasable.");
     }
@@ -260,11 +313,52 @@ try {
     const card = [...document.querySelectorAll(".shop-entry-card")].find((candidate) => candidate.textContent?.includes(targetId));
     return card?.textContent?.includes("Shards: 2 / 4");
   }, critterTarget.id);
+  const firstShardReward = page.locator(".reward-notification").filter({ hasText: "Shop reward" });
+  await firstShardReward.waitFor();
   await page.screenshot({ path: path.join(outputDir, "shop-shards-progress.png"), fullPage: true });
+  await firstShardReward.waitFor({ state: "hidden", timeout: 6_000 });
   await shardOffer.getByRole("button", { name: "Purchase" }).click();
+  const secondShardReward = page.locator(".reward-notification").filter({ hasText: "Shop reward" });
+  await secondShardReward.waitFor();
+  await secondShardReward.waitFor({ state: "hidden", timeout: 6_000 });
   await page.getByRole("heading", { name: `${critterTarget.name} unlocked!` }).waitFor();
+  const unlockBanner = page.locator(".unlock-notification");
+  const unlockPresentation = await unlockBanner.evaluate((banner) => {
+    const bounds = banner.getBoundingClientRect();
+    const style = getComputedStyle(banner);
+    return {
+      bounds: { top: bounds.top, left: bounds.left, width: bounds.width, height: bounds.height },
+      position: style.position,
+      pointerEvents: style.pointerEvents,
+      zIndex: Number(style.zIndex),
+      animationName: style.animationName,
+      live: banner.getAttribute("aria-live"),
+      interactiveDescendants: banner.querySelectorAll("button, a, input, [tabindex]").length,
+      modalBackdrops: document.querySelectorAll(".modal-backdrop").length,
+    };
+  });
+  check(
+    unlockPresentation.position === "fixed"
+      && unlockPresentation.bounds.top <= 16
+      && unlockPresentation.bounds.left <= 16
+      && unlockPresentation.bounds.width <= 360
+      && unlockPresentation.bounds.height <= 90,
+    `The unlock notification must be a compact top-left fixed banner: ${JSON.stringify(unlockPresentation)}`,
+  );
+  check(
+    unlockPresentation.pointerEvents === "none"
+      && unlockPresentation.interactiveDescendants === 0
+      && unlockPresentation.modalBackdrops === 0,
+    `The unlock banner must not intercept interaction or open a modal: ${JSON.stringify(unlockPresentation)}`,
+  );
+  check(
+    unlockPresentation.zIndex > 50
+      && unlockPresentation.live === "polite"
+      && unlockPresentation.animationName.includes("unlock-banner-in"),
+    `The unlock banner must announce politely, animate in, and layer above other UI: ${JSON.stringify(unlockPresentation)}`,
+  );
   await page.screenshot({ path: path.join(outputDir, "unlock-notification.png"), fullPage: true });
-  await page.getByRole("button", { name: "Continue" }).click();
+  await unlockBanner.waitFor({ state: "hidden", timeout: 6_000 });
   await page.waitForFunction((targetId) => {
     const card = [...document.querySelectorAll(".shop-entry-card")].find((candidate) => candidate.textContent?.includes(targetId));
     return card?.getAttribute("data-availability-code") === "COLLECTIBLE_ALREADY_UNLOCKED";

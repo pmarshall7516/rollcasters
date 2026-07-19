@@ -51,6 +51,7 @@ function effect(
 const catalog = {
   currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [],
   elements: [{ id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 }],
+  elementEffectiveness: [{ attacking_element_id: "ember", defending_element_id: "ember", multiplier: 1 }],
   skills: [],
   critters: [
     { id: "hero", name: "Hero", element_1_id: "ember", element_2_id: null, base_hp: 30, base_atk: 25, base_def: 20, base_spd: 15, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 1 },
@@ -65,7 +66,7 @@ const catalog = {
   ], rollcasterAbilityUnlocks: [], relics: [
     { id: "guard", name: "Guard Charm", description: "Guard Charm", max_owned: 1, asset_path: null, sort_order: 1 },
     { id: "ally-aura", name: "Ally Aura", description: "Ally Aura", max_owned: 1, asset_path: null, sort_order: 2 },
-  ], dungeons: [], dungeonOpponents: [], starterRollcasterOptions: [], starterOptions: [], gameAssets: [], statuses: [],
+  ], dungeons: [], dungeonOpponents: [], dungeonCompletionDrops: [], starterRollcasterOptions: [], starterOptions: [], gameAssets: [], statuses: [],
   effectsBySkill: {},
   effectsByAbility: {
     "high-roll": [

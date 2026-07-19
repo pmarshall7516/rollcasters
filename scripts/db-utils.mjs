@@ -45,9 +45,16 @@ export function connectionStringFromEnv(env) {
 
 export function createDbClient(env = readEnv()) {
   const caCertPath = env.SUPABASE_DB_CA_CERT_PATH;
+  const ssl =
+    env.SUPABASE_DB_SSL === "false"
+      ? false
+      : caCertPath
+        ? { ca: fs.readFileSync(path.resolve(root, caCertPath), "utf8") }
+        : true;
+
   return new pg.Client({
     connectionString: connectionStringFromEnv(env),
-    ssl: caCertPath ? { ca: fs.readFileSync(path.resolve(root, caCertPath), "utf8") } : true,
+    ssl,
   });
 }
 

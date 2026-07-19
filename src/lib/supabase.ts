@@ -7,14 +7,25 @@ import type {
   CombatEffectRow,
   CombatProgressEvent,
   Critter,
+  DungeonCompletionDrop,
+  DungeonBattleResult,
+  ActiveDungeonRun,
+  DungeonDrop,
   DungeonOpponent,
+  DungeonOpponentStatOverride,
+  DungeonRunSnapshot,
   ElementDef,
+  ElementEffectiveness,
   PlayerState,
+  PromoCodeRedemption,
+  PromoCodeReward,
   ShopPurchaseReceipt,
   UserAbilitySlot,
   UserRelicSlot,
   UserSkillSlot,
 } from "./types";
+import { parseBattleFormat, sortDungeonsNaturally } from "./dungeons";
+import { createRequestId } from "./uuid";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
@@ -93,6 +104,80 @@ function normalizeCritter(row: Record<string, unknown>): Critter {
 
 function emptyCollectibleSnapshot(): CollectiblePlayerSnapshot {
   return { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] };
+}
+
+type RawDungeonOpponentSkill = { opponent_id: string; skill_id: string; slot_index: number };
+type RawDungeonOpponentRelic = { opponent_id: string; relic_id: string; slot_index: number };
+type RawDungeonCurrencyDrop = {
+  id: string;
+  opponent_id: string;
+  currency_id: string;
+  min_amount: number;
+  max_amount: number;
+  probability: number | string;
+  sort_order: number;
+};
+type RawDungeonItemDrop = {
+  id: string;
+  opponent_id: string;
+  drop_type: "shard" | "relic";
+  target_category: "critter" | "rollcaster" | "relic";
+  target_id: string;
+  min_amount: number;
+  max_amount: number;
+  probability: number | string;
+  dupe_currency_id: string;
+  dupe_currency_amount: number;
+  sort_order: number;
+};
+type RawDungeonCompletionDrop = Omit<RawDungeonItemDrop, "opponent_id"> & {
+  dungeon_id: string;
+  completion_phase: "first_time" | "regular";
+  drop_type: "currency" | "shard" | "relic";
+  target_category: "critter" | "rollcaster" | "relic" | null;
+  dupe_currency_id: string | null;
+  dupe_currency_amount: number | null;
+};
+
+function normalizeDungeonDrop(
+  row: RawDungeonCurrencyDrop | RawDungeonItemDrop,
+): DungeonDrop {
+  if ("currency_id" in row) {
+    return {
+      id: row.id,
+      kind: "currency",
+      targetId: row.currency_id,
+      minAmount: row.min_amount,
+      maxAmount: row.max_amount,
+      probability: Number(row.probability),
+    };
+  }
+  return {
+    id: row.id,
+    kind: row.drop_type,
+    targetCategory: row.target_category,
+    targetId: row.target_id,
+    minAmount: row.min_amount,
+    maxAmount: row.max_amount,
+    probability: Number(row.probability),
+    dupeCurrencyId: row.dupe_currency_id,
+    dupeCurrencyAmount: row.dupe_currency_amount,
+  };
+}
+
+function normalizeCompletionDrop(row: RawDungeonCompletionDrop): DungeonCompletionDrop {
+  return {
+    id: `${row.dungeon_id}:${row.id}`,
+    phase: row.completion_phase,
+    kind: row.drop_type,
+    targetCategory: row.target_category ?? undefined,
+    targetId: row.target_id,
+    minAmount: row.min_amount,
+    maxAmount: row.max_amount,
+    probability: Number(row.probability),
+    dupeCurrencyId: row.dupe_currency_id ?? undefined,
+    dupeCurrencyAmount: row.dupe_currency_amount ?? undefined,
+  };
 }
 
 type CollectibleShopCatalog = Pick<Catalog,
@@ -193,6 +278,7 @@ export async function loadCatalog(): Promise<Catalog> {
   const [
     collectibleShopCatalog,
     elements,
+    elementEffectiveness,
     skills,
     rawCritters,
     critterProgression,
@@ -203,16 +289,22 @@ export async function loadCatalog(): Promise<Catalog> {
     rollcasterAbilityUnlocks,
     relics,
     dungeons,
-    dungeonOpponents,
+    rawDungeonOpponents,
+    dungeonOpponentSkills,
+    dungeonOpponentRelics,
+    dungeonOpponentStatOverrides,
+    dungeonOpponentCurrencyDrops,
+    dungeonOpponentItemDrops,
+    rawDungeonCompletionDrops,
     starterRollcasterOptions,
     starterOptions,
     gameAssets,
     statuses,
     combatEffects,
-    dungeonOpponentStatOverrides,
   ] = await Promise.all([
     loadCollectibleShopCatalog(),
     selectAll("elements"),
+    selectAll<ElementEffectiveness>("element_effectiveness", "attacking_element_id"),
     selectAll("skills"),
     selectAll<Record<string, unknown>>("critters"),
     selectAll("critter_level_progression", "level"),
@@ -223,18 +315,88 @@ export async function loadCatalog(): Promise<Catalog> {
     selectAll("rollcaster_ability_unlocks"),
     selectAll("relics"),
     selectAll("dungeons"),
-    selectAll("dungeon_opponents", "sequence_index"),
+    selectAll<DungeonOpponent>("dungeon_opponents", "sequence_index"),
+    selectAll<RawDungeonOpponentSkill>("dungeon_opponent_skills", "slot_index"),
+    selectAll<RawDungeonOpponentRelic>("dungeon_opponent_relics", "slot_index"),
+    selectAllOptional<DungeonOpponentStatOverride>("dungeon_opponent_stat_overrides", "stat_key"),
+    selectAll<RawDungeonCurrencyDrop>("dungeon_opponent_currency_drops"),
+    selectAll<RawDungeonItemDrop>("dungeon_opponent_item_drops"),
+    selectAll<RawDungeonCompletionDrop>("dungeon_completion_drops"),
     selectAll("starter_rollcaster_options"),
     selectAll("starter_options"),
     selectAllOptional("game_assets"),
     selectAll("statuses"),
     loadCombatEffects(),
-    selectAllOptional("dungeon_opponent_stat_overrides", "stat_key"),
   ]);
 
   const groupedEffects = groupCombatEffectRows(combatEffects);
   const critters = rawCritters.map(normalizeCritter);
+  const dungeonOpponents = rawDungeonOpponents.map((opponent) => {
+    const skills = dungeonOpponentSkills
+      .filter((row) => row.opponent_id === opponent.id)
+      .sort((left, right) => left.slot_index - right.slot_index)
+      .map((row) => row.skill_id);
+    const relics = dungeonOpponentRelics
+      .filter((row) => row.opponent_id === opponent.id)
+      .sort((left, right) => left.slot_index - right.slot_index)
+      .map((row) => row.relic_id);
+    const overrideRows = dungeonOpponentStatOverrides.filter((row) => row.opponent_id === opponent.id);
+    const overrides: DungeonOpponent["overrides"] = {};
+    for (const row of overrideRows) {
+      const key = {
+        hp: "hp",
+        atk: "atk",
+        def: "def",
+        spd: "spd",
+        dice_min: "diceMin",
+        dice_max: "diceMax",
+        block_cost: "block",
+        swap_cost: "swap",
+        relic_slots: "relicSlots",
+      }[row.stat_key] as keyof DungeonOpponent["overrides"];
+      overrides[key] = row.value;
+    }
+    return {
+      ...opponent,
+      probability: opponent.probability == null ? null : Number(opponent.probability),
+      skill_ids: skills.length ? skills : opponent.skill_ids,
+      relic_ids: relics.length ? relics : opponent.relic_ids,
+      currencyDrops: dungeonOpponentCurrencyDrops
+        .filter((row) => row.opponent_id === opponent.id)
+        .sort((left, right) => left.sort_order - right.sort_order)
+        .map(normalizeDungeonDrop),
+      itemDrops: dungeonOpponentItemDrops
+        .filter((row) => row.opponent_id === opponent.id)
+        .sort((left, right) => left.sort_order - right.sort_order)
+        .map(normalizeDungeonDrop),
+      overrides,
+    };
+  });
+  const normalizedDungeons = sortDungeonsNaturally((dungeons as Catalog["dungeons"]).map((dungeon) => {
+    const format = parseBattleFormat(dungeon.battle_format);
+    return {
+      ...dungeon,
+      description: dungeon.description ?? "",
+      battle_count: dungeon.battle_count ?? dungeon.encounter_count,
+      player_active_count: format.playerActiveCount,
+      opponent_active_count: format.opponentActiveCount,
+      regular_logo_path: dungeon.regular_logo_path ?? null,
+      boss_logo_path: dungeon.boss_logo_path ?? null,
+      is_active: dungeon.is_active !== false,
+      is_archived: dungeon.is_archived === true,
+      version: dungeon.version ?? 1,
+    };
+  }));
   const elementIds = new Set((elements as ElementDef[]).map((element) => element.id));
+  const matrixPairs = new Set((elementEffectiveness as ElementEffectiveness[])
+    .map((row) => `${row.attacking_element_id}\u0000${row.defending_element_id}`));
+  for (const attackingElementId of elementIds) {
+    for (const defendingElementId of elementIds) {
+      if (!matrixPairs.has(`${attackingElementId}\u0000${defendingElementId}`)) {
+        throw new Error(`Element Chart is incomplete: ${attackingElementId} attacking ${defendingElementId}.`);
+      }
+    }
+  }
   for (const critter of critters) {
     for (const elementId of [critter.element_1_id, critter.element_2_id]) {
       if (elementId && !elementIds.has(elementId)) {
@@ -245,6 +407,10 @@ export async function loadCatalog(): Promise<Catalog> {
   return {
     ...collectibleShopCatalog,
     elements,
+    elementEffectiveness: (elementEffectiveness as ElementEffectiveness[]).map((row) => ({
+      ...row,
+      multiplier: Number(row.multiplier),
+    })),
     skills,
     critters,
     critterProgression,
@@ -254,8 +420,9 @@ export async function loadCatalog(): Promise<Catalog> {
     rollcasterAbilities,
     rollcasterAbilityUnlocks,
     relics,
-    dungeons,
+    dungeons: normalizedDungeons,
     dungeonOpponents,
+    dungeonCompletionDrops: rawDungeonCompletionDrops.map(normalizeCompletionDrop),
     starterRollcasterOptions,
     starterOptions,
     gameAssets,
@@ -375,21 +542,137 @@ export async function loadAppData(): Promise<AppData> {
   return { catalog, player };
 }
 
-export async function startDungeonRun(dungeonId: string): Promise<{ id: string; selectedOpponents: DungeonOpponent[] }> {
+function normalizeRuntimeOpponent(raw: Record<string, unknown>): DungeonRunSnapshot["selectedOpponents"][number] {
+  const rawCurrencyDrops = Array.isArray(raw.currencyDrops) ? raw.currencyDrops as RawDungeonCurrencyDrop[] : [];
+  const rawItemDrops = Array.isArray(raw.itemDrops) ? raw.itemDrops as RawDungeonItemDrop[] : [];
+  const rawOverrides = raw.overrides && typeof raw.overrides === "object"
+    ? raw.overrides as Record<string, number>
+    : {};
+  return {
+    ...raw,
+    id: String(raw.id),
+    dungeon_id: String(raw.dungeon_id),
+    pool_type: raw.pool_type as DungeonOpponent["pool_type"],
+    sequence_index: raw.sequence_index == null ? null : Number(raw.sequence_index),
+    probability: raw.probability == null ? null : Number(raw.probability),
+    critter_id: String(raw.critter_id),
+    critter_level: Number(raw.critter_level),
+    skill_ids: Array.isArray(raw.skills) ? raw.skills.map(String) : Array.isArray(raw.skill_ids) ? raw.skill_ids.map(String) : [],
+    relic_ids: Array.isArray(raw.relics) ? raw.relics.map(String) : Array.isArray(raw.relic_ids) ? raw.relic_ids.map(String) : [],
+    rollcaster_xp_reward: Number(raw.rollcaster_xp_reward ?? 0),
+    critter_xp_reward: Number(raw.critter_xp_reward ?? 0),
+    currency_reward: Number(raw.currency_reward ?? 0),
+    drops: Array.isArray(raw.drops) ? raw.drops as Array<Record<string, unknown>> : [],
+    currencyDrops: rawCurrencyDrops.map(normalizeDungeonDrop),
+    itemDrops: rawItemDrops.map(normalizeDungeonDrop),
+    overrides: {
+      hp: rawOverrides.hp,
+      atk: rawOverrides.atk,
+      def: rawOverrides.def,
+      spd: rawOverrides.spd,
+      diceMin: rawOverrides.dice_min,
+      diceMax: rawOverrides.dice_max,
+      block: rawOverrides.block_cost,
+      swap: rawOverrides.swap_cost,
+      relicSlots: rawOverrides.relic_slots,
+    },
+    instanceId: String(raw.instanceId),
+    battleIndex: Number(raw.battleIndex),
+    battlefieldSlot: Number(raw.battlefieldSlot),
+  } as DungeonRunSnapshot["selectedOpponents"][number];
+}
+
+function normalizeDungeonRunSnapshot(payload: DungeonRunSnapshot): DungeonRunSnapshot {
+  return {
+    ...payload,
+    battleCount: Number(payload.battleCount),
+    battleIndex: Number(payload.battleIndex),
+    randomCursor: Number(payload.randomCursor),
+    version: Number(payload.version),
+    selectedOpponents: (payload.selectedOpponents ?? [])
+      .map((opponent) => normalizeRuntimeOpponent(opponent as unknown as Record<string, unknown>)),
+    rewards: {
+      entries: payload.rewards?.entries ?? [],
+      defeatedOpponentInstanceIds: payload.rewards?.defeatedOpponentInstanceIds ?? [],
+      critterXp: payload.rewards?.critterXp ?? {},
+      rollcasterXp: Number(payload.rewards?.rollcasterXp ?? 0),
+      completionPhase: payload.rewards?.completionPhase,
+    },
+  };
+}
+
+export async function startDungeonRun(
+  dungeonId: string,
+  requestId = createRequestId(),
+): Promise<DungeonRunSnapshot> {
   const client = requireClient();
-  const { data, error } = await client.rpc("start_dungeon_run", { p_dungeon_id: dungeonId });
+  const { data, error } = await client.rpc("start_dungeon_run_v2", {
+    p_dungeon_id: dungeonId,
+    p_request_id: requestId,
+  });
   if (error) throw error;
-  const runId = data as string;
-  const run = await client
-    .from("dungeon_runs")
-    .select("selected_opponents")
-    .eq("id", runId)
-    .single();
-  if (run.error) throw run.error;
-  if (!Array.isArray(run.data.selected_opponents) || run.data.selected_opponents.length === 0) {
-    throw new Error(`Dungeon run ${runId} has no selected opponents.`);
+  const run = normalizeDungeonRunSnapshot(data as DungeonRunSnapshot);
+  if (!run.id || run.selectedOpponents.length === 0) {
+    throw new Error("The Dungeon run has no selected opponents.");
   }
-  return { id: runId, selectedOpponents: run.data.selected_opponents as DungeonOpponent[] };
+  return run;
+}
+
+export async function recordDungeonBattleResult(
+  run: DungeonRunSnapshot,
+  submission: {
+    outcome: "won" | "lost";
+    defeatedOpponentInstanceIds: string[];
+    participantUserCritterIds: string[];
+    squadHp: Record<string, number>;
+  },
+  requestId = createRequestId(),
+): Promise<DungeonBattleResult> {
+  const { data, error } = await requireClient().rpc("record_dungeon_battle_result", {
+    p_run_id: run.id,
+    p_expected_battle_index: run.battleIndex,
+    p_outcome: submission.outcome,
+    p_defeated_instance_ids: submission.defeatedOpponentInstanceIds,
+    p_participant_user_critter_ids: submission.participantUserCritterIds,
+    p_squad_hp: submission.squadHp,
+    p_request_id: requestId,
+  });
+  if (error) throw error;
+  const result = data as DungeonBattleResult;
+  return {
+    ...result,
+    run: normalizeDungeonRunSnapshot(result.run),
+  };
+}
+
+export async function getActiveDungeonRun(): Promise<ActiveDungeonRun | null> {
+  const { data, error } = await requireClient().rpc("get_active_dungeon_run_v2");
+  if (error) throw error;
+  if (!data) return null;
+  const active = data as ActiveDungeonRun;
+  return {
+    ...active,
+    run: normalizeDungeonRunSnapshot(active.run),
+  };
+}
+
+export async function saveDungeonRunState(
+  run: DungeonRunSnapshot,
+  combatState: Record<string, unknown>,
+  requestId = createRequestId(),
+): Promise<{ run: DungeonRunSnapshot; combatState: unknown }> {
+  const { data, error } = await requireClient().rpc("save_dungeon_run_state", {
+    p_run_id: run.id,
+    p_expected_version: run.version,
+    p_state: combatState,
+    p_request_id: requestId,
+  });
+  if (error) throw error;
+  const response = data as { run: DungeonRunSnapshot; combatState: unknown };
+  return {
+    ...response,
+    run: normalizeDungeonRunSnapshot(response.run),
+  };
 }
 
 export async function snapshotDungeonRunEffects(runId: string, snapshot: unknown): Promise<void> {
@@ -427,6 +710,55 @@ export async function purchaseShopEntry(entryId: string, requestId: string): Pro
   });
   if (error) throw error;
   return data as ShopPurchaseReceipt;
+}
+
+function normalizePromoCodeReward(value: unknown): PromoCodeReward {
+  const reward = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    type: reward.type as PromoCodeReward["type"],
+    targetCategory: typeof reward.targetCategory === "string"
+      ? reward.targetCategory as PromoCodeReward["targetCategory"]
+      : null,
+    targetId: String(reward.targetId ?? ""),
+    name: String(reward.name ?? reward.targetId ?? "Reward"),
+    assetPath: typeof reward.assetPath === "string" && reward.assetPath ? reward.assetPath : null,
+    quantity: String(reward.quantity ?? 0),
+    configuredQuantity: String(reward.configuredQuantity ?? 0),
+    discardedQuantity: String(reward.discardedQuantity ?? 0),
+    didUnlock: reward.didUnlock === true,
+  };
+}
+
+function normalizePromoCodeRedemption(value: unknown): PromoCodeRedemption {
+  const redemption = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const normalizedCount = (count: unknown) => (
+    typeof count === "string" || typeof count === "number" ? String(count) : null
+  );
+  return {
+    redemptionId: String(redemption.redemptionId ?? ""),
+    code: String(redemption.code ?? ""),
+    redeemedAt: String(redemption.redeemedAt ?? ""),
+    playerUses: normalizedCount(redemption.playerUses),
+    playerUsesRemaining: normalizedCount(redemption.playerUsesRemaining),
+    globalUsesRemaining: normalizedCount(redemption.globalUsesRemaining),
+    rewards: Array.isArray(redemption.rewards)
+      ? redemption.rewards.map(normalizePromoCodeReward)
+      : [],
+  };
+}
+
+export async function redeemPromoCode(code: string): Promise<PromoCodeRedemption> {
+  const { data, error } = await requireClient().rpc("redeem_promo_code", {
+    p_code: code.trim(),
+  });
+  if (error) throw error;
+  return normalizePromoCodeRedemption(data);
+}
+
+export async function getPromoCodeRedemptionHistory(): Promise<PromoCodeRedemption[]> {
+  const { data, error } = await requireClient().rpc("promo_code_redemption_history");
+  if (error) throw error;
+  return Array.isArray(data) ? data.map(normalizePromoCodeRedemption) : [];
 }
 
 export async function submitCollectibleCombatEvents(
