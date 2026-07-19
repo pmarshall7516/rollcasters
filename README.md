@@ -24,6 +24,8 @@ SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 postgres_password=YOUR_DATABASE_PASSWORD
 ```
 
+Set `SUPABASE_DB_SSL=false` only when targeting a local Supabase Postgres instance that does not provide TLS. Never disable TLS for a remote database.
+
 Apply the single source-of-truth migration in the Supabase SQL editor or with your preferred migration tool:
 
 1. `supabase/migrations/20260719000000_rollcasters_baseline.sql`
@@ -70,7 +72,16 @@ To run only the baseline migration, pass its basename or path:
 npm run db:migrate -- --files 20260719000000_rollcasters_baseline.sql
 ```
 
-The baseline is for a fresh Supabase database and must not be executed over the existing Rollcasters schema. The linked production database already has this shape. Before using `supabase db push` against that database, reconcile its migration ledger by marking legacy versions `001` and `002` reverted and version `20260719000000` applied; migration repair changes history only and does not execute the baseline SQL.
+The baseline is for a fresh Supabase database and must not be executed over an existing Rollcasters schema. The linked database already has this shape and its migration ledger was reconciled to version `20260719000000` when the baseline was created.
+
+For another existing environment with the same verified schema, reconcile its history without executing the baseline:
+
+```bash
+supabase migration repair 001 002 --status reverted --linked
+supabase migration repair 20260719000000 --status applied --linked
+```
+
+Migration repair changes history only. Do not mark the baseline applied to a database until its schema has been verified to match.
 
 If the local runner reports `SELF_SIGNED_CERT_IN_CHAIN`, use the Supabase SQL editor for the migration files or download the Supabase database CA certificate and set `SUPABASE_DB_CA_CERT_PATH` to that file path. Do not disable TLS verification for migrations.
 

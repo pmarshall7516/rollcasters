@@ -5,10 +5,19 @@ import { createDbClient, parseArgs, resolveMigrationSelection, root } from "./db
 const args = parseArgs();
 const selected = resolveMigrationSelection(args.files);
 
+function migrationMetadata(migration) {
+  const basename = path.basename(migration);
+  const match = basename.match(/^(\d+)_([^.]+)\.sql$/);
+  if (!match) {
+    throw new Error(`Migration filename must match <version>_<name>.sql: ${basename}`);
+  }
+  return { version: match[1], name: match[2] };
+}
+
 if (args.help) {
   process.stdout.write(`Usage:
   npm run db:migrate
-  npm run db:migrate -- --files 001_initial_schema.sql,002_seed_catalog.sql
+  npm run db:migrate -- --files 20260719000000_rollcasters_baseline.sql
   npm run db:migrate -- --dry-run
 
 Options:
@@ -28,13 +37,40 @@ const client = createDbClient();
 try {
   await client.connect();
   await client.query("begin");
+
+  await client.query("create schema if not exists supabase_migrations");
+  await client.query(
+    `create table if not exists supabase_migrations.schema_migrations(
+       version text primary key,
+       statements text[],
+       name text
+     )`,
+  );
+
+  const appliedResult = await client.query(
+    "select version from supabase_migrations.schema_migrations",
+  );
+  const appliedVersions = new Set(appliedResult.rows.map((row) => row.version));
+
   for (const migration of selected) {
+    const { version, name } = migrationMetadata(migration);
+    if (appliedVersions.has(version)) {
+      process.stdout.write(`Skipping ${migration} (already applied).\n`);
+      continue;
+    }
+
     const sql = fs.readFileSync(path.join(root, migration), "utf8");
     process.stdout.write(`Applying ${migration}...\n`);
     await client.query(sql);
+    await client.query(
+      `insert into supabase_migrations.schema_migrations(version,statements,name)
+       values($1,$2::text[],$3)`,
+      [version, [sql], name],
+    );
+    appliedVersions.add(version);
   }
   await client.query("commit");
-  process.stdout.write("Migrations applied successfully.\n");
+  process.stdout.write("Migration check completed successfully.\n");
 } catch (error) {
   await client.query("rollback").catch(() => undefined);
   if (error?.code === "SELF_SIGNED_CERT_IN_CHAIN") {
