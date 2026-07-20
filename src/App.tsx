@@ -141,7 +141,7 @@ import type {
   UserRollcaster,
   View,
 } from "./lib/types";
-import rollcastersLogoUrl from "./assets/rollcasters-logo.png";
+import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type ShopTab = "shard" | "relic" | "lootbox" | "promo";
@@ -447,6 +447,9 @@ export function App() {
         view,
         loading,
         authed: isAuthed,
+        catalogRelease: data?.catalogRelease ?? null,
+        playerStateRevision: data?.player?.playerStateRevision ?? null,
+        serverCatalogVersion: data?.player?.serverCatalogVersion ?? null,
         starterRollcasterSelected: data?.player?.profile.starter_rollcaster_selected_at != null,
         starterSelected: data?.player?.profile.starter_selected_at != null,
         onboarding: view === "starter-rollcaster"

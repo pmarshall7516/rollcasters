@@ -15,13 +15,27 @@ VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
 
 `VITE_SUPABASE_ANON_KEY` is also supported as a backward-compatible fallback, but the app prefers Supabase's current `VITE_SUPABASE_PUBLISHABLE_KEY` name.
 
-Stable catalog art defaults to the public Supabase `game-assets` bucket. To serve it from a separate static host or object CDN instead, set:
+The safe default keeps the current live Supabase behavior in every environment:
 
 ```text
-VITE_GAME_ASSET_BASE_URL=https://assets.example.com
+VITE_GAME_CATALOG_MODE=live
+VITE_GAME_PLAYER_BOOTSTRAP_MODE=legacy
 ```
 
-The external host must preserve the same object paths, such as `critters/001-ramber.png`. The game adds catalog-derived version parameters so long browser caching remains safe when an asset revision receives an updated catalog registry timestamp or checksum.
+After a Content Studio candidate has been built, verified, and published to a public Supabase Storage `game-releases` bucket, opt into the immutable release without changing Auth, player saves, RPC mutations, or authoring data:
+
+```text
+VITE_GAME_CATALOG_MODE=release
+VITE_GAME_CATALOG_BASE_URL=https://YOUR_PROJECT_ID.supabase.co/storage/v1/object/public/game-releases/game-data
+VITE_GAME_ASSET_BASE_URL=https://YOUR_PROJECT_ID.supabase.co/storage/v1/object/public/game-releases/game-assets
+VITE_GAME_VERSION=0.1.0
+```
+
+The loader revalidates `latest.json`, verifies every immutable manifest/pack SHA-256, rejects mixed or incompatible releases, and falls back to the last verified Cache Storage release when offline. Returning to `VITE_GAME_CATALOG_MODE=live` is an immediate code-free rollback to the existing Supabase catalog path. The compact player bootstrap is independently opt-in with `VITE_GAME_PLAYER_BOOTSTRAP_MODE=v1` after its migration is applied.
+
+`VITE_GAME_ASSET_BASE_URL` is used only in release mode. Live mode always resolves the original authoring paths from the existing Supabase `game-assets` bucket, preventing a live-catalog/release-art path mismatch.
+
+The complete Supabase-first export, publish, rollback, migration, and cutover procedure is in [docs/21-static-catalog-release-runbook.md](docs/21-static-catalog-release-runbook.md).
 
 Optional values for database/admin tooling:
 
@@ -37,6 +51,8 @@ Set `SUPABASE_DB_SSL=false` only when targeting a local Supabase Postgres instan
 Apply the single source-of-truth migration in the Supabase SQL editor or with your preferred migration tool:
 
 1. `supabase/migrations/20260719000000_rollcasters_baseline.sql`
+2. `supabase/migrations/20260720000000_content_releases.sql`
+3. `supabase/migrations/20260720020000_player_bootstrap_v1.sql`
 
 The baseline was generated from the live database's current `public` schema. It creates the complete game schema, functions, triggers, RLS policies, grants, the public-read `game-assets` Storage bucket, and the current reusable game catalog/configuration.
 

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -46,6 +46,10 @@
     "test:equip-collectible-order:browser": "RUN_LIVE_EQUIP_ORDER_TEST=true node scripts/equip-collectible-order-playwright.mjs",
     "audit:game-assets": "node scripts/audit-game-assets.mjs",
     "optimize:game-assets-cache": "node scripts/audit-game-assets.mjs --apply",
+    "catalog:export": "node scripts/export-catalog-release.mjs",
+    "catalog:publish": "node scripts/publish-catalog-release.mjs",
+    "test:catalog-release": "tsc scripts/catalog-release-tests.ts src/lib/catalog-release.ts src/lib/types.ts --outDir /tmp/rollcasters-catalog-release-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node /tmp/rollcasters-catalog-release-tests/scripts/catalog-release-tests.js",
+    "test:catalog-release:browser": "node scripts/catalog-release-playwright.mjs",
     "db:migrate": "node scripts/apply-migrations.mjs",
     "db:migrate:dry": "node scripts/apply-migrations.mjs --dry-run",
     "db:migrate:file": "node scripts/apply-migrations.mjs --files",
@@ -65,11 +69,13 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1091.0",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^5.2.0",
     "pg": "^8.13.1",
     "playwright": "^1.61.1",
+    "sharp": "^0.34.5",
     "typescript": "^5.6.2",
     "vite": "^7.3.6"
   }

@@ -1,8 +1,10 @@
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { assertServerCatalogCompatibility, loadPublishedCatalog } from "./catalog-release";
 import { groupCombatEffectRows } from "./effects";
 import type {
   AppData,
   Catalog,
+  CatalogReleaseInfo,
   CollectiblePlayerSnapshot,
   CombatEffectRow,
   CombatProgressEvent,
@@ -30,7 +32,14 @@ import { createRequestId } from "./uuid";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
   import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
-const gameAssetBaseUrl = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const configuredGameAssetBaseUrl = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const gameCatalogBaseUrl = (import.meta.env.VITE_GAME_CATALOG_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const gameVersion = (import.meta.env.VITE_GAME_VERSION as string | undefined) ?? "0.1.0";
+const gameCatalogMode = (import.meta.env.VITE_GAME_CATALOG_MODE as string | undefined) === "release" ? "release" : "live";
+const playerBootstrapMode = (import.meta.env.VITE_GAME_PLAYER_BOOTSTRAP_MODE as string | undefined) === "v1" ? "v1" : "legacy";
+const allowLiveCatalogFallback = import.meta.env.VITE_ALLOW_LIVE_CATALOG_FALLBACK === "true";
+const allowLegacyPlayerBootstrap = import.meta.env.VITE_ALLOW_LEGACY_PLAYER_BOOTSTRAP === "true";
+let activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
 
 export const GAME_ASSETS_BUCKET = "game-assets";
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
@@ -52,9 +61,37 @@ function requireClient(): SupabaseClient {
   return supabase;
 }
 
+const LIVE_CATALOG_COLUMNS: Record<string, string> = {
+  elements: "id,name,description,asset_path,sort_order",
+  element_effectiveness: "attacking_element_id,defending_element_id,multiplier",
+  skills: "id,name,element_id,skill_type,power,mana_cost,targeting,description,sort_order",
+  critters: "id,name,element_1_id,element_2_id,base_hp,base_atk,base_def,base_spd,base_dice_min,base_dice_max,base_block_cost,base_swap_cost,asset_path,description,sort_order,is_active,is_archived",
+  critter_level_progression: "critter_id,level,total_required_xp,grant_skill_points,hp_delta,atk_delta,def_delta,spd_delta,dice_min_delta,dice_max_delta,block_cost_delta,swap_cost_delta,total_unlocked_relic_slots",
+  critter_skill_unlocks: "critter_id,skill_id,unlock_level,unlock_cost,is_default,sort_order",
+  rollcasters: "id,name,asset_path,description,sort_order,is_active,is_archived",
+  rollcaster_level_progression: "rollcaster_id,level,total_required_xp,grant_ability_points,total_unlocked_ability_slots",
+  rollcaster_abilities: "id,name,description,sort_order",
+  rollcaster_ability_unlocks: "rollcaster_id,ability_id,unlock_level,unlock_cost,is_default,sort_order",
+  relics: "id,name,description,max_owned,asset_path,sort_order,is_active,is_archived",
+  dungeons: "id,name,description,dungeon_type,difficulty,battle_format,battle_count,player_active_count,opponent_active_count,encounter_count,next_dungeon_id,regular_logo_path,boss_logo_path,sort_order,is_active,is_archived,version",
+  dungeon_opponents: "id,dungeon_id,pool_type,sequence_index,probability,critter_id,critter_level,skill_ids,relic_ids,rollcaster_xp_reward,critter_xp_reward,currency_reward,drops",
+  dungeon_opponent_skills: "opponent_id,skill_id,slot_index",
+  dungeon_opponent_relics: "opponent_id,relic_id,slot_index",
+  dungeon_opponent_stat_overrides: "opponent_id,stat_key,value",
+  dungeon_opponent_currency_drops: "id,opponent_id,currency_id,min_amount,max_amount,probability,sort_order",
+  dungeon_opponent_item_drops: "id,opponent_id,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
+  dungeon_completion_drops: "id,dungeon_id,completion_phase,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
+  starter_rollcaster_options: "rollcaster_id,sort_order,is_active",
+  starter_options: "critter_id,sort_order,is_active",
+  game_assets: "id,bucket_id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,is_active,sort_order,updated_at",
+  statuses: "id,name,description,asset_path,sort_order,is_active,is_archived,version",
+};
+
 async function selectAll<T>(table: string, order = "sort_order"): Promise<T[]> {
   const client = requireClient();
-  const { data, error } = await client.from(table).select("*").order(order, { ascending: true });
+  const columns = LIVE_CATALOG_COLUMNS[table];
+  if (!columns) throw new Error(`No explicit public catalog projection is defined for ${table}.`);
+  const { data, error } = await client.from(table).select(columns).order(order, { ascending: true });
   if (error) throw error;
   return (data ?? []) as T[];
 }
@@ -261,8 +298,8 @@ export function getGameAssetUrl(assetPath: string | null | undefined): string | 
   if (!assetPath) return null;
   if (/^https?:\/\//i.test(assetPath)) return assetPath;
   const [objectPath, query = ""] = assetPath.split("?", 2);
-  const publicUrl = gameAssetBaseUrl
-    ? `${gameAssetBaseUrl}/${objectPath.split("/").map(encodeURIComponent).join("/")}`
+  const publicUrl = activeGameAssetBaseUrl
+    ? `${activeGameAssetBaseUrl}/${objectPath.split("/").map(encodeURIComponent).join("/")}`
     : requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(objectPath).data.publicUrl;
   if (!query) return publicUrl;
   const url = new URL(publicUrl);
@@ -282,8 +319,9 @@ function groupBy<T>(rows: readonly T[], keyFor: (row: T) => string): Map<string,
 }
 
 let catalogPromise: Promise<Catalog> | null = null;
+let currentCatalogRelease: CatalogReleaseInfo | undefined;
 
-async function fetchCatalog(): Promise<Catalog> {
+async function fetchLiveCatalog(): Promise<Catalog> {
   const [
     collectibleShopCatalog,
     elements,
@@ -447,7 +485,35 @@ async function fetchCatalog(): Promise<Catalog> {
 
 export function loadCatalog({ force = false }: { force?: boolean } = {}): Promise<Catalog> {
   if (force || !catalogPromise) {
-    catalogPromise = fetchCatalog().catch((error) => {
+    catalogPromise = (async () => {
+      if (gameCatalogMode === "release") {
+        if (!gameCatalogBaseUrl) {
+          throw new Error("VITE_GAME_CATALOG_BASE_URL is required when VITE_GAME_CATALOG_MODE=release.");
+        }
+        try {
+          const published = await loadPublishedCatalog(gameCatalogBaseUrl, gameVersion);
+          currentCatalogRelease = published.release;
+          activeGameAssetBaseUrl = configuredGameAssetBaseUrl ?? published.release.assetBaseUrl ?? undefined;
+          return published.catalog;
+        } catch (error) {
+          if (!allowLiveCatalogFallback) throw error;
+          console.warn("Published catalog unavailable; using the explicitly enabled live Supabase fallback.", error);
+        }
+      }
+      // Live catalog rows contain source-master paths. Never combine them with
+      // the hashed release-art root when release mode is disabled or falls back.
+      activeGameAssetBaseUrl = undefined;
+      const catalog = await fetchLiveCatalog();
+      currentCatalogRelease = {
+        schemaVersion: 0,
+        catalogVersion: "live-development",
+        publishedAt: new Date().toISOString(),
+        manifestUrl: "",
+        assetBaseUrl: activeGameAssetBaseUrl ?? null,
+        source: "live-development",
+      };
+      return catalog;
+    })().catch((error) => {
       catalogPromise = null;
       throw error;
     });
@@ -457,9 +523,72 @@ export function loadCatalog({ force = false }: { force?: boolean } = {}): Promis
 
 export function clearCatalogCache(): void {
   catalogPromise = null;
+  currentCatalogRelease = undefined;
+  activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
 }
 
-export async function loadPlayerState(): Promise<PlayerState> {
+export function getCurrentCatalogRelease(): CatalogReleaseInfo | undefined {
+  return currentCatalogRelease;
+}
+
+type PlayerBootstrapPayload = {
+  profile: PlayerState["profile"];
+  rollcasters: PlayerState["rollcasters"];
+  critters: PlayerState["critters"];
+  relic_inventory: PlayerState["relicInventory"];
+  squad_slots: PlayerState["squadSlots"];
+  skill_slots: PlayerState["skillSlots"];
+  ability_slots: PlayerState["abilitySlots"];
+  relic_slots: PlayerState["relicSlots"];
+  unlocked_skills: Array<{ user_critter_id: string; skill_id: string }>;
+  unlocked_abilities: Array<{ user_rollcaster_id: string; ability_id: string }>;
+  dungeon_progress: PlayerState["dungeonProgress"];
+  collectible_snapshot: CollectiblePlayerSnapshot;
+  player_state_revision: string;
+  server_catalog_version: string | null;
+};
+
+function playerStateFromBootstrap(payload: PlayerBootstrapPayload): PlayerState {
+  const unlockedSkillIdsByCritter: Record<string, string[]> = {};
+  for (const row of payload.unlocked_skills ?? []) {
+    unlockedSkillIdsByCritter[row.user_critter_id] = [
+      ...(unlockedSkillIdsByCritter[row.user_critter_id] ?? []),
+      row.skill_id,
+    ];
+  }
+  const unlockedAbilityIdsByRollcaster: Record<string, string[]> = {};
+  for (const row of payload.unlocked_abilities ?? []) {
+    unlockedAbilityIdsByRollcaster[row.user_rollcaster_id] = [
+      ...(unlockedAbilityIdsByRollcaster[row.user_rollcaster_id] ?? []),
+      row.ability_id,
+    ];
+  }
+  return {
+    profile: payload.profile,
+    rollcasters: payload.rollcasters ?? [],
+    critters: payload.critters ?? [],
+    relicInventory: payload.relic_inventory ?? [],
+    squadSlots: payload.squad_slots ?? [],
+    skillSlots: payload.skill_slots ?? [],
+    abilitySlots: payload.ability_slots ?? [],
+    relicSlots: payload.relic_slots ?? [],
+    unlockedSkillIdsByCritter,
+    unlockedAbilityIdsByRollcaster,
+    dungeonProgress: payload.dungeon_progress ?? [],
+    collectibleSnapshot: { ...emptyCollectibleSnapshot(), ...(payload.collectible_snapshot ?? {}) },
+    playerStateRevision: payload.player_state_revision,
+    serverCatalogVersion: payload.server_catalog_version,
+  };
+}
+
+async function loadPlayerBootstrapV1(): Promise<PlayerState> {
+  const { data, error } = await requireClient().rpc("player_bootstrap_v1");
+  if (error) throw error;
+  if (!data || typeof data !== "object") throw new Error("Player bootstrap returned no state.");
+  return playerStateFromBootstrap(data as PlayerBootstrapPayload);
+}
+
+async function loadLegacyPlayerState(): Promise<PlayerState> {
   const client = requireClient();
   const collectibleSnapshot = await getCollectiblePlayerSnapshot();
   const [
@@ -535,6 +664,19 @@ export async function loadPlayerState(): Promise<PlayerState> {
   } as PlayerState;
 }
 
+export async function loadPlayerState(): Promise<PlayerState> {
+  if (playerBootstrapMode === "legacy") return loadLegacyPlayerState();
+  try {
+    return await loadPlayerBootstrapV1();
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+    const missingRpc = code === "42883" || code === "PGRST202";
+    if (!allowLegacyPlayerBootstrap || !missingRpc) throw error;
+    console.warn("player_bootstrap_v1 is not installed; using the explicitly enabled legacy Supabase fallback.");
+    return loadLegacyPlayerState();
+  }
+}
+
 async function callLoadoutRpc(name: string, args: Record<string, unknown>): Promise<void> {
   const { error } = await requireClient().rpc(name, args);
   if (error) throw error;
@@ -563,7 +705,9 @@ export const unlockRollcasterAbility = (userRollcasterId: string, abilityId: str
 
 export async function loadAppData(): Promise<AppData> {
   const [catalog, player] = await Promise.all([loadCatalog(), loadPlayerState()]);
-  return { catalog, player };
+  const catalogRelease = getCurrentCatalogRelease();
+  assertServerCatalogCompatibility(catalogRelease, player.serverCatalogVersion, playerBootstrapMode === "v1");
+  return { catalog, player, catalogRelease };
 }
 
 function normalizeRuntimeOpponent(raw: Record<string, unknown>): DungeonRunSnapshot["selectedOpponents"][number] {

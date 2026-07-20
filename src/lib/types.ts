@@ -582,6 +582,15 @@ export type Catalog = {
   dungeonOpponentStatOverrides: DungeonOpponentStatOverride[];
 };
 
+export type CatalogReleaseInfo = {
+  schemaVersion: number;
+  catalogVersion: string;
+  publishedAt: string;
+  manifestUrl: string;
+  assetBaseUrl: string | null;
+  source: "network" | "cache" | "live-development";
+};
+
 export type PlayerState = {
   profile: Profile;
   rollcasters: UserRollcaster[];
@@ -595,11 +604,14 @@ export type PlayerState = {
   unlockedAbilityIdsByRollcaster: Record<string, string[]>;
   dungeonProgress: UserDungeonProgress[];
   collectibleSnapshot: CollectiblePlayerSnapshot;
+  playerStateRevision?: string;
+  serverCatalogVersion?: string | null;
 };
 
 export type AppData = {
   catalog: Catalog;
   player: PlayerState | null;
+  catalogRelease?: CatalogReleaseInfo;
 };
 
 export type CombatActionType = "swap" | "block" | "skill" | "skip";
