@@ -1,164 +1,47 @@
-# Rollcasters: Roll, Fight, and Collect!
-Created by Patrick Marshall \
-Development Began: July 2026
+# Rollcasters
 
-## Local App Setup
+![Rollcasters logo](src/assets/rollcasters-logo.webp)
 
-Rollcasters is a Vite + React app backed by Supabase Auth and Postgres.
+**Roll. Fight. Collect.**
 
-Required `.env` values for the browser app:
+Rollcasters is a creature-collecting, dice-driven strategy game. Build a squad of Critters, pair them with a powerful Rollcaster, and venture into Dungeons where every Mana roll shapes the turn ahead.
 
-```text
-VITE_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
-```
+## What is a Rollcaster?
 
-`VITE_SUPABASE_ANON_KEY` is also supported as a backward-compatible fallback, but the app prefers Supabase's current `VITE_SUPABASE_PUBLISHABLE_KEY` name.
+A Rollcaster is the heart of your team. Each one brings its own progression and magical Abilities to battle, while your Critters provide the Skills, stats, Elements, and tactical choices that decide each encounter.
 
-The safe default keeps the current live Supabase behavior in every environment:
+Together, they form a loadout you can tune around different opponents and Dungeon challenges.
 
-```text
-VITE_GAME_CATALOG_MODE=live
-VITE_GAME_PLAYER_BOOTSTRAP_MODE=legacy
-```
+## The adventure
 
-After a Content Studio candidate has been built, verified, and published to a public Supabase Storage `game-releases` bucket, opt into the immutable release without changing Auth, player saves, RPC mutations, or authoring data:
+Your journey begins by choosing a starter Rollcaster and Critter. From there, the game revolves around a simple loop:
 
-```text
-VITE_GAME_CATALOG_MODE=release
-VITE_GAME_CATALOG_BASE_URL=https://YOUR_PROJECT_ID.supabase.co/storage/v1/object/public/game-releases/game-data
-VITE_GAME_ASSET_BASE_URL=https://YOUR_PROJECT_ID.supabase.co/storage/v1/object/public/game-releases/game-assets
-VITE_GAME_VERSION=0.1.0
-```
+1. Build your squad and equip Skills, Abilities, and Relics.
+2. Enter a Dungeon and roll Mana Dice for the turn.
+3. Choose attacks, defensive actions, and swaps for your active Critters.
+4. Defeat encounters to earn currency, experience, shards, and collectible drops.
+5. Strengthen your collection and prepare for tougher expeditions.
 
-The loader revalidates `latest.json`, verifies every immutable manifest/pack SHA-256, rejects mixed or incompatible releases, and falls back to the last verified Cache Storage release when offline. Returning to `VITE_GAME_CATALOG_MODE=live` is an immediate code-free rollback to the existing Supabase catalog path. The compact player bootstrap is independently opt-in with `VITE_GAME_PLAYER_BOOTSTRAP_MODE=v1` after its migration is applied.
+## Features
 
-`VITE_GAME_ASSET_BASE_URL` is used only in release mode. Live mode always resolves the original authoring paths from the existing Supabase `game-assets` bucket, preventing a live-catalog/release-art path mismatch.
+- **Creature collecting** — Discover Critters with distinct Elements, stats, Skills, and progression paths.
+- **Rollcaster progression** — Unlock and equip new Abilities as your active Rollcaster gains levels.
+- **Dice-driven combat** — Each Mana roll creates a different action economy and asks you to adapt your plan.
+- **Tactical squads** — Balance attacks, blocking, swapping, targeting, status effects, and elemental matchups.
+- **Custom loadouts** — Equip Critter Skills and Relics alongside Rollcaster Abilities.
+- **Dungeon expeditions** — Battle through regular and boss encounters with persistent rewards and encounter results.
+- **Collectible challenges** — Complete authored goals to unlock new Critters, Rollcasters, and Relics.
+- **Shops and rewards** — Spend earned currency on Critter Shards and Relics, and claim special Promo Code rewards.
+- **Persistent accounts** — Your collection, progression, loadouts, currencies, and challenge progress stay with your account.
 
-The complete Supabase-first export, publish, rollback, migration, and cutover procedure is in [docs/21-static-catalog-release-runbook.md](docs/21-static-catalog-release-runbook.md).
+## Your collection
 
-Optional values for database/admin tooling:
+The Collection is more than a gallery. It shows what you own, what remains locked, and the challenges that lead to each unlock. Critters, Rollcasters, and Relics have dedicated views with their artwork, progression, effects, and collectible IDs.
 
-```text
-SUPABASE_DB_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_ID.supabase.co:5432/postgres
-SUPABASE_DB_CA_CERT_PATH=certs/prod-ca-2021.crt
-SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
-postgres_password=YOUR_DATABASE_PASSWORD
-```
+Duplicate Critter and Rollcaster rewards become shards, while Relics can be collected up to their individual ownership limits.
 
-Set `SUPABASE_DB_SSL=false` only when targeting a local Supabase Postgres instance that does not provide TLS. Never disable TLS for a remote database.
+## Current state
 
-Apply the single source-of-truth migration in the Supabase SQL editor or with your preferred migration tool:
+Rollcasters is in active development. The playable build includes account onboarding, starter selection, squad and equipment management, collection challenges, shops, Promo Codes, Dungeon battles, combat rewards, and persistent progression. Balance, content variety, and presentation will continue to grow as the game develops.
 
-1. `supabase/migrations/20260719000000_rollcasters_baseline.sql`
-2. `supabase/migrations/20260720000000_content_releases.sql`
-3. `supabase/migrations/20260720020000_player_bootstrap_v1.sql`
-
-The baseline was generated from the live database's current `public` schema. It creates the complete game schema, functions, triggers, RLS policies, grants, the public-read `game-assets` Storage bucket, and the current reusable game catalog/configuration.
-
-It intentionally does not copy Auth users, player-owned state, audit history, dungeon runs or commands, purchase receipts, redemption history, or operational promo-code definitions. Storage object files are also not embedded in SQL and must be uploaded separately.
-
-Recommended `game-assets` object layout:
-
-```text
-critters/001-toxichick.png
-critters/002-spreagle.png
-critters/003-congua.png
-rollcasters/001-shanks.png
-relics/001-copper-shield.png
-logos/elements/basic.png
-logos/elements/vile.png
-logos/elements/bloom.png
-logos/elements/aqua.png
-ui/mana.png
-ui/coins.png
-```
-
-Skills and abilities do not have image assets.
-
-The app renders `asset_path` values from the catalog through the `game-assets` bucket and falls back to generated placeholder badges if an image has not been uploaded yet.
-
-Audit the live bucket's referenced bytes, cache policy, large assets, and unused candidates:
-
-```bash
-npm run audit:game-assets
-```
-
-After ensuring asset changes use a new path or update the `game_assets` registry version, apply a one-year browser cache policy without changing file contents:
-
-```bash
-npm run optimize:game-assets-cache
-```
-
-This requires `SUPABASE_DB_URL` (or the equivalent database settings), `VITE_SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY`. The command is intentionally separate from migrations because it rewrites object metadata in Storage.
-
-If you provide a verified database connection string and CA certificate path, the local migration runner can apply all migration files:
-
-```bash
-npm run db:migrate
-```
-
-To preview which migrations will run:
-
-```bash
-npm run db:migrate:dry
-```
-
-To run only the baseline migration, pass its basename or path:
-
-```bash
-npm run db:migrate -- --files 20260719000000_rollcasters_baseline.sql
-```
-
-The baseline is for a fresh Supabase database and must not be executed over an existing Rollcasters schema. The linked database already has this shape and its migration ledger was reconciled to version `20260719000000` when the baseline was created.
-
-For another existing environment with the same verified schema, reconcile its history without executing the baseline:
-
-```bash
-supabase migration repair 001 002 --status reverted --linked
-supabase migration repair 20260719000000 --status applied --linked
-```
-
-Migration repair changes history only. Do not mark the baseline applied to a database until its schema has been verified to match.
-
-If the local runner reports `SELF_SIGNED_CERT_IN_CHAIN`, use the Supabase SQL editor for the migration files or download the Supabase database CA certificate and set `SUPABASE_DB_CA_CERT_PATH` to that file path. Do not disable TLS verification for migrations.
-
-## Development Database Utilities
-
-Grant or revoke collectibles for an existing Auth user by email:
-
-```bash
-npm run game:grant:relic --user=player@example.com --id=001 --count=2
-npm run game:revoke:relic --user=player@example.com --id=001 --count=1
-npm run game:grant:critter --user=player@example.com --id=001
-npm run game:revoke:critter --user=player@example.com --id=001
-npm run game:grant:rollcaster --user=player@example.com --id=001
-npm run game:revoke:rollcaster --user=player@example.com --id=001
-```
-
-Relic `--count` values default to `1`. Granting cannot exceed the catalog Relic's `max_owned`, and revoking cannot reduce inventory below the number of equipped copies. Reducing a Relic to zero removes its inventory row and locks it again. Critters and Rollcasters are whole collectibles, so their commands reject `--count`; a grant initializes their level-one default Skill or Ability unlocks and equipment slots. Revoking an active Rollcaster selects the user's oldest remaining Rollcaster as active, or clears the active selection if none remain.
-
-The commands require `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the database function in `supabase/migrations/20260719000000_rollcasters_baseline.sql`. They return a concise success message and exit nonzero with a specific failure message for missing users or catalog IDs, duplicate ownership, missing ownership, invalid counts, maximum-count violations, and equipped-copy conflicts. The service-role key stays server-side and must never use a `VITE_` prefix.
-
-The no-separator form above is supported as requested. Current npm versions may print an npm-owned `Unknown cli config` warning for those flags; add the standard argument separator (`npm run game:grant:relic -- --user=... --id=...`) to avoid that warning and remain compatible with the next npm major version.
-
-Delete a development user by email:
-
-```bash
-DEV_ENABLE_USER_DELETE=true npm run db:delete-user -- --email test@example.com --yes
-```
-
-This removes the matching row from `auth.users` through Supabase Auth Admin. Game save rows are configured to cascade from `auth.users(id)`, catalog authorship is cleared, and historical audit actor IDs are retained. Apply the baseline migration before using the command. The command refuses to run unless `DEV_ENABLE_USER_DELETE=true`, `SUPABASE_SERVICE_ROLE_KEY`, and `--yes` are present.
-
-Direct database deletion is available only when explicitly requested and the DB certificate chain is configured:
-
-```bash
-DEV_ENABLE_USER_DELETE=true npm run db:delete-user -- --email test@example.com --yes --direct-db
-```
-
-Run locally:
-
-```bash
-npm install
-npm run dev
-```
+Created by **Patrick Marshall**. Development began in July 2026.

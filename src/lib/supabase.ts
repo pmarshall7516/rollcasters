@@ -307,6 +307,20 @@ export function getGameAssetUrl(assetPath: string | null | undefined): string | 
   return url.toString();
 }
 
+// Promo redemption artwork retains an immutable source catalog path. This
+// resolver is the fallback when that reward no longer has an optimized variant
+// in the current release registry.
+export function getSnapshotGameAssetUrl(assetPath: string | null | undefined): string | null {
+  if (!assetPath) return null;
+  if (/^https?:\/\//i.test(assetPath)) return assetPath;
+  const [objectPath, query = ""] = assetPath.split("?", 2);
+  const publicUrl = requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(objectPath).data.publicUrl;
+  if (!query) return publicUrl;
+  const url = new URL(publicUrl);
+  url.search = query;
+  return url.toString();
+}
+
 function groupBy<T>(rows: readonly T[], keyFor: (row: T) => string): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const row of rows) {

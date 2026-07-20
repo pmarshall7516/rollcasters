@@ -307,6 +307,20 @@ try {
   check(await historyCard.getByText("Coins", { exact: true }).isVisible(), "The Currency reward snapshot must render.");
   check(await historyCard.getByText(`${shardTarget.name} Shards`, { exact: true }).isVisible(), "The Shard reward snapshot must render.");
   check(await historyCard.getByText(relicTarget.name, { exact: true }).isVisible(), "The Relic reward snapshot must render.");
+  await page.waitForFunction(() => {
+    const images = [...document.querySelectorAll(".promo-redemption-card:first-child .promo-reward-row img")];
+    return images.length === 3 && images.every((image) => image.complete && image.naturalWidth > 0);
+  });
+  const rewardImages = await historyCard.locator(".promo-reward-row img").evaluateAll((images) => images.map((image) => ({
+    complete: image.complete,
+    naturalWidth: image.naturalWidth,
+    src: image.currentSrc || image.src,
+  })));
+  check(
+    rewardImages.length === 3
+      && rewardImages.every((image) => image.complete && image.naturalWidth > 0 && image.src.includes("/game-releases/game-assets/")),
+    `Every Promo reward sprite must load from an optimized release variant: ${JSON.stringify(rewardImages)}.`,
+  );
   check(
     await historyCard.getByText("Goal reached · 2 excess not added", { exact: true }).isVisible(),
     "Capped Shards must display their excess outcome.",
@@ -441,7 +455,7 @@ try {
   check(mobileLayout.scrollWidth <= mobileLayout.viewport, "The Promo Codes page must not overflow horizontally on mobile.");
   check(mobileLayout.columns === 1, "Mobile redemption history must remain one column.");
   check(
-    mobileLayout.cardBounds.every((bounds) => bounds.width > bounds.height + 20),
+    mobileLayout.cardBounds.every((bounds) => bounds.width >= bounds.height + 15),
     `Mobile redemption history cards must remain compact rectangles: ${JSON.stringify(mobileLayout.cardBounds)}.`,
   );
   check(

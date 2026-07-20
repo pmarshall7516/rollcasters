@@ -5,6 +5,7 @@ import {
   parseCatalogReleaseManifest,
   parseCatalogReleasePointer,
   sha256Hex,
+  sha256HexFallback,
   type CatalogPackKey,
 } from "../src/lib/catalog-release.js";
 import type { Catalog } from "../src/lib/types.js";
@@ -54,6 +55,8 @@ check(isMinimumVersionSatisfied("1.2.3", "1.2.3"), "An exact client version must
 check(isMinimumVersionSatisfied("1.3.0", "1.2.9"), "A newer client version must be compatible.");
 check(!isMinimumVersionSatisfied("1.2.9", "1.3.0"), "An older client version must be rejected.");
 check(await sha256Hex(new TextEncoder().encode("abc").buffer) === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 verification must be deterministic.");
+check(sha256HexFallback(new ArrayBuffer(0)) === "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "Fallback SHA-256 must hash empty bytes correctly.");
+check(sha256HexFallback(new TextEncoder().encode("abc").buffer) === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "Fallback SHA-256 must match the standard abc vector.");
 const releaseInfo = { schemaVersion: 1, catalogVersion: pointer.catalogVersion, publishedAt: pointer.publishedAt, manifestUrl: "https://example.test/release.json", assetBaseUrl: null, source: "network" as const };
 assertServerCatalogCompatibility(releaseInfo, undefined, false);
 assertServerCatalogCompatibility(releaseInfo, pointer.catalogVersion, true);

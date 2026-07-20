@@ -9,8 +9,8 @@ const [css, appSource] = await Promise.all([
   readFile(path.join(root, "src", "styles.css"), "utf8"),
   readFile(path.join(root, "src", "App.tsx"), "utf8"),
 ]);
-const logo = await readFile(path.join(root, "src", "assets", "rollcasters-logo.png"));
-const logoUrl = "https://rollcasters.test/rollcasters-logo.png";
+const logo = await readFile(path.join(root, "src", "assets", "rollcasters-logo.webp"));
+const logoUrl = "https://rollcasters.test/rollcasters-logo.webp";
 
 const unit = (opponent = false) => `<article class="battle-unit ${opponent ? "opponent" : ""}">
   ${opponent ? "" : '<span class="combat-sprite-frame critter-combat-frame"><span class="sprite"></span></span>'}

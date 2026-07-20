@@ -202,6 +202,7 @@ try {
             height: rect.height,
             contentWidth,
             spriteWidth: sprite.width,
+            spriteHeight: sprite.height,
             nameSize: Number.parseFloat(getComputedStyle(entry.querySelector(".card-name-row")).fontSize),
             contentFits: childrenFit && entry.scrollWidth <= entry.clientWidth && entry.scrollHeight <= entry.clientHeight,
           };
@@ -342,20 +343,19 @@ try {
     const [firstCard, ...otherCards] = viewport.cards;
     const sameCards = otherCards.every((entry) => Math.abs(entry.width - firstCard.width) < 0.1 && Math.abs(entry.height - firstCard.height) < 0.1);
     const clamp = (minimum, value, maximum) => Math.min(maximum, Math.max(minimum, value));
-    const expectedSpriteWidth = (entry) => entry.contentWidth <= 319
-      ? entry.contentWidth * ({ "rollcaster-card": 235, "critter-card": 190, "relic-card": 190 }[entry.type] / 320)
-      : entry.type === "rollcaster-card"
-        ? clamp(235, entry.contentWidth * .58, 260)
-        : entry.type === "critter-card"
-          ? clamp(190, entry.contentWidth * .48, 220)
-          : clamp(190, entry.contentWidth * .5, 230);
+    const expectedSpriteWidth = ({ reference: 212.31, wide: 201.6, mobile: 165.6 })[viewport.name] ?? 190;
+    const uniformSpriteBoxes = viewport.cards.every((entry) =>
+      Math.abs(entry.spriteWidth - firstCard.spriteWidth) < .1
+      && Math.abs(entry.spriteHeight - firstCard.spriteHeight) < .1
+      && Math.abs(entry.spriteWidth - entry.spriteHeight) < .1
+    );
     const expectedCardHeight = viewport.anchors.content[2] - 4 <= 319
       ? (viewport.anchors.content[2] - 4) * 500 / 320
       : 500;
     const responsiveCards = viewport.cards.every((entry) =>
       Math.abs(entry.height - expectedCardHeight) < .1 &&
       Math.abs(entry.nameSize - (entry.contentWidth <= 319 ? entry.contentWidth * 18 / 320 : clamp(18, entry.contentWidth * .05, 22))) < .1 &&
-      Math.abs(entry.spriteWidth - expectedSpriteWidth(entry)) < .1 &&
+      Math.abs(entry.spriteWidth - expectedSpriteWidth) < .1 &&
       entry.contentFits
     );
     const maximumManaEdgeOffset = viewport.name === "mobile" ? 10 : 6;
@@ -391,9 +391,9 @@ try {
     const cardsAreWide = firstCard.width >= minimumCardWidth;
     const compactGap = Math.abs(viewport.gridColumnGap - 12) < .1;
     const layoutMatches = viewport.documentScrollable && viewport.noHorizontalOverflow && viewport.pageScrollY > 0 && viewport.gridColumns === expectedColumns && fillsViewport && !viewport.nestedGridScrollable && anchorsStable && viewport.stableScrollbarGutter;
-    return sameCards && responsiveCards && tabCardsMatch && gridEdgesMatch && columnEdgesMatch && tracksFillWidth && cardsAreWide && compactGap && manaFits && effectsVisible && pointCountersVisible && critterStatsAligned && critterStatsEqualWidth && relicEffectsAligned && critterSpacingMatches && challengePaneMatches && lockedScrollbarMatches && cardActionsMatch && challengeAlignmentMatches && challengeBoundaryMatches && statusesMatch && layoutMatches
+    return sameCards && responsiveCards && uniformSpriteBoxes && tabCardsMatch && gridEdgesMatch && columnEdgesMatch && tracksFillWidth && cardsAreWide && compactGap && manaFits && effectsVisible && pointCountersVisible && critterStatsAligned && critterStatsEqualWidth && relicEffectsAligned && critterSpacingMatches && challengePaneMatches && lockedScrollbarMatches && cardActionsMatch && challengeAlignmentMatches && challengeBoundaryMatches && statusesMatch && layoutMatches
       ? []
-      : [{ viewport: viewport.name, sameCards, responsiveCards, cards: viewport.cards, tabCardsMatch, gridEdgesMatch, columnEdgesMatch, tracksFillWidth, availableTrackWidth, cardsAreWide, minimumCardWidth, compactGap, gridColumnGap: viewport.gridColumnGap, manaFits, mana: viewport.mana, effectsVisible, pointCountersVisible, critterStatsAligned, critterStatsEqualWidth, relicEffectsAligned, relicEffectOffsets: viewport.relicEffectOffsets, critterSpacingMatches, critterSpacing: viewport.critterSpacing, challengePaneMatches, challengePanes: viewport.challengePanes, lockedScrollbarMatches, lockedScrollbarStates: viewport.lockedScrollbarStates, ownedScrollbarCount: viewport.ownedScrollbarCount, cardActionsMatch, cardsAreArticles: viewport.cardsAreArticles, nestedButtonCount: viewport.nestedButtonCount, detailActions: viewport.detailActions, trackActions: viewport.trackActions, challengeAlignmentMatches, challengeAlignments: viewport.challengeAlignments, challengeBoundaryMatches, challengeBoundaries: viewport.challengeBoundaries, statusesMatch, anchorsStable, fillsViewport, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, expectedColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
+      : [{ viewport: viewport.name, sameCards, responsiveCards, uniformSpriteBoxes, cards: viewport.cards, tabCardsMatch, gridEdgesMatch, columnEdgesMatch, tracksFillWidth, availableTrackWidth, cardsAreWide, minimumCardWidth, compactGap, gridColumnGap: viewport.gridColumnGap, manaFits, mana: viewport.mana, effectsVisible, pointCountersVisible, critterStatsAligned, critterStatsEqualWidth, relicEffectsAligned, relicEffectOffsets: viewport.relicEffectOffsets, critterSpacingMatches, critterSpacing: viewport.critterSpacing, challengePaneMatches, challengePanes: viewport.challengePanes, lockedScrollbarMatches, lockedScrollbarStates: viewport.lockedScrollbarStates, ownedScrollbarCount: viewport.ownedScrollbarCount, cardActionsMatch, cardsAreArticles: viewport.cardsAreArticles, nestedButtonCount: viewport.nestedButtonCount, detailActions: viewport.detailActions, trackActions: viewport.trackActions, challengeAlignmentMatches, challengeAlignments: viewport.challengeAlignments, challengeBoundaryMatches, challengeBoundaries: viewport.challengeBoundaries, statusesMatch, anchorsStable, fillsViewport, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, expectedColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
   });
 
   if (failures.length) throw new Error(`Collection layout failures:\n${JSON.stringify(failures, null, 2)}`);

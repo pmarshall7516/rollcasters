@@ -30,6 +30,7 @@ import {
   ensureUserGameState,
   getActiveDungeonRun,
   getGameAssetUrl,
+  getSnapshotGameAssetUrl,
   getPromoCodeRedemptionHistory,
   getSession,
   hasSupabaseConfig,
@@ -1524,7 +1525,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
       const selected = current === relic.id;
       const available = owned - used;
       return <button className={`candidate-card ${selected ? "selected" : ""}`} key={relic.id} disabled={saving || selected || available <= 0} onClick={() => onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id))}>
-        <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [])}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {available}</span>
+        <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [])}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {available}</span>
       </button>;
     })}</div> : <p className="empty-state">No relics available</p>;
   } else if (target.type === "ability") {
@@ -1710,6 +1711,7 @@ function ShopScreen({
       {(tab === "shard" || tab === "relic") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
       {tab === "promo" ? (
         <PromoCodesPanel
+          data={data}
           onRefresh={onRefresh}
           onStateChange={onPromoStateChange}
           onNotify={onNotify}
@@ -1729,10 +1731,12 @@ function ShopScreen({
 }
 
 function PromoCodesPanel({
+  data,
   onRefresh,
   onStateChange,
   onNotify,
 }: {
+  data: AppData;
   onRefresh: () => Promise<void>;
   onStateChange: (state: PromoRenderState) => void;
   onNotify: (notification: BannerNotification) => void;
@@ -1909,7 +1913,7 @@ function PromoCodesPanel({
           {historyError && <p className="promo-message promo-history-error" role="alert">{historyError}</p>}
           {historyStatus === "loading" ? <PromoHistorySkeleton /> : history.length > 0 ? (
             <div className="promo-history-list">
-              {history.map((redemption) => <PromoRedemptionCard key={redemption.redemptionId} redemption={redemption} />)}
+              {history.map((redemption) => <PromoRedemptionCard key={redemption.redemptionId} data={data} redemption={redemption} />)}
             </div>
           ) : historyStatus === "loaded" ? (
             <div className="promo-history-empty">
@@ -1950,7 +1954,7 @@ function PromoHistorySkeleton() {
   );
 }
 
-function PromoRedemptionCard({ redemption }: { redemption: PromoCodeRedemption }) {
+function PromoRedemptionCard({ data, redemption }: { data: AppData; redemption: PromoCodeRedemption }) {
   const redeemedAt = new Date(redemption.redeemedAt);
   const formattedDate = Number.isNaN(redeemedAt.getTime())
     ? redemption.redeemedAt
@@ -1961,12 +1965,12 @@ function PromoRedemptionCard({ redemption }: { redemption: PromoCodeRedemption }
         <div><Ticket size={18} aria-hidden="true" /><code>{redemption.code}</code></div>
         <time dateTime={redemption.redeemedAt}>{formattedDate}</time>
       </header>
-      <PromoRewardGrid rewards={redemption.rewards} />
+      <PromoRewardGrid data={data} rewards={redemption.rewards} />
     </article>
   );
 }
 
-function PromoRewardGrid({ rewards }: { rewards: PromoCodeReward[] }) {
+function PromoRewardGrid({ data, rewards }: { data: AppData; rewards: PromoCodeReward[] }) {
   return (
     <div className="promo-reward-grid">
       {rewards.map((reward, index) => {
@@ -1977,7 +1981,7 @@ function PromoRewardGrid({ rewards }: { rewards: PromoCodeReward[] }) {
             key={`${reward.type}:${reward.targetCategory ?? ""}:${reward.targetId}:${index}`}
             aria-label={`${reward.name}, ${formatAmount(reward.quantity)} granted. ${outcome}.`}
           >
-            <PromoRewardArt reward={reward} />
+            <PromoRewardArt data={data} reward={reward} />
             <div className="promo-reward-copy">
               <h3>{reward.name}</h3>
               <span>{outcome}</span>
@@ -1990,7 +1994,7 @@ function PromoRewardGrid({ rewards }: { rewards: PromoCodeReward[] }) {
   );
 }
 
-function PromoRewardArt({ reward }: { reward: PromoCodeReward }) {
+function PromoRewardArt({ data, reward }: { data: AppData; reward: PromoCodeReward }) {
   const fallback = reward.type === "currency"
     ? <Coins aria-hidden="true" />
     : reward.type === "shard"
@@ -2000,7 +2004,12 @@ function PromoRewardArt({ reward }: { reward: PromoCodeReward }) {
         : reward.type === "rollcaster"
           ? <Dices aria-hidden="true" />
           : <Sparkles aria-hidden="true" />;
-  const art = <AssetIcon path={reward.assetPath} alt="" fallback={fallback} />;
+  const snapshotPath = getSnapshotGameAssetUrl(reward.assetPath);
+  const category = reward.type === "shard" ? reward.targetCategory : reward.type;
+  const currentVariant = category
+    ? findAssetPath(data, category, reward.targetId, category === "currency" || category === "relic" ? "icon" : "thumb")
+    : null;
+  const art = <AssetIcon path={currentVariant ?? snapshotPath} alt="" fallback={fallback} />;
   if (reward.type === "shard") {
     return (
       <span className="promo-shard-art" aria-hidden="true">
@@ -2337,7 +2346,7 @@ function RollcasterGrid({
           }}>
             <button type="button" className="catalog-card-details" aria-label={`View ${rollcaster.name} details`} onClick={() => setDetail({ type: "rollcaster", id: rollcaster.id })}><Search size={14} aria-hidden="true" /></button>
             <span className="collectible-id">{rollcaster.id}</span>
-            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} size="hero" fit="portrait" /></CardSprite>
+            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={findAssetPath(data, "rollcaster", rollcaster.id, "card") ?? catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} size="hero" fit="portrait" /></CardSprite>
             <CardName data={data} name={rollcaster.name} />
             <CollectionCardState showScrollbar={!owned}>
               {owned ? <div className="collection-progression"><p>Level {owned.level}</p><ProgressBar progress={progress} /></div> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} onRefresh={onRefresh} />}
@@ -2380,7 +2389,7 @@ function CritterGrid({
             <CardSprite><Sprite
               name={critter.name}
               element={critter.element_1_id}
-              assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)}
+              assetPath={findAssetPath(data, "critter", critter.id, "card") ?? catalogAssetPath(data, "critter", critter.id, critter.asset_path)}
               size="large"
             /></CardSprite>
             <CardName data={data} name={critter.name} critter={critter} />
@@ -2416,7 +2425,7 @@ function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh }: { da
     }}>
       <button type="button" className="catalog-card-details" aria-label={`View ${relic.name} details`} onClick={onClick}><Search size={14} aria-hidden="true" /></button>
       <span className="collectible-id">{relic.id}</span>
-      <CardSprite><Sprite name={relic.name} element="metal" assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} size="large" /></CardSprite>
+      <CardSprite><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} size="large" /></CardSprite>
       <CardName data={data} name={relic.name} />
       <CollectionCardState showScrollbar={!unlocked}>
         {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} onRefresh={onRefresh} />}
@@ -2633,7 +2642,7 @@ function DetailModal({
     const quantity = data.player!.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0;
     return (
       <Modal title={relic.name} onClose={onClose}>
-        <CollectibleDetailHero data={data} id={relic.id} name={relic.name} assetPath={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} assetElement="metal" />
+        <CollectibleDetailHero data={data} id={relic.id} name={relic.name} assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} assetElement="metal" />
         <p>{relic.description}</p>
         <p><strong>Owned:</strong> {quantity} / {relic.max_owned}</p>
         <CollectibleChallengePanel data={data} type="relic" id={relic.id} unlocked={collectibleIsOwned(data, "relic", relic.id)} onRefresh={onRefresh} />
@@ -3895,7 +3904,6 @@ function Sprite({
           data-sprite-image
           decoding="async"
           loading={size === "hero" ? "eager" : "lazy"}
-          fetchPriority={size === "hero" ? "high" : "auto"}
           onError={() => setFailedAssetPath(assetPath ?? null)}
         />
       ) : locked ? "?" : initials}

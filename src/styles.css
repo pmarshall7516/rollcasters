@@ -1638,8 +1638,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .collection-grid .card-sprite-frame {
-  width: clamp(190px, 50cqi, 230px);
-  height: auto;
+  width: clamp(190px, 10.5vw, 215px) !important;
+  height: auto !important;
+  aspect-ratio: 1 / 1;
 }
 
 .collection-grid .critter-card {
@@ -1719,15 +1720,6 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .collection-card-scrollbar:focus-visible .collection-card-scrollbar-thumb { background: linear-gradient(180deg, #bd91ff, #64f0ed); }
 .collection-card-scrollbar:focus-visible { box-shadow: 0 0 0 1px rgb(167 121 255 / 50%); }
 .collection-card-scrollbar-thumb:active { cursor: grabbing; }
-
-.collection-grid .critter-card .card-sprite-frame {
-  width: clamp(190px, 48cqi, 220px);
-  height: auto;
-}
-
-.collection-grid .rollcaster-card .rollcaster-sprite-frame {
-  width: clamp(235px, 58cqi, 260px) !important;
-}
 
 .collection-grid .card-name-row {
   font-size: clamp(18px, 5cqi, 22px);
@@ -2167,17 +2159,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 
   .collection-grid .card-sprite-frame {
-    width: calc(190 / 320 * 100cqi);
-    height: auto;
-  }
-
-  .collection-grid .critter-card .card-sprite-frame {
-    width: calc(190 / 320 * 100cqi);
-    height: auto;
-  }
-
-  .collection-grid .rollcaster-card .rollcaster-sprite-frame {
-    width: calc(235 / 320 * 100cqi) !important;
+    width: clamp(150px, 46vw, 190px) !important;
+    height: auto !important;
+    aspect-ratio: 1 / 1;
   }
 
   .collection-grid .collectible-id,

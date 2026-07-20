@@ -236,8 +236,19 @@ try {
     await modal.locator(".candidate-card").count() === expectedRelicIds.length,
     "The Relic popup must list every owned Relic.",
   );
+  await waitForImages(page);
+  const relicSpriteAssets = await modal.locator(".candidate-card .sprite-frame img").evaluateAll((images) => images.map((image) => ({
+    src: image.currentSrc,
+    naturalWidth: image.naturalWidth,
+    naturalHeight: image.naturalHeight,
+  })));
+  check(
+    relicSpriteAssets.length === expectedRelicIds.length
+      && relicSpriteAssets.every((asset) => asset.src.includes(".card.") && asset.naturalWidth >= 300),
+    `Relic popup cards must use crisp high-resolution card assets: ${JSON.stringify(relicSpriteAssets)}.`,
+  );
   const committedRelicName = relicCatalog.find((row) => row.id === ownedRelics[0].id)?.name;
-  const committedRelicCard = modal.locator(".candidate-card").filter({ has: modal.getByText(committedRelicName, { exact: true }) });
+  const committedRelicCard = modal.locator(".candidate-card").filter({ hasText: committedRelicName });
   check(
     await committedRelicCard.isDisabled()
       && (await committedRelicCard.locator(".inventory-count").textContent())?.includes("Available 0"),

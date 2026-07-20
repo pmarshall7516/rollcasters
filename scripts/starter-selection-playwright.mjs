@@ -259,6 +259,33 @@ try {
       (await critterChallenge.getAttribute("class"))?.includes("complete"),
       `Starter Critter ${critterId} popup must render completed challenge status.`,
     );
+    await page.getByRole("button", { name: "Close" }).click();
+
+    const critterSpriteWidth = await page.locator(".critter-card .card-sprite-frame").first().evaluate((frame) => frame.getBoundingClientRect().width);
+    await page.getByRole("button", { name: "rollcasters", exact: true }).click();
+    const rollcasterSpriteWidth = await page.locator(".rollcaster-card .card-sprite-frame").first().evaluate((frame) => frame.getBoundingClientRect().width);
+    await page.getByRole("button", { name: "relics", exact: true }).click();
+    await waitForImages(page);
+    const relicSpriteMetrics = await page.locator(".relic-card .card-sprite-frame").evaluateAll((frames) => frames.map((frame) => {
+      const image = frame.querySelector("img");
+      return {
+        width: frame.getBoundingClientRect().width,
+        naturalWidth: image?.naturalWidth ?? 0,
+        src: image?.currentSrc || image?.src || "",
+      };
+    }));
+    check(
+      relicSpriteMetrics.length > 0
+        && relicSpriteMetrics.every((metric) => metric.naturalWidth >= 300 && metric.src.includes(".card.")),
+      `Relic collection cards must load their sharp card-sized release art: ${JSON.stringify(relicSpriteMetrics)}.`,
+    );
+    check(
+      relicSpriteMetrics.every((metric) => Math.abs(metric.width - critterSpriteWidth) < .1)
+        && Math.abs(rollcasterSpriteWidth - critterSpriteWidth) < .1,
+      `Rollcaster, Critter, and Relic collection spriteboxes must match: ${JSON.stringify({ rollcasterSpriteWidth, critterSpriteWidth, relicSpriteMetrics })}.`,
+    );
+    const collectionScreenshot = path.join(outputDir, `collection-relics-${rollcasterId}-${critterId}.png`);
+    await page.screenshot({ path: collectionScreenshot, fullPage: true, animations: "disabled" });
 
     verified.push({
       rollcasterId,
@@ -267,6 +294,7 @@ try {
       critterShards: "50",
       screenshot: selectionScreenshot,
       critterScreenshot: critterSelectionScreenshot,
+      collectionScreenshot,
     });
     await context.close();
     await browser.close();

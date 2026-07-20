@@ -94,21 +94,19 @@ declare
   v_owned_id uuid;
   v_user uuid;
 begin
-  if tg_op = 'DELETE' then
-    v_owned_id := case
-      when tg_table_name like 'user_rollcaster_%' then old.user_rollcaster_id
-      else old.user_critter_id
-    end;
-  else
-    v_owned_id := case
-      when tg_table_name like 'user_rollcaster_%' then new.user_rollcaster_id
-      else new.user_critter_id
-    end;
-  end if;
-
   if tg_table_name like 'user_rollcaster_%' then
+    if tg_op = 'DELETE' then
+      v_owned_id := old.user_rollcaster_id;
+    else
+      v_owned_id := new.user_rollcaster_id;
+    end if;
     select user_id into v_user from public.user_rollcasters where id = v_owned_id;
   else
+    if tg_op = 'DELETE' then
+      v_owned_id := old.user_critter_id;
+    else
+      v_owned_id := new.user_critter_id;
+    end if;
     select user_id into v_user from public.user_critters where id = v_owned_id;
   end if;
 
@@ -117,7 +115,8 @@ begin
     set player_state_revision = player_state_revision + 1
     where user_id = v_user;
   end if;
-  return coalesce(new, old);
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
 end;
 $$;
 

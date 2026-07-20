@@ -3,8 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const appUrl = process.env.APP_BASE_URL ?? "http://127.0.0.1:5173";
-const catalogBaseUrl = process.env.CATALOG_BASE_URL;
-if (!catalogBaseUrl) throw new Error("Set CATALOG_BASE_URL to the generated or staged game-data URL.");
+const catalogBaseUrl = process.env.CATALOG_BASE_URL ?? process.env.VITE_GAME_CATALOG_BASE_URL;
+if (!catalogBaseUrl) throw new Error("Set VITE_GAME_CATALOG_BASE_URL (or the CATALOG_BASE_URL test override) to the generated or staged game-data URL.");
 const outputDir = path.resolve(process.env.OUTPUT_DIR ?? "output/catalog-release-browser");
 fs.mkdirSync(outputDir, { recursive: true });
 
@@ -104,6 +104,24 @@ try {
   check(renderErrors.length === 0, `Published-art render errors: ${renderErrors.join(" | ")}`);
   await renderPage.screenshot({ path: path.join(outputDir, "published-art-runtime.png"), fullPage: true });
   await renderPage.close();
+
+  const fallbackPage = await browser.newPage();
+  const fallbackErrors = [];
+  fallbackPage.on("console", (message) => { if (message.type() === "error") fallbackErrors.push(message.text()); });
+  fallbackPage.on("pageerror", (error) => fallbackErrors.push(error.message));
+  await fallbackPage.addInitScript(() => {
+    try { Object.defineProperty(globalThis.crypto, "subtle", { configurable: true, value: undefined }); } catch { /* Browser may already omit it. */ }
+  });
+  await fallbackPage.goto(appUrl, { waitUntil: "networkidle" });
+  const fallback = await fallbackPage.evaluate(async ({ catalogBaseUrl }) => {
+    const module = await import("/src/lib/catalog-release.ts");
+    const loaded = await module.loadPublishedCatalog(catalogBaseUrl, "0.1.0");
+    return { catalogVersion: loaded.release.catalogVersion, subtleAvailable: Boolean(globalThis.crypto?.subtle) };
+  }, { catalogBaseUrl });
+  check(!fallback.subtleAvailable, "The fallback scenario must run without Web Crypto subtle.digest.");
+  check(fallback.catalogVersion === result.catalogVersion, "Portable SHA-256 must verify the same published release.");
+  check(fallbackErrors.length === 0, `Portable SHA-256 browser errors: ${fallbackErrors.join(" | ")}`);
+  await fallbackPage.close();
   process.stdout.write(`Static browser release passed: ${result.catalogVersion}, ${result.assets} variants, online=${result.source}, offline=${offline.source}, tamper=blocked.\n`);
 } finally {
   await browser.close();
