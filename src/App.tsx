@@ -87,10 +87,8 @@ import {
 import {
   battlefieldSlotsForCount,
   dropAmountLabel,
-  effectiveDungeon,
   effectiveDungeons,
   formatProbability,
-  opponentsForBattle,
   type EffectiveDungeon,
 } from "./lib/dungeons";
 import { calculateLoadoutStats, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
@@ -1409,18 +1407,6 @@ function SkillTile({ data, skill, onClick, disabled = false, disabledReason, sel
     {skill?.skill_type === "attack" && <span className="skill-power">PWR {skill.power}</span>}
     {skill && <span className="skill-mana"><AssetIcon path={manaPath} alt="Mana" fallback={<Gem size={15} />} />{skill.mana_cost}</span>}
     {(selected || equipped) && <Check className="selection-check" size={15} />}
-  </button></GameTooltip>;
-}
-
-function RelicSlot({ data, relic, slotIndex, onClick }: { data: AppData; relic?: Relic | null; slotIndex: number; onClick: () => void }) {
-  const attachments = relic ? data.catalog.effectsByRelic[relic.id] ?? [] : [];
-  const details = relic ? `${relic.name}. ${relic.description} ${attachmentText(attachments)}` : "Choose a relic.";
-  const tooltip = relic ? <><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments)}</> : <span className="tooltip-description">Choose a relic.</span>;
-  return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className="relic-slot" onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
-    <SpriteFrame size="sm">{relic
-      ? <AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield size={26} />} />
-      : <Plus className="empty-relic-plus" aria-hidden="true" />}</SpriteFrame>
-    <span>{relic?.name ?? "-----"}</span>
   </button></GameTooltip>;
 }
 
@@ -2823,7 +2809,7 @@ function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
   return (
     <div className="dungeon-drop-row">
       {drop.kind === "currency"
-        ? <AssetIcon path={currency?.asset_path} alt="" fallback={<Coins size={17} />} />
+        ? <AssetIcon path={catalogAssetPath(data, "currency", currency?.id, currency?.asset_path, "icon")} alt="" fallback={<Coins size={17} />} />
         : <CollectibleSprite data={data} type={drop.targetCategory ?? "relic"} id={drop.targetId} size="xs" shard={drop.kind === "shard"} />}
       <span>
         <strong>{dropAmountLabel(drop.minAmount, drop.maxAmount)} {drop.kind === "shard" ? `${targetName} Shards` : targetName}</strong>
@@ -3713,7 +3699,7 @@ function XpGainCard({
 function RewardEntryIcon({ data, entry }: { data: AppData; entry: DungeonRewardSummary["entries"][number] }) {
   if (entry.kind === "currency") {
     const currency = currencyFor(data, entry.targetId);
-    return <AssetIcon path={currency?.asset_path} alt="" fallback={<Coins size={15} />} />;
+    return <AssetIcon path={catalogAssetPath(data, "currency", currency?.id, currency?.asset_path, "icon")} alt="" fallback={<Coins size={15} />} />;
   }
   if (entry.kind === "critter_xp") return <Sparkles size={15} />;
   if (entry.kind === "rollcaster_xp") return <UserRound size={15} />;
@@ -3904,6 +3890,9 @@ function Sprite({
           alt={name}
           className={`sprite-box__image ${fit === "portrait" ? "portrait-sprite-image" : ""}`.trim()}
           data-sprite-image
+          decoding="async"
+          loading={size === "hero" ? "eager" : "lazy"}
+          fetchPriority={size === "hero" ? "high" : "auto"}
           onError={() => setFailedAssetPath(assetPath ?? null)}
         />
       ) : locked ? "?" : initials}
@@ -3936,6 +3925,8 @@ function AssetIcon({
           src={src}
           alt={alt}
           data-sprite-image
+          decoding="async"
+          loading="lazy"
           onError={() => setFailedAssetPath(path ?? null)}
         />
       ) : fallback}
@@ -3950,21 +3941,32 @@ function catalogAssetPath(
   directPath: string | null | undefined,
   variant = "default",
 ): string | null {
-  if (directPath) return directPath;
-  if (!ownerId) return null;
-  return findAssetPath(data, category, ownerId, variant);
+  const path = directPath ?? (ownerId ? findAssetRecord(data, category, ownerId, variant)?.path : null);
+  return versionedAssetPath(data, path);
 }
 
 function findAssetPath(data: AppData, category: string, ownerId: string, variant = "icon"): string | null {
-  return (
-    data.catalog.gameAssets.find(
-      (asset) =>
-        asset.category === category &&
-        asset.owner_id === ownerId &&
-        asset.variant === variant &&
-        asset.is_active,
-    )?.path ?? null
+  return versionedAssetPath(data, findAssetRecord(data, category, ownerId, variant)?.path ?? null);
+}
+
+function findAssetRecord(data: AppData, category: string, ownerId: string, variant: string) {
+  return data.catalog.gameAssets.find(
+    (asset) =>
+      asset.category === category &&
+      asset.owner_id === ownerId &&
+      asset.variant === variant &&
+      asset.is_active,
   );
+}
+
+function versionedAssetPath(data: AppData, path: string | null | undefined): string | null {
+  if (!path || /^https?:\/\//i.test(path)) return path ?? null;
+  const [objectPath] = path.split("?", 1);
+  const asset = data.catalog.gameAssets.find((candidate) => candidate.path === objectPath && candidate.is_active);
+  const version = asset?.checksum || asset?.updated_at;
+  if (!version) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}v=${encodeURIComponent(version)}`;
 }
 
 function modificationTone(breakdown?: StatBreakdown): "positive" | "negative" | "mixed" | "" {

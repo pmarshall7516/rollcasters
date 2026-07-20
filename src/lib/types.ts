@@ -480,8 +480,10 @@ export type GameAsset = {
   content_type: string | null;
   width: number | null;
   height: number | null;
+  checksum: string | null;
   is_active: boolean;
   sort_order: number;
+  updated_at: string;
 };
 
 export type Profile = {

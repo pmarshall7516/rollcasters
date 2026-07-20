@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
@@ -41,6 +44,8 @@
     "test:collectible-commands": "node scripts/manage-user-collectible-tests.mjs",
     "test:collectible-commands:live": "RUN_LIVE_COLLECTIBLE_COMMAND_TEST=true node scripts/manage-user-collectible-live-test.mjs",
     "test:equip-collectible-order:browser": "RUN_LIVE_EQUIP_ORDER_TEST=true node scripts/equip-collectible-order-playwright.mjs",
+    "audit:game-assets": "node scripts/audit-game-assets.mjs",
+    "optimize:game-assets-cache": "node scripts/audit-game-assets.mjs --apply",
     "db:migrate": "node scripts/apply-migrations.mjs",
     "db:migrate:dry": "node scripts/apply-migrations.mjs --dry-run",
     "db:migrate:file": "node scripts/apply-migrations.mjs --files",
@@ -57,15 +62,15 @@
     "@supabase/supabase-js": "^2.45.4",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "typescript": "^5.6.2",
-    "vite": "^5.4.8"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.2",
+    "@vitejs/plugin-react": "^5.2.0",
     "pg": "^8.13.1",
-    "playwright": "^1.61.1"
+    "playwright": "^1.61.1",
+    "typescript": "^5.6.2",
+    "vite": "^7.3.6"
   }
 }

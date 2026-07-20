@@ -15,6 +15,14 @@ VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
 
 `VITE_SUPABASE_ANON_KEY` is also supported as a backward-compatible fallback, but the app prefers Supabase's current `VITE_SUPABASE_PUBLISHABLE_KEY` name.
 
+Stable catalog art defaults to the public Supabase `game-assets` bucket. To serve it from a separate static host or object CDN instead, set:
+
+```text
+VITE_GAME_ASSET_BASE_URL=https://assets.example.com
+```
+
+The external host must preserve the same object paths, such as `critters/001-ramber.png`. The game adds catalog-derived version parameters so long browser caching remains safe when an asset revision receives an updated catalog registry timestamp or checksum.
+
 Optional values for database/admin tooling:
 
 ```text
@@ -53,6 +61,20 @@ ui/coins.png
 Skills and abilities do not have image assets.
 
 The app renders `asset_path` values from the catalog through the `game-assets` bucket and falls back to generated placeholder badges if an image has not been uploaded yet.
+
+Audit the live bucket's referenced bytes, cache policy, large assets, and unused candidates:
+
+```bash
+npm run audit:game-assets
+```
+
+After ensuring asset changes use a new path or update the `game_assets` registry version, apply a one-year browser cache policy without changing file contents:
+
+```bash
+npm run optimize:game-assets-cache
+```
+
+This requires `SUPABASE_DB_URL` (or the equivalent database settings), `VITE_SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY`. The command is intentionally separate from migrations because it rewrites object metadata in Storage.
 
 If you provide a verified database connection string and CA certificate path, the local migration runner can apply all migration files:
 

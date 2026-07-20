@@ -30,6 +30,7 @@ import { createRequestId } from "./uuid";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
   import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
+const gameAssetBaseUrl = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 
 export const GAME_ASSETS_BUCKET = "game-assets";
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
@@ -66,17 +67,6 @@ async function selectAllOptional<T>(table: string, order = "sort_order"): Promis
     if (code === "42P01" || code === "PGRST205") return [];
     throw error;
   }
-}
-
-async function selectActiveAll<T>(table: string, order = "sort_order"): Promise<T[]> {
-  const { data, error } = await requireClient()
-    .from(table)
-    .select("*")
-    .eq("is_active", true)
-    .eq("is_archived", false)
-    .order(order, { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as T[];
 }
 
 function normalizeCritter(row: Record<string, unknown>): Critter {
@@ -270,11 +260,30 @@ export async function selectStarterRollcaster(rollcasterId: string): Promise<voi
 export function getGameAssetUrl(assetPath: string | null | undefined): string | null {
   if (!assetPath) return null;
   if (/^https?:\/\//i.test(assetPath)) return assetPath;
-  const client = requireClient();
-  return client.storage.from(GAME_ASSETS_BUCKET).getPublicUrl(assetPath).data.publicUrl;
+  const [objectPath, query = ""] = assetPath.split("?", 2);
+  const publicUrl = gameAssetBaseUrl
+    ? `${gameAssetBaseUrl}/${objectPath.split("/").map(encodeURIComponent).join("/")}`
+    : requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(objectPath).data.publicUrl;
+  if (!query) return publicUrl;
+  const url = new URL(publicUrl);
+  url.search = query;
+  return url.toString();
 }
 
-export async function loadCatalog(): Promise<Catalog> {
+function groupBy<T>(rows: readonly T[], keyFor: (row: T) => string): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = keyFor(row);
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
+  }
+  return groups;
+}
+
+let catalogPromise: Promise<Catalog> | null = null;
+
+async function fetchCatalog(): Promise<Catalog> {
   const [
     collectibleShopCatalog,
     elements,
@@ -331,16 +340,19 @@ export async function loadCatalog(): Promise<Catalog> {
 
   const groupedEffects = groupCombatEffectRows(combatEffects);
   const critters = rawCritters.map(normalizeCritter);
+  const skillsByOpponent = groupBy(dungeonOpponentSkills, (row) => row.opponent_id);
+  const relicsByOpponent = groupBy(dungeonOpponentRelics, (row) => row.opponent_id);
+  const overridesByOpponent = groupBy(dungeonOpponentStatOverrides, (row) => row.opponent_id);
+  const currencyDropsByOpponent = groupBy(dungeonOpponentCurrencyDrops, (row) => row.opponent_id);
+  const itemDropsByOpponent = groupBy(dungeonOpponentItemDrops, (row) => row.opponent_id);
   const dungeonOpponents = rawDungeonOpponents.map((opponent) => {
-    const skills = dungeonOpponentSkills
-      .filter((row) => row.opponent_id === opponent.id)
+    const skills = (skillsByOpponent.get(opponent.id) ?? [])
       .sort((left, right) => left.slot_index - right.slot_index)
       .map((row) => row.skill_id);
-    const relics = dungeonOpponentRelics
-      .filter((row) => row.opponent_id === opponent.id)
+    const relics = (relicsByOpponent.get(opponent.id) ?? [])
       .sort((left, right) => left.slot_index - right.slot_index)
       .map((row) => row.relic_id);
-    const overrideRows = dungeonOpponentStatOverrides.filter((row) => row.opponent_id === opponent.id);
+    const overrideRows = overridesByOpponent.get(opponent.id) ?? [];
     const overrides: DungeonOpponent["overrides"] = {};
     for (const row of overrideRows) {
       const key = {
@@ -361,12 +373,10 @@ export async function loadCatalog(): Promise<Catalog> {
       probability: opponent.probability == null ? null : Number(opponent.probability),
       skill_ids: skills.length ? skills : opponent.skill_ids,
       relic_ids: relics.length ? relics : opponent.relic_ids,
-      currencyDrops: dungeonOpponentCurrencyDrops
-        .filter((row) => row.opponent_id === opponent.id)
+      currencyDrops: (currencyDropsByOpponent.get(opponent.id) ?? [])
         .sort((left, right) => left.sort_order - right.sort_order)
         .map(normalizeDungeonDrop),
-      itemDrops: dungeonOpponentItemDrops
-        .filter((row) => row.opponent_id === opponent.id)
+      itemDrops: (itemDropsByOpponent.get(opponent.id) ?? [])
         .sort((left, right) => left.sort_order - right.sort_order)
         .map(normalizeDungeonDrop),
       overrides,
@@ -435,6 +445,20 @@ export async function loadCatalog(): Promise<Catalog> {
   } as Catalog;
 }
 
+export function loadCatalog({ force = false }: { force?: boolean } = {}): Promise<Catalog> {
+  if (force || !catalogPromise) {
+    catalogPromise = fetchCatalog().catch((error) => {
+      catalogPromise = null;
+      throw error;
+    });
+  }
+  return catalogPromise;
+}
+
+export function clearCatalogCache(): void {
+  catalogPromise = null;
+}
+
 export async function loadPlayerState(): Promise<PlayerState> {
   const client = requireClient();
   const collectibleSnapshot = await getCollectiblePlayerSnapshot();
@@ -451,17 +475,17 @@ export async function loadPlayerState(): Promise<PlayerState> {
     unlockedAbilities,
     dungeonProgress,
   ] = await Promise.all([
-    client.from("profiles").select("*").single(),
-    client.from("user_rollcasters").select("*").order("unlocked_at", { ascending: true }),
-    client.from("user_critters").select("*").order("unlocked_at", { ascending: true }),
-    client.from("user_relic_inventory").select("*"),
-    client.from("user_squad_slots").select("*").order("slot_index", { ascending: true }),
-    client.from("user_critter_skill_slots").select("*").order("slot_index", { ascending: true }),
-    client.from("user_rollcaster_ability_slots").select("*").order("slot_index", { ascending: true }),
-    client.from("user_critter_relic_slots").select("*").order("slot_index", { ascending: true }),
-    client.from("user_critter_skills").select("*"),
-    client.from("user_rollcaster_abilities").select("*"),
-    client.from("user_dungeon_progress").select("*"),
+    client.from("profiles").select("user_id,username,coins,starter_rollcaster_selected_at,starter_selected_at,active_rollcaster_id").single(),
+    client.from("user_rollcasters").select("id,user_id,rollcaster_id,level,xp,ability_points").order("unlocked_at", { ascending: true }),
+    client.from("user_critters").select("id,user_id,critter_id,level,xp,skill_points").order("unlocked_at", { ascending: true }),
+    client.from("user_relic_inventory").select("user_id,relic_id,quantity,discovered_at"),
+    client.from("user_squad_slots").select("user_id,slot_index,user_critter_id").order("slot_index", { ascending: true }),
+    client.from("user_critter_skill_slots").select("user_critter_id,slot_index,skill_id").order("slot_index", { ascending: true }),
+    client.from("user_rollcaster_ability_slots").select("user_rollcaster_id,slot_index,ability_id").order("slot_index", { ascending: true }),
+    client.from("user_critter_relic_slots").select("user_critter_id,slot_index,relic_id").order("slot_index", { ascending: true }),
+    client.from("user_critter_skills").select("user_critter_id,skill_id"),
+    client.from("user_rollcaster_abilities").select("user_rollcaster_id,ability_id"),
+    client.from("user_dungeon_progress").select("user_id,dungeon_id,is_unlocked,completed_at,clear_count"),
   ]);
 
   for (const result of [

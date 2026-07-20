@@ -1483,8 +1483,6 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   .loadout-critter-frame { width: 112px; }
   .main-actions { grid-template-columns: repeat(3, 1fr); }
   .menu-button, .menu-button.play-button { min-height: 68px; }
-  .collection-grid, .starter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .battle-rollcaster { display: none; }
   .opponent-column { grid-row: 1; }
   .reward-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -1508,7 +1506,6 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   .loadout-critter-frame { grid-column: 1; grid-row: 1 / span 2; width: 88px; align-self: start; }
   .loadout-critter-identity { grid-column: 2; grid-row: 1; gap: 4px; }
   .loadout-critter-identity .critter-name { min-height: 32px; font-size: 21px; }
-  .loadout-critter-identity .critter-name .asset-icon { width: 32px; height: 32px; }
   .loadout-critter-xp-progress { grid-column: 2 / 4; grid-row: 2; }
   .loadout-critter-header .edit-label { grid-column: 3; grid-row: 1; align-self: start; }
   .stat-grid, .stat-grid.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2127,7 +2124,6 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   .promo-shard-art > svg { inset: 2px; width: 54px; height: 54px; }
   .promo-shard-art > span { width: 36px; height: 36px; }
   .challenge-panel-heading { align-items: flex-start; flex-direction: column; }
-  .challenge-detail-row { grid-template-columns: minmax(0, 1fr) max-content; grid-template-areas: "description progress" "action action"; }
   .challenge-detail-row button { width: 100%; }
   .currency-pill { padding: 7px 8px; }
   .user-pill { display: none; }
