@@ -53,7 +53,8 @@ async function readCatalog(client) {
   const data = {};
   data.currencies = await q(`select id,name,description,asset_path,text_color,is_default,is_system,sort_order,is_active,is_archived from public.currencies where is_active and not is_archived order by is_default desc,sort_order,id`);
   data.collectibleUnlockRequirements = await q(`select collectible_type,collectible_id,required_challenges from public.collectible_unlock_requirements order by collectible_type,collectible_id`);
-  data.collectibleUnlockChallenges = (await q(`select id,collectible_type,collectible_id,challenge_type,target_category,target_id,target_mode,any_target,target_ids,required_amount::text,required_level,sort_order,gate_order from public.collectible_unlock_challenges order by collectible_type,collectible_id,sort_order,id`));
+  data.unlockChallengeTemplates = await q(`select id,name,description,challenge_category,progress_mode,runtime_version,allowed_collectible_types,parameter_schema,ui_schema,version,sort_order from public.unlock_challenge_templates where is_active and not is_archived order by sort_order,id`);
+  data.collectibleUnlockChallenges = (await q(`select id,collectible_type,collectible_id,challenge_type,parameters,display_text,target_category,target_id,target_mode,any_target,target_ids,required_amount::text,required_level,sort_order,gate_order from public.collectible_unlock_challenges order by collectible_type,collectible_id,sort_order,id`));
   data.shopEntries = await q(`select id,shop_type,name,description,target_category,target_id,quantity,currency_id,price::text,sort_order,is_active,is_archived from public.shop_entries where is_active and not is_archived order by shop_type,sort_order,id`);
   data.elements = await q(`select id,name,description,asset_path,sort_order from public.elements where is_active and not is_archived order by sort_order,id`);
   data.elementEffectiveness = (await q(`select attacking_element_id,defending_element_id,multiplier from public.element_effectiveness order by attacking_element_id,defending_element_id`)).map((row) => numeric(row, ["multiplier"]));
@@ -88,7 +89,7 @@ async function readCatalog(client) {
   data.starterOptions = await q(`select critter_id,sort_order,is_active from public.starter_options where is_active order by sort_order,critter_id`);
   data.gameAssets = await q(`select id,bucket_id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,is_active,sort_order,updated_at from public.game_assets where is_active order by category,owner_id,variant,path`);
   data.statuses = await q(`select id,name,description,asset_path,sort_order,is_active,is_archived,version from public.statuses where is_active and not is_archived order by sort_order,id`);
-  const effects = groupEffects(await q(`select owner_type,owner_id,id,name,description,sort_order,template_id,runtime_kind,runtime_version,parameters from public.combat_effects_v1 order by owner_type,owner_id,sort_order,id`));
+  const effects = groupEffects(await q(`select owner_type,owner_id,id,name,description,sort_order,template_id,runtime_kind,runtime_version,parameters,classification,execution from public.combat_effects_v1 order by owner_type,owner_id,sort_order,id`));
   data.effectsBySkill = effects.skill;
   data.effectsByAbility = effects.ability;
   data.effectsByRelic = effects.relic;
@@ -107,7 +108,7 @@ const variantsFor = (category) => category === "rollcaster"
 const budgetFor = (variant) => ({ icon: 80_000, thumb: 180_000, card: 300_000, battle: 450_000, portrait: 500_000, default: 500_000 }[variant] ?? 500_000);
 
 async function processAssets(catalog) {
-  if (args["skip-assets"]) return { manifest: { schemaVersion: 1, catalogVersion: releaseId, assets: [] }, replacements: new Map() };
+  if (args["skip-assets"]) return { manifest: { schemaVersion: CATALOG_SCHEMA_VERSION, catalogVersion: releaseId, assets: [] }, replacements: new Map() };
   if (!supabaseUrl) throw new Error("VITE_SUPABASE_URL is required to download source assets.");
   const output = [];
   const replacements = new Map();
@@ -144,7 +145,7 @@ async function processAssets(catalog) {
       if (variant === "default") replacements.set(asset.path, objectPath);
     }
   }
-  return { manifest: { schemaVersion: 1, catalogVersion: releaseId, assets: output }, replacements };
+  return { manifest: { schemaVersion: CATALOG_SCHEMA_VERSION, catalogVersion: releaseId, assets: output }, replacements };
 }
 
 function applyAssetPaths(catalog, manifest, replacements) {
@@ -194,6 +195,7 @@ try {
   const assetManifestBytes = Buffer.from(stableJson(assetManifest));
   const assetManifestHash = sha256(assetManifestBytes);
   const assetManifestName = `asset-manifest.${assetManifestHash.slice(0, 12)}.json`;
+  await fs.mkdir(path.join(outputRoot, "game-assets"), { recursive: true });
   await fs.writeFile(path.join(outputRoot, "game-assets", assetManifestName), assetManifestBytes);
 
   const packDescriptors = [];

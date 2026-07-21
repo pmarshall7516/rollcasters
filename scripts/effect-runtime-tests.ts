@@ -507,6 +507,16 @@ selectedCatalog.effectsBySkill.wave = [effect("skill", "wave", "target-status", 
 const selected = takeTurn(battle(selectedCatalog, makePlayer(), "target-enemies"), [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }]);
 check(selected.statuses.length === 2 && selected.statuses.every((item) => item.holderKey.startsWith("o")), "target_enemies must use every active enemy slot selected by the Skill.");
 
+const selectedSideCatalog = makeCatalog();
+selectedSideCatalog.effectsBySkill.mark = [
+  effect("skill", "mark", "selected-ally", "stat_modifier", { stat: "def", value_mode: "flat", amount: 3, chance: 1, target: "selected_ally" }, 0),
+  effect("skill", "mark", "selected-enemy", "stat_modifier", { stat: "atk", value_mode: "flat", amount: -4, chance: 1, target: "selected_enemy" }, 1),
+];
+const selectedAlly = takeTurn(battle(selectedSideCatalog, makePlayer(), "selected-ally"), [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p2", cost: 2 }]);
+check(selectedAlly.playerUnits[1].stats.def === 23 && selectedAlly.opponentUnits[0].stats.atk === 24, "selected_ally must resolve only when the chosen slot contains an ally.");
+const selectedEnemy = takeTurn(battle(selectedSideCatalog, makePlayer(), "selected-enemy"), [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "o1", cost: 2 }]);
+check(selectedEnemy.opponentUnits[0].stats.atk === 20 && selectedEnemy.playerUnits[1].stats.def === 20, "selected_enemy must resolve only when the chosen slot contains an enemy.");
+
 const healingCatalog = makeCatalog();
 healingCatalog.effectsBySkill.strike = [effect("skill", "strike", "vampire", "restore_hp", { value_mode: "percent_damage_done", amount: 0.625, chance: 1, target: "self" })];
 healingCatalog.effectsBySkill.ritual = [

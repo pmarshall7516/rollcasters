@@ -101,3 +101,30 @@ Database and signed-in browser tests may create rollback-only fixtures or dispos
 - Published release `2026.07.20.2` passed online verification, offline cache recovery, tamper rejection, portable hashing coverage, and decoded artwork checks for all 172 registered variants.
 - Typecheck, production build, npm audit, core catalog/gameplay rule suites, six focused visual suites, and the prescribed web-game smoke all pass. The final smoke screenshot and text state show a clean unauthenticated login view.
 - No known cleanup blocker remains from the published-release/storage transition.
+
+## Dungeon Swap state-conflict fix (2026-07-21)
+
+- Fixed stale `DungeonRunState` updates in combat playback and controls by using functional React state updates, preserving the latest server `state_version` returned by autosave.
+- The affected path was the delayed Swap reveal: an autosave could finish before the 720 ms reveal timer, after which the old closure overwrote the fresh run version and the next save raised `DUNGEON_STATE_CONFLICT`.
+- `npm run typecheck` passes after the fix. Re-run the live Dungeon browser regression with the bundled Node 24 runtime when database/browser credentials are available.
+- `npm run build`, `npm run test:combat-swap-ui`, and the required unauthenticated web-game smoke pass. The signed-in Dungeon browser regression reached the combat shell but currently stops at its pre-existing short-wide layout assertion before the Swap scenario; no `DUNGEON_STATE_CONFLICT` was reported.
+
+## New effects and unlock challenge runtime (2026-07-20)
+
+- Added player-side Challenge v2 types, generated/display override text, all ten tracked Challenge families, and a pure event matcher/derived-progress helper in `src/lib/challenges.ts`.
+- Published/live catalog loading now preserves Challenge Template metadata, Challenge `parameters`/`display_text`, and Effect `classification`/`execution`.
+- Expanded combat validation accepts the documented Effect runtime/version pairs. Combat now supports Shield durability, direct HP changes, Stat Modifier v2 action/slot stats, damage prevention/modification, action-cost modifiers, resource/scaling/compound child resolution, reactive/delayed/repeating runtime instances, and richer normalized progress events.
+- Added `20260720060000_player_effects_challenge_runtime.sql`, widened the idempotent combat event receipt RPC, and added scope-progress storage. The migration was applied successfully to the configured development database.
+- Added the forward-only `20260720070000_fix_challenge_matcher_jsonb_filter.sql` repair and applied it successfully to the configured development database.
+- Verified with typecheck, production build, catalog-release, collection-UI, effect-runtime, effect tooltip UI, combat swap UI, live migration, unauthenticated web-game smoke, and signed-in combat browser coverage. The system Node 20 live browser harness still needs the bundled Node 24 runtime because Supabase Realtime requires native WebSocket support.
+
+## Challenge/effect reconciliation and schema-v2 release (2026-07-20)
+
+- Fixed the release/live-catalog split that could pair an old published Challenge definition with a newer live player-progress snapshot. Catalog schema v2 now publishes all 15 Challenge Templates with every canonical Challenge parameter, and the client derives a safe authored fallback instead of rendering a stale `0 / 0` row.
+- Reconciled Critter 028's stable Challenge UUID to `Own 7 different Critters`, preserving the UUID while resetting stale progress/tracking. Reconciled Critter 027's three-copy Relic requirement to quantity rather than impossible unique ownership.
+- Reclassified all currently authored harmful Status/Skill Effects as negative and corrected Chilling Wind from the accidental ATK increase to its authored DEF −20% behavior.
+- Aligned published and live Effect normalization so hidden inert `element_ids` values do not make a valid Relic Effect fail only in release-mode combat.
+- Published production catalog release `2026.07.20.4` (schema v2). Signed-in release verification displays Ceratusk's exact `Own 7 different Critters.` text and authoritative `1 / 7` progress.
+- Signed-in combat verification loaded the production release, froze five Effects into the run snapshot, resolved both Dungeon encounters to a persisted terminal outcome, and reported no console/page errors.
+- The database audit reports 15 active Challenge Templates, both repaired ownership definitions in canonical form, zero harmful classification errors, and zero Chilling Wind parameter errors.
+- Typecheck, production build, collection/challenge logic, combat Effect runtime, catalog-release contract, shop business rules, migration drift, and the required generic web-game smoke all pass.

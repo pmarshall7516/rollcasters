@@ -1212,6 +1212,12 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .tooltip-heading { display: flex; align-items: center; gap: 7px; color: var(--text-primary); }
 .tooltip-heading .asset-icon { flex: 0 0 auto; width: 21px; height: 21px; }
 .tooltip-description { color: var(--text-secondary); }
+.tooltip-description.effect-classification-positive,
+.effect-list-row.effect-classification-positive { color: #8fe4ae; }
+.tooltip-description.effect-classification-negative,
+.effect-list-row.effect-classification-negative { color: #ff9ca5; }
+.tooltip-description.effect-classification-mixed,
+.effect-list-row.effect-classification-mixed { color: var(--text-secondary); }
 .tooltip-target { padding-top: 7px; border-top: 1px solid rgb(52 61 104 / 70%); color: var(--accent-cyan); font-weight: 750; }
 .tooltip-disabled { color: var(--danger); font-weight: 800; }
 .skill-tile { --skill-meta-size: 17px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; width: 100%; min-height: 84px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 11px; background: linear-gradient(145deg, rgb(27 34 66 / 95%), rgb(11 15 34 / 96%)); color: var(--text-primary); text-align: left; }
@@ -3088,6 +3094,23 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 
 .hp-bar.critical span {
   background: linear-gradient(90deg, #b33f5b, #ff6e86);
+}
+
+.shield-bar {
+  height: 6px;
+  margin-top: 4px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 999px;
+  background: rgb(19 35 57 / 80%);
+}
+
+.shield-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #3e82c8, #8fd8ff);
+  transition: width .72s cubic-bezier(.2, .75, .25, 1);
 }
 
 .battle-unit.bench {

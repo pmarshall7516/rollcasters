@@ -2,6 +2,26 @@ import type { CombatEffectRow, EffectOwnerType, EffectTarget, ResolvedEffectRef 
 
 export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "stat_modifier@1",
+  "stat_modifier@2",
+  "shield_modifier@1",
+  "reactive_trigger@1",
+  "direct_health_modifier@1",
+  "retaliation@1",
+  "damage_modifier@1",
+  "conditional_effect@1",
+  "delayed_effect@1",
+  "effect_duration@1",
+  "effect_removal@1",
+  "effect_copy@1",
+  "effect_transfer@1",
+  "damage_prevention@1",
+  "action_cost_modifier@1",
+  "resource_gain_loss@1",
+  "resource_conversion@1",
+  "effect_scaling@1",
+  "repeating_effect@1",
+  "effect_immunity@1",
+  "effect_amplification@1",
   "mana_dice_modifier@1",
   "apply_status@1",
   "restore_hp@1",
@@ -10,9 +30,9 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
 ]);
 
 const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
-  skill: new Set(["self", "all_allies", "all_friendlies", "all_enemies", "target_enemies"]),
-  ability: new Set(["all_friendlies", "all_enemies", "all_element_friendlies", "all_element_enemies"]),
-  relic: new Set(["equipped_critter", "equipped_allies", "equipped_friendlies", "all_enemies"]),
+  skill: new Set(["self", "selected_ally", "selected_enemy", "all_allies", "all_friendlies", "all_enemies", "target_enemies", "attacker", "defender", "effect_owner"]),
+  ability: new Set(["all_friendlies", "all_squad_friendlies", "all_enemies", "all_element_friendlies", "all_element_enemies", "active_ally", "active_enemy", "attacker", "defender", "effect_owner"]),
+  relic: new Set(["equipped_critter", "equipped_allies", "equipped_friendlies", "all_squad_friendlies", "all_enemies", "active_ally", "active_enemy", "attacker", "defender", "effect_owner"]),
   status: new Set(["status_holder", "status_holder_allies", "status_holder_friendlies", "status_holder_enemies"]),
 };
 
@@ -90,6 +110,56 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     throw new Error(`Effect ${effect.id} cannot target ${target} as ${effect.ownerType}.`);
   }
 
+  // The expanded runtime contract is intentionally validated here as a
+  // catalog boundary. Runtime handlers can then assume the common shape and
+  // focus on resolution rather than accepting malformed authoring data.
+  const expandedKey = new Set([
+    "stat_modifier@2", "shield_modifier@1", "reactive_trigger@1",
+    "direct_health_modifier@1", "retaliation@1", "damage_modifier@1",
+    "conditional_effect@1", "delayed_effect@1", "effect_duration@1",
+    "effect_removal@1", "effect_copy@1", "effect_transfer@1",
+    "damage_prevention@1", "action_cost_modifier@1", "resource_gain_loss@1",
+    "resource_conversion@1", "effect_scaling@1", "repeating_effect@1",
+    "effect_immunity@1", "effect_amplification@1",
+  ]);
+  if (expandedKey.has(runtimeKey)) {
+    if (runtimeKey === "stat_modifier@2" && effect.classification === undefined && effect.execution === undefined) {
+      throw new Error(`Unsupported effect runtime: ${runtimeKey}`);
+    }
+    if (effect.execution && !["root", "child"].includes(effect.execution)) {
+      throw new Error(`Effect ${effect.id} has an invalid execution mode.`);
+    }
+    const childKeys = ["child_effect_ids", "true_effect_ids", "false_effect_ids", "output_effect_ids", "overheal_effect_ids"];
+    for (const childKey of childKeys) {
+      if (parameters[childKey] === undefined) continue;
+      if (!Array.isArray(parameters[childKey]) || parameters[childKey].length === 0 || parameters[childKey].some((id) => typeof id !== "string" || !id)) {
+        throw new Error(`Effect ${effect.id} ${childKey} must be a non-empty string array.`);
+      }
+    }
+    if (parameters.chance !== undefined) validateChance(parameters.chance, `Effect ${effect.id} chance`);
+    for (const key of ["delay_value", "repeat_interval", "initial_delay", "number_of_activations", "activation_limit", "usage_limit", "maximum_effects_copied", "required_occurrences"]) {
+      if (parameters[key] !== undefined && parameters[key] !== null) validateDuration(parameters[key], `Effect ${effect.id} ${key}`);
+    }
+    if (runtimeKey === "stat_modifier@2") {
+      requireChoice(parameters.stat, ["hp", "atk", "def", "spd", "block_cost", "swap_cost", "relic_slots"], `Effect ${effect.id} stat`);
+      requireChoice(parameters.value_mode, ["flat", "percentage"], `Effect ${effect.id} value_mode`);
+      if (parameters.stat === "relic_slots" && parameters.value_mode !== "flat") throw new Error(`Effect ${effect.id} relic_slots is flat only.`);
+    }
+    if (runtimeKey === "shield_modifier@1") {
+      requireChoice(parameters.operation, ["grant", "add", "subtract", "set", "destroy"], `Effect ${effect.id} operation`);
+      if (parameters.operation !== "destroy") {
+        const value = requireFinite(parameters.shield_value, `Effect ${effect.id} shield_value`);
+        if (value < 0 || !Number.isInteger(value)) throw new Error(`Effect ${effect.id} shield_value must be a nonnegative integer.`);
+      }
+      if (parameters.can_stack === true && parameters.replace_existing_shield === true) throw new Error(`Effect ${effect.id} cannot stack and replace a Shield.`);
+    }
+    if (runtimeKey === "direct_health_modifier@1") {
+      requireChoice(parameters.operation, ["heal", "lose_hp", "set_hp", "drain"], `Effect ${effect.id} operation`);
+      requireChoice(parameters.value_type, ["flat", "percent_max_hp", "percent_current_hp", "percent_missing_hp", "percent_damage_dealt"], `Effect ${effect.id} value_type`);
+    }
+    return;
+  }
+
   if (runtimeKey === "stat_modifier@1") {
     const allowed = effect.ownerType === "ability"
       ? ["stat", "value_mode", "amount", "target", "element_ids"]
@@ -109,7 +179,9 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
 
   if (runtimeKey === "mana_dice_modifier@1") {
     if (effect.ownerType !== "ability" && effect.ownerType !== "relic") throw new Error(`Effect ${effect.id} cannot use ${runtimeKey} as a ${effect.ownerType} effect.`);
-    rejectUnknownKeys(parameters, effect.ownerType === "ability" ? ["minimum_delta", "maximum_delta", "target", "element_ids"] : ["minimum_delta", "maximum_delta", "target"], `Effect ${effect.id}`);
+    // Older authored rows persisted the hidden element picker as an empty
+    // array for Relics. It is inert unless the target is explicitly elemental.
+    rejectUnknownKeys(parameters, ["minimum_delta", "maximum_delta", "target", "element_ids"], `Effect ${effect.id}`);
     const minimum = requireFinite(parameters.minimum_delta, `Effect ${effect.id} minimum_delta`);
     const maximum = requireFinite(parameters.maximum_delta, `Effect ${effect.id} maximum_delta`);
     if (!Number.isInteger(minimum) || !Number.isInteger(maximum)) throw new Error(`Effect ${effect.id} Mana deltas must be integers.`);
@@ -177,6 +249,8 @@ export function groupCombatEffectRows(rows: CombatEffectRow[]): Record<EffectOwn
       runtimeVersion: row.runtime_version,
       parameters: normalizeEffectParameters(row),
       sortOrder: row.sort_order,
+      classification: row.classification,
+      execution: row.execution,
     };
     assertEffectContract(effect, row.owner_type);
     const ownerEffects = grouped[row.owner_type][row.owner_id] ?? [];

@@ -1,9 +1,10 @@
 import type { Catalog, CatalogReleaseInfo } from "./types.js";
 
-export const SUPPORTED_CATALOG_SCHEMA_VERSION = 1;
-export const CATALOG_CACHE_NAME = "rollcasters-catalog-v1";
+export const SUPPORTED_CATALOG_SCHEMA_VERSION = 2;
+export const CATALOG_CACHE_NAME = "rollcasters-catalog-v2";
 
-const LAST_VERIFIED_CACHE_KEY = "/__rollcasters_catalog_last_verified_v1__.json";
+const LAST_VERIFIED_CACHE_KEY = "/__rollcasters_catalog_last_verified_v2__.json";
+const isSupportedCatalogSchema = (version: number) => version === 1 || version === SUPPORTED_CATALOG_SCHEMA_VERSION;
 const CATALOG_KEYS = [
   "currencies",
   "collectibleUnlockRequirements",
@@ -280,9 +281,9 @@ async function fetchPointer(url: string): Promise<{ pointer: CatalogReleasePoint
   }
 }
 
-function parsePack(value: unknown, descriptor: CatalogPackDescriptor, version: string): CatalogPack {
+function parsePack(value: unknown, descriptor: CatalogPackDescriptor, version: string, schemaVersion: number): CatalogPack {
   if (!isRecord(value)) throw new Error(`Catalog pack ${descriptor.key} must be an object.`);
-  if (value.schemaVersion !== SUPPORTED_CATALOG_SCHEMA_VERSION || value.catalogVersion !== version || value.pack !== descriptor.key) {
+  if (value.schemaVersion !== schemaVersion || value.catalogVersion !== version || value.pack !== descriptor.key) {
     throw new Error(`Catalog pack ${descriptor.key} does not belong to release ${version}.`);
   }
   return value as CatalogPack;
@@ -300,6 +301,9 @@ export function assembleCatalog(packs: readonly CatalogPack[]): Catalog {
   for (const key of CATALOG_KEYS) {
     if (!(key in assembled)) throw new Error(`Catalog release is missing ${key}.`);
   }
+  if (packs.some((pack) => pack.schemaVersion >= 2) && !("unlockChallengeTemplates" in assembled)) {
+    throw new Error("Catalog schema 2 is missing unlockChallengeTemplates.");
+  }
   return assembled as Catalog;
 }
 
@@ -309,7 +313,7 @@ export async function loadPublishedCatalog(
 ): Promise<{ catalog: Catalog; release: CatalogReleaseInfo }> {
   const latestUrl = new URL("latest.json", `${catalogBaseUrl.replace(/\/+$/, "")}/`).toString();
   const { pointer, source: pointerSource } = await fetchPointer(latestUrl);
-  if (pointer.schemaVersion !== SUPPORTED_CATALOG_SCHEMA_VERSION) {
+  if (!isSupportedCatalogSchema(pointer.schemaVersion)) {
     throw new Error(`Catalog schema ${pointer.schemaVersion} is not supported by this game.`);
   }
   if (!isMinimumVersionSatisfied(gameVersion, pointer.minimumGameVersion)) {
@@ -329,7 +333,7 @@ export async function loadPublishedCatalog(
   const packResults = await Promise.all(manifest.packs.map(async (descriptor) => {
     const url = new URL(descriptor.url, manifestUrl).toString();
     const result = await verifiedResponse(url, descriptor.sha256, descriptor.byteSize);
-    return { pack: parsePack(await result.response.json(), descriptor, manifest.catalogVersion), source: result.source };
+    return { pack: parsePack(await result.response.json(), descriptor, manifest.catalogVersion, manifest.schemaVersion), source: result.source };
   }));
   const catalog = assembleCatalog(packResults.map((result) => result.pack));
   if (!manifest.assetManifestUrl || !manifest.assetManifestSha256) {

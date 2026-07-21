@@ -208,7 +208,7 @@ function normalizeCompletionDrop(row: RawDungeonCompletionDrop): DungeonCompleti
 }
 
 type CollectibleShopCatalog = Pick<Catalog,
-  "currencies" | "collectibleUnlockRequirements" | "collectibleUnlockChallenges" | "shopEntries"
+  "currencies" | "collectibleUnlockRequirements" | "collectibleUnlockChallenges" | "shopEntries" | "unlockChallengeTemplates"
 >;
 
 async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
@@ -219,12 +219,14 @@ async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
     requirements?: Catalog["collectibleUnlockRequirements"];
     challenges?: Catalog["collectibleUnlockChallenges"];
     shop_entries?: Catalog["shopEntries"];
+    challenge_templates?: Catalog["unlockChallengeTemplates"];
   } | null;
   return {
     currencies: payload?.currencies ?? [],
     collectibleUnlockRequirements: payload?.requirements ?? [],
     collectibleUnlockChallenges: payload?.challenges ?? [],
     shopEntries: payload?.shop_entries ?? [],
+    unlockChallengeTemplates: payload?.challenge_templates ?? [],
   };
 }
 
@@ -237,7 +239,7 @@ export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerS
 async function loadCombatEffects(): Promise<CombatEffectRow[]> {
   const { data, error } = await requireClient()
     .from("combat_effects_v1")
-    .select("owner_type,owner_id,id,name,description,sort_order,template_id,runtime_kind,runtime_version,parameters")
+    .select("owner_type,owner_id,id,name,description,sort_order,template_id,runtime_kind,runtime_version,parameters,classification,execution")
     .order("owner_type", { ascending: true })
     .order("owner_id", { ascending: true })
     .order("sort_order", { ascending: true })
