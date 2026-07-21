@@ -78,5 +78,18 @@ const assembled = assembleCatalog([
 ]);
 check(Object.keys(assembled).sort().join(",") === Object.keys(emptyCatalog).sort().join(","), "Tier assembly must produce exactly one complete Catalog contract.");
 await expectError(() => assembleCatalog([{ schemaVersion: 1, catalogVersion: pointer.catalogVersion, pack: "core", currencies: [] }]), "Catalog release is missing");
+await expectError(() => assembleCatalog([
+  { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "core", currencies: [], elements: [], elementEffectiveness: [], starterRollcasterOptions: [], starterOptions: [], gameAssets: [] },
+  { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "combat", skills: [], rollcasterAbilities: [], relics: [], statuses: [], effectsBySkill: {}, effectsByAbility: {}, effectsByRelic: {}, effectsByStatus: {} },
+  { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "collectibles", collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], critters: [], critterProgression: [], critterSkillUnlocks: [], rollcasters: [], rollcasterProgression: [], rollcasterAbilityUnlocks: [] },
+  { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "dungeons", dungeons: [], dungeonOpponents: [], dungeonCompletionDrops: [], dungeonOpponentStatOverrides: [] },
+]), "unlockChallengeTemplates");
+const schemaTwo = assembleCatalog([
+  { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "core", currencies: [], elements: [], elementEffectiveness: [], starterRollcasterOptions: [], starterOptions: [], gameAssets: [] },
+  { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "combat", skills: [], rollcasterAbilities: [], relics: [], statuses: [], effectsBySkill: {}, effectsByAbility: {}, effectsByRelic: {}, effectsByStatus: {} },
+  { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "collectibles", unlockChallengeTemplates: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], critters: [], critterProgression: [], critterSkillUnlocks: [], rollcasters: [], rollcasterProgression: [], rollcasterAbilityUnlocks: [] },
+  { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "dungeons", dungeons: [], dungeonOpponents: [], dungeonCompletionDrops: [], dungeonOpponentStatOverrides: [] },
+]);
+check(Array.isArray(schemaTwo.unlockChallengeTemplates), "Schema 2 must preserve Challenge Template metadata.");
 
 console.log("Catalog release contract tests passed.");

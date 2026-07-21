@@ -90,7 +90,7 @@ try {
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "combat");
 
   const initial = await gameState(page);
-  check(initial.combat?.phase === "ready", "Combat did not initialize in the ready phase.");
+  check(initial.combat?.phase === "await_roll", "Combat did not initialize in the await-roll phase.");
   check(initial.combat.player.some((unit) => unit.active && unit.stats.def >= 1), "Resolved combat stats were not exposed for the active player.");
 
   const run = await admin
@@ -106,33 +106,99 @@ try {
 
   await page.screenshot({ path: path.join(outputDir, "combat-initial.png"), fullPage: true });
 
-  for (let turn = 0; turn < 40; turn += 1) {
+  for (let step = 0; step < 600; step += 1) {
     const state = await gameState(page);
-    if (state.combat?.phase === "won" || state.combat?.phase === "lost") break;
-    if (state.combat?.phase === "ready") {
+    const phase = state.combat?.phase;
+    if (phase === "dungeon_complete" || phase === "dungeon_failed") break;
+
+    if (phase === "await_roll") {
       await page.getByRole("button", { name: "Roll Dice" }).click();
-      await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).combat?.phase === "selecting");
+      continue;
     }
 
-    const usableSkill = page.locator(".battle-unit:not(.opponent) .skill-tile:not([disabled])").first();
-    if (await usableSkill.count()) await usableSkill.click();
-    await page.getByRole("button", { name: "Continue" }).click();
-    await page.waitForTimeout(20);
+    if (phase === "roll_result" || phase === "event_playback") {
+      const narration = page.locator(".combat-narration.advanceable");
+      await narration.waitFor({ state: "visible" });
+      await page.waitForFunction(() => {
+        const button = document.querySelector(".combat-narration.advanceable");
+        return button instanceof HTMLButtonElement && !button.disabled;
+      });
+      await narration.click();
+      continue;
+    }
+
+    if (phase === "select_player_actions") {
+      const submit = page.getByRole("button", { name: "Submit Actions" });
+      if (await submit.isEnabled()) {
+        await submit.click();
+        continue;
+      }
+
+      const skillMenu = page.locator(".combat-primary-actions button").filter({ hasText: /^\s*Skill\s*$/ }).first();
+      if (await skillMenu.count()) {
+        await skillMenu.click();
+        const usableSkill = page.locator(".combat-skill-actions .skill-tile:not([disabled])").first();
+        if (await usableSkill.count()) {
+          await usableSkill.click();
+          const target = page.locator(".battle-unit.legal-target").first();
+          if (await target.count()) await target.click();
+          continue;
+        }
+        await page.locator(".combat-back-row").filter({ hasText: "Back to Action Menu" }).click();
+      }
+
+      const skip = page.locator(".combat-primary-actions button").filter({ hasText: /^\s*Skip/ }).first();
+      check(await skip.count(), "No usable Skill or Skip action was available for the current Critter.");
+      await skip.click();
+      continue;
+    }
+
+    if (phase === "encounter_rewards") {
+      await page.getByRole("button", { name: "Next Encounter" }).click();
+      continue;
+    }
+
+    if (phase === "battle_result") {
+      await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).combat?.phase !== "battle_result");
+      continue;
+    }
+
+    if (phase === "lead_selection" || phase === "forced_replacements") {
+      const selectable = page.locator("[role=dialog] .battle-unit.selectable").first();
+      if (await selectable.count()) await selectable.click();
+      const confirm = page.locator("[role=dialog] button.primary-button").first();
+      if (await confirm.isEnabled()) await confirm.click();
+      continue;
+    }
+
+    throw new Error(`Unhandled combat phase ${String(phase)}.`);
   }
 
   const resolved = await gameState(page);
-  check(resolved.combat?.phase === "won", `Expected the live dungeon to be won, received ${resolved.combat?.phase}.`);
-  await page.getByRole("button", { name: "Claim Rewards" }).click();
-  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "rewards");
-  await page.screenshot({ path: path.join(outputDir, "combat-rewards.png"), fullPage: true });
+  check(
+    resolved.combat?.phase === "dungeon_complete" || resolved.combat?.phase === "dungeon_failed",
+    `Expected a terminal live dungeon outcome, received ${resolved.combat?.phase}.`,
+  );
+  await page.screenshot({ path: path.join(outputDir, "combat-outcome.png"), fullPage: true });
   check(browserErrors.length === 0, `Browser errors detected: ${browserErrors.join(" | ")}`);
 
   process.stdout.write(`${JSON.stringify({
     initialPhase: initial.combat.phase,
-    finalView: (await gameState(page)).view,
+    finalPhase: resolved.combat.phase,
     snapshotEffectCount: run.data.effect_snapshot.effects.length,
     browserErrors,
   })}\n`);
+} catch (error) {
+  if (browser) {
+    const pages = browser.contexts().flatMap((context) => context.pages());
+    const page = pages[0];
+    if (page) {
+      await page.screenshot({ path: path.join(outputDir, "combat-failure.png"), fullPage: true }).catch(() => undefined);
+      const state = await page.evaluate(() => window.render_game_to_text?.() ?? null).catch(() => null);
+      process.stderr.write(`${JSON.stringify({ state, browserErrors }, null, 2)}\n`);
+    }
+  }
+  throw error;
 } finally {
   await browser?.close().catch(() => undefined);
   devServer?.kill("SIGTERM");

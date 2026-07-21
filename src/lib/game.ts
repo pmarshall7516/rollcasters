@@ -41,6 +41,8 @@ export type CombatUnit = {
   persistentStats: StatBlock;
   hp: number;
   maxHp: number;
+  shield: number;
+  maxShield: number;
   skills: Skill[];
   active: boolean;
   battlefieldSlot: number | null;
@@ -57,6 +59,22 @@ export type CombatStatus = {
   sourceOwnerId: string;
   sourceCritterKey?: string;
   effects: ResolvedEffectRef[];
+};
+
+export type RuntimeEffectInstance = {
+  instanceId: string;
+  sourceEffectId: string;
+  sourceOwnerType: EffectOwnerType;
+  sourceOwnerId: string;
+  sourceCritterKey?: string;
+  targetCritterKey?: string;
+  runtimeKind: string;
+  runtimeVersion: number;
+  classification?: "positive" | "negative" | "mixed";
+  appliedAtSequence: number;
+  remaining?: number;
+  activationCount: number;
+  state: Record<string, unknown>;
 };
 
 export type CombatModifier = {
@@ -147,6 +165,8 @@ export type CombatState = {
   snapshot: RunEffectSnapshot;
   turnEvents: CombatProgressEvent[];
   presentationEvents: CombatPresentationEvent[];
+  runtimeEffects: RuntimeEffectInstance[];
+  effectSequence: number;
 };
 
 export type EffectivenessClass =
@@ -294,6 +314,8 @@ export function createInitialCombatState(
       persistentStats: stats,
       hp: stats.hp,
       maxHp: stats.hp,
+      shield: 0,
+      maxShield: 0,
       skills,
       active: index < dungeon.player_active_count,
       battlefieldSlot: index < dungeon.player_active_count ? playerBattlefieldSlots[index] : null,
@@ -325,6 +347,8 @@ export function createInitialCombatState(
       persistentStats: stats,
       hp: stats.hp,
       maxHp: stats.hp,
+      shield: 0,
+      maxShield: 0,
       skills,
       active: index < dungeon.opponent_active_count,
       battlefieldSlot: index < dungeon.opponent_active_count ? opponentBattlefieldSlots[index] : null,
@@ -442,8 +466,11 @@ export function createInitialCombatState(
     },
     turnEvents: [],
     presentationEvents: [],
+    runtimeEffects: [],
+    effectSequence: 0,
   };
   initialState = recomputeCombatStats(initialState);
+  initialState = installRootEffects(initialState);
   return initialState;
 }
 
@@ -516,6 +543,68 @@ function validateRunEffects(registry: RunEffectRegistry, statuses: Record<string
   }
 }
 
+function effectForReference(state: CombatState, ownerType: EffectOwnerType, ownerId: string, effectId: string): ResolvedEffectRef | undefined {
+  return (state.runEffects[ownerType][ownerId] ?? []).find((candidate) => candidate.id === effectId);
+}
+
+function addRuntimeEffect(
+  state: CombatState,
+  effect: ResolvedEffectRef,
+  context: RuntimeContext,
+  stateData: Record<string, unknown> = {},
+  remaining?: number,
+): CombatState {
+  const sequence = state.effectSequence + 1;
+  const instance: RuntimeEffectInstance = {
+    instanceId: `runtime:${sequence}:${effect.id}`,
+    sourceEffectId: effect.id,
+    sourceOwnerType: context.sourceOwnerType,
+    sourceOwnerId: context.sourceOwnerId,
+    sourceCritterKey: context.sourceCritterKey,
+    targetCritterKey: context.skillTargetKeys?.[0],
+    runtimeKind: effect.runtimeKind,
+    runtimeVersion: effect.runtimeVersion,
+    classification: effect.classification,
+    appliedAtSequence: sequence,
+    remaining,
+    activationCount: 0,
+    state: stateData,
+  };
+  return { ...state, effectSequence: sequence, runtimeEffects: [...state.runtimeEffects, instance] };
+}
+
+function resolveChildEffects(state: CombatState, parent: ResolvedEffectRef, context: RuntimeContext, ids: unknown): CombatState {
+  const childIds = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+  if (childIds.length === 0 || (context.resolutionDepth ?? 0) >= 16) return state;
+  let next = state;
+  const stack = new Set<string>(context.parentInstanceId ? [context.parentInstanceId] : []);
+  for (const childId of childIds) {
+    const child = effectForReference(next, parent.ownerType, parent.ownerId, childId);
+    if (!child || child.execution !== "child" || stack.has(child.id)) continue;
+    next = resolveEffect(next, child, { ...context, parentInstanceId: child.id, resolutionDepth: (context.resolutionDepth ?? 0) + 1 });
+  }
+  return next;
+}
+
+function installRootEffects(state: CombatState): CombatState {
+  let next = state;
+  for (const source of activeSetupSources(state)) {
+    for (const effect of source.effects) {
+      if (effect.execution === "child") continue;
+      const context: RuntimeContext = {
+        sourceOwnerType: source.ownerType,
+        sourceOwnerId: source.ownerId,
+        sourceCritterKey: source.sourceKey,
+      };
+      if (effect.runtimeKind === "shield_modifier") next = resolveEffect(next, effect, context);
+      else if (["reactive_trigger", "retaliation", "repeating_effect", "delayed_effect", "conditional_effect", "effect_duration", "effect_immunity", "damage_modifier", "damage_prevention", "action_cost_modifier"].includes(effect.runtimeKind)) {
+        next = addRuntimeEffect(next, effect, context, { sourceOrder: source.sourceOrder });
+      }
+    }
+  }
+  return next;
+}
+
 function applyDungeonOverrides(stats: StatBlock, rows: Catalog["dungeonOpponentStatOverrides"]): StatBlock {
   const next = { ...stats };
   const keys: Record<string, keyof StatBlock> = {
@@ -550,6 +639,7 @@ export function recomputeCombatStats(state: CombatState): CombatState {
   for (const source of activeSetupSources(state)) {
     for (const effect of source.effects) {
       assertEffectContract(effect, source.ownerType);
+      if (effect.execution === "child") continue;
       if (effect.runtimeKind !== "stat_modifier" && effect.runtimeKind !== "mana_dice_modifier") continue;
       const targets = effectTargets(state, String(effect.parameters.target), {
         sourceOwnerType: source.ownerType,
@@ -570,7 +660,8 @@ export function recomputeCombatStats(state: CombatState): CombatState {
       .map((modifier) => modifier.effect);
     const stats = applyStatEffects(persistentStats, modifierEffects);
     const hp = Math.min(stats.hp, Math.max(0, unit.hp + Math.max(0, stats.hp - unit.maxHp)));
-    return { ...unit, persistentStats, stats, maxHp: stats.hp, hp };
+    const maxShield = Math.max(0, unit.maxShield);
+    return { ...unit, persistentStats, stats, maxHp: stats.hp, hp, maxShield, shield: Math.min(maxShield, unit.shield) };
   };
   return { ...state, playerUnits: state.playerUnits.map(apply), opponentUnits: state.opponentUnits.map(apply) };
 }
@@ -578,11 +669,13 @@ export function recomputeCombatStats(state: CombatState): CombatState {
 function applyStatEffects(base: StatBlock, effects: ResolvedEffectRef[]): StatBlock {
   const next = { ...base };
   for (const effect of effects) {
-    if (effect.runtimeKind === "stat_modifier") {
-      const stat = String(effect.parameters.stat) as "hp" | "atk" | "def" | "spd";
+    if (effect.runtimeKind === "stat_modifier" || effect.runtimeKind === "stat_modifier_v2") {
+      const stat = ({ block_cost: "blockCost", swap_cost: "swapCost", relic_slots: "relicSlots" } as Record<string, keyof StatBlock>)[String(effect.parameters.stat)] ?? String(effect.parameters.stat) as keyof StatBlock;
       const amount = Number(effect.parameters.amount ?? 0);
       const delta = effect.parameters.value_mode === "percentage" ? roundHalfUp(next[stat] * amount) : amount;
-      next[stat] = Math.max(1, next[stat] + delta);
+      if (stat === "relicSlots") next[stat] = Math.max(0, Math.min(10, next[stat] + delta));
+      else if (stat === "blockCost" || stat === "swapCost") next[stat] = Math.max(0, next[stat] + delta);
+      else if (stat in next) next[stat] = Math.max(1, next[stat] + delta);
     } else if (effect.runtimeKind === "mana_dice_modifier") {
       next.diceMin += Number(effect.parameters.minimum_delta ?? 0);
       next.diceMax += Number(effect.parameters.maximum_delta ?? 0);
@@ -619,7 +712,7 @@ export function startTurn(state: CombatState): CombatState {
     0,
   );
 
-  return {
+  const rolledState: CombatState = {
     ...next,
     playerUnits,
     opponentUnits,
@@ -632,10 +725,24 @@ export function startTurn(state: CombatState): CombatState {
       ...next.log,
     ],
   };
+  let withDice = rolledState;
+  for (const unit of playerUnits.filter((candidate) => candidate.active && candidate.hp > 0)) {
+    withDice = appendProgressEvent(withDice, {
+      event_type: "dice_resolved",
+      source_critter_id: unit.critter.id,
+      target_critter_id: null,
+      skill_id: null,
+      amount: unit.manaRoll,
+      payload: { die_type: `d${unit.stats.diceMax}`, natural_value: unit.manaRoll, modified_value: unit.manaRoll, natural_maximum: unit.stats.diceMax, turn_mana_total: playerRoll },
+    });
+  }
+
+  return withDice;
 }
 
 export function resolveTurn(state: CombatState, actions: CombatAction[]): CombatState {
-  const cost = actions.reduce((sum, action) => sum + action.cost, 0);
+  const normalizedActions = actions.map((action) => ({ ...action, cost: calculateActionCost(state, action) }));
+  const cost = normalizedActions.reduce((sum, action) => sum + action.cost, 0);
   if (cost > state.playerMana) return state;
 
   let next: CombatState = {
@@ -652,7 +759,7 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
     opponentMana: Math.max(0, next.opponentMana - enemyCost),
   };
 
-  const allActions = [...actions, ...enemyActions].map((action) => prepareActionTarget(next, action));
+  const allActions = [...normalizedActions, ...enemyActions].map((action) => prepareActionTarget(next, action));
   next = resolveActionStage(next, allActions, "swap");
   next = resolveActionStage(next, allActions, "block");
   next = resolveActionStage(next, allActions, "skip");
@@ -662,10 +769,51 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
   const playerAlive = next.playerUnits.some((unit) => unit.hp > 0);
   const opponentsAlive = next.opponentUnits.some((unit) => unit.hp > 0);
   if (!playerAlive || !opponentsAlive) {
-    return { ...next, phase: playerAlive ? "won" : "lost", log: [playerAlive ? "Dungeon cleared." : "Defeat.", ...next.log] };
+    const outcome = playerAlive ? "won" : "lost";
+    const completed = playerAlive ? appendProgressEvent(next, {
+      event_type: "battle_completed",
+      source_critter_id: null,
+      target_critter_id: null,
+      skill_id: null,
+      amount: playerAlive ? 1 : 0,
+      payload: {
+        won: playerAlive,
+        squad: next.playerUnits.map((unit) => ({ critter_id: unit.critter.id, element_ids: critterElementIds(unit.critter), survived: unit.hp > 0 })),
+        survivors_complete: next.playerUnits.filter((unit) => unit.active).every((unit) => unit.hp > 0),
+      },
+    }) : next;
+    return { ...completed, phase: outcome, log: [playerAlive ? "Dungeon cleared." : "Defeat.", ...completed.log] };
   }
 
   return { ...next, turn: next.turn + 1, phase: "ready" };
+}
+
+function calculateActionCost(state: CombatState, action: CombatAction): number {
+  const actor = findUnit(state, action.actorKey);
+  if (!actor) return Math.max(0, action.cost);
+  let cost = action.type === "skill" && action.skillId
+    ? actor.skills.find((skill) => skill.id === action.skillId)?.mana_cost ?? action.cost
+    : action.type === "block" ? actor.stats.blockCost
+      : action.type === "swap" ? actor.stats.swapCost
+        : 0;
+  const effects = state.runtimeEffects.filter((instance) => instance.runtimeKind === "action_cost_modifier");
+  for (const instance of effects) {
+    const p = instance.state.parameters as Record<string, unknown> | undefined;
+    if (!p) continue;
+    const applicable = String(p.applicable_action ?? "all_actions");
+    const costType = String(p.cost_type ?? "other");
+    if (costType === "skill_mana" && action.type !== "skill") continue;
+    if (costType === "block" && action.type !== "block") continue;
+    if (costType === "swap" && action.type !== "swap") continue;
+    if (applicable === "specific_skills" && (!action.skillId || !Array.isArray(p.skill_ids) || !p.skill_ids.includes(action.skillId))) continue;
+    const value = Number(p.modifier_value ?? 0);
+    if (p.modifier_type === "percentage") cost += roundHalfUp(cost * value);
+    else if (p.modifier_type === "set") cost = value;
+    else if (p.modifier_type === "minimum") cost = Math.max(cost, value);
+    else if (p.modifier_type === "maximum") cost = Math.min(cost, value);
+    else cost += value;
+  }
+  return Math.max(0, roundHalfUp(cost));
 }
 
 function chooseEnemyActions(state: CombatState): CombatAction[] {
@@ -718,6 +866,46 @@ function prepareActionTarget(state: CombatState, action: CombatAction): CombatAc
   return { ...action, targetSlotSide: target.side, targetSlotIndex: target.battlefieldSlot };
 }
 
+function resolveIncomingDamage(
+  state: CombatState,
+  attacker: CombatUnit,
+  defender: CombatUnit,
+  attempted: number,
+): { state: CombatState; hpDamage: number; shieldDamage: number; finalDamage: number; blockPrevented: number } {
+  let finalDamage = Math.max(0, attempted);
+  const blockPrevented = defender.blocking && finalDamage > 0 ? Math.max(0, finalDamage - Math.max(1, Math.floor(finalDamage * 0.1))) : 0;
+  if (defender.blocking && finalDamage > 0) finalDamage = Math.max(1, Math.floor(finalDamage * 0.1));
+  for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "damage_modifier")) {
+    const p = instance.state.parameters as Record<string, unknown>;
+    if (p.direction === "dealt" && instance.sourceCritterKey !== attacker.key) continue;
+    if (p.direction === "received" && instance.targetCritterKey !== defender.key) continue;
+    if (p.applicable_source && !["attack", "skill", "any_damage"].includes(String(p.applicable_source))) continue;
+    const value = Number(p.modifier_value ?? 0);
+    finalDamage = p.modifier_type === "percentage" ? finalDamage + roundHalfUp(finalDamage * value) : finalDamage + value;
+    if (p.minimum_final_damage !== undefined) finalDamage = Math.max(finalDamage, Number(p.minimum_final_damage));
+    if (p.maximum_final_damage !== undefined) finalDamage = Math.min(finalDamage, Number(p.maximum_final_damage));
+  }
+  for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "damage_prevention")) {
+    const p = instance.state.parameters as Record<string, unknown>;
+    if (instance.targetCritterKey && instance.targetCritterKey !== defender.key) continue;
+    const requirement = String(p.trigger_requirement ?? "none");
+    if (requirement === "below_half_hp" && defender.hp >= defender.maxHp / 2) continue;
+    if (requirement === "shield_absent" && defender.shield > 0) continue;
+    const prevented = p.prevention_type === "complete" ? finalDamage : p.prevention_type === "percentage" ? roundHalfUp(finalDamage * Number(p.prevented_amount ?? 0)) : Number(p.prevented_amount ?? 0);
+    finalDamage = Math.max(0, finalDamage - Math.min(finalDamage, prevented));
+  }
+  finalDamage = Math.max(0, roundHalfUp(finalDamage));
+  const shieldDamage = defender.shield > 0 && finalDamage > 0 ? Math.min(defender.shield, finalDamage) : 0;
+  // A Shield absorbs a complete incoming hit. Any remaining amount does not
+  // spill into HP until a later hit, matching the authored runtime contract.
+  const hpDamage = shieldDamage > 0 ? 0 : Math.min(defender.hp, finalDamage);
+  let next = shieldDamage > 0
+    ? applyShieldValue(state, defender.key, "subtract", shieldDamage)
+    : updateUnit(state, defender.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - hpDamage) }), `${defender.name} took ${hpDamage} damage.`);
+  next = resolveReactiveEffects(next, "owner_hp_damaged", attacker, defender, finalDamage, hpDamage, shieldDamage);
+  return { state: next, hpDamage, shieldDamage, finalDamage, blockPrevented };
+}
+
 function resolveAction(state: CombatState, action: CombatAction): CombatState {
   const actor = findUnit(state, action.actorKey);
   if (!actor) return state;
@@ -760,14 +948,36 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
 
   if (action.type === "block") {
     const message = `${actor.name} blocks.`;
+    const blockedState = updateUnit(state, action.actorKey, (unit) => ({ ...unit, blocking: true }), message);
+    const blocked = actor.side === "player" ? appendProgressEvent(blockedState, {
+      event_type: "block_completed",
+      source_critter_id: actor.critter.id,
+      target_critter_id: null,
+      skill_id: null,
+      amount: 1,
+      payload: { blocks_performed: 1 },
+    }) : blockedState;
     return appendPresentationEvent(
-      updateUnit(state, action.actorKey, (unit) => ({ ...unit, blocking: true }), message),
+      blocked,
       { kind: "block", message, actorKey: actor.key, targetKeys: [actor.key], hpChanges: [] },
     );
   }
 
   if (action.type === "swap" && action.swapToId) {
-    return swapPlayerUnit(state, action.actorKey, action.swapToId);
+    const swapped = swapPlayerUnit(state, action.actorKey, action.swapToId);
+    const incoming = swapped.playerUnits.find((unit) => unit.userCritter?.id === action.swapToId);
+    return incoming ? appendProgressEvent(swapped, {
+      event_type: "swap_completed",
+      source_critter_id: actor.critter.id,
+      target_critter_id: incoming.critter.id,
+      skill_id: null,
+      amount: 1,
+      payload: {
+        incoming_critter_id: incoming.critter.id,
+        incoming_element_ids: critterElementIds(incoming.critter),
+        unique: true,
+      },
+    }) : swapped;
   }
 
   if (action.type === "skill" && action.skillId) {
@@ -799,18 +1009,14 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
       if (!target || target.hp <= 0) return current;
       if (skill.skill_type === "attack") {
         const resolvedDamage = calculateSkillDamage(current.catalog, actor, target, skill);
-        const finalDamage = target.blocking && resolvedDamage.damage > 0
-          ? Math.max(1, Math.floor(resolvedDamage.damage * 0.1))
-          : resolvedDamage.damage;
-        const actualDamage = Math.min(target.hp, finalDamage);
+        const damage = resolveIncomingDamage(current, actor, target, resolvedDamage.damage);
+        const actualDamage = damage.hpDamage;
         damageDone += actualDamage;
-        const afterHp = Math.max(0, target.hp - finalDamage);
-        const updated = updateUnit(
-          current,
-          target.key,
-          (unit) => ({ ...unit, hp: afterHp }),
-          `${actor.name} used ${skill.name} on ${target.name} for ${finalDamage} damage.${resolvedDamage.suffix ? ` ${resolvedDamage.suffix}` : ""}`,
-        );
+        const afterHp = findUnit(damage.state, target.key)?.hp ?? target.hp;
+        const updated = {
+          ...damage.state,
+          log: [`${actor.name} used ${skill.name} on ${target.name} for ${damage.finalDamage} damage.${resolvedDamage.suffix ? ` ${resolvedDamage.suffix}` : ""}`, ...damage.state.log],
+        };
         const withPresentation = appendPresentationEvent(updated, {
           kind: "damage",
           message: `${target.name} took ${actualDamage} damage.${resolvedDamage.suffix ? ` ${resolvedDamage.suffix}` : ""}`,
@@ -819,7 +1025,18 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
           skillId: skill.id,
           hpChanges: [{ unitKey: target.key, before: target.hp, after: afterHp }],
         });
-        return appendDamageProgressEvents(withPresentation, actor, target, actualDamage, target.hp - actualDamage <= 0);
+        let progress = appendDamageProgressEvents(withPresentation, actor, target, actualDamage, afterHp <= 0);
+        if (damage.blockPrevented > 0 && target.side === "player") {
+          progress = appendProgressEvent(progress, {
+            event_type: "block_completed",
+            source_critter_id: target.critter.id,
+            target_critter_id: actor.critter.id,
+            skill_id: skill.id,
+            amount: damage.blockPrevented,
+            payload: { damage_prevented: damage.blockPrevented, fully_blocked: damage.finalDamage === 0, survived: afterHp > 0 },
+          });
+        }
+        return progress;
       }
       return { ...current, log: [`${actor.name} used ${skill.name} on ${target.name}.`, ...current.log] };
     }, actionState);
@@ -830,6 +1047,15 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
         target_critter_id: null,
         skill_id: skill.id,
         amount: 1,
+        payload: { resolved: true, target_keys: targets.map((target) => target.key) },
+      });
+      next = appendProgressEvent(next, {
+        event_type: "skill_resolved",
+        source_critter_id: actor.critter.id,
+        target_critter_id: targets[0]?.critter.id ?? null,
+        skill_id: skill.id,
+        amount: 1,
+        payload: { source_element_ids: critterElementIds(actor.critter), target_element_ids: targets.flatMap((target) => critterElementIds(target.critter)) },
       });
     }
     next = recomputeCombatStats(next);
@@ -885,6 +1111,16 @@ type RuntimeContext = {
   statusHolderKey?: string;
   damageDone?: number;
   elementIds?: string[];
+  attackerKey?: string;
+  defenderKey?: string;
+  actionId?: string;
+  calculatedValue?: number;
+  damageAttempted?: number;
+  hpDamage?: number;
+  shieldDamage?: number;
+  eventType?: string;
+  parentInstanceId?: string;
+  resolutionDepth?: number;
 };
 
 function effectTargets(state: CombatState, target: string, context: RuntimeContext): CombatUnit[] {
@@ -893,30 +1129,50 @@ function effectTargets(state: CombatState, target: string, context: RuntimeConte
   const friendlies = source?.side === "opponent" ? state.opponentUnits : state.playerUnits;
   const enemies = source?.side === "opponent" ? state.playerUnits : state.opponentUnits;
   const active = (unit: CombatUnit) => unit.active && unit.hp > 0;
+  const ordered = (units: CombatUnit[]) => [...units].sort((a, b) =>
+    (a.side === b.side ? 0 : a.side === "player" ? -1 : 1)
+    || (a.battlefieldSlot ?? 99) - (b.battlefieldSlot ?? 99)
+    || a.key.localeCompare(b.key),
+  );
+  const contextTarget = (key?: string) => key ? findUnit(state, key) : undefined;
   switch (target) {
     case "self": {
       if (!source) throw new Error(`Missing source Critter for ${context.sourceOwnerType} effect from ${context.sourceOwnerId}.`);
       return active(source) ? [source] : [];
     }
-    case "all_enemies": return enemies.filter(active);
-    case "all_allies": return friendlies.filter((unit) => active(unit) && unit.key !== source?.key);
-    case "all_friendlies": return friendlies.filter(active);
+    case "all_enemies": return ordered(enemies.filter(active));
+    case "all_allies": return ordered(friendlies.filter((unit) => active(unit) && unit.key !== source?.key));
+    case "all_friendlies": return ordered(friendlies.filter(active));
+    case "all_squad_friendlies": return ordered(friendlies.filter((unit) => unit.hp > 0));
     case "target_enemies": {
       const selected = new Set(context.skillTargetKeys ?? []);
-      return enemies.filter((unit) => active(unit) && selected.has(unit.key));
+      return ordered(enemies.filter((unit) => active(unit) && selected.has(unit.key)));
     }
     case "all_element_friendlies":
     case "all_element_enemies": {
       const elements = new Set(context.elementIds ?? []);
       const candidates = target === "all_element_friendlies" ? friendlies : enemies;
-      return candidates.filter((unit) => active(unit) && elements.has(unit.critter.element_1_id));
+      return ordered(candidates.filter((unit) => active(unit) && critterElementIds(unit.critter).some((id) => elements.has(id))));
     }
     case "equipped_critter": {
       if (!source) throw new Error(`Missing equipped Critter for relic effect from ${context.sourceOwnerId}.`);
       return active(source) ? [source] : [];
     }
-    case "equipped_allies": return friendlies.filter((unit) => active(unit) && unit.key !== source?.key);
-    case "equipped_friendlies": return friendlies.filter(active);
+    case "equipped_allies": return ordered(friendlies.filter((unit) => active(unit) && unit.key !== source?.key));
+    case "equipped_friendlies": return ordered(friendlies.filter(active));
+    case "selected_ally": {
+      const selected = contextTarget(context.skillTargetKeys?.find((key) => findUnit(state, key)?.side === source?.side));
+      return selected && active(selected) ? [selected] : [];
+    }
+    case "selected_enemy": {
+      const selected = contextTarget(context.skillTargetKeys?.find((key) => findUnit(state, key)?.side !== source?.side));
+      return selected && active(selected) ? [selected] : [];
+    }
+    case "active_ally": return ordered(friendlies.filter(active)).slice(0, 1);
+    case "active_enemy": return ordered(enemies.filter(active)).slice(0, 1);
+    case "attacker": return contextTarget(context.attackerKey) && active(contextTarget(context.attackerKey)!) ? [contextTarget(context.attackerKey)!] : [];
+    case "defender": return contextTarget(context.defenderKey) && active(contextTarget(context.defenderKey)!) ? [contextTarget(context.defenderKey)!] : [];
+    case "effect_owner": return source && active(source) ? [source] : [];
     case "status_holder": {
       if (!holder) throw new Error(`Missing status holder for status effect from ${context.sourceOwnerId}.`);
       return active(holder) ? [holder] : [];
@@ -926,6 +1182,66 @@ function effectTargets(state: CombatState, target: string, context: RuntimeConte
     case "status_holder_enemies": return holder && active(holder) ? enemies.filter(active) : [];
     default: throw new Error(`Unsupported effect target: ${target}`);
   }
+}
+
+function numericEffectValue(effect: ResolvedEffectRef, target: CombatUnit, context: RuntimeContext): number {
+  const p = effect.parameters;
+  const value = Number(p.value ?? p.amount ?? p.shield_value ?? context.calculatedValue ?? 0);
+  const type = String(p.value_type ?? p.value_mode ?? "flat");
+  if (type === "percent_max_hp" || type === "percentage") return target.maxHp * value;
+  if (type === "percent_current_hp") return target.hp * value;
+  if (type === "percent_missing_hp") return (target.maxHp - target.hp) * value;
+  if (type === "percent_damage_dealt") return Number(context.damageAttempted ?? context.hpDamage ?? 0) * value;
+  return value;
+}
+
+function compareValues(value: number, operator: string, target: number): boolean {
+  if (operator === "equal") return value === target;
+  if (operator === "not_equal") return value !== target;
+  if (operator === "above" || operator === "greater_than") return value > target;
+  if (operator === "below" || operator === "less_than") return value < target;
+  if (operator === "at_least" || operator === "greater_than_or_equal") return value >= target;
+  if (operator === "at_most" || operator === "less_than_or_equal") return value <= target;
+  return false;
+}
+
+function applyShieldValue(state: CombatState, targetKey: string, operation: string, value: number, maximum?: number): CombatState {
+  const target = findUnit(state, targetKey);
+  if (!target) return state;
+  const before = target.shield;
+  const nextShield = operation === "destroy"
+    ? 0
+    : operation === "set" || operation === "grant"
+      ? value
+      : operation === "subtract"
+        ? before - value
+        : before + value;
+  const capped = Math.max(0, Math.min(maximum ?? Math.max(before, nextShield), nextShield));
+  const message = capped > before ? `${target.name} gained ${capped - before} Shield.` : capped < before ? `${target.name} lost ${before - capped} Shield.` : `${target.name}'s Shield remained unchanged.`;
+  return updateUnit({ ...state, log: [message, ...state.log] }, targetKey, (unit) => ({ ...unit, shield: capped, maxShield: Math.max(unit.maxShield, maximum ?? capped) }), message);
+}
+
+function applyDirectHealthValue(state: CombatState, effect: ResolvedEffectRef, target: CombatUnit, context: RuntimeContext): { state: CombatState; applied: number; excess: number } {
+  const p = effect.parameters;
+  const amount = Math.max(0, roundHalfUp(numericEffectValue(effect, target, context)));
+  const operation = String(p.operation);
+  if (operation === "heal") {
+    const applied = Math.min(amount, target.maxHp - target.hp);
+    const excess = Math.max(0, amount - applied);
+    const next = updateUnit(state, target.key, (unit) => ({ ...unit, hp: unit.hp + applied }), `${target.name} recovered ${applied} HP.`);
+    return { state: next, applied, excess };
+  }
+  if (operation === "set_hp") {
+    const after = Math.max(Boolean(p.can_defeat_target) ? 0 : 1, Math.min(target.maxHp, amount));
+    return { state: updateUnit(state, target.key, (unit) => ({ ...unit, hp: after }), `${target.name}'s HP was set to ${after}.`), applied: Math.abs(after - target.hp), excess: 0 };
+  }
+  const shieldAbsorb = p.affected_by_shield === true ? Math.min(target.shield, amount) : 0;
+  const remaining = amount - shieldAbsorb;
+  const maximumLoss = Boolean(p.can_defeat_target) ? target.hp : Math.max(0, target.hp - 1);
+  const applied = Math.min(maximumLoss, remaining);
+  let next = shieldAbsorb > 0 ? applyShieldValue(state, target.key, "subtract", shieldAbsorb) : state;
+  next = updateUnit(next, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - applied) }), `${target.name} lost ${applied} HP.`);
+  return { state: next, applied, excess: 0 };
 }
 
 function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: RuntimeContext): CombatState {
@@ -938,9 +1254,94 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   });
   if (!targets.length) return state;
   const key = `${effect.runtimeKind}@${effect.runtimeVersion}`;
-  const chance = rollChance(state, Number(effect.parameters.chance));
+  const chance = rollChance(state, effect.parameters.chance === undefined ? 1 : Number(effect.parameters.chance));
   let next = chance.state;
   if (!chance.activated) return next;
+  if (effect.execution === "root" && context.parentInstanceId) return next;
+  if ((context.resolutionDepth ?? 0) > 16) return next;
+  if (effect.runtimeKind === "shield_modifier") {
+    const operation = String(effect.parameters.operation ?? "grant");
+    const value = operation === "destroy" ? 0 : Math.max(0, roundHalfUp(Number(effect.parameters.shield_value ?? 0)));
+    return targets.reduce((current, target) => applyShieldValue(
+      current,
+      target.key,
+      operation,
+      value,
+      Number.isFinite(Number(effect.parameters.maximum_shield)) ? Number(effect.parameters.maximum_shield) : undefined,
+    ), next);
+  }
+  if (effect.runtimeKind === "direct_health_modifier") {
+    return targets.reduce((current, target) => {
+      const result = applyDirectHealthValue(current, effect, findUnit(current, target.key)!, context);
+      if (result.excess > 0 && effect.parameters.overhealing_behavior === "convert") {
+        return resolveChildEffects(result.state, effect, { ...context, calculatedValue: result.excess }, effect.parameters.overheal_effect_ids);
+      }
+      return result.state;
+    }, next);
+  }
+  if (effect.runtimeKind === "effect_scaling") {
+    const sourceTarget = targets[0];
+    const scalingSource = String(effect.parameters.scaling_source);
+    const sourceValue = scalingSource === "missing_hp" && sourceTarget ? sourceTarget.maxHp - sourceTarget.hp
+      : scalingSource === "current_hp" && sourceTarget ? sourceTarget.hp
+        : scalingSource === "maximum_hp" && sourceTarget ? sourceTarget.maxHp
+          : Number(context.damageAttempted ?? context.hpDamage ?? context.calculatedValue ?? 0);
+    const scaled = Math.max(Number(effect.parameters.minimum_value ?? -Infinity), Math.min(Number(effect.parameters.maximum_value ?? Infinity), Number(effect.parameters.base_value ?? 0) + sourceValue * Number(effect.parameters.scaling_ratio ?? 0)));
+    return resolveChildEffects(next, effect, { ...context, calculatedValue: roundHalfUp(scaled) }, effect.parameters.child_effect_ids);
+  }
+  if (effect.runtimeKind === "effect_duration") {
+    const duration = Number(effect.parameters.duration_value ?? effect.parameters.turns ?? 1);
+    return resolveChildEffects(addRuntimeEffect(next, effect, context, {}, duration), effect, context, effect.parameters.child_effect_ids);
+  }
+  if (effect.runtimeKind === "conditional_effect") {
+    const target = targets[0];
+    if (!target) return next;
+    const condition = String(effect.parameters.condition);
+    const actual = condition === "hp_percent" ? target.hp / Math.max(1, target.maxHp) * 100
+      : condition === "shield_present" ? (target.shield > 0 ? 1 : 0)
+        : condition === "shield_value" ? target.shield
+          : condition === "active_state" ? (target.active ? 1 : 0)
+            : condition === "element" ? (critterElementIds(target.critter).includes(String(effect.parameters.condition_value)) ? 1 : 0)
+              : 0;
+    const expected = Number(effect.parameters.condition_value ?? 1);
+    return resolveChildEffects(next, effect, { ...context }, compareValues(actual, String(effect.parameters.comparison ?? "equal"), expected) ? effect.parameters.true_effect_ids : effect.parameters.false_effect_ids);
+  }
+  if (effect.runtimeKind === "delayed_effect" || effect.runtimeKind === "repeating_effect") {
+    const delay = Number(effect.parameters.delay_value ?? effect.parameters.initial_delay ?? effect.parameters.repeat_interval ?? 1);
+    return addRuntimeEffect(next, effect, { ...context, skillTargetKeys: targets.map((target) => target.key) }, { childEffectIds: effect.parameters.child_effect_ids, repeat: effect.parameters.repeat === true }, delay);
+  }
+  if (effect.runtimeKind === "resource_gain_loss") {
+    const value = Math.max(0, roundHalfUp(Number(effect.parameters.value ?? 0)));
+    const playerResource = context.sourceCritterKey?.startsWith("p") || effect.parameters.target_squad === "user";
+    const updateMana = (current: number) => {
+      const operation = String(effect.parameters.operation);
+      if (["lose", "drain"].includes(operation)) return Math.max(0, current - value);
+      if (operation === "set") return value;
+      return current + value;
+    };
+    return { ...next, playerMana: playerResource ? updateMana(next.playerMana) : next.playerMana, opponentMana: playerResource ? next.opponentMana : updateMana(next.opponentMana) };
+  }
+  if (effect.runtimeKind === "resource_conversion" || effect.runtimeKind === "effect_transfer") {
+    const sourceValue = Number(context.calculatedValue ?? context.hpDamage ?? context.damageAttempted ?? 0);
+    const calculatedValue = effect.runtimeKind === "resource_conversion"
+      ? Math.min(Number(effect.parameters.maximum_conversion ?? Infinity), sourceValue * Number(effect.parameters.conversion_ratio ?? 1))
+      : sourceValue * Number(effect.parameters.transfer_percentage ?? 1);
+    return resolveChildEffects(next, effect, { ...context, calculatedValue: roundHalfUp(calculatedValue) }, effect.parameters.output_effect_ids ?? effect.parameters.child_effect_ids);
+  }
+  if (["effect_immunity", "damage_modifier", "damage_prevention", "action_cost_modifier", "reactive_trigger", "retaliation", "effect_amplification"].includes(effect.runtimeKind)) {
+    return addRuntimeEffect(next, effect, context, { parameters: structuredClone(effect.parameters) });
+  }
+  if (effect.runtimeKind === "effect_removal") {
+    const category = String(effect.parameters.removal_category ?? "all_removable");
+    const removable = next.runtimeEffects.filter((instance) => instance.sourceEffectId !== effect.id && (category === "all_removable" || category === instance.classification || instance.runtimeKind.includes(category.replace("_modifiers", "_modifier"))));
+    const remove = new Set(removable.slice(0, Number(effect.parameters.maximum_effects_removed ?? 1)).map((instance) => instance.instanceId));
+    return { ...next, runtimeEffects: next.runtimeEffects.filter((instance) => !remove.has(instance.instanceId)) };
+  }
+  if (effect.runtimeKind === "effect_copy") {
+    const copies = next.runtimeEffects.filter((instance) => instance.targetCritterKey && targets.some((target) => target.key === instance.targetCritterKey)).slice(0, Number(effect.parameters.maximum_effects_copied ?? 1));
+    const cloned = copies.map((instance, index) => ({ ...instance, instanceId: `runtime:${next.effectSequence + index + 1}:copy:${instance.sourceEffectId}`, targetCritterKey: targets[0]?.key, state: { ...instance.state, copiedFrom: instance.instanceId } }));
+    return { ...next, runtimeEffects: [...next.runtimeEffects, ...cloned], effectSequence: next.effectSequence + cloned.length };
+  }
   if (key === "restore_hp@1") {
     return targets.reduce((current, original) => {
       const target = findUnit(current, original.key)!;
@@ -979,7 +1380,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     }
     return next;
   }
-  if (key === "stat_modifier@1") {
+  if (key === "stat_modifier@1" || key === "stat_modifier@2") {
     const modifiers = targets.map((target, index): CombatModifier => ({
       instanceId: `${context.sourceOwnerType}:${context.sourceOwnerId}:${effect.id}:${target.key}:${state.turn}:${state.modifiers.length + index}`,
       holderKey: target.key,
@@ -1002,6 +1403,64 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     }), modified);
   }
   throw new Error(`Unsupported effect runtime: ${key}`);
+}
+
+function resolveReactiveEffects(
+  state: CombatState,
+  eventType: string,
+  attacker: CombatUnit,
+  defender: CombatUnit,
+  attempted: number,
+  hpDamage: number,
+  shieldDamage: number,
+): CombatState {
+  let next = state;
+  for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "reactive_trigger" || candidate.runtimeKind === "retaliation")) {
+    const parent = effectForReference(next, instance.sourceOwnerType, instance.sourceOwnerId, instance.sourceEffectId);
+    if (!parent) continue;
+    const p = parent.parameters;
+    const trigger = instance.runtimeKind === "retaliation" ? String(p.trigger_condition ?? "hit") : String(p.trigger_event ?? "owner_hp_damaged");
+    const watched = effectTargets(next, String(p.target ?? ""), {
+      sourceOwnerType: instance.sourceOwnerType,
+      sourceOwnerId: instance.sourceOwnerId,
+      sourceCritterKey: instance.sourceCritterKey,
+      skillTargetKeys: [defender.key],
+      attackerKey: attacker.key,
+      defenderKey: defender.key,
+    });
+    if (!watched.some((unit) => unit.key === defender.key)) continue;
+    if (p.activation_limit !== undefined && instance.activationCount >= Number(p.activation_limit)) continue;
+    const matches = instance.runtimeKind === "retaliation"
+      ? ["attacked", "hit", "hp_damaged"].includes(trigger) && defender.hp > 0
+      : trigger === eventType || (trigger === "owner_shield_breaks" && defender.shield <= 0 && shieldDamage > 0);
+    if (!matches) continue;
+    if (Number(p.minimum_damage ?? 0) > Math.max(hpDamage, shieldDamage)) continue;
+    const chance = rollChance(next, p.activation_chance === undefined ? 1 : Number(p.activation_chance));
+    next = chance.state;
+    if (!chance.activated) continue;
+    next = {
+      ...next,
+      runtimeEffects: next.runtimeEffects.map((candidate) => candidate.instanceId === instance.instanceId
+        ? { ...candidate, activationCount: candidate.activationCount + 1 }
+        : candidate),
+    };
+    const targetKeys = instance.runtimeKind === "retaliation" ? [attacker.key] : [defender.key];
+    const childIds = p.child_effect_ids;
+    next = resolveChildEffects(next, parent, {
+      sourceOwnerType: instance.sourceOwnerType,
+      sourceOwnerId: instance.sourceOwnerId,
+      sourceCritterKey: instance.sourceCritterKey,
+      skillTargetKeys: targetKeys,
+      attackerKey: attacker.key,
+      defenderKey: defender.key,
+      damageAttempted: attempted,
+      hpDamage,
+      shieldDamage,
+      eventType,
+      resolutionDepth: 1,
+    }, childIds);
+  }
+  return next;
 }
 
 function rollChance(state: CombatState, chance: number): { state: CombatState; activated: boolean } {
@@ -1042,8 +1501,16 @@ function applyStatus(
   }
   const holder = findUnit(state, holderKey);
   const message = `${holder?.name ?? holderKey} received ${status.name}.`;
+  let next = recomputeCombatStats({ ...state, statuses, log: [message, ...state.log] });
+  for (const effect of state.runEffects.status[statusId] ?? []) {
+    if (effect.execution === "child") continue;
+    const context: RuntimeContext = { sourceOwnerType: "status", sourceOwnerId: statusId, sourceCritterKey: holderKey, statusHolderKey: holderKey, skillTargetKeys: [holderKey] };
+    if (["damage_over_time", "skip_action_chance"].includes(effect.runtimeKind)) continue;
+    if (["reactive_trigger", "retaliation", "damage_modifier", "damage_prevention", "action_cost_modifier", "effect_immunity", "effect_amplification", "delayed_effect", "repeating_effect"].includes(effect.runtimeKind)) next = addRuntimeEffect(next, effect, context);
+    else next = resolveEffect(next, effect, context);
+  }
   return appendPresentationEvent(
-    recomputeCombatStats({ ...state, statuses, log: [message, ...state.log] }),
+    next,
     {
       kind: "status",
       message,
@@ -1093,6 +1560,28 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
         if (source) next = appendDamageProgressEvents(next, source, target, actualDamage, target.hp - actualDamage <= 0);
       }
     }
+  }
+  const scheduled = [...next.runtimeEffects];
+  for (const instance of scheduled) {
+    if (instance.remaining === undefined || instance.remaining > 0) continue;
+    const parent = effectForReference(next, instance.sourceOwnerType, instance.sourceOwnerId, instance.sourceEffectId);
+    if (!parent) continue;
+    const context: RuntimeContext = {
+      sourceOwnerType: instance.sourceOwnerType,
+      sourceOwnerId: instance.sourceOwnerId,
+      sourceCritterKey: instance.sourceCritterKey,
+      skillTargetKeys: instance.targetCritterKey ? [instance.targetCritterKey] : undefined,
+      parentInstanceId: instance.instanceId,
+    };
+    next = resolveChildEffects(next, parent, context, parent.parameters.child_effect_ids);
+    if (parent.runtimeKind === "repeating_effect" || parent.parameters.repeat === true) {
+      next = { ...next, runtimeEffects: next.runtimeEffects.map((candidate) => candidate.instanceId === instance.instanceId ? { ...candidate, remaining: Number(parent.parameters.repeat_interval ?? 1), activationCount: candidate.activationCount + 1 } : candidate) };
+    } else {
+      next = { ...next, runtimeEffects: next.runtimeEffects.filter((candidate) => candidate.instanceId !== instance.instanceId) };
+    }
+  }
+  if (timing === "end_of_turn") {
+    next = { ...next, runtimeEffects: next.runtimeEffects.map((instance) => instance.remaining === undefined ? instance : { ...instance, remaining: instance.remaining - 1 }).filter((instance) => instance.remaining === undefined || instance.remaining > 0) };
   }
   if (timing === "end_of_turn") {
     next = {
@@ -1295,6 +1784,15 @@ function appendDamageProgressEvents(
       target_critter_id: target.critter.id,
       skill_id: null,
       amount: actualDamage,
+      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
+    });
+    next = appendProgressEvent(next, {
+      event_type: "hp_damage_dealt",
+      source_critter_id: source.critter.id,
+      target_critter_id: target.critter.id,
+      skill_id: null,
+      amount: actualDamage,
+      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
     });
     if (knockedOut) {
       next = appendProgressEvent(next, {
@@ -1303,6 +1801,15 @@ function appendDamageProgressEvents(
         target_critter_id: target.critter.id,
         skill_id: null,
         amount: 1,
+        payload: { target_element_ids: critterElementIds(target.critter) },
+      });
+      next = appendProgressEvent(next, {
+        event_type: "critter_knocked_out",
+        source_critter_id: source.critter.id,
+        target_critter_id: target.critter.id,
+        skill_id: null,
+        amount: 1,
+        payload: { target_element_ids: critterElementIds(target.critter) },
       });
     }
   } else if (source.side === "opponent" && target.side === "player") {
@@ -1312,6 +1819,15 @@ function appendDamageProgressEvents(
       target_critter_id: target.critter.id,
       skill_id: null,
       amount: actualDamage,
+      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
+    });
+    next = appendProgressEvent(next, {
+      event_type: "hp_damage_taken",
+      source_critter_id: source.critter.id,
+      target_critter_id: target.critter.id,
+      skill_id: null,
+      amount: actualDamage,
+      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
     });
   }
   return next;

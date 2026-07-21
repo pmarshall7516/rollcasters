@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Check,
   ChevronLeft,
@@ -676,6 +676,29 @@ export function App() {
                 resolved.run,
                 dungeonBattleSubmission(resolved),
               );
+              if (result.run.status === "won") {
+                const activatedRelicIds = [...new Set(resolved.battle.runtimeEffects
+                  .filter((effect) => effect.sourceOwnerType === "relic" && effect.activationCount > 0)
+                  .map((effect) => effect.sourceOwnerId))];
+                await submitCollectibleCombatEvents(resolved.run.id, resolved.battle.turn, [{
+                  event_key: `dungeon:${resolved.run.id}:completed`,
+                  event_type: "dungeon_completed",
+                  source_critter_id: null,
+                  target_critter_id: null,
+                  skill_id: null,
+                  amount: 1,
+                  payload: {
+                    won: true,
+                    dungeon_id: resolved.run.dungeonId,
+                    dungeon_order: resolved.dungeon.sort_order,
+                    dungeon_clear: true,
+                    squad: resolved.battle.playerUnits.map((unit) => ({ critter_id: unit.critter.id, element_ids: critterElementIds(unit.critter), survived: unit.hp > 0 })),
+                    survivors_complete: resolved.battle.playerUnits.filter((unit) => unit.active).every((unit) => unit.hp > 0),
+                    activated_relic_ids: activatedRelicIds,
+                    required_relics_activated: activatedRelicIds.length > 0,
+                  },
+                }]);
+              }
               const loaded = await loadAppData();
               setData(loaded);
               setCombat(applyDungeonBattleResult(resolved, result, loaded.catalog, loaded.player!));
@@ -1448,18 +1471,19 @@ function targetingDescription(skill: Skill): string {
 }
 
 function attachmentText(effects: ResolvedEffectRef[]): string {
-  return effects.map((effect) => `${effect.name}: ${effect.description}`).join(" ");
+  return effects.filter((effect) => effect.execution !== "child").map((effect) => `${effect.name}: ${effect.description}`).join(" ");
 }
 
 function attachmentRows(effects: ResolvedEffectRef[]): React.ReactNode {
-  return effects.map((effect) => <span className="tooltip-description" key={effect.id}><strong>{effect.name}:</strong> {effect.description}</span>);
+  return effects.filter((effect) => effect.execution !== "child").map((effect) => <span className={`tooltip-description effect-classification-${effect.classification ?? "mixed"}`} key={effect.id}><strong>{effect.name}:</strong> {effect.description}</span>);
 }
 
 function EffectList({ effects, className = "" }: { effects: ResolvedEffectRef[]; className?: string }) {
+  const visibleEffects = effects.filter((effect) => effect.execution !== "child");
   return (
     <span className={`effect-list ${className}`.trim()}>
-      {effects.length
-        ? effects.map((effect) => <span className="effect-list-row" key={effect.id}><strong>{effect.name}:</strong> {effect.description}</span>)
+      {visibleEffects.length
+        ? visibleEffects.map((effect) => <span className={`effect-list-row effect-classification-${effect.classification ?? "mixed"}`} key={effect.id}><strong>{effect.name}:</strong> {effect.description}</span>)
         : <span className="effect-list-row">No additional effect.</span>}
     </span>
   );
@@ -2845,7 +2869,7 @@ function CombatScreen({
 }: {
   data: AppData;
   combat: DungeonRunState;
-  setCombat: (state: DungeonRunState) => void;
+  setCombat: Dispatch<SetStateAction<DungeonRunState | null>>;
   onTurnResolved: (state: DungeonRunState) => Promise<void>;
   onBattleResult: (state: DungeonRunState) => Promise<void>;
   onBack: () => void;
@@ -2933,7 +2957,7 @@ function CombatScreen({
         return;
       }
       const revealTimer = window.setTimeout(() => {
-        setCombat(revealDungeonSwapEvent(combat));
+        setCombat((current) => current ? revealDungeonSwapEvent(current) : current);
       }, 720);
       const settleTimer = window.setTimeout(() => setEventSettled(true), 1_180);
       return () => {
@@ -3011,8 +3035,9 @@ function CombatScreen({
 
   async function submitActions() {
     if (!actionsReady) return;
-    const resolved = submitDungeonActions(combat, activePlayer.map((unit) => actions[unit.key]));
-    setCombat(resolved);
+    const selectedActions = activePlayer.map((unit) => actions[unit.key]);
+    const resolved = submitDungeonActions(combat, selectedActions);
+    setCombat((current) => current ? submitDungeonActions(current, selectedActions) : current);
     setSubmittingProgress(true);
     try { await onTurnResolved(resolved); } finally { setSubmittingProgress(false); }
   }
@@ -3144,7 +3169,7 @@ function CombatScreen({
           rolling={!diceSettled}
           onRoll={() => {
             setDiceSettled(false);
-            setCombat(rollDungeonDice(combat));
+            setCombat((current) => current ? rollDungeonDice(current) : current);
           }}
           canSubmit={actionsReady}
           submitting={submittingProgress}
@@ -3159,7 +3184,9 @@ function CombatScreen({
             || (combat.phase === "roll_result" && !diceSettled)
             || (combat.phase === "event_playback" && (submittingProgress || !eventSettled))
           }
-          onClick={() => setCombat(combat.phase === "event_playback" ? advanceDungeonEvent(combat) : continueAfterRoll(combat))}
+          onClick={() => setCombat((current) => current
+            ? current.phase === "event_playback" ? advanceDungeonEvent(current) : continueAfterRoll(current)
+            : current)}
         >
           <span>
             {combat.phase === "lead_selection" && `Choose ${combat.requiredLeadCount} healthy lead Critter${combat.requiredLeadCount === 1 ? "" : "s"} before revealing the enemy lineup.`}
@@ -3190,15 +3217,15 @@ function CombatScreen({
           title={`Encounter ${combat.run.battleIndex - 1} / ${combat.run.battleCount} cleared`}
           rewards={combat.lastBattleRewards}
           actionLabel="Next Encounter"
-          onAction={() => setCombat(continueAfterEncounterRewards(combat))}
+          onAction={() => setCombat((current) => current ? continueAfterEncounterRewards(current) : current)}
         />
       )}
       {(combat.phase === "lead_selection" || combat.phase === "forced_replacements") && (
         <CombatLeadDialog
           data={data}
           combat={combat}
-          onToggle={(id) => setCombat(toggleDungeonLead(combat, id))}
-          onConfirm={() => setCombat(confirmDungeonLeads(combat))}
+          onToggle={(id) => setCombat((current) => current ? toggleDungeonLead(current, id) : current)}
+          onConfirm={() => setCombat((current) => current ? confirmDungeonLeads(current) : current)}
         />
       )}
     </section>
@@ -3372,7 +3399,8 @@ function BattleUnit({
             <span className="mana-roll-stat"><AssetIcon path={manaAssetPath} alt="Mana Roll" fallback={<Gem />} /> {unit.stats.diceMin}–{unit.stats.diceMax}</span>
           </span>
           <div className={`hp-bar ${healthTone}`} role="progressbar" aria-label={`${unit.name} health`} aria-valuemin={0} aria-valuemax={unit.maxHp} aria-valuenow={unit.hp} aria-valuetext={`${unit.hp} of ${unit.maxHp} HP`}><span style={{ width: `${pct}%` }} /></div>
-          <p>{unit.hp} / {unit.maxHp} HP {unit.blocking ? "· Blocking" : ""}</p>
+          {unit.shield > 0 && <div className="shield-bar" role="progressbar" aria-label={`${unit.name} shield`} aria-valuemin={0} aria-valuemax={Math.max(unit.maxShield, unit.shield)} aria-valuenow={unit.shield} aria-valuetext={`${unit.shield} shield`}><span style={{ width: `${Math.min(100, Math.round((unit.shield / Math.max(unit.maxShield, unit.shield)) * 100))}%` }} /></div>}
+          <p>{unit.hp} / {unit.maxHp} HP {unit.shield > 0 ? `· ${unit.shield} Shield` : ""} {unit.blocking ? "· Blocking" : ""}</p>
         </div>
       </div>
       <div className="combat-action-space">

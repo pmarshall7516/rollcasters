@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { createDbClient, root } from "./db-utils.mjs";
+import { createDbClient } from "./db-utils.mjs";
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -20,8 +18,6 @@ async function expectDbError(client, savepoint, expectedCode, action) {
   check(matched, `Expected database error ${expectedCode}.`);
 }
 
-const migrationPath = path.join(root, "supabase", "migrations", "012_gate_challenge_runtime.sql");
-const migrationSql = fs.readFileSync(migrationPath, "utf8");
 const client = createDbClient();
 let began = false;
 
@@ -29,7 +25,6 @@ try {
   await client.connect();
   await client.query("begin");
   began = true;
-  await client.query(migrationSql);
 
   const fixture = await client.query(`
     select
@@ -95,6 +90,7 @@ try {
   const trackedId = crypto.randomUUID();
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
   await client.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
+  await client.query("delete from public.user_collectible_shards where user_id=$1 and collectible_type=$2 and collectible_id=$3", [userId, targetType, targetId]);
   await client.query(`
     delete from public.collectible_unlock_requirements
     where collectible_type=$1 and collectible_id=$2
@@ -106,19 +102,19 @@ try {
   `, [targetType, targetId]);
   await client.query(`
     insert into public.collectible_unlock_challenges(
-      id,collectible_type,collectible_id,challenge_type,required_amount,sort_order,gate_order
-    ) values($1,$2,$3,'shop_shards',1,2,1)
-  `, [gateOneId, targetType, targetId]);
+      id,collectible_type,collectible_id,challenge_type,parameters,required_amount,sort_order,gate_order
+    ) values($1,$2,$3,'shop_shards',$4::jsonb,1,2,1)
+  `, [gateOneId, targetType, targetId, JSON.stringify({ required_amount: 1 })]);
   await client.query(`
     insert into public.collectible_unlock_challenges(
-      id,collectible_type,collectible_id,challenge_type,target_category,target_id,required_amount,sort_order,gate_order
-    ) values($1,$2,$3,'own_collectible','critter',$4,1,0,2)
-  `, [gateTwoId, targetType, targetId, ownedCritterId]);
+      id,collectible_type,collectible_id,challenge_type,parameters,target_category,target_id,required_amount,sort_order,gate_order
+    ) values($1,$2,$3,'own_collectible',$4::jsonb,'critter',$5,1,0,2)
+  `, [gateTwoId, targetType, targetId, JSON.stringify({ collectible_category: "critter", collectible_ids: [ownedCritterId], required_amount: 1, require_unique_collectibles: true, retroactive: true }), ownedCritterId]);
   await client.query(`
     insert into public.collectible_unlock_challenges(
-      id,collectible_type,collectible_id,challenge_type,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
-    ) values($1,$2,$3,'deal_damage','species',true,'{}',5,1,null)
-  `, [trackedId, targetType, targetId]);
+      id,collectible_type,collectible_id,challenge_type,parameters,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
+    ) values($1,$2,$3,'deal_damage',$4::jsonb,'species',true,'{}',5,1,null)
+  `, [trackedId, targetType, targetId, JSON.stringify({ target_mode: "species", any_target: true, target_ids: [], required_amount: 5 })]);
   await client.query("select public.assert_collectible_gate_integrity($1,$2)", [targetType, targetId]);
 
   await client.query(`

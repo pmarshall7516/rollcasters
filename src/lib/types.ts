@@ -8,8 +8,32 @@ export type CollectibleChallengeType =
   | "deal_damage"
   | "take_damage"
   | "use_skill"
+  | "collection_diversity"
+  | "squad_composition"
+  | "dungeon_clear"
+  | "resource_spending"
+  | "swap_action"
+  | "block_action"
+  | "dice_roll"
   | "shop_shards"
   | "shop_relic";
+
+export type ChallengeCategory = "global" | "tracked" | "shop";
+export type ChallengeProgressMode = "derived" | "tracked_event" | "shop";
+
+export type UnlockChallengeTemplate = {
+  id: CollectibleChallengeType;
+  name: string;
+  description: string;
+  challenge_category: ChallengeCategory;
+  progress_mode: ChallengeProgressMode;
+  runtime_version: number;
+  allowed_collectible_types: CollectibleType[];
+  parameter_schema?: Record<string, unknown>;
+  ui_schema?: Record<string, unknown>;
+  version?: number;
+  sort_order: number;
+};
 
 export type CurrencyDef = {
   id: string;
@@ -44,6 +68,8 @@ export type CollectibleUnlockChallenge = {
   required_level: number | null;
   sort_order: number;
   gate_order?: number | null;
+  parameters?: Record<string, unknown>;
+  display_text?: string | null;
 };
 
 export type ShopEntry = {
@@ -130,11 +156,26 @@ export type PromoCodeRedemption = {
 
 export type CombatProgressEvent = {
   event_key: string;
-  event_type: "knock_out_critters" | "deal_damage" | "take_damage" | "use_skill";
+  event_type:
+    | "knock_out_critters"
+    | "deal_damage"
+    | "take_damage"
+    | "use_skill"
+    | "critter_knocked_out"
+    | "hp_damage_dealt"
+    | "hp_damage_taken"
+    | "skill_resolved"
+    | "battle_completed"
+    | "dungeon_completed"
+    | "swap_completed"
+    | "block_completed"
+    | "dice_resolved"
+    | "resource_spent";
   source_critter_id: string | null;
   target_critter_id: string | null;
   skill_id: string | null;
   amount: number;
+  payload?: Record<string, unknown>;
 };
 
 export type ElementDef = {
@@ -175,7 +216,15 @@ export type EffectTarget =
   | "status_holder"
   | "status_holder_allies"
   | "status_holder_friendlies"
-  | "status_holder_enemies";
+  | "status_holder_enemies"
+  | "selected_ally"
+  | "selected_enemy"
+  | "all_squad_friendlies"
+  | "active_ally"
+  | "active_enemy"
+  | "attacker"
+  | "defender"
+  | "effect_owner";
 
 export type CombatEffectRow = {
   owner_type: EffectOwnerType;
@@ -188,6 +237,8 @@ export type CombatEffectRow = {
   runtime_kind: string;
   runtime_version: number;
   parameters: Record<string, unknown>;
+  classification?: "positive" | "negative" | "mixed";
+  execution?: "root" | "child";
 };
 
 export type ResolvedEffectRef = {
@@ -201,6 +252,8 @@ export type ResolvedEffectRef = {
   runtimeVersion: number;
   parameters: Record<string, unknown>;
   sortOrder: number;
+  classification?: "positive" | "negative" | "mixed";
+  execution?: "root" | "child";
 };
 
 export type Status = {
@@ -556,6 +609,7 @@ export type Catalog = {
   currencies: CurrencyDef[];
   collectibleUnlockRequirements: CollectibleUnlockRequirement[];
   collectibleUnlockChallenges: CollectibleUnlockChallenge[];
+  unlockChallengeTemplates?: UnlockChallengeTemplate[];
   shopEntries: ShopEntry[];
   elements: ElementDef[];
   elementEffectiveness: ElementEffectiveness[];

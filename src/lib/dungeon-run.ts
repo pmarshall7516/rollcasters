@@ -532,12 +532,20 @@ export function restoreDungeonRunState(
       ...persisted.battle,
       catalog,
       presentationEvents: persisted.battle.presentationEvents ?? [],
+      runtimeEffects: persisted.battle.runtimeEffects ?? [],
+      effectSequence: persisted.battle.effectSequence ?? 0,
+      playerUnits: persisted.battle.playerUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0 })),
+      opponentUnits: persisted.battle.opponentUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0 })),
     } as CombatState,
     pendingBattle: persisted.pendingBattle
       ? {
           ...persisted.pendingBattle,
           catalog,
           presentationEvents: persisted.pendingBattle.presentationEvents ?? [],
+          runtimeEffects: persisted.pendingBattle.runtimeEffects ?? [],
+          effectSequence: persisted.pendingBattle.effectSequence ?? 0,
+          playerUnits: persisted.pendingBattle.playerUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0 })),
+          opponentUnits: persisted.pendingBattle.opponentUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0 })),
         } as CombatState
       : null,
   };

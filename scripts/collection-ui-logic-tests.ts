@@ -1,6 +1,7 @@
 import { calculateLoadoutStats } from "../src/lib/loadout.js";
+import { challengeDescription, progressFor } from "../src/lib/collectibles.js";
 import { relicSlotUnlocks, xpProgress } from "../src/lib/progression.js";
-import type { AppData, Catalog, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
+import type { AppData, Catalog, CollectibleUnlockChallenge, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -112,5 +113,45 @@ check(calculated.stats.atk === 24, "The equipped Relic ATK penalty must be refle
 check(calculated.stats.def === 21, "Positive and negative DEF deltas must combine into the combat value.");
 check(calculated.stats.diceMin === 1 && calculated.stats.diceMax === 9, "Only the modified Mana maximum must change.");
 check(calculated.breakdowns.def?.sources.map((source) => source.amount).join(",") === "3,-2", "The DEF tooltip must retain positive and negative source deltas in resolution order.");
+
+const ownershipChallenge: CollectibleUnlockChallenge = {
+  id: "ownership-seven",
+  collectible_type: "critter",
+  collectible_id: "hero",
+  challenge_type: "own_collectible",
+  parameters: {
+    collectible_category: "critter",
+    collectible_ids: [],
+    required_amount: 7,
+    require_unique_collectibles: true,
+    retroactive: true,
+  },
+  target_category: "critter",
+  target_id: null,
+  target_mode: null,
+  any_target: false,
+  target_ids: [],
+  required_amount: "7",
+  required_level: null,
+  sort_order: 0,
+};
+const ownershipData = {
+  catalog: { ...catalog, collectibleUnlockChallenges: [ownershipChallenge] },
+  player,
+} as AppData;
+check(challengeDescription(ownershipData, ownershipChallenge) === "Own 7 different Critters.", "Quantity ownership text must put 'different' before the collectible name.");
+const ownershipProgress = progressFor(ownershipData, ownershipChallenge.id);
+check(ownershipProgress.current === "2" && ownershipProgress.goal === "7", "A missing snapshot row must derive ownership progress instead of rendering 0 / 0.");
+check(ownershipProgress.trackable === false, "A catalog row missing from the authoritative snapshot must not be trackable.");
+
+const quantityRelicChallenge = {
+  ...ownershipChallenge,
+  id: "relic-copies",
+  parameters: { ...ownershipChallenge.parameters, collectible_category: "relic", collectible_ids: ["guard"], required_amount: 3, require_unique_collectibles: false },
+  target_category: "relic",
+  target_id: "guard",
+  required_amount: "3",
+} satisfies CollectibleUnlockChallenge;
+check(challengeDescription(ownershipData, quantityRelicChallenge) === "Own 3 of: Guard Charm.", "Quantity-based Relic ownership text must match the dev default.");
 
 console.log("Collection progression and loadout stat tests passed.");
