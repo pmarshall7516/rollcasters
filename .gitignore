@@ -13,3 +13,6 @@ output/
 supabase/.temp/
 
 progress.md
+
+rollcaster-sim/*
+rollcaster-sim/

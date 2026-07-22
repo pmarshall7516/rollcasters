@@ -1,5 +1,9 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+Current request (2026-07-21): Add owner-qualified combat narration, active effect/status hover details with exact deltas and sources, equipped Relics on Critter combat cards, and larger single-line Skill cost/power metadata; keep rollcaster-sim behavior and UI in parity.
+
+Current request (2026-07-22): Restrict active-effect tooltips to each Critter's sprite box and stage stat, healing, and status changes event-by-event with specialized, source-Skill narration in both the game and simulator.
+
 # Rollcasters project handoff
 
 Last condensed: 2026-07-20
@@ -94,6 +98,15 @@ Database and signed-in browser tests may create rollback-only fixtures or dispos
 - Keep the Content Studio release publisher and this player runtime on the same schema/runtime contract before publishing future releases.
 - Before a public launch, complete a dedicated production security, accessibility, multi-browser, failure-recovery, balance, and load test pass.
 
+## Combat ownership and inspection parity (2026-07-21)
+
+- Combat presentation now qualifies Critters as `Your …` or `The enemy …`; action selection and Mana-roll narration use the same player-relative language.
+- Added shared, ordered per-Critter effect summaries with exact applied stat deltas and source ownership. Healthy active combat cards reveal positive/negative/mixed effects and statuses on hover, including Skill, Relic, Status, and Rollcaster Ability sources.
+- Equipped Relics now render beside each Critter's HP text with their existing detailed tooltips.
+- Combat Skill buttons place Power and the larger Mana icon/cost on one metadata row without changing card or battlefield dimensions.
+- The published `2026.07.21.2` catalog's inert empty `overheal_effect_ids` default is accepted only when overhealing is not configured to convert; active child-effect lists remain strictly validated.
+- Verification passed: typecheck, production build, effect runtime (including exact `+5 ATK` summary regression), combat Swap UI, effect/status tooltip UI, required web-game smoke, and a signed-in live Effect combat run. The live browser fixture equipped a Relic, verified the hover summary and Relic icon, geometrically asserted one-line Power/Mana layout, completed both encounters, and reported zero browser errors.
+
 ## Latest verified snapshot (2026-07-20)
 
 - Cleaned tracked OS metadata and the unused 1.1 MB PNG logo duplicate; the app and responsive fixtures now share the 53 KB WebP asset.
@@ -128,3 +141,17 @@ Database and signed-in browser tests may create rollback-only fixtures or dispos
 - Signed-in combat verification loaded the production release, froze five Effects into the run snapshot, resolved both Dungeon encounters to a persisted terminal outcome, and reported no console/page errors.
 - The database audit reports 15 active Challenge Templates, both repaired ownership definitions in canonical form, zero harmful classification errors, and zero Chilling Wind parameter errors.
 - Typecheck, production build, collection/challenge logic, combat Effect runtime, catalog-release contract, shop business rules, migration drift, and the required generic web-game smoke all pass.
+
+## Event-synchronized combat effects (2026-07-22)
+
+- Combat presentation events now freeze the exact visible Mana, unit stats/HP/Shield, modifiers, statuses, and runtime effects at each narration step. Dungeon playback applies those snapshots as it advances, so a multi-target debuff becomes hover-visible one target at a time on the matching message.
+- Stat, HP, healing, and Status narration uses exact applied amounts and authored Skill/source names; embedded owner phrases use lowercase `your` / `the enemy` while sentence-leading names retain capitalization.
+- Active-effect tooltips now open only from the healthy active Critter's sprite box. `render_game_to_text` also exposes each visible unit's active effects.
+- Added a two-target debuff playback regression plus sprite-only hover assertions. Effect runtime, typecheck, production build, effect UI, Swap UI, signed-in effect-combat browser coverage, and the required web-game client pass with no browser errors.
+
+## Base-referenced percentage stacking (2026-07-22)
+
+- Percentage stat modifiers now calculate every application from the Critter's unchanged pre-temporary-effect stat instead of the already modified current value.
+- Any nonzero percentage whose rounded magnitude would be zero now applies a signed one-point minimum.
+- Repeated modifiers from the same source and stat are combined into one cumulative tooltip row, so two identical Glare applications display their total DEF loss instead of hiding the later stack.
+- Added regressions for repeated percentage debuffs, one-point minimum buffs/debuffs, cumulative tooltip totals, and exact repeated-application narration. Main-game runtime/typecheck/build, Effect UI, signed-in combat browser coverage, and required web-game QA pass.

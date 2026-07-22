@@ -3017,9 +3017,17 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .critter-combat-frame,
-.combat-sprite-stack {
+.combat-sprite-stack,
+.combat-effect-hover-zone {
   width: var(--combat-sprite-size);
   height: var(--combat-sprite-size);
+}
+
+.combat-effect-hover-zone {
+  position: relative;
+  display: block;
+  border-radius: 11px;
+  outline: none;
 }
 
 .battle-unit-info {
@@ -3028,6 +3036,93 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   gap: 5px;
   min-width: 0;
 }
+
+.combat-health-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.combat-health-row > p {
+  min-width: 0;
+  margin: 0;
+}
+
+.combat-relic-row {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+}
+
+.combat-relic-row .tooltip-anchor { display: inline-flex; }
+
+.combat-relic-icon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: rgb(8 10 24 / 72%);
+}
+
+.combat-relic-icon .asset-icon { width: 100%; height: 100%; }
+
+.combat-effect-tooltip {
+  position: absolute;
+  z-index: 50;
+  left: 50%;
+  top: 52%;
+  display: grid;
+  gap: 6px;
+  width: min(310px, calc(100vw - 24px));
+  max-height: 170px;
+  padding: 10px 11px;
+  overflow: auto;
+  border: 1px solid var(--border-bright);
+  border-radius: 10px;
+  background: #080b1d;
+  box-shadow: 0 14px 40px rgb(0 0 0 / 55%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, 5px);
+  transition: var(--motion);
+  text-align: left;
+}
+
+.combat-effect-hover-zone:hover > .combat-effect-tooltip,
+.combat-effect-hover-zone:focus > .combat-effect-tooltip,
+.combat-effect-hover-zone:focus-within > .combat-effect-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  transition-delay: 180ms;
+}
+
+.combat-effect-heading {
+  color: var(--text-primary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.combat-effect-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.combat-effect-row > span { color: currentColor; opacity: .86; }
+.combat-effect-row > small { margin-left: auto; color: var(--text-muted); font-size: 9px; }
+.combat-effect-row.effect-classification-positive { color: #8fe4ae; }
+.combat-effect-row.effect-classification-negative { color: #ff7f8c; }
+.combat-effect-row.effect-classification-mixed { color: var(--text-secondary); }
 
 .battle-unit-info .critter-name {
   min-width: 0;
@@ -3339,12 +3434,13 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   align-items: center;
   gap: 2px;
   color: var(--accent-cyan);
-  font-size: 10px;
+  font-size: 13px;
+  font-weight: 950;
 }
 
 .combat-mana-cost .asset-icon {
-  width: 13px;
-  height: 13px;
+  width: 17px;
+  height: 17px;
 }
 
 .combat-skill-actions > .tooltip-anchor {
@@ -3354,7 +3450,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .combat-skill-actions .skill-tile {
-  --skill-meta-size: clamp(8px, .7vw, 11px);
+  --skill-meta-size: clamp(10px, .82vw, 13px);
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: repeat(2, minmax(0, 1fr));
   height: 100%;
@@ -3364,10 +3460,24 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .combat-skill-actions .skill-title {
+  grid-column: 1 / -1;
+  grid-row: 1;
   gap: 4px;
   min-width: 0;
   padding-right: 4px;
   font-size: clamp(9px, .8vw, 12px);
+}
+
+.combat-skill-actions .skill-power {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: start;
+}
+
+.combat-skill-actions .skill-mana {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
 }
 
 .combat-skill-actions .skill-title .asset-icon {
@@ -4428,9 +4538,11 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
     height: 11px;
   }
 
-  .battle-unit-info > p {
+  .combat-health-row > p {
     font-size: 8px;
   }
+
+  .combat-relic-icon { width: 14px; height: 14px; padding: 1px; }
 
   .hp-bar {
     height: 7px;
@@ -4470,16 +4582,16 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 
   .combat-mana-cost {
-    font-size: 7px;
+    font-size: 9px;
   }
 
   .combat-mana-cost .asset-icon {
-    width: 8px;
-    height: 8px;
+    width: 11px;
+    height: 11px;
   }
 
   .combat-skill-actions .skill-tile {
-    --skill-meta-size: 7px;
+    --skill-meta-size: 8px;
     min-height: 29px;
     padding: 3px 4px;
   }

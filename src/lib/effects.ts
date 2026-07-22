@@ -132,6 +132,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     const childKeys = ["child_effect_ids", "true_effect_ids", "false_effect_ids", "output_effect_ids", "overheal_effect_ids"];
     for (const childKey of childKeys) {
       if (parameters[childKey] === undefined) continue;
+      if (childKey === "overheal_effect_ids" && parameters.overhealing_behavior !== "convert" && Array.isArray(parameters[childKey]) && parameters[childKey].length === 0) continue;
       if (!Array.isArray(parameters[childKey]) || parameters[childKey].length === 0 || parameters[childKey].some((id) => typeof id !== "string" || !id)) {
         throw new Error(`Effect ${effect.id} ${childKey} must be a non-empty string array.`);
       }

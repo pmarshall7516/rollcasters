@@ -85,6 +85,19 @@ try {
 
   await page.locator(".starter-card").first().click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");
+
+  const [{ data: ownedCritter, error: ownedCritterError }, { data: relic, error: relicError }] = await Promise.all([
+    admin.from("user_critters").select("id").eq("user_id", userId).limit(1).single(),
+    admin.from("relics").select("id").eq("is_active", true).eq("is_archived", false).order("sort_order").limit(1).single(),
+  ]);
+  if (ownedCritterError) throw ownedCritterError;
+  if (relicError) throw relicError;
+  const inventory = await admin.from("user_relic_inventory").upsert({ user_id: userId, relic_id: relic.id, quantity: 1, discovered_at: new Date().toISOString() });
+  if (inventory.error) throw inventory.error;
+  const equipped = await admin.from("user_critter_relic_slots").upsert({ user_critter_id: ownedCritter.id, slot_index: 1, relic_id: relic.id });
+  if (equipped.error) throw equipped.error;
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");
   await page.getByRole("button", { name: "Play" }).click();
   await page.getByRole("button", { name: "Enter dungeon" }).first().click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "combat");
@@ -102,10 +115,22 @@ try {
     .single();
   if (run.error) throw run.error;
   check(run.data.effect_snapshot?.effects?.some((effect) => effect.ownerType === "ability"), "The live run snapshot did not include its equipped Ability effects.");
+  check(run.data.effect_snapshot?.effects?.some((effect) => effect.ownerType === "relic"), "The live run snapshot did not include its equipped Relic effects.");
   check(Array.isArray(run.data.effect_snapshot?.statuses), "The live run snapshot did not freeze Status lifecycle data.");
 
   await page.screenshot({ path: path.join(outputDir, "combat-initial.png"), fullPage: true });
+  const activeCard = page.locator(".player-column .battle-unit[data-combat-unit-key]:not(.knocked-out)").first();
+  check(await activeCard.locator(".combat-relic-icon").count(), "The active game Critter did not render its equipped Relic.");
+  const effectTooltip = activeCard.locator(".combat-effect-tooltip");
+  await activeCard.locator(".battle-unit-info").hover();
+  await page.waitForTimeout(250);
+  check(!await effectTooltip.isVisible(), "The active Effect tooltip appeared outside the Critter sprite box.");
+  await activeCard.locator(".combat-effect-hover-zone").hover();
+  await effectTooltip.waitFor({ state: "visible" });
+  check(await activeCard.locator(".combat-effect-row").count(), "The active game Critter did not expose its active Effect details on hover.");
+  await page.screenshot({ path: path.join(outputDir, "combat-effects-and-relics.png"), fullPage: false });
 
+  let capturedSkillLayout = false;
   for (let step = 0; step < 600; step += 1) {
     const state = await gameState(page);
     const phase = state.combat?.phase;
@@ -139,6 +164,17 @@ try {
         await skillMenu.click();
         const usableSkill = page.locator(".combat-skill-actions .skill-tile:not([disabled])").first();
         if (await usableSkill.count()) {
+          if (!capturedSkillLayout) {
+            check(/^Choose your .+'s action\.$/.test((await page.locator(".combat-narration").textContent())?.trim() ?? ""), "The game action narration did not include the player owner before the Critter name.");
+            const power = usableSkill.locator(".skill-power");
+            const mana = usableSkill.locator(".skill-mana");
+            if (await power.count()) {
+              const [powerBox, manaBox] = await Promise.all([power.boundingBox(), mana.boundingBox()]);
+              check(powerBox && manaBox && Math.abs((powerBox.y + powerBox.height / 2) - (manaBox.y + manaBox.height / 2)) < 3, "Combat Skill Power and Mana cost were not aligned on one line.");
+            }
+            await page.screenshot({ path: path.join(outputDir, "combat-skill-cost-layout.png"), fullPage: false });
+            capturedSkillLayout = true;
+          }
           await usableSkill.click();
           const target = page.locator(".battle-unit.legal-target").first();
           if (await target.count()) await target.click();

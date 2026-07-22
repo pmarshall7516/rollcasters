@@ -60,6 +60,7 @@ import {
 } from "./lib/supabase";
 import {
   byId,
+  combatEffectSummaries,
   critterElementIds,
   critterStats,
   isSingleTarget,
@@ -517,6 +518,7 @@ export function App() {
                 slot: unit.battlefieldSlot,
                 roll: unit.manaRoll,
                 stats: unit.stats,
+                activeEffects: combatEffectSummaries(combat.battle, unit.key),
               })),
               opponents: combat.phase === "lead_selection"
                 ? combat.battle.opponentUnits.map((_unit, slot) => ({ slot, hidden: true }))
@@ -530,6 +532,7 @@ export function App() {
                     slot: unit.battlefieldSlot,
                     roll: unit.manaRoll,
                     stats: unit.stats,
+                    activeEffects: combatEffectSummaries(combat.battle, unit.key),
                   })),
               statuses: combat.battle.statuses.map((status) => ({ statusId: status.statusId, holder: status.holderKey, duration: status.duration })),
               presentation: currentDungeonEvent(combat)
@@ -3106,6 +3109,7 @@ function CombatScreen({
               return <BattleUnit
                 key={unit.key}
                 unit={unit}
+                battle={battle}
                 data={data}
                 allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
                 action={actions[unit.key]}
@@ -3143,6 +3147,7 @@ function CombatScreen({
                 ? <BattleUnit
                     key={unit.key}
                     unit={unit}
+                    battle={battle}
                     data={data}
                     allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
                     opponent
@@ -3194,8 +3199,8 @@ function CombatScreen({
             {combat.phase === "await_roll" && `Roll the Dice to start Turn ${battle.turn}.`}
             {combat.phase === "roll_result" && (!diceSettled
               ? "Rolling…"
-              : `User rolled ${combat.rollSummary?.player ?? 0} mana and enemy rolled ${combat.rollSummary?.opponent ?? 0} mana.`)}
-            {combat.phase === "select_player_actions" && (targeting ? `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")}
+              : `You rolled ${combat.rollSummary?.player ?? 0} mana and the enemy rolled ${combat.rollSummary?.opponent ?? 0} mana.`)}
+            {combat.phase === "select_player_actions" && (targeting ? `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose your ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")}
             {combat.phase === "event_playback" && (submittingProgress ? "Saving the resolved turn…" : event?.message)}
             {combat.phase === "battle_result" && (recordingResult ? "Committing encounter rewards…" : "Encounter resolved.")}
             {combat.phase === "encounter_rewards" && `Encounter ${combat.run.battleIndex - 1} cleared.`}
@@ -3292,6 +3297,7 @@ function CombatLeadDialog({
 
 function BattleUnit({
   unit,
+  battle,
   data,
   allUnits = [],
   action,
@@ -3318,6 +3324,7 @@ function BattleUnit({
   swapMotion,
 }: {
   unit: CombatState["playerUnits"][number];
+  battle: CombatState;
   data: AppData;
   allUnits?: CombatState["playerUnits"];
   action?: CombatAction;
@@ -3363,6 +3370,11 @@ function BattleUnit({
           ? "receiving-status"
           : ""
     : "";
+  const effectSummaries = combatEffectSummaries(battle, unit.key);
+  const relicIds = battle.setupSources
+    .filter((source) => source.ownerType === "relic" && source.sourceKey === unit.key)
+    .sort((left, right) => left.sourceOrder - right.sourceOrder)
+    .map((source) => source.ownerId);
   return (
     <article
       className={`battle-unit ${interactive ? "combat-unit-interactive" : ""} ${!unit.active ? "bench" : ""} ${unit.hp <= 0 ? "knocked-out" : ""} ${opponent ? "opponent" : ""} ${selected ? "selected-lead" : ""} ${selectable ? "selectable" : ""} ${targetable ? "legal-target" : ""} ${waiting ? "waiting-turn" : ""} ${acting ? "acting-skill" : ""} ${swappingOut ? "swapping-out" : ""} ${swappingIn ? "swapping-in" : ""} ${reactionClass}`}
@@ -3383,14 +3395,17 @@ function BattleUnit({
     >
       <div className="combat-unit-top">
         <span className="combat-sprite-stack">
-        <span className="combat-sprite-frame critter-combat-frame"><Sprite
-          name={unit.name}
-          element={unit.critter.element_1_id}
-          assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)}
-          size="medium"
-          flipped={opponent}
-        /></span>
-        {unit.active && unit.hp > 0 && <StatusIconRow data={data} statuses={statuses} />}
+          <span className="combat-effect-hover-zone" tabIndex={0} aria-label={`${unit.name} sprite and active effects`}>
+            <span className="combat-sprite-frame critter-combat-frame"><Sprite
+              name={unit.name}
+              element={unit.critter.element_1_id}
+              assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)}
+              size="medium"
+              flipped={opponent}
+            /></span>
+            {unit.active && unit.hp > 0 && effectSummaries.length > 0 && <CombatEffectTooltip data={data} unitName={unit.name} effects={effectSummaries} />}
+          </span>
+          {unit.active && unit.hp > 0 && <StatusIconRow data={data} statuses={statuses} />}
         </span>
         <div className="battle-unit-info">
           <span className="combat-identity-row">
@@ -3400,7 +3415,10 @@ function BattleUnit({
           </span>
           <div className={`hp-bar ${healthTone}`} role="progressbar" aria-label={`${unit.name} health`} aria-valuemin={0} aria-valuemax={unit.maxHp} aria-valuenow={unit.hp} aria-valuetext={`${unit.hp} of ${unit.maxHp} HP`}><span style={{ width: `${pct}%` }} /></div>
           {unit.shield > 0 && <div className="shield-bar" role="progressbar" aria-label={`${unit.name} shield`} aria-valuemin={0} aria-valuemax={Math.max(unit.maxShield, unit.shield)} aria-valuenow={unit.shield} aria-valuetext={`${unit.shield} shield`}><span style={{ width: `${Math.min(100, Math.round((unit.shield / Math.max(unit.maxShield, unit.shield)) * 100))}%` }} /></div>}
-          <p>{unit.hp} / {unit.maxHp} HP {unit.shield > 0 ? `· ${unit.shield} Shield` : ""} {unit.blocking ? "· Blocking" : ""}</p>
+          <div className="combat-health-row">
+            <p>{unit.hp} / {unit.maxHp} HP {unit.shield > 0 ? `· ${unit.shield} Shield` : ""} {unit.blocking ? "· Blocking" : ""}</p>
+            <CombatRelicRow data={data} relicIds={relicIds} />
+          </div>
         </div>
       </div>
       <div className="combat-action-space">
@@ -3464,6 +3482,36 @@ function BattleUnit({
       {targetable && <span className="combat-selection-label target"><Target size={14} /> Legal target</span>}
     </article>
   );
+}
+
+function CombatEffectTooltip({ data, unitName, effects }: { data: AppData; unitName: string; effects: ReturnType<typeof combatEffectSummaries> }) {
+  return <aside className="combat-effect-tooltip" role="tooltip" aria-label={`${unitName} active effects`}>
+    <strong className="combat-effect-heading">Active effects</strong>
+    {effects.map((effect) => <span key={effect.id} className={`combat-effect-row effect-classification-${effect.classification}`} title={effect.description}>
+      <strong>{effect.amountLabel ?? effect.name}</strong>
+      <span>({combatEffectSourceName(data, effect.sourceOwnerType, effect.sourceOwnerId)})</span>
+      {effect.kind === "status" && effect.duration !== undefined && <small>{effect.duration === null ? "Indefinite" : `${effect.duration} turn${effect.duration === 1 ? "" : "s"}`}</small>}
+    </span>)}
+  </aside>;
+}
+
+function combatEffectSourceName(data: AppData, ownerType: "skill" | "ability" | "relic" | "status", ownerId: string): string {
+  if (ownerType === "skill") return byId(data.catalog.skills, ownerId)?.name ?? ownerId;
+  if (ownerType === "ability") return byId(data.catalog.rollcasterAbilities, ownerId)?.name ?? ownerId;
+  if (ownerType === "relic") return byId(data.catalog.relics, ownerId)?.name ?? ownerId;
+  return byId(data.catalog.statuses, ownerId)?.name ?? ownerId;
+}
+
+function CombatRelicRow({ data, relicIds }: { data: AppData; relicIds: string[] }) {
+  if (!relicIds.length) return null;
+  return <span className="combat-relic-row" aria-label="Equipped relics">{relicIds.map((id) => {
+    const relic = byId(data.catalog.relics, id);
+    if (!relic) return null;
+    const effects = data.catalog.effectsByRelic[id] ?? [];
+    return <GameTooltip key={id} label={`${relic.name}. ${relic.description} ${attachmentText(effects)}`} content={<><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(effects)}</>}>
+      <span className="combat-relic-icon"><AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield size={13} />} /></span>
+    </GameTooltip>;
+  })}</span>;
 }
 
 function CombatEmptySlot({ label, opponent = false }: { label: string; opponent?: boolean }) {

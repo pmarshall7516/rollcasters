@@ -2,6 +2,7 @@ import { groupCombatEffectRows } from "../src/lib/effects.js";
 import {
   calculateSkillDamage,
   classifyEffectiveness,
+  combatEffectSummaries,
   createInitialCombatState,
   critterElementIds,
   critterHasElement,
@@ -205,7 +206,7 @@ check(
   playerKnockoutResult.playerUnits[0].hp === 0
     && playerKnockoutResult.playerMana === 10
     && playerKnockoutResult.opponentUnits[0].hp === playerKnockoutBattle.opponentUnits[0].hp
-    && playerKnockoutResult.log.some((line) => line === "Player One was knocked out before acting; 5 reserved mana was refunded."),
+    && playerKnockoutResult.log.some((line) => line === "Your Player One was knocked out before acting; 5 reserved mana was refunded."),
   "A player Critter knocked out before its queued action must not act and must recover that action's reserved Mana.",
 );
 
@@ -244,7 +245,7 @@ check(
   opponentKnockoutResult.opponentUnits[0].hp === 0
     && opponentKnockoutResult.opponentMana === 5
     && opponentKnockoutResult.playerUnits[0].hp === opponentKnockoutBattle.playerUnits[0].hp
-    && opponentKnockoutResult.log.some((line) => line === "Opponent One was knocked out before acting; 5 reserved mana was refunded."),
+    && opponentKnockoutResult.log.some((line) => line === "The enemy Opponent One was knocked out before acting; 5 reserved mana was refunded."),
   "An opposing Critter knocked out before its queued action must not act and must recover that action's reserved Mana.",
 );
 
@@ -487,6 +488,89 @@ check(skilled.playerUnits[1].stats.def === 22 && skilled.playerUnits[0].stats.de
 check(skilled.playerUnits[0].stats.spd === 27 && skilled.playerUnits[1].stats.spd === 18, "Signed Skill percentages must round their deltas half-up for all_friendlies.");
 check(skilled.opponentUnits[0].stats.atk === 21 && skilled.opponentUnits[1].stats.atk === 23, "Skill all_enemies must affect all active enemy slots.");
 
+const stackingCatalog = makeCatalog();
+stackingCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "stacking-glare", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.1, chance: 1, target: "all_enemies" }),
+  effect("skill", "ritual", "tiny-buff", "stat_modifier", { stat: "atk", value_mode: "percentage", amount: 0.01, chance: 1, target: "self" }, 1),
+  effect("skill", "ritual", "tiny-debuff", "stat_modifier", { stat: "spd", value_mode: "percentage", amount: -0.01, chance: 1, target: "self" }, 2),
+];
+let stacked = takeTurn(battle(stackingCatalog, makePlayer(), "stacking-percentages"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(
+  stacked.opponentUnits[0].stats.def === 22
+    && stacked.playerUnits[0].stats.atk === 26
+    && stacked.playerUnits[0].stats.spd === 29,
+  "Percentage modifiers must round from their unchanged reference stat and apply a signed one-point minimum for nonzero sub-one changes.",
+);
+stacked = takeTurn(stacked, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+const stackedGlareRows = combatEffectSummaries(stacked, stacked.opponentUnits[0].key)
+  .filter((row) => row.sourceOwnerType === "skill" && row.sourceOwnerId === "ritual" && row.amountLabel?.includes("DEF"));
+check(
+  stacked.opponentUnits[0].stats.def === 19
+    && stacked.playerUnits[0].stats.atk === 27
+    && stacked.playerUnits[0].stats.spd === 28,
+  "Repeated percentage modifiers must reuse the pre-temporary-effect stat instead of shrinking against the current modified value.",
+);
+check(
+  stackedGlareRows.length === 1 && stackedGlareRows[0].amountLabel === "−6 DEF",
+  "Repeated modifiers from the same Skill and stat must appear as one accumulated tooltip total.",
+);
+check(
+  stacked.presentationEvents.some((event) => event.message === "The enemy Opponent One lost −3 DEF from Ritual."),
+  "Each repeated percentage application must narrate the exact base-referenced amount applied on that turn.",
+);
+
+const debuffCatalog = makeCatalog();
+debuffCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "menace", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.2, chance: 1, target: "all_enemies" }),
+];
+const debuffBefore = battle(debuffCatalog, makePlayer(), "debuff-playback");
+const debuffResolved = takeTurn(debuffBefore, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+const debuffEvents = debuffResolved.presentationEvents.map((event, index) => ({
+  ...event,
+  id: `debuff:${index}`,
+  turn: 1,
+  phase: "resolution",
+  requiresAdvance: true,
+}));
+const debuffSkillEventIndex = debuffEvents.findIndex((event) => event.kind === "skill" && event.skillId === "ritual");
+const firstDebuffEvent = debuffEvents[debuffSkillEventIndex + 1];
+const secondDebuffEvent = debuffEvents[debuffSkillEventIndex + 2];
+const firstDebuffAmount = firstDebuffEvent?.message.match(/lost −(\d+) DEF from Ritual\./)?.[1];
+const secondDebuffAmount = secondDebuffEvent?.message.match(/lost −(\d+) DEF from Ritual\./)?.[1];
+check(
+  debuffEvents[debuffSkillEventIndex]?.message === "Your Player One used Ritual!"
+    && firstDebuffEvent?.message.startsWith("The enemy Opponent One lost −")
+    && secondDebuffEvent?.message.startsWith("The enemy Opponent Two lost −")
+    && Boolean(firstDebuffAmount)
+    && Boolean(secondDebuffAmount),
+  `Multi-target stat effects must narrate each exact stat delta using the Skill name, not the internal effect name. Received: ${JSON.stringify(debuffEvents.map((event) => event.message))}`,
+);
+check(
+  firstDebuffEvent?.state?.modifiers.length === 1
+    && secondDebuffEvent?.state?.modifiers.length === 2,
+  "Each multi-target effect event must snapshot only the effects that have triggered by that playback step.",
+);
+let debuffPlayback = {
+  ...swapPlayback,
+  battle: debuffBefore,
+  pendingBattle: debuffResolved,
+  events: debuffEvents,
+  eventCursor: debuffSkillEventIndex,
+} as unknown as DungeonRunState;
+debuffPlayback = advanceDungeonEvent(debuffPlayback);
+check(
+  currentDungeonEvent(debuffPlayback)?.message === firstDebuffEvent.message
+    && combatEffectSummaries(debuffPlayback.battle, firstDebuffEvent.targetKeys[0]).some((row) => row.amountLabel === `−${firstDebuffAmount} DEF` && row.sourceOwnerId === "ritual")
+    && combatEffectSummaries(debuffPlayback.battle, secondDebuffEvent.targetKeys[0]).length === 0,
+  `The first target's tooltip data must become visible on its narration event before the next target's effect triggers. First: ${JSON.stringify(combatEffectSummaries(debuffPlayback.battle, firstDebuffEvent.targetKeys[0]))}; second: ${JSON.stringify(combatEffectSummaries(debuffPlayback.battle, secondDebuffEvent.targetKeys[0]))}`,
+);
+debuffPlayback = advanceDungeonEvent(debuffPlayback);
+check(
+  currentDungeonEvent(debuffPlayback)?.message === secondDebuffEvent.message
+    && combatEffectSummaries(debuffPlayback.battle, secondDebuffEvent.targetKeys[0]).some((row) => row.amountLabel === `−${secondDebuffAmount} DEF` && row.sourceOwnerId === "ritual"),
+  "Advancing playback must expose the second target's effect on its own narration event.",
+);
+
 const statusCatalog = makeCatalog();
 statusCatalog.effectsBySkill.ritual = [
   effect("skill", "ritual", "finite-apply", "apply_status", { status_id: "finite", chance: 1, target: "self", indefinite: false, turns: 3 }),
@@ -536,7 +620,7 @@ check(
   ritualSkillEventIndex >= 0
     && ritualHealEventIndexes.length >= 2
     && ritualHealEventIndexes.every((index) => index > ritualSkillEventIndex)
-    && healing.presentationEvents.filter((event) => event.kind === "heal" && event.actorKey === "p1").every((event) => event.message.includes("healed") && event.hpChanges.length === 1),
+    && healing.presentationEvents.filter((event) => event.kind === "heal" && event.actorKey === "p1").every((event) => event.message.includes("gained") && event.message.includes("HP from Ritual") && event.hpChanges.length === 1),
   "Healing Skills must stage the user animation before numeric healing messages and per-target HP changes.",
 );
 const beforeVampire = healing.playerUnits[0].hp;
@@ -589,7 +673,7 @@ slotted = takeTurn(slotted, [
   { actorKey: "p2", type: "swap", swapToId: "up3", cost: 4 },
   { actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p2", cost: 2 },
 ]);
-check(slotted.log.some((line) => line === "Player One used Mark on Player Three."), "A selected target must follow its battlefield slot when a Swap resolves before the Skill.");
+check(slotted.log.some((line) => line === "Your Player One used Mark on your Player Three."), "A selected target must follow its battlefield slot when a Swap resolves before the Skill.");
 
 const frozenCatalog = makeCatalog();
 frozenCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "frozen", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 5, chance: 1, target: "self" })];
@@ -597,6 +681,10 @@ const frozen = battle(frozenCatalog, makePlayer(), "frozen");
 frozenCatalog.effectsBySkill.ritual.length = 0;
 const frozenResult = takeTurn(frozen, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
 check(frozenResult.playerUnits[0].stats.atk === 30, "An active combat must resolve its frozen inline-effect registry after mutable catalog data changes.");
+check(
+  combatEffectSummaries(frozenResult, "p1").some((row) => row.amountLabel === "+5 ATK" && row.sourceOwnerType === "skill" && row.sourceOwnerId === "ritual"),
+  "Active-effect summaries must report the exact applied stat delta and its Skill source.",
+);
 check(JSON.stringify(frozen.snapshot) === JSON.stringify(battle(makeCatalogWithFrozenEffect(), makePlayer(), "frozen").snapshot), "Effect snapshots must be deterministic for an identical run and inline catalog.");
 
 function makeCatalogWithFrozenEffect(): Catalog {

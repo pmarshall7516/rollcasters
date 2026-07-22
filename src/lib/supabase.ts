@@ -252,6 +252,10 @@ export async function getSession(): Promise<Session | null> {
   const client = requireClient();
   const { data, error } = await client.auth.getSession();
   if (error) throw error;
+  if (data.session && !(await isGameAccount(client))) {
+    await client.auth.signOut({ scope: "local" });
+    throw new Error("This is a dev-tool account. Sign in with a dedicated Rollcasters game account.");
+  }
   return data.session;
 }
 
@@ -259,6 +263,16 @@ export async function signIn(email: string, password: string): Promise<void> {
   const client = requireClient();
   const { error } = await client.auth.signInWithPassword({ email, password });
   if (error) throw error;
+  if (!(await isGameAccount(client))) {
+    await client.auth.signOut({ scope: "local" });
+    throw new Error("This is a dev-tool account. Sign in with a dedicated Rollcasters game account.");
+  }
+}
+
+async function isGameAccount(client: SupabaseClient): Promise<boolean> {
+  const { data, error } = await client.rpc("is_game_account");
+  if (error) throw error;
+  return data === true;
 }
 
 export async function signUp(email: string, password: string, username: string): Promise<boolean> {

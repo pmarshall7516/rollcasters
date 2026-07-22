@@ -3,6 +3,7 @@ import {
   recomputeCombatStats,
   resolveTurn,
   startTurn,
+  type CombatPresentationState,
   type CombatState,
 } from "./game.js";
 import { battlefieldSlotsForCount, opponentsForBattle, parseBattleFormat } from "./dungeons.js";
@@ -48,6 +49,7 @@ export type DungeonCombatEvent = {
     before: number;
     after: number;
   }>;
+  state?: CombatPresentationState;
 };
 
 export type DungeonRunState = {
@@ -253,7 +255,36 @@ function resolvedMessages(before: CombatState, after: CombatState): string[] {
   return after.log.slice(0, addedCount).reverse();
 }
 
-function applyEventHp(battle: CombatState, event: DungeonCombatEvent | undefined): CombatState {
+function applyEventState(battle: CombatState, event: DungeonCombatEvent | undefined, preserveFormation = false): CombatState {
+  if (event?.state) {
+    const units = new Map(event.state.units.map((unit) => [unit.key, unit]));
+    const update = (unit: CombatState["playerUnits"][number]) => {
+      const snapshot = units.get(unit.key);
+      if (!snapshot) return unit;
+      return {
+        ...unit,
+        hp: snapshot.hp,
+        maxHp: snapshot.maxHp,
+        shield: snapshot.shield,
+        maxShield: snapshot.maxShield,
+        blocking: snapshot.blocking,
+        active: preserveFormation ? unit.active : snapshot.active,
+        battlefieldSlot: preserveFormation ? unit.battlefieldSlot : snapshot.battlefieldSlot,
+        persistentStats: { ...snapshot.persistentStats },
+        stats: { ...snapshot.stats },
+      };
+    };
+    return {
+      ...battle,
+      playerMana: event.state.playerMana,
+      opponentMana: event.state.opponentMana,
+      playerUnits: battle.playerUnits.map(update),
+      opponentUnits: battle.opponentUnits.map(update),
+      statuses: structuredClone(event.state.statuses),
+      modifiers: structuredClone(event.state.modifiers),
+      runtimeEffects: structuredClone(event.state.runtimeEffects),
+    };
+  }
   if (!event?.hpChanges.length) return battle;
   const hpByKey = new Map(event.hpChanges.map((change) => [change.unitKey, change.after]));
   const update = (unit: CombatState["playerUnits"][number]) => hpByKey.has(unit.key)
@@ -311,7 +342,7 @@ export function submitDungeonActions(state: DungeonRunState, actions: CombatActi
   if (events.length === 0) return finishResolvedTurn({ ...state, battle: resolved });
   return {
     ...state,
-    battle: applyEventHp(state.battle, events[0]),
+    battle: applyEventState(state.battle, events[0], events[0].kind === "swap"),
     pendingBattle: resolved,
     phase: "event_playback",
     events,
@@ -356,7 +387,7 @@ export function advanceDungeonEvent(state: DungeonRunState): DungeonRunState {
     const revealed = revealDungeonSwapEvent(state);
     return {
       ...revealed,
-      battle: applyEventHp(revealed.battle, state.events[nextCursor]),
+      battle: applyEventState(revealed.battle, state.events[nextCursor], state.events[nextCursor].kind === "swap"),
       eventCursor: nextCursor,
     };
   }
