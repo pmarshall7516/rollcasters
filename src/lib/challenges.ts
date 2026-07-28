@@ -18,6 +18,7 @@ export type ChallengeEventType =
   | "critter_knocked_out"
   | "hp_damage_dealt"
   | "hp_damage_taken"
+  | "hp_healed"
   | "skill_resolved";
 
 export type ChallengeEvent = {
@@ -43,6 +44,7 @@ const trackedTypes = new Set([
   "knock_out_critters", "deal_damage", "take_damage", "use_skill",
   "squad_composition", "dungeon_clear", "resource_spending",
   "swap_action", "block_action", "dice_roll",
+  "heal_hp",
 ]);
 
 function parametersOf(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
@@ -78,6 +80,7 @@ function eventTypeFor(challengeType: string): ChallengeEventType | null {
     swap_action: "swap_completed",
     block_action: "block_completed",
     dice_roll: "dice_resolved",
+    heal_hp: "hp_healed",
   }[challengeType] as ChallengeEventType | undefined ?? null;
 }
 
@@ -118,6 +121,21 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(type)) {
     if (!matchesLegacyTarget(challenge, event)) return 0;
     return type === "knock_out_critters" || type === "use_skill" ? 1 : Math.max(0, Math.floor(event.amount ?? 0));
+  }
+
+  if (type === "heal_hp") {
+    const payload = event.payload ?? {};
+    if (String(payload.source_side ?? "") !== "player") return 0;
+    const recipientSide = String(p.recipient_side ?? "any");
+    if (recipientSide !== "any" && recipientSide !== String(payload.recipient_side ?? "")) return 0;
+    const targetMode = String(p.target_mode ?? "any");
+    const targetIds = stringArray(p.target_ids);
+    if (targetMode === "species" && targetIds.length && !includesOrAny(targetIds, event.targetCritterId)) return 0;
+    if (targetMode === "element") {
+      const targetElements = event.targetElementIds ?? stringArray(payload.target_element_ids);
+      if (targetIds.length && !targetIds.some((id) => targetElements.includes(id))) return 0;
+    }
+    return Math.max(0, Math.floor(event.amount ?? 0));
   }
 
   if (type === "resource_spending") {

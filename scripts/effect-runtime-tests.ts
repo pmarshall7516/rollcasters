@@ -8,7 +8,9 @@ import {
   critterHasElement,
   elementEffectiveness,
   matchesSelectedElements,
+  orderedActiveCombatUnits,
   resolveTurn,
+  refreshSetupRuntimeEffects,
   roundHalfUp,
 } from "../src/lib/game.js";
 import {
@@ -169,6 +171,199 @@ check(eventResult.turnEvents.some((event) => event.event_type === "use_skill" &&
 check(eventResult.turnEvents.some((event) => event.event_type === "deal_damage" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit a positive deal_damage progress event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
 
+const reactiveCatalog = makeCatalog();
+reactiveCatalog.dungeonOpponents[0].skill_ids = ["strike"];
+reactiveCatalog.dungeonOpponents[1].skill_ids = ["strike"];
+reactiveCatalog.effectsByRelic["spiky"] = [
+  effect("relic", "spiky", "thorns", "direct_health_modifier", {
+    value: 0.05,
+    target: "attacker",
+    operation: "lose_hp",
+    value_type: "percent_max_hp",
+    can_defeat_target: true,
+    affected_by_shield: false,
+  }),
+];
+reactiveCatalog.effectsByRelic["gambler"] = [
+  effect("relic", "gambler", "give-and-take", "reactive_trigger", {
+    target: "equipped_critter",
+    trigger_event: "owner_attacked",
+    activation_limit: null,
+    activation_chance: 1,
+    requires_hp_damage: true,
+    child_effect_ids: ["mana-trade", "rage"],
+  }),
+  { ...effect("relic", "gambler", "mana-trade", "resource_gain_loss", {
+    value: 3,
+    resource: "squad_mana",
+    operation: "lose",
+    target_squad: "owner",
+  }, 1), execution: "child" },
+  { ...effect("relic", "gambler", "rage", "stat_modifier", {
+    stat: "atk",
+    amount: 0.1,
+    target: "equipped_critter",
+    value_mode: "percentage",
+  }, 2), execution: "child" },
+];
+reactiveCatalog.effectsByRelic["stim"] = [effect("relic", "stim", "health-booster", "effect_amplification", {
+  target: "equipped_critter",
+  affected_effect_category: "healing",
+  direction: "received",
+  modifier_type: "percentage",
+  modifier_value: 0.2,
+  duration_type: "while_relic_equipped",
+  duration_clock: "target_turn",
+  duration_value: null,
+})];
+const reactivePlayer = makePlayer();
+reactivePlayer.relicSlots = [
+  { user_critter_id: "up1", slot_index: 1, relic_id: "spiky" },
+  { user_critter_id: "up1", slot_index: 2, relic_id: "gambler" },
+  { user_critter_id: "up1", slot_index: 3, relic_id: "stim" },
+];
+let reactiveBattle = battle(reactiveCatalog, reactivePlayer, "reactive-relics");
+reactiveBattle = { ...reactiveBattle, playerMana: 10, opponentMana: 10 };
+const reactiveResult = resolveTurn(reactiveBattle, [
+  { actorKey: "p1", type: "skip", cost: 0 },
+  { actorKey: "p2", type: "skip", cost: 0 },
+]);
+check(reactiveResult.playerUnits[0].hp < reactiveBattle.playerUnits[0].hp, "The equipped reactive-relic target must take damage from the enemy hit.");
+check(reactiveResult.opponentUnits[0].hp === reactiveBattle.opponentUnits[0].hp - 5, "Spiky Shield must immediately deal 5% max-HP retaliation damage to its attacker.");
+check(reactiveResult.playerMana === 4, "Gambler's Rune must immediately remove 3 squad Mana after each HP-damaging hit.");
+check(reactiveResult.presentationEvents.some((event) => event.message === "You lost 3 mana."), "Gambler's Rune must narrate the actual squad Mana lost.");
+check(reactiveResult.playerUnits[0].stats.atk === 31, "Gambler's Rune must immediately apply its +10% ATK boost after each HP-damaging hit.");
+const gamblerDamageIndex = reactiveResult.presentationEvents.findIndex((event) => event.kind === "damage" && event.targetKeys.includes("p1"));
+const gamblerEffectIndex = reactiveResult.presentationEvents.findIndex((event) => event.kind === "status" && event.targetKeys.includes("p1") && event.message.includes("+3 ATK"));
+check(gamblerDamageIndex >= 0 && gamblerEffectIndex > gamblerDamageIndex, "Gambler's Rune must present after the equipped Critter's damage event.");
+const nextActionIndex = reactiveResult.presentationEvents.findIndex((event, index) => index > gamblerEffectIndex && event.kind === "skill");
+const attackStatsAtDamage = reactiveResult.presentationEvents[gamblerDamageIndex]?.state?.units.find((unit) => unit.key === "p1")?.stats.atk;
+const attackStatsAfterRune = reactiveResult.presentationEvents[gamblerEffectIndex]?.state?.units.find((unit) => unit.key === "p1")?.stats.atk;
+const attackStatsBeforeNextAction = reactiveResult.presentationEvents[nextActionIndex]?.state?.units.find((unit) => unit.key === "p1")?.stats.atk;
+check(attackStatsAtDamage === 25 && attackStatsAfterRune === 28 && attackStatsBeforeNextAction === 28, "Gambler's Rune's staged combat state must be active before the next action begins.");
+const thornsDamageIndex = reactiveResult.presentationEvents.findIndex((event) => event.kind === "damage" && event.targetKeys.includes("o1") && event.message.includes("thorns"));
+const incomingDamageIndex = reactiveResult.presentationEvents.findIndex((event) => event.kind === "damage" && event.targetKeys.includes("p1"));
+check(thornsDamageIndex >= 0 && incomingDamageIndex >= 0 && thornsDamageIndex > incomingDamageIndex, "Spiky Shield retaliation must present after the incoming damage event.");
+check(reactiveResult.presentationEvents[thornsDamageIndex]?.message === "The enemy Opponent One took 5 damage from thorns.", "Spiky Shield must name the attacker, actual damage, and Effect source.");
+
+let lowManaReactive = battle(reactiveCatalog, reactivePlayer, "reactive-relics");
+lowManaReactive = { ...lowManaReactive, playerMana: 1, opponentMana: 10 };
+const lowManaReactiveResult = resolveTurn(lowManaReactive, [
+  { actorKey: "p1", type: "skip", cost: 0 },
+  { actorKey: "p2", type: "skip", cost: 0 },
+]);
+check(lowManaReactiveResult.presentationEvents.some((event) => event.message === "You lost 1 mana."), "Mana-loss narration must clamp to the squad's remaining Mana.");
+
+const shieldProjectorCatalog = makeCatalog();
+shieldProjectorCatalog.dungeonOpponents[0].skill_ids = ["strike"];
+shieldProjectorCatalog.effectsByRelic["projector"] = [
+  effect("relic", "projector", "defensive-reaction", "reactive_trigger", {
+    target: "equipped_critter",
+    trigger_event: "owner_attacked",
+    cooldown_turns: 0,
+    minimum_damage: null,
+    trigger_source: "self",
+    activation_limit: 1,
+    child_effect_ids: ["shield-i"],
+    activation_chance: 0.25,
+    requires_hp_damage: true,
+    activation_limit_scope: "turn",
+    requires_shield_damage: false,
+  }),
+  { ...effect("relic", "projector", "shield-i", "shield_modifier", {
+    target: "equipped_critter",
+    can_stack: true,
+    operation: "grant",
+    shield_value: 10,
+    duration_type: "end_of_battle",
+    duration_clock: "target_turn",
+    duration_value: null,
+    maximum_shield: null,
+    replace_existing_shield: false,
+  }, 1), execution: "child" },
+];
+let projectorActivations = 0;
+let shieldedProjectorBattle: ReturnType<typeof battle> | null = null;
+for (let seedIndex = 0; seedIndex < 100 && projectorActivations === 0; seedIndex += 1) {
+  const projectorPlayer = makePlayer();
+  projectorPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "projector" }];
+  let projectorBattle = battle(shieldProjectorCatalog, projectorPlayer, `shield-projector-${seedIndex}`);
+  check(projectorBattle.runtimeEffects.some((instance) => instance.sourceEffectId === "defensive-reaction"), "Shield Projector's reactive parent must be installed at battle start.");
+  projectorBattle = { ...projectorBattle, playerMana: 10, opponentMana: 10 };
+  const projectorResult = resolveTurn(projectorBattle, [
+    { actorKey: "p1", type: "skip", cost: 0 },
+    { actorKey: "p2", type: "skip", cost: 0 },
+  ]);
+  check(projectorResult.playerUnits[0].hp < projectorBattle.playerUnits[0].hp, "Shield Projector regression must receive an actual enemy attack.");
+  if (projectorResult.playerUnits[0].shield > 0) {
+    projectorActivations += 1;
+    shieldedProjectorBattle = projectorResult;
+    check(projectorResult.playerUnits[0].shield === 10, "Shield Projector must grant exactly 10 Shield when its reaction activates.");
+  }
+}
+check(projectorActivations > 0, "Shield Projector must activate in a deterministic sample of 100 damaged attacks.");
+const shieldHitResult = resolveTurn({ ...shieldedProjectorBattle!, phase: "selecting", playerMana: 0, opponentMana: 10 }, [
+  { actorKey: "p1", type: "skip", cost: 0 },
+  { actorKey: "p2", type: "skip", cost: 0 },
+]);
+check(shieldHitResult.playerUnits[0].shield === 5, "A hit against a 10-point Shield must reduce it by the incoming damage without reducing HP.");
+const shieldHitEvent = shieldHitResult.presentationEvents.find((event) => event.kind === "damage" && event.targetKeys.includes("p1"));
+check(shieldHitEvent?.message === "Your Player One's Shield absorbed 5 damage.", "Shield damage must narrate the absorbed amount instead of reporting 0 HP damage.");
+check(!shieldHitResult.presentationEvents.some((event) => event.message.includes("took 0 damage")), "Shield-only damage must not produce a 0-damage HP narration.");
+const shieldBreakResult = resolveTurn({ ...shieldHitResult, phase: "selecting", playerMana: 0, opponentMana: 10 }, [
+  { actorKey: "p1", type: "skip", cost: 0 },
+  { actorKey: "p2", type: "skip", cost: 0 },
+]);
+check(shieldBreakResult.playerUnits[0].shield === 0, "A second hit must break the remaining Shield.");
+const shieldBreakEvent = shieldBreakResult.presentationEvents.find((event) => event.message === "Your Player One's Shield broke.");
+check(shieldBreakEvent?.kind === "status" && shieldBreakEvent.effectPolarity === "negative", "Shield break must get its own negative status presentation event.");
+
+const selectedLeadBattle = battle(reactiveCatalog, reactivePlayer, "selected-lead-runtime");
+const activatedLeadBattle = refreshSetupRuntimeEffects({
+  ...selectedLeadBattle,
+  playerUnits: selectedLeadBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, active: false } : unit),
+});
+const reactivatedLeadBattle = refreshSetupRuntimeEffects({
+  ...activatedLeadBattle,
+  playerUnits: activatedLeadBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, active: true } : unit),
+});
+check(
+  reactivatedLeadBattle.runtimeEffects.some((instance) => instance.sourceEffectId === "thorns")
+    && reactivatedLeadBattle.runtimeEffects.some((instance) => instance.sourceEffectId === "health-booster"),
+  "Activating Dungeon leads must reinstall equipped Relic runtime Effects after the initial inactive formation.",
+);
+
+const swapReactivePlayer = makePlayer();
+swapReactivePlayer.relicSlots = [{ user_critter_id: "up3", slot_index: 1, relic_id: "spiky" }];
+let swapReactiveBattle = battle(reactiveCatalog, swapReactivePlayer, "swap-in-reactive-relic");
+swapReactiveBattle = { ...swapReactiveBattle, playerMana: 10, opponentMana: 5 };
+const swapReactiveResult = resolveTurn(swapReactiveBattle, [
+  { actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 },
+  { actorKey: "p2", type: "skip", cost: 0 },
+]);
+check(swapReactiveResult.playerUnits.find((unit) => unit.key === "p3")?.hp! < swapReactiveBattle.playerUnits.find((unit) => unit.key === "p3")?.hp!, "A Critter swapped into an attacked slot must take the incoming damage.");
+check(swapReactiveResult.opponentUnits[0].hp === swapReactiveBattle.opponentUnits[0].hp - 5, "A Critter swapped into an attacked slot must immediately trigger its Spiky Shield retaliation.");
+check(
+  swapReactiveResult.presentationEvents.some((event) => event.kind === "damage" && event.targetKeys.includes("p3"))
+    && swapReactiveResult.presentationEvents.some((event) => event.kind === "damage" && event.targetKeys.includes("o1") && event.message.includes("thorns")),
+  "Swap-in Relic damage and retaliation must both be staged in combat order.",
+);
+
+let blockFailure: ReturnType<typeof battle> | null = null;
+for (let seedIndex = 0; seedIndex < 1000 && !blockFailure; seedIndex += 1) {
+  const first = takeTurn(battle(makeCatalog(), makePlayer(), `block-odds-${seedIndex}`), [{ actorKey: "p1", type: "block", cost: 3 }], 10);
+  const second = takeTurn(first, [{ actorKey: "p1", type: "block", cost: 3 }], 10);
+  if (!second.playerUnits[0].blocking && second.playerUnits[0].blockStreak === 0) blockFailure = second;
+}
+check(blockFailure, "The deterministic combat RNG must expose a reproducible second-block failure for odds regression coverage.");
+check(
+  blockFailure!.presentationEvents.filter((event) => event.kind === "block").map((event) => event.message).join("|") === "Your Player One blocks.|Player One's block failed.",
+  "A failed consecutive Block must first present the declaration and then show concise failure narration on the next event.",
+);
+const resetBlock = takeTurn(blockFailure!, [{ actorKey: "p1", type: "block", cost: 3 }], 10);
+check(resetBlock.playerUnits[0].blocking && resetBlock.playerUnits[0].blockStreak === 1, "A failed Block must reset the next Block odds to 1/1 and allow it to succeed.");
+check(resetBlock.presentationEvents.some((event) => event.kind === "block" && event.message === "Your Player One blocks."), "A reset successful Block must use the concise success narration.");
+
 const knockoutCatalog = makeCatalog();
 knockoutCatalog.dungeonOpponents[0].skill_ids = ["strike"];
 let playerKnockoutBattle = battle(knockoutCatalog, makePlayer(), "player-knockout-refund");
@@ -328,6 +523,17 @@ check(
   "One-active formations must use center, two-active formations top/bottom, and three-active formations every slot.",
 );
 
+const actionOrderBattle = battle(eventCatalog, makePlayer(), "action-order");
+const swappedActionOrder = orderedActiveCombatUnits([
+  { ...actionOrderBattle.playerUnits[0], active: false, battlefieldSlot: null },
+  { ...actionOrderBattle.playerUnits[1], active: true, battlefieldSlot: 2 },
+  { ...actionOrderBattle.playerUnits[2], active: true, battlefieldSlot: 0 },
+]);
+check(
+  swappedActionOrder.map((unit) => unit.battlefieldSlot).join(",") === "0,2",
+  "Player action selection must always follow top-to-bottom battlefield slots after a Swap, regardless of squad-array order.",
+);
+
 check(
   elementEffectiveness(eventCatalog, "bloom", eventCatalog.critters[4]) === 2,
   "Dual-type Element effectiveness must multiply the chart cell for both defending Elements.",
@@ -403,7 +609,7 @@ check(passive.opponentUnits[0].stats.spd === 10 && passive.opponentUnits[1].stat
 check(passive.opponentUnits[0].stats.diceMin === 1 && passive.opponentUnits[1].stats.diceMin === 4 && passive.opponentUnits[1].stats.diceMax === 8, "Ability element enemy targeting must filter active opponents by element.");
 const passiveSwapSlot = passive.playerUnits[0].battlefieldSlot;
 passive = takeTurn(passive, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }]);
-check(passive.playerUnits[0].maxHp === 100 && passive.playerUnits[1].stats.atk === 20, "Every Relic effect must disappear when its carrier leaves active play.");
+check(passive.playerUnits[0].maxHp === 110 && passive.playerUnits[1].stats.atk === 23, "Equipped Relic stat effects must remain sourced from the equipped Critter after it leaves active play.");
 check(passive.playerUnits[2].stats.def === 24, "Active Rollcaster Ability effects must recompute for the Critter entering an active slot.");
 const passiveSwapEvent = passive.presentationEvents.find((event) => event.kind === "swap" && event.actorKey === "p1");
 check(
@@ -411,6 +617,13 @@ check(
     && passiveSwapEvent.swap.incomingKey === "p3"
     && passiveSwapEvent.swap.battlefieldSlot === passiveSwapSlot,
   "Swap presentation must identify the outgoing Critter, incoming Critter, and preserved battlefield slot.",
+);
+passive = takeTurn(passive, [{ actorKey: "p3", type: "swap", swapToId: "up1", cost: 4 }]);
+check(
+  passive.playerUnits[0].maxHp === 110
+    && passive.playerUnits[0].stats.def === 28
+    && passive.playerUnits[1].stats.atk === 23,
+  "Returning to an equipped Critter must restore its setup stats exactly once rather than stacking another copy.",
 );
 const swapPlaybackBefore = {
   ...battle(passiveCatalog, passivePlayer, "swap-playback"),
@@ -519,6 +732,45 @@ check(
   "Each repeated percentage application must narrate the exact base-referenced amount applied on that turn.",
 );
 
+const temporarySwapCatalog = makeCatalog();
+temporarySwapCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "temporary-defense", "stat_modifier", { stat: "def", value_mode: "flat", amount: 5, chance: 1, target: "self" }),
+];
+let temporarySwap = takeTurn(battle(temporarySwapCatalog, makePlayer(), "temporary-swap"), [
+  { actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 },
+]);
+check(temporarySwap.playerUnits[0].stats.def === 30, "A Skill stat modifier must apply to its active Critter.");
+temporarySwap = takeTurn(temporarySwap, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }]);
+check(
+  temporarySwap.playerUnits[0].stats.def === 25
+    && !temporarySwap.modifiers.some((modifier) => modifier.holderKey === "p1"),
+  "Skill stat modifiers must be removed when their Critter swaps out.",
+);
+temporarySwap = takeTurn(temporarySwap, [{ actorKey: "p3", type: "swap", swapToId: "up1", cost: 4 }]);
+check(temporarySwap.playerUnits[0].stats.def === 25, "A swapped-out Skill stat modifier must not return when the Critter comes back in.");
+
+const temporaryKnockoutCatalog = makeCatalog();
+temporaryKnockoutCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "temporary-enemy-defense", "stat_modifier", { stat: "def", value_mode: "flat", amount: 5, chance: 1, target: "all_enemies" }),
+];
+let temporaryKnockout = takeTurn(battle(temporaryKnockoutCatalog, makePlayer(), "temporary-knockout"), [
+  { actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 },
+]);
+temporaryKnockout = {
+  ...temporaryKnockout,
+  opponentUnits: temporaryKnockout.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, hp: 1 } : unit),
+};
+temporaryKnockout = takeTurn(temporaryKnockout, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }]);
+const knockedOutOpponent = temporaryKnockout.opponentUnits.find((unit) => unit.key === "o1")!;
+const knockoutDamageEvent = temporaryKnockout.presentationEvents.find((event) => event.kind === "damage" && event.targetKeys.includes("o1"));
+check(
+  knockedOutOpponent.hp === 0
+    && knockedOutOpponent.stats.def === 25
+    && !temporaryKnockout.modifiers.some((modifier) => modifier.holderKey === "o1")
+    && !knockoutDamageEvent?.state?.modifiers.some((modifier) => modifier.holderKey === "o1"),
+  "Stat modifiers must be removed immediately when a Critter is knocked out, including the damage presentation snapshot.",
+);
+
 const debuffCatalog = makeCatalog();
 debuffCatalog.effectsBySkill.ritual = [
   effect("skill", "ritual", "menace", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.2, chance: 1, target: "all_enemies" }),
@@ -625,7 +877,7 @@ check(
 );
 const beforeVampire = healing.playerUnits[0].hp;
 healing = takeTurn(healing, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }]);
-check(healing.playerUnits[0].hp === beforeVampire + 3, "percent_damage_done healing must use the Skill's actual final damage and shared half-up rounding.");
+check(healing.playerUnits[0].hp === beforeVampire + 3, "percent_damage_done healing must use the Skill's actual final damage and half-up percentage rounding.");
 const vampireKinds = healing.presentationEvents
   .filter((event) => event.actorKey === "p1")
   .map((event) => event.kind)
@@ -633,6 +885,113 @@ const vampireKinds = healing.presentationEvents
 check(
   vampireKinds.includes("skill,damage,heal"),
   "Damage-drain Skills must present skill use, damage, and healing in that order.",
+);
+
+const stimCatalog = makeCatalog();
+stimCatalog.relics.push({ id: "stim", name: "Stim Shot", description: "Healing amplifier.", max_owned: 1, asset_path: null, sort_order: 10 });
+stimCatalog.effectsByRelic.stim = [effect("relic", "stim", "health-booster", "effect_amplification", {
+  target: "equipped_critter",
+  affected_effect_category: "healing",
+  direction: "received",
+  modifier_type: "percentage",
+  modifier_value: 0.2,
+  duration_type: "while_relic_equipped",
+  duration_clock: "target_turn",
+  duration_value: null,
+})];
+stimCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "stim-heal", "restore_hp", { value_mode: "percent_max_hp", amount: 0.1, chance: 1, target: "self" })];
+const stimPlayer = makePlayer();
+stimPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "stim" }];
+let stimulated = battle(stimCatalog, stimPlayer, "stim-healing");
+stimulated = {
+  ...stimulated,
+  playerUnits: stimulated.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, maxHp: 48, hp: 30, stats: { ...unit.stats, hp: 48 }, baseStats: { ...unit.baseStats, hp: 48 } } : unit),
+};
+stimulated = takeTurn(stimulated, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(stimulated.playerUnits[0].hp === 36, "Stim Shot must round the 4.8 HP base heal to 5, then boost 5 by 20% to 6.");
+check(stimulated.turnEvents.some((event) => event.event_type === "hp_healed" && event.amount === 6 && event.target_critter_id === "p1"), "Heal HP Challenge progress must use amplified, actually restored HP.");
+
+const unamplified = takeTurn({ ...stimulated, runtimeEffects: [], playerUnits: stimulated.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 30 } : unit) }, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(unamplified.playerUnits[0].hp === 35, "Base 10% healing from 48 max HP must round to 5 before any amplifier is applied.");
+
+const medicCatalog = makeCatalog();
+medicCatalog.rollcasterAbilities.push({ id: "battle-medic", name: "Battle Medic I", description: "Heal after an enemy knockout.", sort_order: 10 });
+medicCatalog.effectsByAbility["battle-medic"] = [
+  { ...effect("ability", "battle-medic", "medic-heal", "direct_health_modifier", {
+    value: 0.05,
+    target: "all_friendlies",
+    operation: "heal",
+    value_type: "percent_max_hp",
+    can_defeat_target: false,
+    affected_by_shield: false,
+    affected_by_healing_modifiers: true,
+    overhealing_behavior: "discard",
+    overheal_effect_ids: [],
+  }), execution: "child" },
+  effect("ability", "battle-medic", "medic-trigger", "reactive_trigger", {
+    target: "all_friendlies",
+    trigger_event: "owner_defeats_enemy",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "per_target_battle",
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    child_effect_ids: ["medic-heal"],
+  }, 1),
+];
+const medicPlayer = makePlayer();
+medicPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "battle-medic" }];
+let medicBattle = battle(medicCatalog, medicPlayer, "battle-medic");
+medicBattle = {
+  ...medicBattle,
+  playerUnits: medicBattle.playerUnits.map((unit) => ({ ...unit, hp: unit.key === "p1" ? 50 : unit.key === "p2" ? 40 : unit.hp })),
+  opponentUnits: medicBattle.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, hp: 1 } : unit),
+};
+const medicResult = takeTurn(medicBattle, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }]);
+check(medicResult.playerUnits[0].hp === 55 && medicResult.playerUnits[1].hp === 44, "Battle Medic I must heal every living active friendly for 5% max HP after an enemy knockout.");
+const medicEvent = medicResult.presentationEvents.find((event) => event.kind === "heal" && event.message.includes("Battle Medic I"));
+check(Boolean(medicEvent) && medicEvent!.targetKeys.length === 2 && medicEvent!.hpChanges.length === 2, "Battle Medic I must animate all healed friendlies in one staged presentation event.");
+check(medicEvent?.message === "Your Player One healed 5 HP and your Player Two healed 4 HP from Battle Medic I.", "Battle Medic I must narrate every Critter's actual healed HP in one message.");
+
+let smallMedicBattle = battle(medicCatalog, medicPlayer, "battle-medic-small-heal");
+smallMedicBattle = {
+  ...smallMedicBattle,
+  playerUnits: smallMedicBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, maxHp: 48, hp: 30, stats: { ...unit.stats, hp: 48 }, baseStats: { ...unit.baseStats, hp: 48 } } : unit),
+  opponentUnits: smallMedicBattle.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, hp: 1 } : unit),
+};
+const smallMedicResult = takeTurn(smallMedicBattle, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }]);
+check(smallMedicResult.playerUnits[0].hp === 32, "Battle Medic must half-up round 48 max HP * 5% to 2 HP.");
+
+const percentageRoundingCatalog = makeCatalog();
+percentageRoundingCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "three-point-three", "restore_hp", { value_mode: "percent_max_hp", amount: 0.033, chance: 1, target: "self" }, 0),
+  effect("skill", "ritual", "four-point-five", "restore_hp", { value_mode: "percent_max_hp", amount: 0.045, chance: 1, target: "self" }, 1),
+  effect("skill", "ritual", "less-than-one", "restore_hp", { value_mode: "percent_max_hp", amount: 0.003, chance: 1, target: "self" }, 2),
+];
+let percentageRoundingBattle = battle(percentageRoundingCatalog, makePlayer(), "healing-percentage-rounding");
+percentageRoundingBattle = { ...percentageRoundingBattle, playerUnits: percentageRoundingBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 50 } : unit) };
+const percentageRoundingResult = takeTurn(percentageRoundingBattle, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(percentageRoundingResult.playerUnits[0].hp === 59, "Healing percentages must round 3.3 to 3, 4.5 to 5, and any positive result below 1 to 1.");
+
+medicCatalog.effectsBySkill.mark = [effect("skill", "mark", "effect-knockout", "direct_health_modifier", {
+  value: 100,
+  target: "selected_enemy",
+  operation: "lose_hp",
+  value_type: "flat",
+  can_defeat_target: true,
+  affected_by_shield: false,
+})];
+let effectKnockoutBattle = battle(medicCatalog, medicPlayer, "battle-medic-effect-knockout");
+effectKnockoutBattle = {
+  ...effectKnockoutBattle,
+  playerUnits: effectKnockoutBattle.playerUnits.map((unit) => ({ ...unit, hp: unit.key === "p1" ? 50 : unit.key === "p2" ? 40 : unit.hp })),
+  opponentUnits: effectKnockoutBattle.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, hp: 1 } : unit),
+};
+const effectKnockoutResult = takeTurn(effectKnockoutBattle, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "o1", cost: 2 }]);
+check(
+  effectKnockoutResult.playerUnits[0].hp === 55 && effectKnockoutResult.playerUnits[1].hp === 44,
+  "Battle Medic I must also trigger when an enemy is knocked out by a Skill Effect instead of base attack damage.",
 );
 
 const dotCatalog = makeCatalog();

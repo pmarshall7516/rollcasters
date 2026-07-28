@@ -1,4 +1,4 @@
-import { byId, critterStats, roundHalfUp, type StatBlock } from "./game.js";
+import { actionCostModifierApplies, applyActionCostModifiers, byId, critterElementIds, critterStats, roundHalfUp, type ActionCostBreakdown, type ActionCostModifier, type StatBlock } from "./game.js";
 import type { AppData, ResolvedEffectRef, UserCritter } from "./types.js";
 
 export type LoadoutStatKey = keyof StatBlock;
@@ -16,6 +16,7 @@ export type StatBreakdown = {
 export type CalculatedLoadoutStats = {
   stats: StatBlock;
   breakdowns: Partial<Record<LoadoutStatKey, StatBreakdown>>;
+  skillCosts: Record<string, ActionCostBreakdown>;
 };
 
 type PassiveSource = {
@@ -29,22 +30,22 @@ function targetsCritter(
   source: PassiveSource,
   effect: ResolvedEffectRef,
   target: UserCritter,
-  targetElementId: string,
+  targetElementIds: string[],
 ): boolean {
   const effectTarget = String(effect.parameters.target ?? "");
   if (source.ownerType === "relic") {
     if (effectTarget === "equipped_critter") return source.sourceCritterId === target.id;
     if (effectTarget === "equipped_allies") return source.sourceCritterId !== target.id;
-    if (effectTarget === "equipped_friendlies") return true;
+    if (effectTarget === "equipped_friendlies" || effectTarget === "all_squad_friendlies") return true;
     return false;
   }
 
-  if (effectTarget === "all_friendlies") return true;
+  if (effectTarget === "all_friendlies" || effectTarget === "all_squad_friendlies") return true;
   if (effectTarget === "all_element_friendlies") {
     const elementIds = Array.isArray(effect.parameters.element_ids)
       ? effect.parameters.element_ids.filter((id): id is string => typeof id === "string")
       : [];
-    return elementIds.includes(targetElementId);
+    return elementIds.some((elementId) => targetElementIds.includes(elementId));
   }
   return false;
 }
@@ -104,25 +105,52 @@ function addDelta(
   breakdowns[key] = breakdown;
 }
 
+function actionCostSources(
+  sources: PassiveSource[],
+  target: UserCritter,
+  elementIds: string[],
+): ActionCostModifier[] {
+  return sources.flatMap((source) => source.effects
+    .filter((effect) => effect.execution !== "child" && effect.runtimeKind === "action_cost_modifier")
+    .filter((effect) => targetsCritter(source, effect, target, elementIds))
+    .map((effect) => ({
+      parameters: effect.parameters,
+      sourceName: source.sourceName,
+    })));
+}
+
+function addCostDelta(
+  breakdowns: Partial<Record<LoadoutStatKey, StatBreakdown>>,
+  key: "blockCost" | "swapCost",
+  base: number,
+  amount: number,
+  sourceName: string,
+): void {
+  addDelta(breakdowns, key, base, amount, sourceName);
+}
+
 export function calculateLoadoutStats(data: AppData, owned: UserCritter): CalculatedLoadoutStats {
   const critter = byId(data.catalog.critters, owned.critter_id);
   if (!critter) throw new Error(`Missing catalog Critter ${owned.critter_id}.`);
   const base = critterStats(data.catalog, critter, owned.level);
   const stats = { ...base };
   const breakdowns: Partial<Record<LoadoutStatKey, StatBreakdown>> = {};
+  const sources = passiveSources(data);
+  const elementIds = critterElementIds(critter);
 
-  for (const source of passiveSources(data)) {
+  for (const source of sources) {
     for (const effect of source.effects) {
-      if (!targetsCritter(source, effect, owned, critter.element_1_id)) continue;
+      if (!targetsCritter(source, effect, owned, elementIds)) continue;
       if (effect.runtimeKind === "stat_modifier") {
-        const key = String(effect.parameters.stat) as "hp" | "atk" | "def" | "spd";
-        if (!["hp", "atk", "def", "spd"].includes(key)) continue;
+        const key = String(effect.parameters.stat) as LoadoutStatKey;
+        if (!(key in stats)) continue;
         const configured = Number(effect.parameters.amount ?? 0);
         const delta = effect.parameters.value_mode === "percentage"
-          ? roundHalfUp(stats[key] * configured)
+          ? (roundHalfUp(base[key] * configured) || (configured === 0 ? 0 : Math.sign(configured)))
           : configured;
         const previous = stats[key];
-        stats[key] = Math.max(1, previous + delta);
+        const minimum = key === "blockCost" || key === "swapCost" ? 0 : key === "relicSlots" ? 0 : 1;
+        stats[key] = Math.max(minimum, previous + delta);
         addDelta(breakdowns, key, base[key], stats[key] - previous, source.sourceName);
       } else if (effect.runtimeKind === "mana_dice_modifier") {
         const minimumDelta = Number(effect.parameters.minimum_delta ?? 0);
@@ -137,5 +165,24 @@ export function calculateLoadoutStats(data: AppData, owned: UserCritter): Calcul
 
   stats.diceMin = Math.max(1, roundHalfUp(stats.diceMin));
   stats.diceMax = Math.max(stats.diceMin, roundHalfUp(stats.diceMax));
-  return { stats, breakdowns };
+  const blockCostModifiers = actionCostSources(sources, owned, elementIds)
+    .filter((modifier) => actionCostModifierApplies(modifier.parameters, { type: "block" }));
+  const swapCostModifiers = actionCostSources(sources, owned, elementIds)
+    .filter((modifier) => actionCostModifierApplies(modifier.parameters, { type: "swap" }));
+  const blockCost = applyActionCostModifiers(stats.blockCost, blockCostModifiers);
+  const swapCost = applyActionCostModifiers(stats.swapCost, swapCostModifiers);
+  for (const source of blockCost.sources) addCostDelta(breakdowns, "blockCost", base.blockCost, source.amount, source.sourceName);
+  for (const source of swapCost.sources) addCostDelta(breakdowns, "swapCost", base.swapCost, source.amount, source.sourceName);
+  stats.blockCost = blockCost.final;
+  stats.swapCost = swapCost.final;
+
+  const skillCosts = Object.fromEntries(data.catalog.skills.map((skill) => [
+    skill.id,
+    applyActionCostModifiers(
+      skill.mana_cost,
+      actionCostSources(sources, owned, elementIds)
+        .filter((modifier) => actionCostModifierApplies(modifier.parameters, { type: "skill", skillId: skill.id, skillType: skill.skill_type })),
+    ),
+  ]));
+  return { stats, breakdowns, skillCosts };
 }

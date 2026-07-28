@@ -15,6 +15,7 @@ export type CollectibleChallengeType =
   | "swap_action"
   | "block_action"
   | "dice_roll"
+  | "heal_hp"
   | "shop_shards"
   | "shop_relic";
 
@@ -170,7 +171,8 @@ export type CombatProgressEvent = {
     | "swap_completed"
     | "block_completed"
     | "dice_resolved"
-    | "resource_spent";
+    | "resource_spent"
+    | "hp_healed";
   source_critter_id: string | null;
   target_critter_id: string | null;
   skill_id: string | null;

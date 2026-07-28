@@ -54,14 +54,18 @@ async function waitForImages(page) {
 }
 
 async function grant(type, collectibleId) {
-  await callCollectibleRpc({
-    action: "grant",
-    collectibleType: type,
-    email,
-    collectibleId,
-    count: 1,
-    countWasProvided: type === "relic",
-  }, env);
+  try {
+    await callCollectibleRpc({
+      action: "grant",
+      collectibleType: type,
+      email,
+      collectibleId,
+      count: 1,
+      countWasProvided: type === "relic",
+    }, env);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("already has")) throw error;
+  }
 }
 
 async function candidateNames(modal, selector) {
@@ -80,7 +84,7 @@ try {
   const [critterCatalogResult, rollcasterCatalogResult, relicCatalogResult] = await Promise.all([
     admin.from("critters").select("id,name").eq("is_active", true).eq("is_archived", false),
     admin.from("rollcasters").select("id,name").eq("is_active", true).eq("is_archived", false),
-    admin.from("relics").select("id,name,max_owned").eq("is_active", true).eq("is_archived", false),
+    admin.from("relics").select("id,name,description,max_owned").eq("is_active", true).eq("is_archived", false),
   ]);
   for (const result of [critterCatalogResult, rollcasterCatalogResult, relicCatalogResult]) {
     if (result.error) throw result.error;
@@ -138,6 +142,26 @@ try {
   for (const result of [starterCritterResult, starterRollcasterResult, profileResult]) {
     if (result.error) throw result.error;
   }
+  const leveledStarter = await admin
+    .from("user_critters")
+    .update({ level: 100 })
+    .eq("id", starterCritterResult.data.id);
+  if (leveledStarter.error) throw leveledStarter.error;
+  const starterSkillUnlocks = await admin
+    .from("critter_skill_unlocks")
+    .select("skill_id")
+    .eq("critter_id", starterCritterResult.data.critter_id)
+    .order("sort_order")
+    .limit(3);
+  if (starterSkillUnlocks.error) throw starterSkillUnlocks.error;
+  const unlockedStarterSkills = await admin.from("user_critter_skills").upsert(
+    starterSkillUnlocks.data.map((row) => ({
+      user_critter_id: starterCritterResult.data.id,
+      skill_id: row.skill_id,
+    })),
+    { onConflict: "user_critter_id,skill_id" },
+  );
+  if (unlockedStarterSkills.error) throw unlockedStarterSkills.error;
 
   const extraCritters = critterCatalog.filter((row) => row.id !== starterCritterResult.data.critter_id).slice(0, 2);
   const extraRollcasters = rollcasterCatalog.filter((row) => row.id !== starterRollcasterResult.data.rollcaster_id).slice(0, 2);
@@ -254,7 +278,36 @@ try {
       && (await committedRelicCard.locator(".inventory-count").textContent())?.includes("Available 0"),
     "A fully committed owned Relic must remain visible, show zero availability, and stay disabled.",
   );
+  const relicDescriptionsVisible = await modal.locator(".candidate-card").evaluateAll(
+    (cards, descriptions) => cards.some((card) => descriptions.some((description) => description && card.textContent?.includes(description))),
+    relicCatalog.map((relic) => relic.description),
+  );
+  check(!relicDescriptionsVisible, "Relic equip cards must omit the general Relic description and show only attached Effects.");
+  const relicSearch = modal.getByLabel("Search relics by name");
+  await relicSearch.fill(ownedRelics[1].name);
+  check(await modal.locator(".candidate-card").count() === 1, "Relic search must filter equip candidates by name.");
+  await relicSearch.fill("");
   await modal.screenshot({ path: path.join(outputDir, "relics-id-order.png"), animations: "disabled" });
+  await modal.getByRole("button", { name: "Cancel" }).click();
+
+  const starterCritterName = critterCatalog.find((row) => row.id === starterCritterResult.data.critter_id)?.name;
+  const starterCritterSlot = page.locator(".loadout-slot").filter({ hasText: starterCritterName });
+  await starterCritterSlot.locator(".skill-tile").first().click();
+  modal = page.getByRole("dialog");
+  const skillGrid = modal.locator(".skill-tile-grid");
+  const desktopColumns = await skillGrid.evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
+  check(desktopColumns === 3, `Desktop Skill equip popup must use three columns, found ${desktopColumns}.`);
+  check(await modal.locator(".skill-tile").count() >= 3, "Skill popup fixture must visibly exercise all three desktop columns.");
+  await modal.screenshot({ path: path.join(outputDir, "skills-three-column.png"), animations: "disabled" });
+  const skillSearch = modal.getByLabel("Search skills by name or element");
+  const firstSkillName = (await modal.locator(".skill-title strong").first().textContent())?.trim();
+  check(firstSkillName, "The starter Critter needs at least one unlocked Skill for equip search coverage.");
+  await skillSearch.fill(firstSkillName);
+  check(await modal.locator(".skill-tile").count() === 1, "Skill search must filter candidates by Skill name.");
+  const firstElement = (await modal.locator(".skill-title img").first().getAttribute("alt"))?.replace(/ element$/i, "");
+  await skillSearch.fill(firstElement || "");
+  check(!firstElement || await modal.locator(".skill-tile").count() >= 1, "Skill search must match authored Element names.");
+  await modal.screenshot({ path: path.join(outputDir, "skills-three-column-search.png"), animations: "disabled" });
 
   check(browserErrors.length === 0, `The equip-order browser flow logged errors: ${browserErrors.join("\n")}`);
   check(failedResponses.length === 0, `The equip-order browser flow had failed responses: ${failedResponses.join("\n")}`);

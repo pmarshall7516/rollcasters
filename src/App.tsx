@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
+  ArrowUp,
   Check,
   ChevronLeft,
   ChevronDown,
@@ -60,13 +61,16 @@ import {
 } from "./lib/supabase";
 import {
   byId,
+  calculateActionCostBreakdown,
   combatEffectSummaries,
   critterElementIds,
   critterStats,
   isSingleTarget,
   matchesSelectedElements,
+  orderedActiveCombatUnits,
   skillTargets,
   squadCritters,
+  type ActionCostBreakdown,
   type CombatState,
 } from "./lib/game";
 import {
@@ -517,6 +521,8 @@ export function App() {
                 active: unit.active,
                 slot: unit.battlefieldSlot,
                 roll: unit.manaRoll,
+                blocking: unit.blocking,
+                blockStreak: unit.blockStreak,
                 stats: unit.stats,
                 activeEffects: combatEffectSummaries(combat.battle, unit.key),
               })),
@@ -531,6 +537,8 @@ export function App() {
                     active: unit.active,
                     slot: unit.battlefieldSlot,
                     roll: unit.manaRoll,
+                    blocking: unit.blocking,
+                    blockStreak: unit.blockStreak,
                     stats: unit.stats,
                     activeEffects: combatEffectSummaries(combat.battle, unit.key),
                   })),
@@ -1327,7 +1335,9 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
         <SkillTileGrid ariaLabel={`${critter.name} skill slots`}>
           {[1, 2, 3, 4].map((skillSlot) => {
             const row = data.player!.skillSlots.find((candidate) => candidate.user_critter_id === owned.id && candidate.slot_index === skillSlot);
-            return <SkillTile key={skillSlot} data={data} skill={byId(data.catalog.skills, row?.skill_id)} onClick={(event) => {
+            const skill = byId(data.catalog.skills, row?.skill_id);
+            const skillCost = skill ? calculated.skillCosts[skill.id] : undefined;
+            return <SkillTile key={skillSlot} data={data} skill={skill} manaCost={skillCost?.final} manaCostBreakdown={skillCost} onClick={(event) => {
               const grid = event.currentTarget.closest(".skill-tile-grid");
               onEquip({ type: "skill", slotIndex: skillSlot, owned, gridWidth: grid?.getBoundingClientRect().width ?? 0 });
             }} />;
@@ -1423,19 +1433,21 @@ function SkillTileGrid({ ariaLabel, children, width }: { ariaLabel: string; chil
   return <div ref={gridRef} className={`skill-tile-grid ${compact ? "compact" : ""}`.trim()} aria-label={ariaLabel} style={width ? { width: "100%", maxWidth: width } : undefined}>{children}</div>;
 }
 
-function SkillTile({ data, skill, onClick, disabled = false, disabledReason, selected = false, equipped = false }: { data: AppData; skill?: Skill | null; onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void; disabled?: boolean; disabledReason?: string; selected?: boolean; equipped?: boolean }) {
+function SkillTile({ data, skill, onClick, disabled = false, disabledReason, selected = false, equipped = false, manaCost, manaCostBreakdown }: { data: AppData; skill?: Skill | null; onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void; disabled?: boolean; disabledReason?: string; selected?: boolean; equipped?: boolean; manaCost?: number; manaCostBreakdown?: ActionCostBreakdown }) {
   const element = skill ? byId(data.catalog.elements, skill.element_id) : null;
   const elementPath = skill ? catalogAssetPath(data, "element", skill.element_id, element?.asset_path, "icon") : null;
   const manaPath = findAssetPath(data, "mana", "mana");
+  const displayedManaCost = skill ? manaCost ?? skill.mana_cost : null;
   const attachments = skill ? data.catalog.effectsBySkill[skill.id] ?? [] : [];
   const effectText = skill ? attachmentText(attachments) : "";
   const targetText = skill ? targetingDescription(skill) : "";
-  const label = skill ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}. ${skill.description} ${effectText} ${targetText}` : "Choose a skill.";
-  const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{attachmentRows(attachments)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
+  const costSummary = skill && manaCostBreakdown ? costBreakdownText("Mana cost", manaCostBreakdown) : "";
+  const label = skill ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}, ${displayedManaCost} Mana. ${skill.description} ${effectText} ${targetText} ${costSummary}` : "Choose a skill.";
+  const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{manaCostBreakdown && manaCostBreakdown.sources.length > 0 && <CostBreakdownLine label="Mana cost" breakdown={manaCostBreakdown} />}{attachmentRows(attachments)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
   return <GameTooltip label={label.trim()} content={tooltip}><button type="button" className={`skill-tile ${skill ? "" : "empty"} ${selected ? "selected" : ""} ${equipped ? "equipped" : ""} ${!onClick ? "read-only" : ""}`} onClick={onClick} disabled={disabled} aria-disabled={!onClick || undefined}>
     <span className="skill-title">{skill && <AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={16} />} />}<strong>{skill?.name ?? "-----"}</strong></span>
     {skill?.skill_type === "attack" && <span className="skill-power">PWR {skill.power}</span>}
-    {skill && <span className="skill-mana"><AssetIcon path={manaPath} alt="Mana" fallback={<Gem size={15} />} />{skill.mana_cost}</span>}
+    {skill && <span className={`skill-mana ${actionCostTone(manaCostBreakdown)}`.trim()}><AssetIcon path={manaPath} alt="Mana" fallback={<Gem size={15} />} />{displayedManaCost}</span>}
     {(selected || equipped) && <Check className="selection-check" size={15} />}
   </button></GameTooltip>;
 }
@@ -1502,6 +1514,9 @@ function unlockedAbilitySlotCount(data: AppData, owned?: UserRollcaster): number
 function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void }) {
   const player = data.player!;
   const title = target.type === "rollcaster" ? "Choose active Rollcaster" : `Equip ${target.type} · Slot ${target.slotIndex}`;
+  const [query, setQuery] = useState("");
+  useEffect(() => setQuery(""), [target.type, target.slotIndex]);
+  const normalizedQuery = query.trim().toLowerCase();
   let content: React.ReactNode;
 
   if (target.type === "critter") {
@@ -1525,8 +1540,14 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
     const current = rows.find((row) => row.slot_index === target.slotIndex)?.skill_id;
     const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex).map((row) => row.skill_id));
     const equippedCount = rows.filter((row) => row.skill_id).length;
-    const eligible = ids.map((id) => byId(data.catalog.skills, id)).filter((skill): skill is Skill => Boolean(skill));
-    content = eligible.length ? <SkillTileGrid ariaLabel="Available skills" width={target.gridWidth}>{eligible.map((skill) => {
+    const eligible = ids
+      .map((id) => byId(data.catalog.skills, id))
+      .filter((skill): skill is Skill => Boolean(skill))
+      .filter((skill) => {
+        const element = byId(data.catalog.elements, skill.element_id);
+        return !normalizedQuery || `${skill.name} ${skill.element_id} ${element?.name ?? ""}`.toLowerCase().includes(normalizedQuery);
+      });
+    content = eligible.length ? <SkillTileGrid ariaLabel="Available skills">{eligible.map((skill) => {
       const selected = current === skill.id;
       const equipped = selected || equippedElsewhere.has(skill.id);
       const cannotRemoveLast = selected && equippedCount <= 1;
@@ -1543,16 +1564,16 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
     })}</SkillTileGrid> : <p className="empty-state">No skills available</p>;
   } else if (target.type === "relic") {
     const current = player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id;
-    const eligible = sortByCollectibleId(data.catalog.relics).filter(
-      (relic) => (player.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0) > 0,
-    );
+    const eligible = sortByCollectibleId(data.catalog.relics)
+      .filter((relic) => (player.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0) > 0)
+      .filter((relic) => !normalizedQuery || relic.name.toLowerCase().includes(normalizedQuery));
     content = eligible.length ? <div className="candidate-grid">{eligible.map((relic) => {
       const owned = player.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0;
       const used = player.relicSlots.filter((row) => row.relic_id === relic.id).length;
       const selected = current === relic.id;
       const available = owned - used;
       return <button className={`candidate-card ${selected ? "selected" : ""}`} key={relic.id} disabled={saving || selected || available <= 0} onClick={() => onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id))}>
-        <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [])}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {available}</span>
+        <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [])}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {available}</span>
       </button>;
     })}</div> : <p className="empty-state">No relics available</p>;
   } else if (target.type === "ability") {
@@ -1578,8 +1599,10 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
   const currentAbility = target.type === "ability" ? player.abilitySlots.find((row) => row.user_rollcaster_id === target.owned.id && row.slot_index === target.slotIndex)?.ability_id : null;
   const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && Boolean(currentAbility));
   const clear = target.type === "critter" ? () => setSquadSlot(target.slotIndex, null) : target.type === "skill" ? () => setCritterSkillSlot(target.owned.id, target.slotIndex, null) : target.type === "relic" ? () => setCritterRelicSlot(target.owned.id, target.slotIndex, null) : target.type === "ability" ? () => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, null) : null;
-  return <Modal title={title} description="Choose an eligible item for this loadout slot." onClose={onClose}>
-    {error && <p className="notice error" role="alert">{error}</p>}{content}
+  return <Modal className={target.type === "skill" ? "equip-dialog equip-dialog-skill" : target.type === "relic" ? "equip-dialog equip-dialog-relic" : "equip-dialog"} title={title} description="Choose an eligible item for this loadout slot." onClose={onClose}>
+    {error && <p className="notice error" role="alert">{error}</p>}
+    {(target.type === "skill" || target.type === "relic") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : "Search relics by name"} /></label>}
+    {content}
     <div className="dialog-actions">{canUnequip && clear && <button className="danger-button" disabled={saving} onClick={() => onEquip(clear)}>Unequip</button>}<button className="secondary-button" onClick={onClose}>Cancel</button></div>
   </Modal>;
 }
@@ -2462,8 +2485,10 @@ function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh }: { da
   );
 }
 
-function PointCounter({ kind, points }: { kind: "skill" | "ability"; points: number }) {
-  return <p className="point-counter"><strong>{points}</strong> {kind} point{points === 1 ? "" : "s"}</p>;
+function PointCounter({ kind, points, inline = false }: { kind: "skill" | "ability"; points: number; inline?: boolean }) {
+  return inline
+    ? <span className="point-counter point-counter-inline"><strong>{points}</strong> {kind} point{points === 1 ? "" : "s"}</span>
+    : <p className="point-counter"><strong>{points}</strong> {kind} point{points === 1 ? "" : "s"}</p>;
 }
 
 function CardSprite({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -2634,15 +2659,16 @@ function DetailModal({
     const owned = data.player!.critters.find((row) => row.critter_id === critter.id);
     const stats = critterStats(data.catalog, critter, owned?.level ?? 1);
     const skillIds = owned ? data.player!.unlockedSkillIdsByCritter[owned.id] ?? [] : [];
+    const progression = owned ? xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp) : null;
     return (
       <Modal title={critter.name} onClose={onClose}>
         {detailError && <p className="notice error" role="alert">{detailError}</p>}
         <CollectibleDetailHero data={data} id={critter.id} name={critter.name} critter={critter} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} assetElement={critter.element_1_id} />
         <p className="detail-level">{owned ? `Level ${owned.level}` : "Locked"}</p>
         <CollectibleChallengePanel data={data} type="critter" id={critter.id} unlocked={Boolean(owned)} onRefresh={onRefresh} />
+        {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
         <StatGrid stats={stats} />
-        <PointCounter kind="skill" points={owned?.skill_points ?? 0} />
-        <h3>Skills</h3>
+        <h3 className="detail-section-heading">Skills <PointCounter kind="skill" points={owned?.skill_points ?? 0} inline /></h3>
         <div className="mini-grid">
           {data.catalog.critterSkillUnlocks
             .filter((row) => row.critter_id === critter.id)
@@ -2681,15 +2707,15 @@ function DetailModal({
   const rollcaster = byId(data.catalog.rollcasters, detail.id)!;
   const owned = data.player!.rollcasters.find((row) => row.rollcaster_id === rollcaster.id);
   const abilityIds = owned ? data.player!.unlockedAbilityIdsByRollcaster[owned.id] ?? [] : [];
+  const progression = owned ? xpProgress(data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id), owned.level, owned.xp) : null;
   return (
     <Modal title={rollcaster.name} onClose={onClose}>
       {detailError && <p className="notice error" role="alert">{detailError}</p>}
       <CollectibleDetailHero data={data} id={rollcaster.id} name={rollcaster.name} assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} assetElement="basic" />
       <p className="detail-level">{owned ? `Level ${owned.level}` : "Locked"}</p>
       <CollectibleChallengePanel data={data} type="rollcaster" id={rollcaster.id} unlocked={Boolean(owned)} onRefresh={onRefresh} />
-      {owned && <ProgressBar progress={xpProgress(data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id), owned.level, owned.xp)} />}
-      <PointCounter kind="ability" points={owned?.ability_points ?? 0} />
-      <h3>Abilities</h3>
+      {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
+      <h3 className="detail-section-heading">Abilities <PointCounter kind="ability" points={owned?.ability_points ?? 0} inline /></h3>
       <div className="mini-grid">
         {data.catalog.rollcasterAbilityUnlocks
           .filter((row) => row.rollcaster_id === rollcaster.id)
@@ -2725,6 +2751,39 @@ function CollectibleDetailHero({ data, id, name, critter, assetPath, assetElemen
   );
 }
 
+const DUNGEONS_PER_PAGE = 20;
+
+function DungeonPageTabs({
+  page,
+  pageCount,
+  onChange,
+}: {
+  page: number;
+  pageCount: number;
+  onChange: (page: number) => void;
+}) {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="dungeon-page-tabs" role="tablist" aria-label="Dungeon pages">
+      {Array.from({ length: pageCount }, (_, index) => {
+        const pageNumber = index + 1;
+        return (
+          <button
+            key={pageNumber}
+            type="button"
+            role="tab"
+            aria-selected={page === pageNumber}
+            className={page === pageNumber ? "active" : ""}
+            onClick={() => onChange(pageNumber)}
+          >
+            {pageNumber}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function PlayScreen({
   data,
   onBack,
@@ -2735,7 +2794,67 @@ function PlayScreen({
   onStart: (dungeon: Dungeon) => void;
 }) {
   const [infoDungeon, setInfoDungeon] = useState<EffectiveDungeon | null>(null);
+  const [page, setPage] = useState(1);
+  const gridRef = useRef<HTMLDivElement>(null);
   const dungeons = effectiveDungeons(data.player!, data.catalog.dungeons, data.catalog.dungeonOpponents);
+  const pageCount = Math.max(1, Math.ceil(dungeons.length / DUNGEONS_PER_PAGE));
+  const activePage = Math.min(page, pageCount);
+  const pageDungeons = dungeons.slice((activePage - 1) * DUNGEONS_PER_PAGE, activePage * DUNGEONS_PER_PAGE);
+
+  useEffect(() => {
+    if (page !== activePage) setPage(activePage);
+  }, [page, activePage]);
+
+  const pageDungeonIds = pageDungeons.map((entry) => entry.dungeon.id).join(",");
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    let frame = 0;
+    let syncing = false;
+
+    const syncHeights = () => {
+      if (syncing) return;
+      syncing = true;
+      const previousRows = grid.style.gridAutoRows;
+      grid.style.gridAutoRows = "auto";
+      const cards = [...grid.querySelectorAll<HTMLElement>(".dungeon-grid-card")];
+      for (const card of cards) {
+        card.style.minHeight = "";
+        card.style.height = "";
+      }
+      void grid.offsetHeight;
+      const maxHeight = Math.max(0, ...cards.map((card) => card.getBoundingClientRect().height));
+      const nextRows = maxHeight > 0 ? `${Math.ceil(maxHeight)}px` : "";
+      if (nextRows) {
+        grid.style.gridAutoRows = nextRows;
+        for (const card of cards) {
+          card.style.height = "100%";
+        }
+      } else {
+        grid.style.gridAutoRows = previousRows;
+      }
+      syncing = false;
+    };
+
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(syncHeights);
+    };
+
+    schedule();
+    void document.fonts.ready.then(schedule);
+    const observer = new ResizeObserver(schedule);
+    observer.observe(grid);
+    window.addEventListener("resize", schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", schedule);
+      grid.style.gridAutoRows = "";
+    };
+  }, [activePage, pageDungeonIds]);
+
   return (
     <section className="screen-stack dungeon-select-screen">
       <div className="screen-heading row">
@@ -2745,41 +2864,45 @@ function PlayScreen({
         </div>
         <button className="secondary-button" onClick={onBack}>Back</button>
       </div>
-      <div className="dungeon-grid">
-        {dungeons.map((entry) => (
-          <article
-            key={entry.dungeon.id}
-            className={`dungeon-card dungeon-grid-card ${!entry.enterable ? "locked" : ""} ${(entry.progress?.clear_count ?? 0) > 0 ? "completed" : ""}`}
-          >
-            <span className="collectible-id">{entry.dungeon.id}</span>
-            <button
-              type="button"
-              className="catalog-card-details dungeon-info-button"
-              aria-label={`View ${entry.dungeon.name} information`}
-              onClick={() => setInfoDungeon(entry)}
+      <DungeonPageTabs page={activePage} pageCount={pageCount} onChange={setPage} />
+      <div className="dungeon-grid-content">
+        <div className="dungeon-grid" ref={gridRef}>
+          {pageDungeons.map((entry) => (
+            <article
+              key={entry.dungeon.id}
+              className={`dungeon-card dungeon-grid-card ${!entry.enterable ? "locked" : ""} ${(entry.progress?.clear_count ?? 0) > 0 ? "completed" : ""}`}
             >
-              <Info size={16} aria-hidden="true" />
-            </button>
-            <span className={`dungeon-logo-frame ${entry.mode}`} role="img" aria-label={`${entry.mode === "boss" ? "Boss" : "Regular"} Dungeon`}>
-              {entry.logoPath
-                ? <AssetIcon path={entry.logoPath} alt="" fallback={entry.mode === "boss" ? <Skull /> : <Swords />} />
-                : entry.mode === "boss" ? <Skull /> : <Swords />}
-            </span>
-            <h2>{entry.dungeon.name}</h2>
-            <p className="dungeon-description">{entry.dungeon.description || "\u00a0"}</p>
-            <div className="dungeon-stat-grid">
-              <span><small>Difficulty</small><strong>{entry.difficulty}</strong></span>
-              <span><small>Format</small><strong>{entry.dungeon.battle_format}</strong></span>
-              <span><small>Encounters</small><strong>{entry.battleCount}</strong></span>
-              <span><small>Clears</small><strong>{entry.progress?.clear_count ?? 0}</strong></span>
-            </div>
-            <p className="dungeon-entry-state locked">{entry.lockedReason ?? "\u00a0"}</p>
-            <button className="primary-button dungeon-enter-button" disabled={!entry.enterable} onClick={() => onStart(entry.dungeon)}>
-              {entry.enterable ? "Enter Dungeon" : <><Lock size={15} /> Locked</>}
-            </button>
-          </article>
-        ))}
+              <span className="collectible-id">{entry.dungeon.id}</span>
+              <button
+                type="button"
+                className="catalog-card-details dungeon-info-button"
+                aria-label={`View ${entry.dungeon.name} information`}
+                onClick={() => setInfoDungeon(entry)}
+              >
+                <Info size={16} aria-hidden="true" />
+              </button>
+              <span className={`dungeon-logo-frame ${entry.mode}`} role="img" aria-label={`${entry.mode === "boss" ? "Boss" : "Regular"} Dungeon`}>
+                {entry.logoPath
+                  ? <AssetIcon path={entry.logoPath} alt="" fallback={entry.mode === "boss" ? <Skull /> : <Swords />} />
+                  : entry.mode === "boss" ? <Skull /> : <Swords />}
+              </span>
+              <h2>{entry.dungeon.name}</h2>
+              <p className="dungeon-description">{entry.dungeon.description || "\u00a0"}</p>
+              <div className="dungeon-stat-grid">
+                <span><small>Difficulty</small><strong>{entry.difficulty}</strong></span>
+                <span><small>Format</small><strong>{entry.dungeon.battle_format}</strong></span>
+                <span><small>Encounters</small><strong>{entry.battleCount}</strong></span>
+                <span><small>Clears</small><strong>{entry.progress?.clear_count ?? 0}</strong></span>
+              </div>
+              <p className="dungeon-entry-state locked">{entry.lockedReason ?? "\u00a0"}</p>
+              <button className="primary-button dungeon-enter-button" disabled={!entry.enterable} onClick={() => onStart(entry.dungeon)}>
+                {entry.enterable ? "Enter Dungeon" : <><Lock size={15} /> Locked</>}
+              </button>
+            </article>
+          ))}
+        </div>
       </div>
+      <DungeonPageTabs page={activePage} pageCount={pageCount} onChange={setPage} />
       {infoDungeon && <DungeonInfoDialog data={data} entry={infoDungeon} onClose={() => setInfoDungeon(null)} />}
     </section>
   );
@@ -2895,7 +3018,7 @@ function CombatScreen({
     y: number;
   } | null>(null);
   const battle = combat.battle;
-  const activePlayer = battle.playerUnits.filter((unit) => unit.active && unit.hp > 0);
+  const activePlayer = orderedActiveCombatUnits(battle.playerUnits);
   const totalCost = Object.values(actions).reduce((sum, action) => sum + action.cost, 0);
   const manaAssetPath = findAssetPath(data, "mana", "mana");
   const activeOwnedRollcaster = data.player!.rollcasters.find((row) => row.id === data.player!.profile.active_rollcaster_id) ?? data.player!.rollcasters[0];
@@ -2949,7 +3072,7 @@ function CombatScreen({
   }, [combat.phase, battle.turn, combat.rollSummary?.player, combat.rollSummary?.opponent]);
 
   useEffect(() => {
-    if (combat.phase !== "event_playback" || !event || !["skill", "damage", "heal", "swap"].includes(event.kind)) {
+    if (combat.phase !== "event_playback" || !event) {
       setEventSettled(true);
       return;
     }
@@ -2968,7 +3091,12 @@ function CombatScreen({
         window.clearTimeout(settleTimer);
       };
     }
-    const timer = window.setTimeout(() => setEventSettled(true), event.kind === "skill" ? 620 : 720);
+    const duration = event.kind === "skill" || event.kind === "status" || event.kind === "block"
+      ? 620
+      : event.kind === "other" || event.kind === "wait"
+        ? 420
+        : 720;
+    const timer = window.setTimeout(() => setEventSettled(true), duration);
     return () => window.clearTimeout(timer);
   }, [combat.phase, event?.id]);
 
@@ -3007,7 +3135,8 @@ function CombatScreen({
       setTargeting({ actorKey, skill });
       return;
     }
-    setAction({ actorKey, type: "skill", skillId: skill.id, targetKey: isSingleTarget(skill) ? targets[0]?.key : undefined, cost: skill.mana_cost });
+    const action = { actorKey, type: "skill" as const, skillId: skill.id, targetKey: isSingleTarget(skill) ? targets[0]?.key : undefined, cost: skill.mana_cost };
+    setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
   }
 
   function backToPreviousActor() {
@@ -3127,7 +3256,10 @@ function CombatScreen({
                   ? () => reselectAction(unit.key)
                   : undefined}
                 targetable={legalTargetKeys.has(unit.key)}
-                onTarget={() => targeting && setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost })}
+                onTarget={() => targeting && (() => {
+                  const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost };
+                  setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
+                })()}
                 statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
                 manaAssetPath={manaAssetPath}
                 presentation={event}
@@ -3152,7 +3284,10 @@ function CombatScreen({
                     allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
                     opponent
                     targetable={legalTargetKeys.has(unit.key)}
-                    onTarget={() => targeting && setAction({ actorKey: targeting.actorKey, type: "skill", skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost })}
+                    onTarget={() => targeting && (() => {
+                      const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost };
+                      setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
+                    })()}
                     statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
                     manaAssetPath={manaAssetPath}
                     presentation={event}
@@ -3282,7 +3417,7 @@ function CombatLeadDialog({
                   {unit.hp <= 0 && <strong>Knocked out</strong>}
                   {fixed && <strong>Already active</strong>}
                 </span>
-                {selected && <Check size={19} aria-hidden="true" />}
+                {selected && <span className="combat-lead-selection-check" aria-hidden="true"><Check size={19} /></span>}
               </button>
             );
           })}
@@ -3350,8 +3485,15 @@ function BattleUnit({
   presentation?: ReturnType<typeof currentDungeonEvent>;
   swapMotion?: { x: number; y: number };
 }) {
-  const pct = Math.max(0, Math.round((unit.hp / unit.maxHp) * 100));
-  const healthTone = pct > 65 ? "healthy" : pct > 35 ? "wounded" : "critical";
+  const maxHp = Math.max(1, unit.maxHp);
+  const shieldExceedsMaxHp = unit.shield > maxHp;
+  const barCapacity = shieldExceedsMaxHp ? Math.max(1, unit.hp + unit.shield) : maxHp;
+  const visualShield = shieldExceedsMaxHp ? unit.shield : Math.min(unit.shield, maxHp);
+  const visualHealth = shieldExceedsMaxHp
+    ? Math.min(unit.hp, maxHp)
+    : Math.min(unit.hp, Math.max(0, maxHp - visualShield));
+  const healthPct = Math.max(0, Math.min(100, (visualHealth / barCapacity) * 100));
+  const shieldPct = Math.max(0, Math.min(100, (visualShield / barCapacity) * 100));
   const summary = action ? combatActionSummary(data, allUnits, unit, action) : null;
   const acting = presentation?.kind === "skill" && presentation.actorKey === unit.key;
   const swappingOut = presentation?.kind === "swap"
@@ -3362,22 +3504,27 @@ function BattleUnit({
     && unit.active;
   const reacting = presentation?.targetKeys.includes(unit.key) ?? false;
   const reactionClass = reacting && presentation
-    ? presentation.kind === "damage"
-      ? "taking-damage"
-      : presentation.kind === "heal"
-        ? "receiving-heal"
-        : presentation.kind === "status"
-          ? "receiving-status"
-          : ""
+      ? presentation.kind === "damage"
+        ? "taking-damage"
+        : presentation.kind === "heal"
+          ? "receiving-heal"
+          : presentation.kind === "status"
+            ? presentation.effectPolarity === "negative" ? "receiving-negative" : "receiving-status"
+            : presentation.kind === "block"
+              ? (presentation.message.includes("failed") ? "block-failed" : "block-success")
+              : ""
     : "";
+  const presentationToken = presentation?.id?.replace(/[^a-zA-Z0-9_-]/g, "-") ?? "no-presentation";
   const effectSummaries = combatEffectSummaries(battle, unit.key);
+  const blockCost = calculateActionCostBreakdown(battle, { actorKey: unit.key, type: "block", cost: unit.stats.blockCost });
+  const swapCost = calculateActionCostBreakdown(battle, { actorKey: unit.key, type: "swap", cost: unit.stats.swapCost });
   const relicIds = battle.setupSources
     .filter((source) => source.ownerType === "relic" && source.sourceKey === unit.key)
     .sort((left, right) => left.sourceOrder - right.sourceOrder)
     .map((source) => source.ownerId);
   return (
     <article
-      className={`battle-unit ${interactive ? "combat-unit-interactive" : ""} ${!unit.active ? "bench" : ""} ${unit.hp <= 0 ? "knocked-out" : ""} ${opponent ? "opponent" : ""} ${selected ? "selected-lead" : ""} ${selectable ? "selectable" : ""} ${targetable ? "legal-target" : ""} ${waiting ? "waiting-turn" : ""} ${acting ? "acting-skill" : ""} ${swappingOut ? "swapping-out" : ""} ${swappingIn ? "swapping-in" : ""} ${reactionClass}`}
+      className={`battle-unit presentation-${presentationToken} ${interactive ? "combat-unit-interactive" : ""} ${!unit.active ? "bench" : ""} ${unit.hp <= 0 ? "knocked-out" : ""} ${opponent ? "opponent" : ""} ${selected ? "selected-lead" : ""} ${selectable ? "selectable" : ""} ${targetable ? "legal-target" : ""} ${waiting ? "waiting-turn" : ""} ${acting ? "acting-skill" : ""} ${swappingOut ? "swapping-out" : ""} ${swappingIn ? "swapping-in" : ""} ${reactionClass}`}
       data-combat-unit-key={unit.key}
       style={swapMotion ? ({
         "--combat-swap-x": `${swapMotion.x}px`,
@@ -3413,8 +3560,18 @@ function BattleUnit({
             <strong className="combat-level">Lv {unit.level}</strong>
             <span className="mana-roll-stat"><AssetIcon path={manaAssetPath} alt="Mana Roll" fallback={<Gem />} /> {unit.stats.diceMin}–{unit.stats.diceMax}</span>
           </span>
-          <div className={`hp-bar ${healthTone}`} role="progressbar" aria-label={`${unit.name} health`} aria-valuemin={0} aria-valuemax={unit.maxHp} aria-valuenow={unit.hp} aria-valuetext={`${unit.hp} of ${unit.maxHp} HP`}><span style={{ width: `${pct}%` }} /></div>
-          {unit.shield > 0 && <div className="shield-bar" role="progressbar" aria-label={`${unit.name} shield`} aria-valuemin={0} aria-valuemax={Math.max(unit.maxShield, unit.shield)} aria-valuenow={unit.shield} aria-valuetext={`${unit.shield} shield`}><span style={{ width: `${Math.min(100, Math.round((unit.shield / Math.max(unit.maxShield, unit.shield)) * 100))}%` }} /></div>}
+          <div
+            className="hp-bar"
+            role="progressbar"
+            aria-label={`${unit.name} health and shield`}
+            aria-valuemin={0}
+            aria-valuemax={barCapacity}
+            aria-valuenow={visualHealth + visualShield}
+            aria-valuetext={`${unit.hp} of ${unit.maxHp} HP${unit.shield > 0 ? ` and ${unit.shield} Shield` : ""}`}
+          >
+            <span className="hp-bar-health" style={{ width: `${healthPct}%` }} />
+            {visualShield > 0 && <span className="hp-bar-shield" style={{ left: `calc(${healthPct}% - 2px)`, width: `calc(${shieldPct}% + 2px)` }} />}
+          </div>
           <div className="combat-health-row">
             <p>{unit.hp} / {unit.maxHp} HP {unit.shield > 0 ? `· ${unit.shield} Shield` : ""} {unit.blocking ? "· Blocking" : ""}</p>
             <CombatRelicRow data={data} relicIds={relicIds} />
@@ -3429,20 +3586,23 @@ function BattleUnit({
             </button>
             {menu === "actions" && <div className="combat-primary-actions">
               <button onClick={(event) => { event.stopPropagation(); setMenu?.("skills"); }}><Swords size={16} /> Skill</button>
-              <button disabled={unit.stats.blockCost > availableMana} onClick={(event) => { event.stopPropagation(); onAction({ actorKey: unit.key, type: "block", cost: unit.stats.blockCost }); }}><Shield size={16} /> Block <ManaCost path={manaAssetPath} amount={unit.stats.blockCost} /></button>
-              <button disabled={bench.length === 0 || unit.stats.swapCost > availableMana} onClick={(event) => { event.stopPropagation(); setMenu?.("swap"); }}><RefreshCw size={16} /> Swap <ManaCost path={manaAssetPath} amount={unit.stats.swapCost} /></button>
+              <button disabled={blockCost.final > availableMana} onClick={(event) => { event.stopPropagation(); onAction({ actorKey: unit.key, type: "block", cost: blockCost.final }); }}><Shield size={16} /> Block <ManaCost path={manaAssetPath} amount={blockCost.final} breakdown={blockCost} /></button>
+              <button disabled={bench.length === 0 || swapCost.final > availableMana} onClick={(event) => { event.stopPropagation(); setMenu?.("swap"); }}><RefreshCw size={16} /> Swap <ManaCost path={manaAssetPath} amount={swapCost.final} breakdown={swapCost} /></button>
               <button onClick={(event) => { event.stopPropagation(); onAction({ actorKey: unit.key, type: "skip", cost: 0 }); }}><ChevronRight size={16} /> Skip <ManaCost path={manaAssetPath} amount={0} /></button>
             </div>}
             {menu === "skills" && <div className="combat-skill-actions">
               {[0, 1, 2, 3].map((slot) => {
                 const skill = unit.skills[slot];
+                const skillCost = skill ? calculateActionCostBreakdown(battle, { actorKey: unit.key, type: "skill", skillId: skill.id, cost: skill.mana_cost }) : undefined;
                 return skill
                   ? <SkillTile
                       key={skill.id}
                       data={data}
                       skill={skill}
-                      disabled={skill.mana_cost > availableMana}
-                      disabledReason={skill.mana_cost > availableMana ? "Insufficient Mana." : undefined}
+                      manaCost={skillCost?.final}
+                      manaCostBreakdown={skillCost}
+                      disabled={skillCost!.final > availableMana}
+                      disabledReason={skillCost!.final > availableMana ? "Insufficient Mana." : undefined}
                       onClick={(event) => { event.stopPropagation(); onChooseSkill?.(unit.key, skill); }}
                     />
                   : <button key={slot} className="combat-empty-skill" disabled>-----</button>;
@@ -3451,7 +3611,7 @@ function BattleUnit({
             {menu === "swap" && <div className="combat-swap-actions">
               {bench.map((candidate) => <button key={candidate.key} data-swap-to-id={candidate.userCritter?.id} onClick={(event) => {
                 event.stopPropagation();
-                onAction({ actorKey: unit.key, type: "swap", swapToId: candidate.userCritter?.id, cost: unit.stats.swapCost });
+                onAction({ actorKey: unit.key, type: "swap", swapToId: candidate.userCritter?.id, cost: swapCost.final });
               }}>
                 <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
                 <span>Swap to <strong>{candidate.name}</strong></span>
@@ -3530,8 +3690,12 @@ function CombatHiddenOpponentSlot() {
   );
 }
 
-function ManaCost({ path, amount }: { path: string | null; amount: number }) {
-  return <span className="combat-mana-cost"><AssetIcon path={path} alt="Mana" fallback={<Gem />} /> {amount}</span>;
+function ManaCost({ path, amount, breakdown }: { path: string | null; amount: number; breakdown?: ActionCostBreakdown }) {
+  const cost = <span className={`combat-mana-cost ${actionCostTone(breakdown)}`.trim()}><AssetIcon path={path} alt="Mana" fallback={<Gem />} /> {amount}</span>;
+  if (!breakdown?.sources.length) return cost;
+  return <GameTooltip label={costBreakdownText("Action cost", breakdown)} content={<CostBreakdownLine label="Action cost" breakdown={breakdown} />}>
+    {cost}
+  </GameTooltip>;
 }
 
 function combatActionSummary(
@@ -3674,13 +3838,129 @@ function xpStateAtTotal(progression: XpThreshold[], totalXp: number): { level: n
   return { level, progress: xpProgress(ordered, level, totalXp) };
 }
 
+const XP_REVEAL_DELAY_MS = 560;
+const XP_FILL_TOTAL_MS = 1800;
+const XP_LEVEL_UP_HOLD_MS = 980;
+const XP_MIN_FILL_SEGMENT_MS = 420;
+
+type XpFillSegment = {
+  kind: "fill";
+  from: number;
+  to: number;
+  /** Keep showing this level (and fill toward 100%) even as total XP reaches the next threshold. */
+  displayLevel: number;
+  fillsToLevelUp: boolean;
+};
+
+type XpLevelUpSegment = {
+  kind: "levelUp";
+  fromLevel: number;
+  toLevel: number;
+};
+
+type XpAnimSegment = XpFillSegment | XpLevelUpSegment;
+
+type XpCardVisual = {
+  level: number;
+  pct: number;
+  progressText: string;
+  showLevelUp: boolean;
+  snapBar: boolean;
+};
+
+function orderedXpThresholds(progression: XpThreshold[]): XpThreshold[] {
+  return [...progression].sort((left, right) => left.level - right.level);
+}
+
+function buildXpAnimSegments(progression: XpThreshold[], startingTotal: number, finalTotal: number): XpAnimSegment[] {
+  const ordered = orderedXpThresholds(progression);
+  const crossed = ordered.filter((row) => row.total_required_xp > startingTotal && row.total_required_xp <= finalTotal);
+  const segments: XpAnimSegment[] = [];
+  let cursor = startingTotal;
+
+  for (const row of crossed) {
+    const fromLevel = xpStateAtTotal(ordered, Math.max(0, row.total_required_xp - 1)).level;
+    segments.push({
+      kind: "fill",
+      from: cursor,
+      to: row.total_required_xp,
+      displayLevel: fromLevel,
+      fillsToLevelUp: true,
+    });
+    segments.push({ kind: "levelUp", fromLevel, toLevel: row.level });
+    cursor = row.total_required_xp;
+  }
+
+  if (cursor < finalTotal) {
+    segments.push({
+      kind: "fill",
+      from: cursor,
+      to: finalTotal,
+      displayLevel: xpStateAtTotal(ordered, cursor).level,
+      fillsToLevelUp: false,
+    });
+  }
+
+  return segments;
+}
+
+function visualForXpTotal(progression: XpThreshold[], totalXp: number, levelOverride?: number): Omit<XpCardVisual, "showLevelUp" | "snapBar"> {
+  const ordered = orderedXpThresholds(progression);
+  const state = levelOverride == null
+    ? xpStateAtTotal(ordered, totalXp)
+    : { level: levelOverride, progress: xpProgress(ordered, levelOverride, totalXp) };
+  const pct = state.progress.isMaxLevel || state.progress.needed <= 0
+    ? 100
+    : Math.min(100, Math.round((state.progress.current / state.progress.needed) * 100));
+  const progressText = state.progress.isMaxLevel
+    ? "Max level"
+    : `${state.progress.current} / ${state.progress.needed} XP`;
+  return { level: state.level, pct, progressText };
+}
+
+function visualForLevelUpHold(progression: XpThreshold[], fromLevel: number): Omit<XpCardVisual, "showLevelUp" | "snapBar"> {
+  const ordered = orderedXpThresholds(progression);
+  const progress = xpProgress(ordered, fromLevel, Number.MAX_SAFE_INTEGER);
+  return {
+    level: fromLevel,
+    pct: 100,
+    progressText: progress.isMaxLevel || progress.needed <= 0 ? "Max level" : `${progress.needed} / ${progress.needed} XP`,
+  };
+}
+
 function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewardSummary }) {
   const equippedCritters = squadCritters(data.player!);
   const ownedRollcaster = data.player!.rollcasters.find((row) => row.id === data.player!.profile.active_rollcaster_id)
     ?? data.player!.rollcasters[0];
   const rollcaster = byId(data.catalog.rollcasters, ownedRollcaster?.rollcaster_id);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const [xpReady, setXpReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let frameA = 0;
+    let frameB = 0;
+    let timeout = 0;
+    // Wait until the rewards UI has painted, then settle briefly so the party cards are readable before XP moves.
+    frameA = window.requestAnimationFrame(() => {
+      frameB = window.requestAnimationFrame(() => {
+        timeout = window.setTimeout(() => {
+          if (cancelled) return;
+          sectionRef.current?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+          setXpReady(true);
+        }, XP_REVEAL_DELAY_MS);
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameA);
+      window.cancelAnimationFrame(frameB);
+      window.clearTimeout(timeout);
+    };
+  }, [rewards]);
+
   return (
-    <section className="combat-xp-section" aria-label="Party experience">
+    <section ref={sectionRef} className="combat-xp-section" aria-label="Party experience">
       <div className="combat-xp-heading">
         <span><Sparkles size={17} aria-hidden="true" /></span>
         <h3>Party XP</h3>
@@ -3695,6 +3975,7 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
             progression={data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id)}
             sprite={<SpriteFrame size="sm"><Sprite name={rollcaster.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} fit="portrait" /></SpriteFrame>}
             identity={<strong>{rollcaster.name}</strong>}
+            animate={xpReady}
             rollcaster
           />
         )}
@@ -3711,6 +3992,7 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
               progression={data.catalog.critterProgression.filter((row) => row.critter_id === critter.id)}
               sprite={<SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>}
               identity={<CritterName data={data} critter={critter} />}
+              animate={xpReady}
             />
           );
         })}
@@ -3726,6 +4008,7 @@ function XpGainCard({
   progression,
   sprite,
   identity,
+  animate,
   rollcaster = false,
 }: {
   name: string;
@@ -3734,52 +4017,182 @@ function XpGainCard({
   progression: XpThreshold[];
   sprite: React.ReactNode;
   identity: React.ReactNode;
+  animate: boolean;
   rollcaster?: boolean;
 }) {
   const startingTotal = Math.max(0, finalTotal - gain);
-  const [displayedTotal, setDisplayedTotal] = useState(startingTotal);
+  const initialVisual = visualForXpTotal(progression, startingTotal);
+  const [visual, setVisual] = useState<XpCardVisual>({
+    ...initialVisual,
+    showLevelUp: false,
+    snapBar: false,
+  });
 
   useEffect(() => {
-    setDisplayedTotal(startingTotal);
-    if (gain <= 0 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setDisplayedTotal(finalTotal);
+    const startVisual = visualForXpTotal(progression, startingTotal);
+    setVisual({ ...startVisual, showLevelUp: false, snapBar: false });
+
+    if (gain <= 0) return;
+    if (!animate) return;
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const endVisual = visualForXpTotal(progression, finalTotal);
+      setVisual({ ...endVisual, showLevelUp: false, snapBar: true });
       return;
     }
-    let frame = 0;
-    const startedAt = performance.now();
-    const duration = 1900;
-    const animate = (now: number) => {
-      const progress = Math.min(1, (now - startedAt) / duration);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplayedTotal(Math.round(startingTotal + gain * eased));
-      if (progress < 1) frame = window.requestAnimationFrame(animate);
-    };
-    frame = window.requestAnimationFrame(animate);
-    return () => window.cancelAnimationFrame(frame);
-  }, [startingTotal, finalTotal, gain]);
 
-  const state = xpStateAtTotal(progression, displayedTotal);
-  const pct = state.progress.isMaxLevel || state.progress.needed <= 0
-    ? 100
-    : Math.min(100, Math.round((state.progress.current / state.progress.needed) * 100));
-  const progressText = state.progress.isMaxLevel
-    ? "Max level"
-    : `${state.progress.current} / ${state.progress.needed} XP`;
+    const segments = buildXpAnimSegments(progression, startingTotal, finalTotal);
+    const fillXpTotal = segments.reduce((sum, segment) => (
+      segment.kind === "fill" ? sum + Math.max(0, segment.to - segment.from) : sum
+    ), 0);
+    let cancelled = false;
+    let frame = 0;
+    const timeouts = new Set<number>();
+    let index = 0;
+
+    const schedule = (fn: () => void, ms: number) => {
+      const id = window.setTimeout(() => {
+        timeouts.delete(id);
+        fn();
+      }, ms);
+      timeouts.add(id);
+    };
+
+    const finish = () => {
+      if (cancelled) return;
+      const endVisual = visualForXpTotal(progression, finalTotal);
+      setVisual({ ...endVisual, showLevelUp: false, snapBar: false });
+    };
+
+    const runNext = () => {
+      if (cancelled) return;
+      if (index >= segments.length) {
+        finish();
+        return;
+      }
+
+      const segment = segments[index];
+      index += 1;
+
+      if (segment.kind === "levelUp") {
+        const holdVisual = visualForLevelUpHold(progression, segment.fromLevel);
+        setVisual({
+          ...holdVisual,
+          level: segment.toLevel,
+          showLevelUp: true,
+          snapBar: false,
+        });
+        schedule(() => {
+          if (cancelled) return;
+          const ordered = orderedXpThresholds(progression);
+          const thresholdXp = ordered.find((row) => row.level === segment.toLevel)?.total_required_xp ?? startingTotal;
+          const nextProgress = xpProgress(ordered, segment.toLevel, thresholdXp);
+          // Clear the badge and snap the bar empty on the new level before overflow XP fills.
+          setVisual({
+            level: segment.toLevel,
+            pct: 0,
+            progressText: nextProgress.isMaxLevel || nextProgress.needed <= 0
+              ? "Max level"
+              : `0 / ${nextProgress.needed} XP`,
+            showLevelUp: false,
+            snapBar: true,
+          });
+          schedule(() => {
+            if (cancelled) return;
+            runNext();
+          }, 40);
+        }, XP_LEVEL_UP_HOLD_MS);
+        return;
+      }
+
+      const xpSpan = Math.max(0, segment.to - segment.from);
+      const duration = fillXpTotal <= 0
+        ? XP_MIN_FILL_SEGMENT_MS
+        : Math.max(XP_MIN_FILL_SEGMENT_MS, Math.round(XP_FILL_TOTAL_MS * (xpSpan / fillXpTotal)));
+      const fromVisual = visualForXpTotal(progression, segment.from, segment.displayLevel);
+      const startedAt = performance.now();
+
+      const animateFill = (now: number) => {
+        if (cancelled) return;
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const total = Math.round(segment.from + (segment.to - segment.from) * eased);
+
+        if (segment.fillsToLevelUp) {
+          const startPct = fromVisual.pct;
+          const pct = Math.min(100, Math.round(startPct + (100 - startPct) * eased));
+          const ordered = orderedXpThresholds(progression);
+          const progressState = xpProgress(ordered, segment.displayLevel, Math.min(total, segment.to - 1));
+          setVisual({
+            level: segment.displayLevel,
+            pct,
+            progressText: progressState.needed <= 0
+              ? "Max level"
+              : `${Math.min(progressState.needed, Math.round(progressState.needed * (pct / 100)))} / ${progressState.needed} XP`,
+            showLevelUp: false,
+            snapBar: false,
+          });
+        } else {
+          const live = visualForXpTotal(progression, total, segment.displayLevel);
+          setVisual({ ...live, showLevelUp: false, snapBar: false });
+        }
+
+        if (progress < 1) {
+          frame = window.requestAnimationFrame(animateFill);
+          return;
+        }
+
+        if (segment.fillsToLevelUp) {
+          const holdVisual = visualForLevelUpHold(progression, segment.displayLevel);
+          setVisual({ ...holdVisual, showLevelUp: false, snapBar: false });
+        }
+        runNext();
+      };
+
+      frame = window.requestAnimationFrame(animateFill);
+    };
+
+    runNext();
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      for (const id of timeouts) window.clearTimeout(id);
+      timeouts.clear();
+    };
+    // progression is catalog data stable for the mounted rewards screen; omit to avoid restarting mid-tween.
+  }, [animate, startingTotal, finalTotal, gain]);
 
   return (
     <article
-      className={`combat-xp-card ${gain > 0 ? "gained" : ""} ${rollcaster ? "rollcaster" : ""}`}
+      className={`combat-xp-card ${gain > 0 ? "gained" : ""} ${rollcaster ? "rollcaster" : ""} ${visual.showLevelUp ? "leveling-up" : ""}`}
       data-xp-recipient={name}
       data-xp-gain={gain}
     >
       {sprite}
       <div className="combat-xp-card-copy">
-        <span className="combat-xp-identity">{identity}<small>Lv {state.level}</small></span>
-        <div className="combat-xp-bar xp-bar" role="progressbar" aria-label={`${name} experience`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-valuetext={progressText}>
-          <span style={{ width: `${pct}%` }} />
+        <span className="combat-xp-identity">{identity}<small>Lv {visual.level}</small></span>
+        <div
+          className={`combat-xp-bar xp-bar ${visual.snapBar ? "snap" : ""}`}
+          role="progressbar"
+          aria-label={`${name} experience`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={visual.pct}
+          aria-valuetext={visual.progressText}
+        >
+          <span style={{ width: `${visual.pct}%` }} />
         </div>
-        <span className="combat-xp-values"><small>{progressText}</small><strong>{gain > 0 ? `+${gain} XP` : "No XP gained"}</strong></span>
+        <span className="combat-xp-values"><small>{visual.progressText}</small><strong>{gain > 0 ? `+${gain} XP` : "No XP gained"}</strong></span>
       </div>
+      {visual.showLevelUp && (
+        <div className="combat-xp-level-up" aria-live="polite">
+          <span className="combat-xp-level-up-badge">
+            <ArrowUp size={15} strokeWidth={2.75} aria-hidden="true" />
+            <strong>Level Up</strong>
+          </span>
+        </div>
+      )}
     </article>
   );
 }
@@ -3894,12 +4307,14 @@ function Modal({
   description = "Item details",
   children,
   onClose,
+  className = "",
 }: {
   eyebrow?: string;
   title: string;
   description?: string;
   children: React.ReactNode;
   onClose: () => void;
+  className?: string;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const titleId = `modal-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -3922,7 +4337,7 @@ function Modal({
   }, [onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal" ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={`${titleId}-description`}>
+      <div className={`modal ${className}`.trim()} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={`${titleId}-description`}>
         <div className="modal-header">
           <div><p className="eyebrow">{eyebrow}</p><h2 id={titleId}>{title}</h2><p id={`${titleId}-description`}>{description}</p></div>
           <button className="icon-button" onClick={onClose} aria-label="Close">
@@ -4056,12 +4471,28 @@ function versionedAssetPath(data: AppData, path: string | null | undefined): str
   return `${path}${separator}v=${encodeURIComponent(version)}`;
 }
 
-function modificationTone(breakdown?: StatBreakdown): "positive" | "negative" | "mixed" | "" {
+function modificationTone(breakdown?: StatBreakdown, cost = false): "positive" | "negative" | "mixed" | "" {
   if (!breakdown?.sources.length) return "";
-  const positive = breakdown.sources.some((source) => source.amount > 0);
-  const negative = breakdown.sources.some((source) => source.amount < 0);
+  const positive = breakdown.sources.some((source) => cost ? source.amount < 0 : source.amount > 0);
+  const negative = breakdown.sources.some((source) => cost ? source.amount > 0 : source.amount < 0);
   if (positive && negative) return "mixed";
   return positive ? "positive" : negative ? "negative" : "";
+}
+
+function actionCostTone(breakdown?: ActionCostBreakdown): "positive" | "negative" | "mixed" | "" {
+  if (!breakdown?.sources.length) return "";
+  const discount = breakdown.sources.some((source) => source.amount < 0);
+  const increase = breakdown.sources.some((source) => source.amount > 0);
+  if (discount && increase) return "mixed";
+  return discount ? "positive" : "negative";
+}
+
+function costBreakdownText(label: string, breakdown: ActionCostBreakdown): string {
+  return `${label}: ${breakdown.base} (Base) ${breakdown.sources.map((source) => `${signedAmount(source.amount)} (${source.sourceName})`).join(" ")}`;
+}
+
+function CostBreakdownLine({ label, breakdown }: { label: string; breakdown: ActionCostBreakdown }) {
+  return <span className="tooltip-cost-breakdown"><strong>{label}: </strong><span>{breakdown.base} (Base)</span>{breakdown.sources.map((source, index) => <strong className={source.amount < 0 ? "positive" : "negative"} key={`${source.sourceName}-${index}`}> {signedAmount(source.amount)} ({source.sourceName})</strong>)}</span>;
 }
 
 function signedAmount(amount: number): string {
@@ -4072,23 +4503,23 @@ function breakdownText(label: string, breakdown: StatBreakdown): string {
   return `${label}: ${breakdown.base} (Base) ${breakdown.sources.map((source) => `${signedAmount(source.amount)} (${source.sourceName})`).join(" ")}`;
 }
 
-function StatBreakdownLine({ label, breakdown }: { label?: string; breakdown: StatBreakdown }) {
+function StatBreakdownLine({ label, breakdown, cost = false }: { label?: string; breakdown: StatBreakdown; cost?: boolean }) {
   return (
     <span className="stat-breakdown-line">
       {label && <strong>{label}: </strong>}
       <span>{breakdown.base} (Base)</span>
-      {breakdown.sources.map((source, index) => <strong className={source.amount > 0 ? "positive" : "negative"} key={`${source.sourceName}-${index}`}> {signedAmount(source.amount)} ({source.sourceName})</strong>)}
+      {breakdown.sources.map((source, index) => <strong className={(cost ? source.amount < 0 : source.amount > 0) ? "positive" : "negative"} key={`${source.sourceName}-${index}`}> {signedAmount(source.amount)} ({source.sourceName})</strong>)}
     </span>
   );
 }
 
-function StatCell({ label, value, className = "", breakdowns = [] }: { label: string; value: React.ReactNode; className?: string; breakdowns?: Array<{ label?: string; breakdown: StatBreakdown }> }) {
+function StatCell({ label, value, className = "", breakdowns = [], cost = false }: { label: string; value: React.ReactNode; className?: string; breakdowns?: Array<{ label?: string; breakdown: StatBreakdown }>; cost?: boolean }) {
   const modified = breakdowns.some((entry) => entry.breakdown.sources.length > 0);
   const accessibleBreakdown = breakdowns.map((entry) => breakdownText(entry.label ?? label, entry.breakdown)).join(". ");
   return (
     <span className={`stat-cell ${className} ${modified ? "modified" : ""}`.trim()} tabIndex={modified ? 0 : undefined} aria-label={modified ? `${label} ${accessibleBreakdown}` : undefined}>
       <span className="stat-label">{label}</span>{value}
-      {modified && <span className="game-tooltip stat-breakdown" role="tooltip">{breakdowns.map((entry, index) => <StatBreakdownLine key={`${entry.label ?? label}-${index}`} label={entry.label} breakdown={entry.breakdown} />)}</span>}
+      {modified && <span className="game-tooltip stat-breakdown" role="tooltip">{breakdowns.map((entry, index) => <StatBreakdownLine key={`${entry.label ?? label}-${index}`} label={entry.label} breakdown={entry.breakdown} cost={cost} />)}</span>}
     </span>
   );
 }
@@ -4109,8 +4540,8 @@ function StatGrid({ stats, compact, breakdowns = {} }: { stats: ReturnType<typeo
           ...(breakdowns.diceMax ? [{ label: "Maximum", breakdown: breakdowns.diceMax }] : []),
         ]}
       />
-      <StatCell label="Block" value={<strong>{stats.blockCost}</strong>} />
-      <StatCell label="Swap" value={<strong>{stats.swapCost}</strong>} />
+      <StatCell label="Block" value={<strong className={modificationTone(breakdowns.blockCost, true)}>{stats.blockCost}</strong>} cost breakdowns={breakdowns.blockCost ? [{ breakdown: breakdowns.blockCost }] : []} />
+      <StatCell label="Swap" value={<strong className={modificationTone(breakdowns.swapCost, true)}>{stats.swapCost}</strong>} cost breakdowns={breakdowns.swapCost ? [{ breakdown: breakdowns.swapCost }] : []} />
       <StatCell label="Relics" value={<strong>{stats.relicSlots}</strong>} />
     </div>
   );

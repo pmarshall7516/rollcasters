@@ -270,13 +270,28 @@ try {
 
   await page.getByRole("button", { name: "Play" }).click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "play");
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
   const ids = await page.locator(".dungeon-grid-card > .collectible-id").allTextContents();
   check(ids.length >= 1, "The Dungeon grid must contain at least one authored Dungeon.");
+  check(ids.length <= 20, "The Dungeon grid must paginate to at most 20 Dungeons per page.");
   check(
     ids.join(",") === [...ids].sort((left, right) => left.localeCompare(right, undefined, { numeric: true })).join(","),
     "The Dungeon grid must use natural numeric ID order.",
   );
-  await page.locator(".dungeon-select-screen").screenshot({
+  const pageTabs = page.locator(".dungeon-page-tabs").first().locator("button");
+  const pageTabCount = await pageTabs.count();
+  if (pageTabCount > 0) {
+    check(pageTabCount >= 2, "Dungeon page tabs must appear when more than one page of Dungeons exists.");
+    check(await page.locator(".dungeon-page-tabs").count() === 2, "Dungeon page tabs must appear above and below the grid.");
+  }
+  await page.locator(".dungeon-grid-card").first().screenshot({
+    path: path.join(outputDir, "dungeon-card-first.png"),
+    animations: "disabled",
+  });
+  await page.screenshot({
     path: path.join(outputDir, "dungeon-grid.png"),
     animations: "disabled",
   });
@@ -286,15 +301,18 @@ try {
     noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
   }));
   check(mobileGrid.columns === 1 && mobileGrid.noHorizontalOverflow, "The Dungeon grid must collapse to one overflow-safe mobile column.");
-  await page.locator(".dungeon-select-screen").screenshot({
+  await page.screenshot({
     path: path.join(outputDir, "dungeon-grid-mobile.png"),
     animations: "disabled",
   });
   await page.setViewportSize({ width: 960, height: 720 });
-  await page.locator(".dungeon-select-screen").screenshot({
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.screenshot({
     path: path.join(outputDir, "dungeon-grid-medium.png"),
     animations: "disabled",
   });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const firstCard = page.locator(".dungeon-grid-card").first();
   check(await firstCard.locator(".dungeon-stat-grid").count() === 1, "Dungeon cards must show difficulty, format, encounter count, and clears.");
   const cardGeometry = await page.locator(".dungeon-grid-card").evaluateAll((cards) => cards.slice(0, 2).map((card) => {
@@ -308,25 +326,38 @@ try {
     return {
       width: rect.width,
       height: rect.height,
-      minHeight: getComputedStyle(card).minHeight,
-      maxHeight: getComputedStyle(card).maxHeight,
-      gridColumns: getComputedStyle(card).gridTemplateColumns,
       logoCenterDelta: centerDelta(logo),
       titleCenterDelta: centerDelta(title),
       descriptionCenterDelta: centerDelta(description),
       statsCenterDelta: centerDelta(stats),
       actionCenterDelta: centerDelta(action),
+      descriptionBottom: description?.bottom ?? 0,
+      statsTop: stats?.top ?? 0,
       titleTop: title?.top - rect.top,
-      statsTop: stats?.top - rect.top,
       actionTop: action?.top - rect.top,
       text: card.textContent,
     };
   }));
+  const alignment = await page.evaluate(() => {
+    const heading = document.querySelector(".dungeon-select-screen .screen-heading h1")?.getBoundingClientRect();
+    const back = document.querySelector(".dungeon-select-screen .screen-heading .secondary-button")?.getBoundingClientRect();
+    const grid = document.querySelector(".dungeon-grid")?.getBoundingClientRect();
+    const first = document.querySelector(".dungeon-grid-card")?.getBoundingClientRect();
+    const cards = [...document.querySelectorAll(".dungeon-grid-card")].map((card) => card.getBoundingClientRect());
+    const last = cards.at(-1);
+    return {
+      headingLeft: heading?.left ?? 0,
+      backRight: back?.right ?? 0,
+      gridLeft: grid?.left ?? 0,
+      gridRight: grid?.right ?? 0,
+      firstLeft: first?.left ?? 0,
+      lastRight: last?.right ?? 0,
+      equalHeights: cards.length > 0 && cards.every((card) => Math.abs(card.height - cards[0].height) < 1),
+    };
+  });
   check(
     cardGeometry.length === 2
-      && cardGeometry.every((card) => card.width === cardGeometry[0].width && card.height === cardGeometry[0].height)
-      && cardGeometry.every((card) => card.minHeight === "550px" && card.maxHeight === "550px")
-      && cardGeometry.every((card) => card.gridColumns === cardGeometry[0].gridColumns)
+      && cardGeometry.every((card) => Math.abs(card.width - cardGeometry[0].width) < 1 && Math.abs(card.height - cardGeometry[0].height) < 1)
       && cardGeometry.every((card) => [
         card.logoCenterDelta,
         card.titleCenterDelta,
@@ -334,11 +365,16 @@ try {
         card.statsCenterDelta,
         card.actionCenterDelta,
       ].every((delta) => delta !== null && Math.abs(delta) < 0.6))
-      && cardGeometry.every((card) => card.titleTop === cardGeometry[0].titleTop && card.statsTop === cardGeometry[0].statsTop && card.actionTop === cardGeometry[0].actionTop),
-    `Dungeon cards must use identical fixed geometry and anchors: ${JSON.stringify(cardGeometry)}`,
+      && cardGeometry.every((card) => card.statsTop >= card.descriptionBottom + 8)
+      && alignment.equalHeights
+      && Math.abs(alignment.gridLeft - alignment.headingLeft) < 2
+      && Math.abs(alignment.gridRight - alignment.backRight) < 2,
+    `Dungeon cards must share equal height, keep stats below descriptions, and align with the page heading: ${JSON.stringify({ cardGeometry, alignment })}`,
   );
   check(!cardGeometry.some((card) => card.text?.includes("Ready to enter")), "Dungeon cards must not repeat the Enter button's ready state.");
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  if (process.env.DUNGEON_LAYOUT_ONLY === "true") {
+    process.stdout.write(`${JSON.stringify({ layoutOnly: true, dungeonCount: ids.length, pageTabs: pageTabCount, browserErrors })}\n`);
+  } else {
   await firstCard.getByRole("button", { name: /^View .* information$/ }).click();
   check(await page.locator(".dungeon-opponent-entry").count() >= 1, "Dungeon information must expose its effective opponent pool.");
   const briefingText = await page.locator(".modal").innerText();
@@ -1050,6 +1086,7 @@ try {
     rewardEntries: completedRun.data.rewards?.entries?.length ?? 0,
     browserErrors,
   })}\n`);
+  }
 } finally {
   await browser?.close().catch(() => undefined);
   devServer?.kill("SIGTERM");

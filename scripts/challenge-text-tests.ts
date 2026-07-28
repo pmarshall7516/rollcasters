@@ -1,4 +1,5 @@
 import { challengeDescription, challengeGoal } from "../src/lib/collectibles.js";
+import { challengeEventIncrement } from "../src/lib/challenges.js";
 import type { AppData, CollectibleUnlockChallenge } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -78,10 +79,36 @@ const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("swap_action", { tracked_action: "unique_critters_swapped_in", required_amount: 2 }), "Unique Critters Swapped In 2 times."],
   [challenge("block_action", { tracked_action: "attacks_fully_blocked", required_amount: 2 }), "Attacks Fully Blocked: 2."],
   [challenge("dice_roll", { tracked_result: "maximum_die_result", comparison: "greater_than_or_equal", target_value: 6, required_occurrences: 2, die_types: ["d6"] }), "Maximum Die Result Greater Than Or Equal 6, 2 times."],
+  [challenge("heal_hp", { required_amount: 200, recipient_side: "any", target_mode: "any", target_ids: [], tracking_scope: "lifetime" }), "Heal 200 HP on Critters."],
   [challenge("shop_shards", { required_amount: 20 }), "Unlock Cragram shards"],
   [challenge("shop_relic", { required_amount: 1 }), "Own Cragram"],
 ];
 
 for (const [row, expected] of cases) check(challengeDescription(data, row) === expected, `${row.challenge_type} text differs from the dev default: ${challengeDescription(data, row)}`);
+
+const friendlyVileHealing = challenge("heal_hp", {
+  required_amount: 200,
+  recipient_side: "friendly",
+  target_mode: "element",
+  target_ids: ["vile"],
+  tracking_scope: "lifetime",
+});
+check(challengeGoal(friendlyVileHealing) === 200n, "Heal HP goal must use required_amount.");
+check(challengeEventIncrement(friendlyVileHealing, {
+  eventId: "heal:1",
+  type: "hp_healed",
+  targetCritterId: "002",
+  targetElementIds: ["vile"],
+  amount: 5,
+  payload: { source_side: "player", recipient_side: "friendly" },
+}) === 5, "Heal HP must count actual amplified friendly healing that matches the Element filter.");
+check(challengeEventIncrement(friendlyVileHealing, {
+  eventId: "heal:2",
+  type: "hp_healed",
+  targetCritterId: "002",
+  targetElementIds: ["vile"],
+  amount: 5,
+  payload: { source_side: "player", recipient_side: "enemy" },
+}) === 0, "Heal HP must reject healing on the wrong recipient side.");
 
 console.log(`Challenge text audit passed for ${cases.length + 2} representative definitions.`);

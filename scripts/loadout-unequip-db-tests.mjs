@@ -8,10 +8,10 @@ function check(condition, message) {
 }
 
 const client = createDbClient();
-const migrationSql = fs.readFileSync(
-  path.join(root, "supabase", "migrations", "20260720030000_fix_indirect_player_revision_trigger.sql"),
-  "utf8",
-);
+const migrationSql = [
+  "20260720030000_fix_indirect_player_revision_trigger.sql",
+  "20260727020000_clear_relics_on_squad_unequip.sql",
+].map((file) => fs.readFileSync(path.join(root, "supabase", "migrations", file), "utf8")).join("\n");
 let began = false;
 
 try {
@@ -24,9 +24,10 @@ try {
     select
       (select rollcaster_id from public.starter_rollcaster_options where is_active order by sort_order,rollcaster_id limit 1) as rollcaster_id,
       (select critter_id from public.starter_options where is_active order by sort_order,critter_id limit 1) as critter_id,
+      (select id from public.critters where is_active and not is_archived and id <> (select critter_id from public.starter_options where is_active order by sort_order,critter_id limit 1) order by sort_order,id limit 1) as replacement_critter_id,
       (select id from public.relics where is_active and not is_archived order by sort_order,id limit 1) as relic_id
   `)).rows[0];
-  check(starter?.rollcaster_id && starter?.critter_id && starter?.relic_id, "The loadout fixture requires active starter and Relic catalog entries.");
+  check(starter?.rollcaster_id && starter?.critter_id && starter?.replacement_critter_id && starter?.relic_id, "The loadout fixture requires two active Critters and a Relic catalog entry.");
 
   const userId = crypto.randomUUID();
   await client.query(`
@@ -45,6 +46,13 @@ try {
       (select player_state_revision from public.profiles where user_id=$1) as revision
   `, [userId, starter.rollcaster_id, starter.critter_id])).rows[0];
   check(owned?.rollcaster_id && owned?.critter_id, "Starter selection must create both owned loadout records.");
+
+  const replacement = (await client.query(`
+    insert into public.user_critters(user_id,critter_id)
+    values($1,$2)
+    returning id
+  `, [userId, starter.replacement_critter_id])).rows[0];
+  check(replacement?.id, "The loadout fixture must create a replacement Critter.");
 
   const secondSkill = (await client.query(`
     select unlock.skill_id
@@ -72,6 +80,25 @@ try {
     on conflict(user_id,relic_id) do update set quantity=greatest(public.user_relic_inventory.quantity,1),discovered_at=coalesce(public.user_relic_inventory.discovered_at,now())
   `, [userId, starter.relic_id]);
   await client.query("select public.set_critter_relic_slot($1,1,$2)", [owned.critter_id, starter.relic_id]);
+
+  await client.query("select public.set_squad_critter_slot($1,$2)", [2, replacement.id]);
+  await client.query("select public.set_squad_critter_slot($1,$2)", [1, null]);
+  const afterUnequip = (await client.query(`
+    select
+      (select skill_id from public.user_critter_skill_slots where user_critter_id=$1 and slot_index=2) as skill_id,
+      (select relic_id from public.user_critter_relic_slots where user_critter_id=$1 and slot_index=1) as relic_id
+  `, [owned.critter_id])).rows[0];
+  check(afterUnequip.skill_id === secondSkill, "Removing a Critter from the squad must retain its equipped skills.");
+  check(afterUnequip.relic_id === null, "Removing a Critter from the squad must clear its equipped Relics.");
+
+  await client.query("select public.set_squad_critter_slot($1,$2)", [1, owned.critter_id]);
+  const afterReequip = (await client.query(`
+    select
+      (select skill_id from public.user_critter_skill_slots where user_critter_id=$1 and slot_index=2) as skill_id,
+      (select relic_id from public.user_critter_relic_slots where user_critter_id=$1 and slot_index=1) as relic_id
+  `, [owned.critter_id])).rows[0];
+  check(afterReequip.skill_id === secondSkill, "Re-equipping a Critter must restore its remembered skills.");
+  check(afterReequip.relic_id === null, "Re-equipping a Critter must not restore cleared Relics.");
 
   await client.query("select public.set_critter_skill_slot($1,2,null)", [owned.critter_id]);
   await client.query("select public.set_critter_relic_slot($1,1,null)", [owned.critter_id]);

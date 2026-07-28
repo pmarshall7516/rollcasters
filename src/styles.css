@@ -632,13 +632,23 @@ button.catalog-card:hover,
   height: 8px;
   overflow: hidden;
   border-radius: 999px;
+}
+
+.xp-bar {
+  border: 1px solid rgb(125 232 255 / 55%);
+  background: #05070f;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 70%);
+}
+
+.hp-bar {
   background: #dce5e2;
 }
 
 .xp-bar span {
   display: block;
   height: 100%;
-  background: #3d8c73;
+  background: linear-gradient(90deg, #3376a8, #4ba6d8, #7de8ff);
+  box-shadow: 0 0 10px rgb(125 232 255 / 45%);
 }
 
 .hp-bar span {
@@ -941,6 +951,10 @@ button.catalog-card:hover,
 .collectible-detail-hero .card-name-row { font-size: 26px; }
 .collectible-detail-hero .card-name-row .asset-icon { width: 32px; height: 32px; }
 .detail-level { text-align: center; font-weight: 800; }
+.detail-xp-progress { width: 100%; max-width: none; }
+.detail-section-heading { display: flex; align-items: baseline; gap: 8px; }
+.point-counter-inline { color: var(--accent-cyan); font-size: 12px; font-weight: 750; }
+.point-counter-inline strong { color: var(--accent-cyan); }
 .effect-details { white-space: pre-wrap; }
 
 .modal-header {
@@ -1220,6 +1234,10 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .effect-list-row.effect-classification-mixed { color: var(--text-secondary); }
 .tooltip-target { padding-top: 7px; border-top: 1px solid rgb(52 61 104 / 70%); color: var(--accent-cyan); font-weight: 750; }
 .tooltip-disabled { color: var(--danger); font-weight: 800; }
+.tooltip-cost-breakdown { display: block; padding-top: 7px; border-top: 1px solid rgb(52 61 104 / 70%); color: var(--text-secondary); }
+.tooltip-cost-breakdown strong:first-child { color: var(--text-primary); }
+.tooltip-cost-breakdown .positive { color: var(--success); font-weight: 950; }
+.tooltip-cost-breakdown .negative { color: var(--danger); font-weight: 950; }
 .skill-tile { --skill-meta-size: 17px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; width: 100%; min-height: 84px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 11px; background: linear-gradient(145deg, rgb(27 34 66 / 95%), rgb(11 15 34 / 96%)); color: var(--text-primary); text-align: left; }
 .skill-tile:hover:not(:disabled) { border-color: var(--accent-magic); box-shadow: 0 0 20px rgb(167 121 255 / 18%); }
 .skill-tile.selected { border-color: var(--success); box-shadow: 0 0 0 2px rgb(97 221 160 / 14%), 0 0 20px rgb(97 221 160 / 20%); }
@@ -1231,6 +1249,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .skill-title .asset-icon { flex: 0 0 auto; width: 38px; height: 38px; }
 .skill-power { grid-column: 2; grid-row: 1; align-self: center; color: var(--accent-gold); font: 900 var(--skill-meta-size)/1.1 ui-monospace, monospace; white-space: nowrap; }
 .skill-mana { grid-column: 2; grid-row: 2; align-self: center; display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--accent-cyan); font-size: var(--skill-meta-size); line-height: 1; font-weight: 950; }
+.skill-mana.positive, .combat-mana-cost.positive { color: var(--success); }
+.skill-mana.negative, .combat-mana-cost.negative { color: var(--danger); }
+.skill-mana.mixed, .combat-mana-cost.mixed { color: var(--accent-gold); }
 .skill-mana .asset-icon { width: var(--skill-meta-size); height: var(--skill-meta-size); }
 .skill-tile.empty { display: grid; place-items: center; text-align: center; }
 .skill-tile.empty .skill-title { grid-column: 1 / -1; grid-row: 1 / -1; justify-self: center; padding: 0; font-size: 21px; letter-spacing: .12em; }
@@ -1410,6 +1431,34 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .modal-backdrop { z-index: 50; background: var(--bg-overlay); backdrop-filter: blur(8px); }
 .modal { width: min(900px, 100%); height: min(760px, calc(100vh - 48px)); max-height: none; overflow-y: auto; padding: 22px; border-color: var(--border-bright); scrollbar-width: none; }
 .modal::-webkit-scrollbar { display: none; }
+.modal.equip-dialog-skill { width: min(1180px, 100%); }
+.equip-dialog-skill > .skill-tile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.equip-search {
+  position: sticky;
+  z-index: 2;
+  top: 74px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 16px;
+  padding: 10px 13px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: rgb(8 11 29 / 96%);
+  color: var(--accent-cyan);
+}
+.equip-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+}
+.equip-dialog-relic .candidate-card > .tooltip-description {
+  color: var(--text-secondary);
+  text-align: left;
+}
 .modal-header { position: sticky; z-index: 3; top: -22px; justify-content: space-between; margin: -22px -22px 20px; padding: 18px 22px; border-bottom: 1px solid var(--border-soft); background: rgb(16 21 42 / 96%); backdrop-filter: blur(12px); }
 .modal-header h2, .modal-header p { margin: 2px 0; }
 .candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
@@ -2445,34 +2494,91 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 
 /* Renovated Dungeons and combat */
 .dungeon-select-screen {
-  max-width: 1500px;
+  width: 100%;
+}
+
+.dungeon-page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.dungeon-page-tabs button {
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: rgb(16 21 42 / 80%);
+  color: var(--text-secondary);
+  font-weight: 850;
+}
+
+.dungeon-page-tabs button:hover {
+  border-color: var(--border-bright);
+  color: var(--text-primary);
+}
+
+.dungeon-page-tabs button.active {
+  border-color: rgb(181 160 255 / 65%);
+  background: linear-gradient(135deg, #6d45d0, #376c94);
+  color: var(--text-primary);
+}
+
+.dungeon-grid-content {
+  container-type: inline-size;
+  min-width: 0;
+  width: 100%;
 }
 
 .dungeon-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 330px));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
-  justify-content: center;
-  gap: clamp(14px, 1.5vw, 24px);
+  gap: clamp(14px, 1.5vw, 20px);
+  width: 100%;
+}
+
+@container (min-width: 900px) {
+  .dungeon-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 1200px) {
+  .dungeon-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 519px) {
+  .dungeon-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .dungeon-grid-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 22px 132px 58px 44px 112px 36px 46px;
-  align-content: start;
-  align-items: stretch;
-  justify-content: stretch;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 10px;
-  width: min(100%, 330px);
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
-  min-height: 550px;
-  max-width: 100%;
-  height: 550px;
-  max-height: 550px;
+  min-height: 0;
+  max-width: none;
+  height: 100%;
+  overflow: visible;
   padding: 18px;
   text-align: center;
+}
+
+.dungeon-grid-card > * {
+  flex-shrink: 0;
 }
 
 .dungeon-grid-card::before {
@@ -2487,7 +2593,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .dungeon-grid-card > .collectible-id {
-  justify-self: start;
+  align-self: start;
 }
 
 .dungeon-info-button {
@@ -2498,7 +2604,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 
 .dungeon-logo-frame {
   display: grid;
-  justify-self: center;
+  flex: 0 0 auto;
   width: 132px;
   height: 132px;
   place-items: center;
@@ -2537,25 +2643,22 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .dungeon-grid-card h2 {
-  display: grid;
-  align-items: center;
-  justify-items: center;
+  display: block;
   width: 100%;
   margin: 0;
-  font: 800 clamp(24px, 2.2vw, 31px)/1.05 Georgia, serif;
+  font: 800 clamp(22px, 1.8vw, 28px)/1.1 Georgia, serif;
   text-align: center;
   text-wrap: balance;
 }
 
 .dungeon-description {
-  display: grid;
-  align-items: start;
-  justify-items: center;
+  display: block;
   width: 100%;
   min-height: 0;
   margin: 0;
+  overflow: visible;
   color: var(--text-secondary);
-  line-height: 1.4;
+  line-height: 1.45;
   text-align: center;
   text-wrap: balance;
 }
@@ -2563,10 +2666,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .dungeon-stat-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  justify-self: center;
   gap: 7px;
-  width: min(260px, 100%);
-  margin-inline: auto;
+  width: 100%;
+  margin-top: auto;
 }
 
 .dungeon-stat-grid > span {
@@ -2594,7 +2696,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .dungeon-entry-state {
   align-self: center;
   width: 100%;
-  min-height: 46px;
+  min-height: 1.4em;
   margin: 0;
   color: var(--text-muted);
   font-size: 13px;
@@ -2607,8 +2709,6 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .dungeon-enter-button {
-  align-self: end;
-  justify-self: stretch;
   width: 100%;
 }
 
@@ -3165,47 +3265,38 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .hp-bar {
+  position: relative;
+  isolation: isolate;
   height: 10px;
   overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 10%);
+  border: 1px solid rgb(125 232 255 / 55%);
   border-radius: 999px;
-  background: #dce5e2;
+  background: #05070f;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 70%);
 }
 
 .hp-bar span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
   display: block;
   height: 100%;
   border-radius: inherit;
   transition: width .72s cubic-bezier(.2, .75, .25, 1), background .3s ease;
 }
 
-.hp-bar.healthy span {
+.hp-bar .hp-bar-health {
+  z-index: 1;
   background: linear-gradient(90deg, #3d8c73, #61dda0);
 }
 
-.hp-bar.wounded span {
-  background: linear-gradient(90deg, #d69f39, #f4ca65);
-}
-
-.hp-bar.critical span {
-  background: linear-gradient(90deg, #b33f5b, #ff6e86);
-}
-
-.shield-bar {
-  height: 6px;
-  margin-top: 4px;
-  overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: 999px;
-  background: rgb(19 35 57 / 80%);
-}
-
-.shield-bar span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
+.hp-bar .hp-bar-shield {
+  z-index: 2;
+  border-radius: 0 inherit inherit 0;
   background: linear-gradient(90deg, #3e82c8, #8fd8ff);
-  transition: width .72s cubic-bezier(.2, .75, .25, 1);
+  box-shadow: inset 1px 0 rgb(255 255 255 / 35%), 0 0 8px rgb(105 196 255 / 35%);
+  transition: left .72s cubic-bezier(.2, .75, .25, 1), width .72s cubic-bezier(.2, .75, .25, 1);
 }
 
 .battle-unit.bench {
@@ -3290,6 +3381,33 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   animation: combat-status-flash .62s ease;
 }
 
+.battle-unit.receiving-negative {
+  z-index: 7;
+  animation: combat-negative-effect .62s ease;
+}
+
+.battle-unit.block-success {
+  z-index: 7;
+  animation: combat-block-success .62s ease;
+}
+
+.battle-unit.block-failed {
+  z-index: 7;
+  animation: combat-block-failed .62s ease;
+}
+
+@keyframes combat-block-success {
+  0%, 100% { transform: scale(1); box-shadow: none; }
+  42% { transform: scale(1.045); box-shadow: 0 0 34px rgb(75 226 255 / 42%); }
+}
+
+@keyframes combat-block-failed {
+  0%, 100% { transform: translateX(0); filter: none; }
+  18%, 54%, 82% { transform: translateX(-6px); }
+  36%, 70% { transform: translateX(6px); }
+  48% { filter: saturate(.65) brightness(.78); }
+}
+
 @keyframes combat-skill-lunge {
   0%, 100% { transform: translateX(0) scale(1); }
   42% { transform: translateX(clamp(14px, 2.2vw, 34px)) scale(1.035); box-shadow: 0 0 36px rgb(79 228 225 / 34%); }
@@ -3365,6 +3483,13 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 
 @keyframes combat-status-flash {
   45% { border-color: var(--accent-magic); box-shadow: 0 0 36px rgb(167 121 255 / 42%); }
+}
+
+@keyframes combat-negative-effect {
+  0%, 100% { transform: translateX(0); filter: none; }
+  18%, 54%, 82% { transform: translateX(-5px); }
+  36%, 70% { transform: translateX(5px); }
+  48% { border-color: var(--danger); box-shadow: 0 0 36px rgb(255 110 134 / 52%); filter: saturate(.72) brightness(.86); }
 }
 
 .combat-action-space {
@@ -3770,11 +3895,11 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .combat-lead-option {
   position: relative;
   display: grid;
-  grid-template-columns: 84px minmax(0, 1fr) auto;
+  grid-template-columns: 84px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 10px;
+  padding: 10px 42px 10px 10px;
   border: 1px solid var(--border-soft);
   border-radius: 13px;
   background: rgb(8 10 24 / 62%);
@@ -3790,7 +3915,17 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 
 .combat-lead-option:disabled { cursor: default; opacity: .62; }
 .combat-lead-option .sprite-frame { width: 84px; }
-.combat-lead-option > svg { color: var(--focus); }
+.combat-lead-selection-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  color: var(--focus);
+  pointer-events: none;
+}
 .combat-lead-option-copy { display: grid; gap: 4px; min-width: 0; }
 .combat-lead-option-copy small { color: var(--text-secondary); }
 .combat-lead-option-copy > strong { color: var(--danger); font-size: 11px; }
@@ -3975,6 +4110,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .combat-xp-card {
+  position: relative;
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
   align-items: center;
@@ -3985,6 +4121,8 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   border-radius: 10px;
   background: rgb(8 10 24 / 58%);
   text-align: left;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .combat-xp-card.gained {
@@ -3994,6 +4132,69 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 
 .combat-xp-card.rollcaster {
   border-color: rgb(167 121 255 / 48%);
+}
+
+.combat-xp-card.leveling-up {
+  border-color: rgb(255 214 102 / 72%);
+  box-shadow: inset 0 0 22px rgb(255 214 102 / 12%), 0 0 18px rgb(255 214 102 / 14%);
+}
+
+.combat-xp-card > .sprite-frame,
+.combat-xp-card-copy {
+  position: relative;
+  z-index: 0;
+}
+
+.combat-xp-level-up {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  pointer-events: none;
+  background: rgb(7 9 18 / 78%);
+  animation: combat-xp-level-up-in .28s ease both;
+}
+
+.combat-xp-level-up-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid rgb(255 220 120 / 58%);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgb(52 40 14 / 96%), rgb(22 16 8 / 96%));
+  box-shadow: 0 10px 22px rgb(0 0 0 / 42%);
+  color: #ffe7a8;
+}
+
+.combat-xp-level-up-badge strong {
+  font: 800 12px/1 Georgia, serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.combat-xp-level-up-badge svg {
+  flex: 0 0 auto;
+  color: #ffe7a8;
+  animation: combat-xp-level-up-arrow .7s ease-in-out infinite alternate;
+}
+
+@keyframes combat-xp-level-up-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes combat-xp-level-up-arrow {
+  from { transform: translateY(2px); }
+  to { transform: translateY(-3px); }
 }
 
 .combat-xp-card > .sprite-frame {
@@ -4041,16 +4242,24 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 
 .combat-xp-bar {
   height: 8px;
-  background: rgb(220 229 226 / 26%);
+  border: 1px solid rgb(125 232 255 / 55%);
+  background: #05070f;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 70%);
 }
 
 .combat-xp-bar span {
   background: linear-gradient(90deg, #3376a8, #4ba6d8, #7de8ff);
+  box-shadow: 0 0 10px rgb(125 232 255 / 45%);
   transition: width .1s linear;
 }
 
-.combat-xp-card.rollcaster .combat-xp-bar span {
-  background: linear-gradient(90deg, #7451d8, #a779ff, #cfb7ff);
+.combat-xp-bar.snap span {
+  transition: none;
+}
+
+.combat-xp-card.leveling-up .combat-xp-bar span {
+  background: linear-gradient(90deg, #b8892c, #e4c35a, #ffe7a0);
+  box-shadow: 0 0 12px rgb(255 214 102 / 48%);
 }
 
 .combat-screen.dungeon-outcome-screen {
@@ -4778,13 +4987,13 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 }
 
+@media (max-width: 860px) {
+  .equip-dialog-skill > .skill-tile-grid { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 480px) {
   .dungeon-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .dungeon-grid-card {
-    min-height: 550px;
   }
 
   .dungeon-info-summary {

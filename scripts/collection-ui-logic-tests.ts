@@ -31,7 +31,7 @@ function effect(
   ownerType: "relic" | "ability",
   ownerId: string,
   id: string,
-  runtimeKind: "stat_modifier" | "mana_dice_modifier",
+  runtimeKind: "stat_modifier" | "mana_dice_modifier" | "action_cost_modifier",
   parameters: Record<string, unknown>,
   sortOrder: number,
 ): ResolvedEffectRef {
@@ -53,7 +53,7 @@ const catalog = {
   currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [],
   elements: [{ id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 }],
   elementEffectiveness: [{ attacking_element_id: "ember", defending_element_id: "ember", multiplier: 1 }],
-  skills: [],
+  skills: [{ id: "starter-skill", name: "Starter Skill", element_id: "ember", skill_type: "support", power: 0, mana_cost: 3, targeting: "self_only", description: "Starter Skill", sort_order: 0 }],
   critters: [
     { id: "hero", name: "Hero", element_1_id: "ember", element_2_id: null, base_hp: 30, base_atk: 25, base_def: 20, base_spd: 15, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 1 },
     { id: "ally", name: "Ally", element_1_id: "ember", element_2_id: null, base_hp: 20, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 2 },
@@ -73,12 +73,14 @@ const catalog = {
     "high-roll": [
       effect("ability", "high-roll", "Maximum Roll", "mana_dice_modifier", { target: "all_friendlies", minimum_delta: 0, maximum_delta: 3 }, 0),
       effect("ability", "high-roll", "Defense Cost", "stat_modifier", { target: "all_friendlies", stat: "def", value_mode: "flat", amount: -2 }, 1),
+      effect("ability", "high-roll", "Block Cost", "action_cost_modifier", { target: "all_friendlies", cost_type: "block", applicable_action: "all_actions", modifier_type: "flat", modifier_value: -1 }, 2),
     ],
   },
   effectsByRelic: {
     guard: [
       effect("relic", "guard", "Guard", "stat_modifier", { target: "equipped_critter", stat: "def", value_mode: "flat", amount: 3 }, 0),
       effect("relic", "guard", "Weight", "stat_modifier", { target: "equipped_critter", stat: "atk", value_mode: "flat", amount: -1 }, 1),
+      effect("relic", "guard", "Mana Talisman", "action_cost_modifier", { target: "equipped_critter", cost_type: "skill_mana", applicable_action: "all_actions", modifier_type: "flat", modifier_value: -1 }, 2),
     ],
     "ally-aura": [effect("relic", "ally-aura", "Aura", "stat_modifier", { target: "equipped_allies", stat: "hp", value_mode: "flat", amount: 2 }, 0)],
   },
@@ -112,6 +114,9 @@ check(calculated.stats.hp === 32, "An ally Relic must affect the selected squad 
 check(calculated.stats.atk === 24, "The equipped Relic ATK penalty must be reflected on the home card.");
 check(calculated.stats.def === 21, "Positive and negative DEF deltas must combine into the combat value.");
 check(calculated.stats.diceMin === 1 && calculated.stats.diceMax === 9, "Only the modified Mana maximum must change.");
+check(calculated.stats.blockCost === 1, "A Block action-cost discount must reduce the home stat value.");
+check(calculated.skillCosts["starter-skill"]?.final === 2, "A Mana Talisman-style Skill cost discount must reduce the home Skill tile cost.");
+check(calculated.skillCosts["starter-skill"]?.sources[0]?.amount === -1 && calculated.skillCosts["starter-skill"]?.sources[0]?.sourceName === "Guard Charm", "Skill cost breakdowns must retain the discount source.");
 check(calculated.breakdowns.def?.sources.map((source) => source.amount).join(",") === "3,-2", "The DEF tooltip must retain positive and negative source deltas in resolution order.");
 
 const ownershipChallenge: CollectibleUnlockChallenge = {

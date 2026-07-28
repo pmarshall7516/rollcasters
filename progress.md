@@ -1,10 +1,82 @@
 Original prompt: Now, I want you to use all of these refined implementation documents to make the first version of my game. This should be functional for the most part with a decent bit of UI and feature polish. Seed initial data in the database, and use a database connection to pull all user and game catalog data. Do not seed any user data, as I will test the sign up and log in flows when the first version is built. In this repo, I have a .env file, and I can provide all needed database connection information to it, just let me know what else I need to add to this documentation or repo so you can go though implementation iterations of building and testing to refine a first version of this game.
 
+Current request (2026-07-28): Display passive and combat action-cost modifiers in loadout/combat UI; show source tooltips with cost-aware colors; make Critter/Rollcaster collection detail XP bars match the challenge panel width and move points inline with Skills/Abilities.
+
+- Added shared action-cost breakdown helpers used by combat validation/display and loadout previews. Discounts render green, increases red, and source rows retain names such as `-1 (Mana Talisman)`.
+- Main loadout now applies passive Skill Mana, Block, and Swap cost modifiers; combat controls show and submit resolved costs, including temporary Skill/Relic/Ability/Status modifiers.
+- Collection Critter and Rollcaster detail modals now render full-width XP progress bars and inline blue Skill/Ability point counters.
+- Verification: typecheck, build, collection UI logic, effect runtime, home/collection/skill layout, combat swap UI, effect UI, and required web-game smoke pass. Static browser probe confirms XP/challenge width parity and cost tooltip content.
+
+Current request (2026-07-23): Clean up `/play` Dungeon cards — remove description/stat overlap, equalize card heights to the longest description, align the grid with the heading/Back edges like Collection, widen cards, and add dynamic 20-per-page number tabs above and below the grid.
+
 Current request (2026-07-21): Add owner-qualified combat narration, active effect/status hover details with exact deltas and sources, equipped Relics on Critter combat cards, and larger single-line Skill cost/power metadata; keep rollcaster-sim behavior and UI in parity.
 
 Current request (2026-07-22): Restrict active-effect tooltips to each Critter's sprite box and stage stat, healing, and status changes event-by-event with specialized, source-Skill narration in both the game and simulator.
 
 # Rollcasters project handoff
+
+## Current request (2026-07-27): Shield Projector relic trigger
+
+- Reproduced the live Shield Projector catalog effect in the effect-runtime suite.
+- The reactive trigger was activating, but `maximum_shield: null` was coerced through `Number(null)` to `0`, so every 10 Shield grant was capped at zero.
+- Fixed nullable `maximum_shield` handling in `src/lib/game.ts` and added an exact catalog-shaped regression in `scripts/effect-runtime-tests.ts`.
+- Focused `npm run test:effect-runtime` passes.
+
+## Current request (2026-07-27): Unified HP and Shield bar
+
+- Replaced the separate Shield bar in combat cards with one fixed-height overlapping bar: HP is the left segment and Shield follows it in blue.
+- Normal shields use the max-HP scale and visually cover the HP they protect; shields larger than max HP expand the scale to current HP + Shield so oversized builds remain proportional.
+- HP is consistently green and Shield consistently blue so the two resources remain immediately distinguishable at every health level.
+- Kept the numeric `HP · Shield` text row and relic position unchanged; the bar is always present so granting/removing Shield does not shift card content.
+- Verified the segment geometry with 50/50 + 10 Shield, 45/50 + 10 Shield, 20/50 + 10 Shield, and 1/1 + 30 Shield fixtures. Build, combat-swap UI, and effect UI tests pass.
+
+## Current request (2026-07-27): Shield combat narration
+
+- Shield-only hits now narrate the absorbed amount, for example `Your Critter's Shield absorbed 5 damage.` instead of `took 0 damage.`
+- A hit that reduces Shield to zero adds a separate `Shield broke.` status event with negative polarity, red negative-effect animation, and its own playback text box.
+- Added runtime regressions for partial Shield damage, no `0 damage` narration, and Shield-break event polarity.
+
+## Current request (2026-07-28): HP bar track styling
+
+- Matched all combat HP bar tracks to the XP-bar treatment: dark empty space, cyan outline, and inset black edge.
+- Preserved the green HP and blue Shield fills and the fixed bar geometry.
+
+## Current request (2026-07-28): HP and Shield bar seam
+
+- Overlapped the Shield segment by 2px and removed its inner left rounding so the green HP and blue Shield fills meet cleanly without a track-colored seam.
+
+## Current request (2026-07-27): Clear temporary combat stat modifiers on swap/KO
+
+- `recomputeCombatStats` now removes Skill/Status-style `CombatModifier` entries whose holder is inactive or at 0 HP.
+- Cleanup occurs before damage/KO presentation snapshots, including direct-health and timed damage paths.
+- Equipped Relic/Ability stat setup effects are recomputed as persistent sources, so a Relic/Ability DEF boost survives a swap and cannot stack a second copy on return.
+- Added effect-runtime regressions for swap cleanup, KO cleanup, event snapshots, and persistent setup stat restoration.
+- Focused `npm run test:effect-runtime` passes.
+- Synced `rollcaster-sim/src/generated/game/` from the updated engine; simulator typecheck and all 11 core tests pass.
+
+## Current request (2026-07-23): Play Dungeon grid cleanup
+
+- Dungeon cards no longer use fixed 550px/`grid-template-rows` that caused Difficulty/Format/Encounters/Clears to overlap descriptions.
+- Cards grow with description content; every card on the current page matches the tallest card height via measured `grid-auto-rows`.
+- Grid spans the same content width as the heading (left with "Dungeons", right with Back), with wider fractional columns like Collection.
+- Pagination shows 20 Dungeons per page with numbered tabs above and below the grid; page count scales with catalog size (5 tabs for 100 Dungeons).
+- Verified: typecheck, layout-only live Dungeon browser gate (`DUNGEON_LAYOUT_ONLY=true` → 20 cards/page, 5 tabs, equal heights, stats below descriptions, heading alignment, zero browser errors), and unauthenticated web-game smoke. Full combat browser suite still has a pre-existing Swap handoff assertion failure unrelated to this layout work.
+
+## TODOs / next agent
+
+- Re-run full `npm run test:dungeons:browser` with Node 24 and fix the Swap incoming-slot persistence assertion if still failing.
+- Optional: expose play-page pagination in `render_game_to_text` for QA hooks.
+
+## Current request (2026-07-23): Critter XP bar color
+
+- Critter XP bars (loadout, collection, combat) now use a light neon mana-blue fill (`#3376a8` → `#4ba6d8` → `#7de8ff`) instead of green.
+- Rollcaster XP bars stay purple to match the existing combat outcome styling.
+
+## Prior request (2026-07-23): Immediate reactive relic combat timing
+
+- Fixed post-damage reactive resolution for Spiky Shield and Gambler's Rune.
+- Damage presentation is now staged before the synchronous reactive effect, so retaliation/stat changes resolve before the next queued action is processed and play back in the correct order.
+- Added focused runtime regressions covering Spiky Shield retaliation damage, Gambler's Rune mana loss and ATK gain, nullable activation limits, and event ordering.
 
 Last condensed: 2026-07-20
 
@@ -155,3 +227,33 @@ Database and signed-in browser tests may create rollback-only fixtures or dispos
 - Any nonzero percentage whose rounded magnitude would be zero now applies a signed one-point minimum.
 - Repeated modifiers from the same source and stat are combined into one cumulative tooltip row, so two identical Glare applications display their total DEF loss instead of hiding the later stack.
 - Added regressions for repeated percentage debuffs, one-point minimum buffs/debuffs, cumulative tooltip totals, and exact repeated-application narration. Main-game runtime/typecheck/build, Effect UI, signed-in combat browser coverage, and required web-game QA pass.
+
+## Combat healing/reactive fixes and Heal HP Challenges (2026-07-27)
+
+- Gambler's Rune now presents the actual clamped squad Mana loss (`You lost 3 mana.` or the lower remaining amount) after each qualifying incoming hit.
+- Spiky Shield's root attacker-targeted Direct Health Effect is retained as an equipped-Critter retaliation, resolves only when that equipped Critter is attacked, presents exact reflected damage, and targets the attacker for the normal damage animation.
+- Enemy knockouts now dispatch `owner_defeats_enemy` reactions after both base attack damage and Effect-driven HP loss. Battle Medic I resolves its all-friendly 5% heal as one staged event with every changed HP bar and animation; authored data now opts into healing modifiers.
+- Healing amplification is installed as a persistent runtime Effect. Stim Shot's 20% received-healing modifier applies across direct-health and restore-HP sources with round-half-up behavior, then healing progress records only actual restored HP after amplification and the missing-HP cap.
+- Added `hp_healed` Challenge events and the `heal_hp` collectible template contract, including friendly/enemy recipient filters plus Critter-species and Element subsets. The matching forward migration is mirrored in the game and Content Studio repositories and was dry-run, applied, and read back successfully in the configured development database.
+- Skill equip uses a wider three-column desktop dialog with name/Element search. Relic equip adds name search and omits general Relic descriptions while retaining Effect summaries.
+- Verification passed: typecheck, production build, Effect runtime (including low Mana, reflected damage ordering, Effect-driven knockout healing, multi-target Battle Medic, Stim Shot rounding, and amplified Challenge progress), Challenge text/matching, Collection UI, Effect UI, signed-in Effect combat, live equip-dialog Playwright, schema/editor Playwright in Content Studio, and the required generic web-game client. Visual artifacts are in `output/equip-collectible-order-browser/` and `output/combat-healing-web-client/`.
+- No game catalog release was created or published. Build and publish the next release manually after reviewing these changes.
+
+## Active lead Relic runtime and block odds (2026-07-27)
+
+- Fixed Dungeon lead activation so setup Relic runtime Effects are reinstalled after the initial inactive formation. This restores live Spiky Shield Thorns and Stim Shot instances in actual encounters, not only in synthetic active-state tests.
+- Healing now rounds each stage independently: base percentage heal first, then each amplifier, with Stim Shot turning 48 max HP × 10% into 5 then 6.
+- Added per-Critter consecutive Block streaks. Block odds are `1/(streak + 1)`, failures narrate and reset the streak, and successful/failed blocks have dedicated combat animations.
+- Added regressions for lead runtime refresh, staged Stim rounding, 1/2 Block failure narration, and reset 1/1 success. Game typecheck/build, runtime/UI/challenge tests, signed-in Effect combat, and the required web-game smoke pass.
+- Combat playback now holds status/block/other Effect events long enough for their target animation and changes a presentation token per event so consecutive target Effects restart their animation reliably.
+- Block narration is intentionally concise: successful blocks say `Your <Critter> blocks.` and failures say `<Critter>'s block failed.` with no odds included in player-facing text.
+- Failed consecutive Blocks now queue two presentation events: the declaration text first, then the concise failure text on the next combat advance. Successful Blocks queue only the declaration event.
+- Healing-stage rounding now uses half-up rounding at the base and every amplifier stage, with a minimum of 1 for any positive result below 1. This yields 48 × 10% = 5, then Stim Shot = 6, while 48 × 5% Battle Medic = 2.
+- Setup runtime Effects now refresh on every Critter Swap as well as lead activation. A Critter entering an attacked battlefield slot can immediately take damage and trigger equipped Spiky Shield retaliation in the same turn.
+
+## Combat lead selection and action order (2026-07-27)
+
+- Lead-selection checks are now absolutely positioned overlays with permanent right-side space reserved, so selecting a Critter never reflows its name/HP text.
+- Player action selection now orders living active Critters by fixed battlefield slot (top to bottom), rather than squad-array order. This preserves top-to-bottom selection after a 2vX Swap introduces a benched Critter into the top slot.
+- Added an effect-runtime regression for the swapped top/bottom action-selection ordering.
+- Verification passed: typecheck, effect runtime, production build, existing combat Swap UI test, required web-game smoke, and focused lead-card geometry/screenshot check. No browser errors were reported by the web-game smoke.

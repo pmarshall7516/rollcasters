@@ -1,6 +1,7 @@
 import {
   createInitialCombatState,
   recomputeCombatStats,
+  refreshSetupRuntimeEffects,
   resolveTurn,
   startTurn,
   type CombatPresentationState,
@@ -36,6 +37,7 @@ export type DungeonCombatEvent = {
   message: string;
   requiresAdvance: boolean;
   kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other";
+  effectPolarity?: "positive" | "negative";
   actorKey?: string;
   targetKeys: string[];
   skillId?: string;
@@ -200,9 +202,10 @@ function activateSelectedLeads(state: DungeonRunState, selectedLeadIds: string[]
   for (const unit of playerUnits) {
     if (unit.active && unit.userCritter) participants.add(unit.userCritter.id);
   }
+  const activatedBattle = refreshSetupRuntimeEffects({ ...state.battle, playerUnits });
   return {
     ...state,
-    battle: { ...state.battle, playerUnits },
+    battle: recomputeCombatStats(activatedBattle),
     selectedLeadIds,
     participatedUserCritterIds: [...participants],
     phase: "await_roll",
@@ -268,6 +271,7 @@ function applyEventState(battle: CombatState, event: DungeonCombatEvent | undefi
         shield: snapshot.shield,
         maxShield: snapshot.maxShield,
         blocking: snapshot.blocking,
+        blockStreak: snapshot.blockStreak ?? unit.blockStreak,
         active: preserveFormation ? unit.active : snapshot.active,
         battlefieldSlot: preserveFormation ? unit.battlefieldSlot : snapshot.battlefieldSlot,
         persistentStats: { ...snapshot.persistentStats },
@@ -565,8 +569,8 @@ export function restoreDungeonRunState(
       presentationEvents: persisted.battle.presentationEvents ?? [],
       runtimeEffects: persisted.battle.runtimeEffects ?? [],
       effectSequence: persisted.battle.effectSequence ?? 0,
-      playerUnits: persisted.battle.playerUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0 })),
-      opponentUnits: persisted.battle.opponentUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0 })),
+      playerUnits: persisted.battle.playerUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0, blockStreak: unit.blockStreak ?? 0 })),
+      opponentUnits: persisted.battle.opponentUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0, blockStreak: unit.blockStreak ?? 0 })),
     } as CombatState,
     pendingBattle: persisted.pendingBattle
       ? {
@@ -575,8 +579,8 @@ export function restoreDungeonRunState(
           presentationEvents: persisted.pendingBattle.presentationEvents ?? [],
           runtimeEffects: persisted.pendingBattle.runtimeEffects ?? [],
           effectSequence: persisted.pendingBattle.effectSequence ?? 0,
-          playerUnits: persisted.pendingBattle.playerUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0 })),
-          opponentUnits: persisted.pendingBattle.opponentUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0 })),
+          playerUnits: persisted.pendingBattle.playerUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0, blockStreak: unit.blockStreak ?? 0 })),
+          opponentUnits: persisted.pendingBattle.opponentUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0, blockStreak: unit.blockStreak ?? 0 })),
         } as CombatState
       : null,
   };

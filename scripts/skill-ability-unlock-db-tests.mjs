@@ -9,7 +9,7 @@ function check(condition, message) {
 
 const client = createDbClient();
 const migrationSql = fs.readFileSync(
-  path.join(root, "supabase", "migrations", "014_skill_ability_unlocks.sql"),
+  path.join(root, "supabase", "migrations", "20260727030000_auto_equip_unlocked_skill.sql"),
   "utf8",
 );
 let began = false;
@@ -103,6 +103,10 @@ try {
     insert into public.user_critters(user_id,critter_id)
     values($1,$2) returning id
   `, [userId, authored.skill.critter_id])).rows[0].id;
+  await client.query(`
+    insert into public.user_critter_skill_slots(user_critter_id,slot_index,skill_id)
+    values($1,1,null),($1,2,null),($1,3,null),($1,4,null)
+  `, [ownerCritterId]);
   const otherCritterId = (await client.query(`
     insert into public.user_critters(user_id,critter_id)
     values($1,$2) returning id
@@ -169,10 +173,12 @@ try {
       exists(
         select 1 from public.user_critter_skills unlocked
         where unlocked.user_critter_id=owned.id and unlocked.skill_id=$2
-      ) as unlocked
+      ) as unlocked,
+      (select skill_id from public.user_critter_skill_slots equipped
+       where equipped.user_critter_id=owned.id and equipped.slot_index=1) as equipped_skill_id
     from public.user_critters owned where owned.id=$1
   `, [ownerCritterId, authored.skill.skill_id])).rows[0];
-  check(skillState.skill_points === 0 && skillState.unlocked, "A successful Skill unlock must spend its exact cost and persist ownership.");
+  check(skillState.skill_points === 0 && skillState.unlocked && skillState.equipped_skill_id === authored.skill.skill_id, "A successful Skill unlock must spend its exact cost, persist ownership, and fill the first empty slot.");
   await expectFailure(
     "select public.unlock_critter_skill($1,$2)",
     [ownerCritterId, authored.skill.skill_id],

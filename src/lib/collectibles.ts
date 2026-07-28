@@ -198,6 +198,7 @@ export function challengeGoal(challenge: CollectibleUnlockChallenge): bigint {
     case "squad_composition": return safeUnknownBigInt(parameters.required_completions);
     case "dungeon_clear": return safeUnknownBigInt(parameters.required_clears);
     case "dice_roll": return safeUnknownBigInt(parameters.required_occurrences);
+    case "heal_hp": return safeUnknownBigInt(parameters.required_amount);
     default: return safeUnknownBigInt(parameters.required_amount ?? challenge.required_amount);
   }
 }
@@ -274,6 +275,18 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
     case "swap_action": return `${humanize(String(parameters.tracked_action))} ${parameters.required_amount} time${Number(parameters.required_amount) === 1 ? "" : "s"}.`;
     case "block_action": return `${humanize(String(parameters.tracked_action))}: ${parameters.required_amount}.`;
     case "dice_roll": return `${humanize(String(parameters.tracked_result))} ${humanize(String(parameters.comparison))} ${parameters.target_value}, ${parameters.required_occurrences} time${Number(parameters.required_occurrences) === 1 ? "" : "s"}.`;
+    case "heal_hp": {
+      const recipient = parameters.recipient_side === "friendly" ? "friendly" : parameters.recipient_side === "enemy" ? "enemy" : "";
+      const ids = stringParameters(parameters, "target_ids");
+      const targetMode = String(parameters.target_mode ?? "any");
+      const names = targetMode === "species"
+        ? namesFor(data, "critter", ids)
+        : targetMode === "element"
+          ? namesFor(data, "element", ids)
+          : [];
+      const qualifier = names.length ? ` ${names.join(", ")}` : "";
+      return `Heal ${parameters.required_amount} HP on ${recipient ? `${recipient} ` : ""}${targetMode === "species" ? "Critters" : targetMode === "element" ? "Elements" : "Critters"}${qualifier}.`;
+    }
     case "level_up_critter": {
       const id = String(challenge.target_id ?? parameters.critter_id ?? "");
       return `Unlock level ${challenge.required_level ?? parameters.required_level ?? 0} for ${collectibleName(data, "critter", id)} (${id || "—"})`;

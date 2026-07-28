@@ -101,13 +101,21 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   }
 
   const parameters = requireRecord(effect.parameters, `Effect ${effect.id} parameters`);
-  const target = requireChoice(
-    parameters.target,
-    [...TARGETS_BY_OWNER[effect.ownerType]],
-    `Effect ${effect.id} target for ${effect.ownerType}`,
-  );
-  if (!TARGETS_BY_OWNER[effect.ownerType].has(target)) {
-    throw new Error(`Effect ${effect.id} cannot target ${target} as ${effect.ownerType}.`);
+  // Resource and Effect Copy/Transfer runtimes operate on squad state or
+  // resolution context rather than directly selecting a Critter. Their
+  // schemas intentionally do not include `target`; do not force them through
+  // the owner-scoped Critter target vocabulary.
+  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1"]);
+  const target = parameters.target;
+  if (!targetlessRuntimes.has(runtimeKey) || parameters.target !== undefined) {
+    const validatedTarget = requireChoice(
+      target,
+      [...TARGETS_BY_OWNER[effect.ownerType]],
+      `Effect ${effect.id} target for ${effect.ownerType}`,
+    );
+    if (!TARGETS_BY_OWNER[effect.ownerType].has(validatedTarget)) {
+      throw new Error(`Effect ${effect.id} cannot target ${validatedTarget} as ${effect.ownerType}.`);
+    }
   }
 
   // The expanded runtime contract is intentionally validated here as a
