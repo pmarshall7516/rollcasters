@@ -169,8 +169,9 @@ let eventBattle = battle(eventCatalog, makePlayer(), "progress-events");
 eventBattle.opponentMana = 0;
 const eventTarget = eventBattle.opponentUnits[0];
 const eventResult = takeTurn(eventBattle, [{ actorKey: eventBattle.playerUnits[0].key, type: "skill", skillId: "strike", targetKey: eventTarget.key, cost: 1 }]);
-check(eventResult.turnEvents.some((event) => event.event_type === "use_skill" && event.skill_id === "strike" && event.source_critter_id === "p1"), "A successful player skill must emit a use_skill progress event.");
-check(eventResult.turnEvents.some((event) => event.event_type === "deal_damage" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit a positive deal_damage progress event.");
+check(eventResult.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "strike" && event.source_critter_id === "p1"), "A successful player skill must emit one normalized skill_resolved progress event.");
+check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit one normalized hp_damage_dealt progress event.");
+check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
 
 const allCrittersSkill = { ...eventCatalog.skills[0], id: "all-critters", name: "All Critters", power: 1, targeting: "all_critters" as const };
@@ -886,6 +887,10 @@ check(
     && !temporaryKnockout.modifiers.some((modifier) => modifier.holderKey === "o1")
     && !knockoutDamageEvent?.state?.modifiers.some((modifier) => modifier.holderKey === "o1"),
   "Stat modifiers must be removed immediately when a Critter is knocked out, including the damage presentation snapshot.",
+);
+check(
+  temporaryKnockout.turnEvents.filter((event) => event.target_critter_id === "o1" && ["knock_out_critters", "critter_knocked_out"].includes(event.event_type)).map((event) => event.event_type).join(",") === "critter_knocked_out",
+  "A knocked-out opponent must emit exactly one normalized knockout progress event.",
 );
 
 const debuffCatalog = makeCatalog();

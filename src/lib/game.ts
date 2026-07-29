@@ -1421,14 +1421,6 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
     }, actionState);
     if (actor.side === "player") {
       next = appendProgressEvent(next, {
-        event_type: "use_skill",
-        source_critter_id: actor.critter.id,
-        target_critter_id: null,
-        skill_id: skill.id,
-        amount: 1,
-        payload: { resolved: true, target_keys: targets.map((target) => target.key) },
-      });
-      next = appendProgressEvent(next, {
         event_type: "skill_resolved",
         source_critter_id: actor.critter.id,
         target_critter_id: targets[0]?.critter.id ?? null,
@@ -2443,14 +2435,6 @@ function appendDamageProgressEvents(
   let next = state;
   if (source.side === "player" && target.side === "opponent") {
     next = appendProgressEvent(next, {
-      event_type: "deal_damage",
-      source_critter_id: source.critter.id,
-      target_critter_id: target.critter.id,
-      skill_id: null,
-      amount: actualDamage,
-      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
-    });
-    next = appendProgressEvent(next, {
       event_type: "hp_damage_dealt",
       source_critter_id: source.critter.id,
       target_critter_id: target.critter.id,
@@ -2459,14 +2443,6 @@ function appendDamageProgressEvents(
       payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
     });
     if (knockedOut) {
-      next = appendProgressEvent(next, {
-        event_type: "knock_out_critters",
-        source_critter_id: source.critter.id,
-        target_critter_id: target.critter.id,
-        skill_id: null,
-        amount: 1,
-        payload: { target_element_ids: critterElementIds(target.critter) },
-      });
       next = appendProgressEvent(next, {
         event_type: "critter_knocked_out",
         source_critter_id: source.critter.id,
@@ -2477,14 +2453,6 @@ function appendDamageProgressEvents(
       });
     }
   } else if (source.side === "opponent" && target.side === "player") {
-    next = appendProgressEvent(next, {
-      event_type: "take_damage",
-      source_critter_id: source.critter.id,
-      target_critter_id: target.critter.id,
-      skill_id: null,
-      amount: actualDamage,
-      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
-    });
     next = appendProgressEvent(next, {
       event_type: "hp_damage_taken",
       source_critter_id: source.critter.id,

@@ -132,15 +132,20 @@ try {
     skill_id: null,
     amount: 3,
   }];
-  await client.query("select public.submit_collectible_combat_events($1,1,$2::jsonb)", [runId, JSON.stringify(firstCombatEvent)]);
-  await client.query("select public.submit_collectible_combat_events($1,1,$2::jsonb)", [runId, JSON.stringify(firstCombatEvent)]);
+  const normalizedFirstCombatEvent = [{
+    ...firstCombatEvent[0],
+    event_key: "db-probe-damage-1-normalized",
+    event_type: "hp_damage_dealt",
+  }];
+  await client.query("select public.submit_collectible_combat_events($1,1,$2::jsonb)", [runId, JSON.stringify([...firstCombatEvent, ...normalizedFirstCombatEvent])]);
+  await client.query("select public.submit_collectible_combat_events($1,1,$2::jsonb)", [runId, JSON.stringify([...firstCombatEvent, ...normalizedFirstCombatEvent])]);
   const afterRetry = await client.query("select progress::text from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, combatChallengeId]);
-  check(afterRetry.rows[0].progress === "3", "Retrying a combat event key must not increment tracked progress twice.");
+  check(afterRetry.rows[0].progress === "3", "Legacy and normalized aliases for one combat outcome must not increment tracked progress twice.");
 
   const finalCombatEvent = [{ ...firstCombatEvent[0], event_key: "db-probe-damage-2", amount: 2 }];
   const combatSnapshot = (await client.query("select public.submit_collectible_combat_events($1,1,$2::jsonb) as snapshot", [runId, JSON.stringify(finalCombatEvent)])).rows[0].snapshot;
   const combatEventCount = await client.query("select count(*)::int as count from public.collectible_combat_events where run_id=$1", [runId]);
-  check(combatEventCount.rows[0].count === 2, "Only unique combat event keys must be persisted.");
+  check(combatEventCount.rows[0].count === 3, "Only unique combat event keys must be persisted, while mixed aliases remain one gameplay outcome.");
   check(combatSnapshot.unlock_events.some((event) => event.collectible_type === "critter" && event.collectible_id === combatUnlockTargetId), "Completing tracked combat progress must return the new unlock notification.");
   check((await client.query("select count(*)::int as count from public.user_critters where user_id=$1 and critter_id=$2", [userId, combatUnlockTargetId])).rows[0].count === 1, "Completed combat progress must grant the target collectible.");
 
