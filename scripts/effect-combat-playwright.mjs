@@ -131,6 +131,7 @@ try {
   await page.screenshot({ path: path.join(outputDir, "combat-effects-and-relics.png"), fullPage: false });
 
   let capturedSkillLayout = false;
+  let capturedDamageRoll = false;
   for (let step = 0; step < 600; step += 1) {
     const state = await gameState(page);
     const phase = state.combat?.phase;
@@ -142,6 +143,21 @@ try {
     }
 
     if (phase === "roll_result" || phase === "event_playback") {
+      const presentation = state.combat?.presentation;
+      if (presentation?.kind === "damage" && presentation.damageRollPercent != null) {
+        check(
+          !/Damage roll|Multi-target power/i.test((await page.locator(".combat-narration").textContent()) ?? ""),
+          "Combat narration must not expose internal damage-roll or spread calculations.",
+        );
+        check(
+          presentation.damageRollPercent >= 85 && presentation.damageRollPercent <= 100,
+          `Skill damage roll must stay between 85% and 100% of max: ${presentation.damageRollPercent}`,
+        );
+        if (!capturedDamageRoll) {
+          await page.screenshot({ path: path.join(outputDir, "combat-damage-roll.png"), fullPage: false });
+          capturedDamageRoll = true;
+        }
+      }
       const narration = page.locator(".combat-narration.advanceable");
       await narration.waitFor({ state: "visible" });
       await page.waitForFunction(() => {
@@ -215,6 +231,7 @@ try {
     resolved.combat?.phase === "dungeon_complete" || resolved.combat?.phase === "dungeon_failed",
     `Expected a terminal live dungeon outcome, received ${resolved.combat?.phase}.`,
   );
+  check(capturedDamageRoll, "Live combat never exposed a Skill damage percentage roll in its staged damage narration.");
   await page.screenshot({ path: path.join(outputDir, "combat-outcome.png"), fullPage: true });
   check(browserErrors.length === 0, `Browser errors detected: ${browserErrors.join(" | ")}`);
 

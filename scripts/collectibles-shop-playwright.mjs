@@ -311,7 +311,7 @@ try {
   await shardOffer.getByRole("button", { name: "Purchase" }).click();
   await page.waitForFunction((targetId) => {
     const card = [...document.querySelectorAll(".shop-entry-card")].find((candidate) => candidate.textContent?.includes(targetId));
-    return card?.textContent?.includes("Shards: 2 / 4");
+    return card?.textContent?.includes("2 / 4 Shards") && !card?.textContent?.includes("Shards: 2 / 4");
   }, critterTarget.id);
   const firstShardReward = page.locator(".reward-notification").filter({ hasText: "Shop reward" });
   await firstShardReward.waitFor();
@@ -363,8 +363,9 @@ try {
     const card = [...document.querySelectorAll(".shop-entry-card")].find((candidate) => candidate.textContent?.includes(targetId));
     return card?.getAttribute("data-availability-code") === "COLLECTIBLE_ALREADY_UNLOCKED";
   }, critterTarget.id);
-  check((await shardOffer.getAttribute("class"))?.includes("sold-out"), "An already-unlocked Shard offer must grey out the entire card.");
-  check(await shardOffer.getByRole("button", { name: "Purchase" }).isDisabled(), "An already-unlocked Shard purchase button must be disabled.");
+  check(!(await shardOffer.getAttribute("class"))?.includes("sold-out"), "An already-unlocked Shard offer must keep its full card presentation.");
+  check(await shardOffer.getByRole("button", { name: "Already Owned" }).isDisabled(), "An already-unlocked Shard offer must show a disabled Already Owned button.");
+  check(await shardOffer.getByRole("button", { name: "Purchase" }).count() === 0, "An already-unlocked Shard offer must not show a Purchase button.");
   const shardVisuals = await shardOffer.evaluate((card) => {
     const square = card.querySelector(".shard-sprite-frame .sprite");
     const shard = card.querySelector(".shard-sprite-frame");
@@ -409,6 +410,36 @@ try {
   check(shardHover.cardShadow !== "none" && shardHover.outlineGlowOpacity === "1", "Hovering a Shard offer must glow both the card border and diamond outline.");
   check(shardHover.outlineFilter === "none" && shardHover.spriteFilter === shardVisuals?.spriteFilter && shardHover.wrapperFilter === "none", "Shard hover must not apply a filter glow to the collectible sprite or its wrapper.");
   await page.screenshot({ path: path.join(outputDir, "shop-shards-owned-hover.png"), fullPage: true });
+
+  await page.getByRole("button", { name: "Bag" }).click();
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "bag");
+  await page.getByRole("tab", { name: "Shards" }).click();
+  const completedBagShard = page.locator(`.bag-shard-card[data-collectible-id="${critterTarget.id}"][data-shard-status="complete"]`);
+  await completedBagShard.waitFor();
+  const bagCompletion = await completedBagShard.evaluate((card) => {
+    const outline = card.querySelector(".shard-outline-border");
+    const outlineSvg = card.querySelector(".shard-sprite-outline");
+    const progress = card.querySelector(".shard-progress");
+    const progressBar = card.querySelector(".shard-progress .xp-bar");
+    const progressFill = card.querySelector(".shard-progress .xp-bar span");
+    return {
+      text: card.textContent,
+      cardStatus: card.getAttribute("data-shard-status"),
+      outlineColor: outline ? getComputedStyle(outline).stroke : null,
+      outlineWidth: outline ? getComputedStyle(outline).strokeWidth : null,
+      outlineFilter: outlineSvg ? getComputedStyle(outlineSvg).filter : null,
+      progressClass: progress?.className ?? null,
+      progressBorderColor: progressBar ? getComputedStyle(progressBar).borderTopColor : null,
+      progressBoxShadow: progressBar ? getComputedStyle(progressBar).boxShadow : null,
+      progressAnimation: progressFill ? getComputedStyle(progressFill).animationName : null,
+    };
+  });
+  check(bagCompletion.cardStatus === "complete", `The Bag Shard card must expose its completed state: ${JSON.stringify(bagCompletion)}`);
+  check(bagCompletion.progressClass?.includes("complete"), `The Bag Shard progress block must expose its completed state: ${JSON.stringify(bagCompletion)}`);
+  check(bagCompletion.outlineColor === "rgb(97, 221, 160)" && bagCompletion.outlineWidth === "2.4px", `The completed Bag Shard outline must use the success treatment: ${JSON.stringify(bagCompletion)}`);
+  check(bagCompletion.outlineFilter !== "none" && bagCompletion.progressBorderColor === "rgb(97, 221, 160)" && bagCompletion.progressAnimation === "none", `The completed Bag Shard progress visuals must be static and distinct: ${JSON.stringify(bagCompletion)}`);
+  check(bagCompletion.text?.includes("4 / 4 Shards") && !bagCompletion.text?.includes("Shards: 4 / 4"), `The Bag Shard card must keep one centered progress label: ${JSON.stringify(bagCompletion)}`);
+  await page.screenshot({ path: path.join(outputDir, "bag-shards-complete.png"), fullPage: true });
 
   const finalState = await gameState(page);
   check(finalState.currencies.some((row) => row.currency_id === "coins" && row.balance === "0"), "The currency header did not use the normalized ledger snapshot.");

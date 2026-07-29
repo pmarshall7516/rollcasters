@@ -1455,6 +1455,42 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   background: transparent;
   color: var(--text-primary);
 }
+.equip-dialog-point-summary {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: rgb(8 10 24 / 54%);
+}
+.equip-skill-option {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+.equip-skill-option > .tooltip-anchor {
+  min-width: 0;
+}
+.equip-skill-option.locked > .tooltip-anchor {
+  filter: grayscale(.82);
+  opacity: .5;
+}
+.equip-skill-unlock-row {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+}
+.skill-unlock-button-inline {
+  min-width: 118px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
 .equip-dialog-relic .candidate-card > .tooltip-description {
   color: var(--text-secondary);
   text-align: left;
@@ -1871,7 +1907,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .shop-groups { display: grid; gap: 28px; }
 .shop-group { display: grid; gap: 13px; }
 .shop-group h2 { margin: 0; color: var(--text-primary); font-family: Georgia, "Times New Roman", serif; }
-.shop-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
+.shop-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
 .shop-entry-card { position: relative; display: grid; grid-template-rows: auto auto minmax(72px, auto) auto auto auto auto; justify-items: center; align-content: start; gap: 10px; min-width: 0; padding: 17px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: linear-gradient(150deg, rgb(23 29 56 / 96%), rgb(11 15 34 / 96%)); box-shadow: 0 16px 40px rgb(0 0 0 / 22%); text-align: center; transition: transform var(--motion), border-color var(--motion), box-shadow var(--motion), background var(--motion); }
 .shop-entry-card:is(:hover, :focus-within) { transform: translateY(-2px); border-color: var(--accent-cyan); box-shadow: 0 18px 44px rgb(0 0 0 / 28%), 0 0 0 1px rgb(79 228 225 / 18%), 0 0 26px rgb(79 228 225 / 28%); }
 .shop-entry-card > .sprite-frame { transition: border-color var(--motion), box-shadow var(--motion), background var(--motion); }
@@ -1922,6 +1958,11 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .shop-entry-card:is(:hover, :focus-within) .shard-outline-glow { opacity: 1; }
 .shop-entry-card.sold-out .shard-outline-border { stroke: rgb(126 131 151 / 72%); }
 .shop-entry-card.sold-out > .shard-sprite-glow { opacity: .5; }
+.bag-shard-card.complete .shard-sprite-outline { filter: drop-shadow(0 0 4px rgb(97 221 160 / 72%)); }
+.bag-shard-card.complete .shard-outline-border { stroke: var(--success); stroke-width: 2.4; }
+.bag-shard-card.complete .shard-outline-glow { opacity: 1; }
+.bag-shard-card.complete .shard-outline-glow-wide { stroke: rgb(97 221 160 / 24%); }
+.bag-shard-card.complete .shard-outline-glow-mid { stroke: rgb(244 202 101 / 62%); }
 .promo-codes-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -3025,6 +3066,46 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   background: rgb(8 10 24 / 72%);
   color: var(--accent-cyan);
   font-size: 22px;
+}
+
+.combat-mana-total-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.mana-refund-counter {
+  animation: mana-refund-counter .86s cubic-bezier(.2, .85, .3, 1) both;
+  transform-origin: center;
+}
+
+.mana-refund-pop {
+  position: absolute;
+  top: -17px;
+  right: 10%;
+  color: var(--success);
+  font-size: 17px;
+  font-weight: 950;
+  line-height: 1;
+  text-shadow: 0 0 12px rgb(97 221 160 / 60%);
+  pointer-events: none;
+  animation: mana-refund-pop .86s ease-out both;
+}
+
+@keyframes mana-refund-counter {
+  0% { transform: scale(1) translateX(0) rotate(0); }
+  18% { transform: scale(1.34) translateX(-2px) rotate(-1deg); }
+  34% { transform: scale(1.08) translateX(2px) rotate(1deg); }
+  52% { transform: scale(.9) translateX(-2px) rotate(-1deg); }
+  70% { transform: scale(1.08) translateX(2px) rotate(1deg); }
+  86% { transform: scale(.97) translateX(-1px) rotate(0); }
+  100% { transform: scale(1) translateX(0) rotate(0); }
+}
+
+@keyframes mana-refund-pop {
+  0% { opacity: 0; transform: translateY(8px) scale(.72); }
+  18% { opacity: 1; transform: translateY(-2px) scale(1.12); }
+  72% { opacity: 1; transform: translateY(-8px) scale(1); }
+  100% { opacity: 0; transform: translateY(-20px) scale(.9); }
 }
 
 .combat-mana-total .asset-icon {
@@ -5006,4 +5087,34 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   .combat-primary-actions > button { font-size: 8px; }
   .combat-die { min-width: 0; }
   .combat-narration { min-height: 52px; padding: 7px 9px; }
+}
+
+/* Bag inventory */
+.bag-screen > .bag-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 250px; }
+.bag-currency-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: auto; align-items: start; }
+.bag-currency-card { align-items: center; justify-items: center; min-height: 0; height: auto !important; padding: 14px; text-align: center; }
+.bag-currency-icon { display: grid; place-items: center; width: 148px; height: 148px; padding: 18px; border: 1px solid var(--border-soft); border-radius: 12px; background: radial-gradient(circle at 50% 42%, rgb(125 121 216 / 26%), rgb(8 10 24 / 72%) 72%); color: var(--accent-gold); }
+.bag-currency-icon .asset-icon { width: 100%; height: 100%; }
+.bag-currency-icon .asset-icon__image { width: 100%; height: 100%; object-fit: contain; }
+.bag-currency-icon .asset-icon > svg { width: 100%; height: 100%; }
+.bag-currency-amount { margin: 0 !important; color: var(--accent-cyan) !important; font-size: 28px; font-weight: 950; font-variant-numeric: tabular-nums; }
+.bag-shard-groups { width: 100%; }
+.bag-shard-card { grid-template-rows: auto auto minmax(54px, auto) auto; }
+.bag-shard-card .shard-progress { width: 100%; }
+.shard-progress { display: grid; gap: 5px; width: 100%; }
+.shard-progress .xp-bar { width: 100%; }
+.shard-progress > p { margin: 0 !important; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.shard-progress.complete .xp-bar { border-color: var(--success); box-shadow: inset 0 0 0 1px rgb(0 0 0 / 70%), 0 0 12px rgb(97 221 160 / 42%); }
+.shard-progress.complete .xp-bar span { background: linear-gradient(90deg, #3eaa78, var(--success), #9bf0b9); box-shadow: 0 0 12px rgb(97 221 160 / 72%); }
+.shard-progress.complete > p { color: var(--success); font-weight: 900; }
+
+@media (max-width: 1050px) {
+  .bag-currency-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .shop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 650px) {
+  .bag-currency-grid { grid-template-columns: minmax(0, 1fr); }
+  .bag-screen > .bag-tabs { width: 100%; }
+  .shop-grid { grid-template-columns: minmax(0, 1fr); }
 }

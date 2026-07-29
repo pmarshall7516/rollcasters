@@ -36,11 +36,17 @@ export type DungeonCombatEvent = {
   phase: string;
   message: string;
   requiresAdvance: boolean;
-  kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other";
+  kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other" | "mana_refund";
   effectPolarity?: "positive" | "negative";
   actorKey?: string;
   targetKeys: string[];
   skillId?: string;
+  damageRollPercent?: number;
+  damageSpreadPercent?: number;
+  manaRefund?: {
+    side: "player" | "opponent";
+    amount: number;
+  };
   swap?: {
     outgoingKey: string;
     incomingKey: string;

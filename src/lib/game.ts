@@ -139,12 +139,20 @@ export type CombatEffectSummary = {
 };
 
 export type CombatPresentationEvent = {
-  kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other";
+  kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other" | "mana_refund";
   message: string;
   effectPolarity?: "positive" | "negative";
   actorKey?: string;
   targetKeys: string[];
   skillId?: string;
+  /** The bounded random percentage used for a Skill's base damage roll. */
+  damageRollPercent?: number;
+  /** The Pokémon-style spread-move power multiplier, when it weakens an attack. */
+  damageSpreadPercent?: number;
+  manaRefund?: {
+    side: "player" | "opponent";
+    amount: number;
+  };
   swap?: {
     outgoingKey: string;
     incomingKey: string;
@@ -253,6 +261,10 @@ export type EffectivenessClass =
 
 export type SkillDamage = {
   damage: number;
+  maxDamage: number;
+  damageRollPercent: number;
+  targetCount: number;
+  spreadMultiplier: number;
   effectiveness: number;
   classification: EffectivenessClass;
   suffix: string;
@@ -1247,17 +1259,22 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
   if (!actor) return state;
   if (actor.hp <= 0) {
     const refund = Math.max(0, action.cost);
+    if (refund === 0) return state;
     const refundedState = refund === 0
       ? state
       : actor.side === "player"
         ? { ...state, playerMana: state.playerMana + refund }
         : { ...state, opponentMana: state.opponentMana + refund };
-    const message = refund > 0
-      ? `${combatantName(actor)} was knocked out before acting; ${refund} reserved mana was refunded.`
-      : `${combatantName(actor)} was knocked out before acting; no mana was spent.`;
     return appendPresentationEvent(
-      { ...refundedState, log: [message, ...refundedState.log] },
-      { kind: "other", message, actorKey: actor.key, targetKeys: [], hpChanges: [] },
+      refundedState,
+      {
+        kind: "mana_refund",
+        message: "",
+        actorKey: actor.key,
+        targetKeys: [],
+        manaRefund: { side: actor.side, amount: refund },
+        hpChanges: [],
+      },
     );
   }
   if (!actor.active) return state;
@@ -1362,8 +1379,9 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
       const target = findUnit(current, originalTarget.key);
       if (!target || target.hp <= 0) return current;
       if (skill.skill_type === "attack") {
-        const resolvedDamage = calculateSkillDamage(current.catalog, actor, target, skill);
-        const damage = resolveIncomingDamage(current, actor, target, resolvedDamage.damage);
+        const damageRoll = nextRandom(current.rngState);
+        const resolvedDamage = calculateSkillDamage(current.catalog, actor, target, skill, () => damageRoll.value, targets.length);
+        const damage = resolveIncomingDamage({ ...current, rngState: damageRoll.state }, actor, target, resolvedDamage.damage);
         const actualDamage = damage.hpDamage;
         damageDone += actualDamage;
         const afterHp = findUnit(damage.state, target.key)?.hp ?? target.hp;
@@ -1381,6 +1399,10 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
           actorKey: actor.key,
           targetKeys: [target.key],
           skillId: skill.id,
+          damageRollPercent: resolvedDamage.damageRollPercent,
+          damageSpreadPercent: resolvedDamage.spreadMultiplier < 1
+            ? Math.round(resolvedDamage.spreadMultiplier * 100)
+            : undefined,
           hpChanges: [{ unitKey: target.key, before: target.hp, after: afterHp }],
         });
         if (shieldBroken) {
@@ -2345,10 +2367,16 @@ export function calculateSkillDamage(
   attacker: CombatUnit,
   defender: CombatUnit,
   skill: Skill,
+  random: () => number = () => 1,
+  targetCount = 1,
 ): SkillDamage {
   if (skill.skill_type !== "attack" || skill.power <= 0) {
     return {
       damage: 0,
+      maxDamage: 0,
+      damageRollPercent: DAMAGE_ROLL_MAX_PERCENT,
+      targetCount: 1,
+      spreadMultiplier: 1,
       effectiveness: 1,
       classification: "neutral",
       suffix: "",
@@ -2358,16 +2386,41 @@ export function calculateSkillDamage(
   const stab = critterHasElement(attacker.critter, skill.element_id);
   const effectivePower = skill.power * (stab ? 1.5 : 1);
   const effectiveness = elementEffectiveness(catalog, skill.element_id, defender.critter);
+  const resolvedTargetCount = Math.max(1, Math.floor(Number(targetCount) || 1));
+  const spreadMultiplier = resolvedTargetCount > 1 ? MULTI_TARGET_DAMAGE_MULTIPLIER : 1;
   const rawDamage = (((((2 * attacker.level) / 5 + 2) * effectivePower * attacker.stats.atk) / defender.stats.def) / 50 + 2)
-    * effectiveness;
+    * effectiveness
+    * spreadMultiplier;
   const minimum = effectiveness === 0 ? 0 : 1;
-  const damage = Math.max(minimum, Math.floor(rawDamage));
+  const maxDamage = Math.max(minimum, Math.floor(rawDamage));
+  const damageRollPercent = rollDamagePercent(random);
+  const damage = maxDamage === 0
+    ? 0
+    : Math.max(minimum, Math.floor((maxDamage * damageRollPercent) / 100));
   return {
     damage,
+    maxDamage,
+    damageRollPercent,
+    targetCount: resolvedTargetCount,
+    spreadMultiplier,
     effectiveness,
     ...classifyEffectiveness(effectiveness),
     stab,
   };
+}
+
+export const DAMAGE_ROLL_MIN_PERCENT = 85;
+export const DAMAGE_ROLL_MAX_PERCENT = 100;
+export const MULTI_TARGET_DAMAGE_MULTIPLIER = 0.75;
+
+/**
+ * Roll the percentage of a Skill's calculated maximum damage to apply.
+ * The upper bound is inclusive, so a 100% roll always means max damage.
+ */
+export function rollDamagePercent(random: () => number = Math.random): number {
+  const value = Number(random());
+  const normalized = Number.isFinite(value) ? Math.max(0, Math.min(0.999999999, value)) : 0.5;
+  return DAMAGE_ROLL_MIN_PERCENT + Math.floor(normalized * (DAMAGE_ROLL_MAX_PERCENT - DAMAGE_ROLL_MIN_PERCENT + 1));
 }
 
 function updateUnit(state: CombatState, key: string, updater: (unit: CombatUnit) => CombatUnit, log: string): CombatState {

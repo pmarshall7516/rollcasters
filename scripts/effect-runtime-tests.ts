@@ -13,6 +13,8 @@ import {
   resolveTurn,
   refreshSetupRuntimeEffects,
   roundHalfUp,
+  rollDamagePercent,
+  MULTI_TARGET_DAMAGE_MULTIPLIER,
   skillTargets,
 } from "../src/lib/game.js";
 import {
@@ -403,14 +405,26 @@ const shieldHitResult = resolveTurn({ ...shieldedProjectorBattle!, phase: "selec
   { actorKey: "p1", type: "skip", cost: 0 },
   { actorKey: "p2", type: "skip", cost: 0 },
 ]);
-check(shieldHitResult.playerUnits[0].shield === 5, "A hit against a 10-point Shield must reduce it by the incoming damage without reducing HP.");
+const shieldRemainingAfterHit = shieldHitResult.playerUnits[0].shield;
+check(
+  shieldRemainingAfterHit > 0
+    && shieldRemainingAfterHit < 10
+    && shieldHitResult.playerUnits[0].hp === shieldedProjectorBattle!.playerUnits[0].hp,
+  "A hit against a 10-point Shield must reduce it by the incoming damage without reducing HP.",
+);
 const shieldHitEvent = shieldHitResult.presentationEvents.find((event) => event.kind === "damage" && event.targetKeys.includes("p1"));
-check(shieldHitEvent?.message === "Your Player One's Shield absorbed 5 damage.", "Shield damage must narrate the absorbed amount instead of reporting 0 HP damage.");
+check(
+  shieldHitEvent?.message === `Your Player One's Shield absorbed ${10 - shieldRemainingAfterHit} damage.`,
+  "Shield damage must narrate the absorbed amount instead of reporting 0 HP damage.",
+);
 check(!shieldHitResult.presentationEvents.some((event) => event.message.includes("took 0 damage")), "Shield-only damage must not produce a 0-damage HP narration.");
-const shieldBreakResult = resolveTurn({ ...shieldHitResult, phase: "selecting", playerMana: 0, opponentMana: 10 }, [
-  { actorKey: "p1", type: "skip", cost: 0 },
-  { actorKey: "p2", type: "skip", cost: 0 },
-]);
+let shieldBreakResult = shieldHitResult;
+for (let hit = 0; hit < 4 && shieldBreakResult.playerUnits[0].shield > 0; hit += 1) {
+  shieldBreakResult = resolveTurn({ ...shieldBreakResult, phase: "selecting", playerMana: 0, opponentMana: 10 }, [
+    { actorKey: "p1", type: "skip", cost: 0 },
+    { actorKey: "p2", type: "skip", cost: 0 },
+  ]);
+}
 check(shieldBreakResult.playerUnits[0].shield === 0, "A second hit must break the remaining Shield.");
 const shieldBreakEvent = shieldBreakResult.presentationEvents.find((event) => event.message === "Your Player One's Shield broke.");
 check(shieldBreakEvent?.kind === "status" && shieldBreakEvent.effectPolarity === "negative", "Shield break must get its own negative status presentation event.");
@@ -498,8 +512,9 @@ check(
   playerKnockoutResult.playerUnits[0].hp === 0
     && playerKnockoutResult.playerMana === 10
     && playerKnockoutResult.opponentUnits[0].hp === playerKnockoutBattle.opponentUnits[0].hp
-    && playerKnockoutResult.log.some((line) => line === "Your Player One was knocked out before acting; 5 reserved mana was refunded."),
-  "A player Critter knocked out before its queued action must not act and must recover that action's reserved Mana.",
+    && playerKnockoutResult.presentationEvents.some((event) => event.kind === "mana_refund" && event.manaRefund?.side === "player" && event.manaRefund.amount === 5)
+    && !playerKnockoutResult.log.some((line) => line.includes("reserved mana")),
+  "A player Critter knocked out before its queued action must recover that action's reserved Mana without refund narration.",
 );
 
 let opponentKnockoutBattle = battle(knockoutCatalog, makePlayer(), "opponent-knockout-refund");
@@ -537,8 +552,9 @@ check(
   opponentKnockoutResult.opponentUnits[0].hp === 0
     && opponentKnockoutResult.opponentMana === 5
     && opponentKnockoutResult.playerUnits[0].hp === opponentKnockoutBattle.playerUnits[0].hp
-    && opponentKnockoutResult.log.some((line) => line === "The enemy Opponent One was knocked out before acting; 5 reserved mana was refunded."),
-  "An opposing Critter knocked out before its queued action must not act and must recover that action's reserved Mana.",
+    && opponentKnockoutResult.presentationEvents.some((event) => event.kind === "mana_refund" && event.manaRefund?.side === "opponent" && event.manaRefund.amount === 5)
+    && !opponentKnockoutResult.log.some((line) => line.includes("reserved mana")),
+  "An opposing Critter knocked out before its queued action must recover that action's reserved Mana without refund narration.",
 );
 
 check(roundHalfUp(2.5) === 3 && roundHalfUp(-2.5) === -3, "Shared half-up rounding must round exact halves away from zero.");
@@ -653,6 +669,36 @@ const nonMatchingSkill = { ...matchingSkill, element_id: "basic" };
 const stabDamage = calculateSkillDamage(eventCatalog, damageState.playerUnits[1], damageState.opponentUnits[0], matchingSkill);
 const plainDamage = calculateSkillDamage(eventCatalog, damageState.playerUnits[1], damageState.opponentUnits[0], nonMatchingSkill);
 check(stabDamage.stab && !plainDamage.stab && stabDamage.damage === 4 && plainDamage.damage === 3, "STAB must apply 1.5× to Skill Power before the final damage floor.");
+check(rollDamagePercent(() => 0) === 85 && rollDamagePercent(() => 0.999) === 100, "Damage rolls must stay within the inclusive 85–100% range.");
+const minimumDamageRoll = calculateSkillDamage(eventCatalog, damageState.playerUnits[1], damageState.opponentUnits[0], nonMatchingSkill, () => 0);
+const maximumDamageRoll = calculateSkillDamage(eventCatalog, damageState.playerUnits[1], damageState.opponentUnits[0], nonMatchingSkill, () => 0.999);
+check(
+  minimumDamageRoll.damageRollPercent === 85
+    && maximumDamageRoll.damageRollPercent === 100
+    && minimumDamageRoll.maxDamage === maximumDamageRoll.maxDamage
+    && minimumDamageRoll.damage <= maximumDamageRoll.damage,
+  "The same Skill against the same Critter must use one bounded damage maximum with a variable percentage roll.",
+);
+const singleTargetPower = calculateSkillDamage(eventCatalog, damageState.playerUnits[1], damageState.opponentUnits[0], nonMatchingSkill, () => 0.999, 1);
+const spreadTargetPower = calculateSkillDamage(eventCatalog, damageState.playerUnits[1], damageState.opponentUnits[0], nonMatchingSkill, () => 0.999, 2);
+const threeTargetPower = calculateSkillDamage(eventCatalog, damageState.playerUnits[1], damageState.opponentUnits[0], nonMatchingSkill, () => 0.999, 3);
+check(
+  singleTargetPower.spreadMultiplier === 1
+    && spreadTargetPower.spreadMultiplier === MULTI_TARGET_DAMAGE_MULTIPLIER
+    && threeTargetPower.spreadMultiplier === MULTI_TARGET_DAMAGE_MULTIPLIER
+    && singleTargetPower.damage >= spreadTargetPower.damage
+    && singleTargetPower.maxDamage >= spreadTargetPower.maxDamage
+    && spreadTargetPower.maxDamage === threeTargetPower.maxDamage,
+  "A multi-target Skill must use Pokémon's 75% spread modifier, while a single living target keeps full power.",
+);
+const spreadSkill = { ...nonMatchingSkill, id: "spread-strike", targeting: "all_enemies" as const };
+const spreadTargets = skillTargets(damageState, damageState.playerUnits[1].key, spreadSkill);
+const oneTargetState = {
+  ...damageState,
+  opponentUnits: damageState.opponentUnits.map((unit, index) => index === 1 ? { ...unit, hp: 0 } : unit),
+};
+const remainingTargets = skillTargets(oneTargetState, oneTargetState.playerUnits[1].key, spreadSkill);
+check(spreadTargets.length === 2 && remainingTargets.length === 1, "Spread damage must count only the living valid targets at the moment the Skill resolves.");
 const immuneCatalog = makeCatalog();
 immuneCatalog.elementEffectiveness = immuneCatalog.elementEffectiveness.map((cell) =>
   cell.attacking_element_id === "basic" && cell.defending_element_id === "basic"

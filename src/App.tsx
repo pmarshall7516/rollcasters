@@ -115,6 +115,7 @@ import {
   orderedCurrencies,
   progressFor,
   requirementFor,
+  shardProgress,
   shopAvailability,
   shopErrorMessage,
   sortByCollectibleId,
@@ -150,6 +151,7 @@ import type {
 import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
+type BagTab = "currency" | "shards";
 type ShopTab = "shard" | "relic" | "lootbox" | "promo";
 type CollectionDetail = { type: "critter" | "rollcaster" | "relic"; id: string };
 type PromoRenderState = {
@@ -194,6 +196,7 @@ function routeFromLocation(): { view: View; shopTab: ShopTab } {
     : "shard";
   if (window.location.pathname === "/shop") return { view: "shop", shopTab };
   if (window.location.pathname === "/collection") return { view: "collection", shopTab };
+  if (window.location.pathname === "/bag") return { view: "bag", shopTab };
   if (window.location.pathname === "/play") return { view: "play", shopTab };
   return { view: "home", shopTab };
 }
@@ -201,6 +204,7 @@ function routeFromLocation(): { view: View; shopTab: ShopTab } {
 function viewUrl(view: View, shopTab: ShopTab): string {
   if (view === "shop") return `/shop?tab=${shopTab}`;
   if (view === "collection") return "/collection";
+  if (view === "bag") return "/bag";
   if (view === "play") return "/play";
   return "/";
 }
@@ -219,6 +223,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("critters");
+  const [bagTab, setBagTab] = useState<BagTab>("currency");
   const [shopTab, setShopTab] = useState<ShopTab>(() => routeFromLocation().shopTab);
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
   const [combat, setCombat] = useState<DungeonRunState | null>(null);
@@ -260,7 +265,7 @@ export function App() {
   function navigate(nextView: View, nextShopTab = shopTab, replace = false) {
     if (nextView === "shop") setShopTab(nextShopTab);
     setView(nextView);
-    if (["home", "collection", "shop", "play"].includes(nextView)) {
+    if (["home", "collection", "bag", "shop", "play"].includes(nextView)) {
       window.history[replace ? "replaceState" : "pushState"]({}, "", viewUrl(nextView, nextShopTab));
     }
   }
@@ -479,6 +484,13 @@ export function App() {
               promo: shopTab === "promo" ? promoState : null,
             }
           : null,
+        bag: view === "bag"
+          ? {
+              tab: bagTab,
+              currencies: data ? orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite").length : 0,
+              shards: data?.player?.collectibleSnapshot.shards.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
+            }
+          : null,
         unlockNotification: notificationQueue[0]?.kind === "collectible-unlock"
           ? notificationQueue[0].event
           : null,
@@ -550,6 +562,8 @@ export function App() {
                     kind: currentDungeonEvent(combat)!.kind,
                     actorKey: currentDungeonEvent(combat)!.actorKey ?? null,
                     targetKeys: currentDungeonEvent(combat)!.targetKeys,
+                    damageRollPercent: currentDungeonEvent(combat)!.damageRollPercent ?? null,
+                    damageSpreadPercent: currentDungeonEvent(combat)!.damageSpreadPercent ?? null,
                     swap: currentDungeonEvent(combat)!.swap
                       ? {
                           ...currentDungeonEvent(combat)!.swap!,
@@ -567,7 +581,7 @@ export function App() {
           : null,
       });
     window.advanceTime = () => undefined;
-  }, [view, shopTab, loading, isAuthed, data, combat, notificationQueue, promoState]);
+  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, notificationQueue, promoState]);
 
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
@@ -576,7 +590,7 @@ export function App() {
 
   return (
     <Shell className={
-      view === "collection" || view === "shop"
+      view === "collection" || view === "bag" || view === "shop"
         ? "collection-shell"
         : view === "combat"
           ? "combat-shell"
@@ -629,6 +643,7 @@ export function App() {
         <HomeScreen
           data={data}
           onCollection={() => navigate("collection")}
+          onBag={() => navigate("bag")}
           onShop={() => navigate("shop", "shard")}
           onPlay={() => navigate("play")}
           onRefresh={() => refresh("home")}
@@ -642,6 +657,14 @@ export function App() {
           detail={detail}
           setDetail={setDetail}
           onRefresh={() => refresh("collection")}
+          onBack={() => navigate("home")}
+        />
+      )}
+      {view === "bag" && (
+        <BagScreen
+          data={data}
+          tab={bagTab}
+          setTab={setBagTab}
           onBack={() => navigate("home")}
         />
       )}
@@ -1123,7 +1146,7 @@ type EquipTarget =
   | { type: "ability"; slotIndex: number; owned: UserRollcaster }
   | { type: "rollcaster"; slotIndex: number };
 
-function HomeScreen({ data, onCollection, onShop, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onShop: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
+function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onBag: () => void; onShop: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
   const player = data.player!;
   const activeRollcaster = player.rollcasters.find((row) => row.id === player.profile.active_rollcaster_id) ?? player.rollcasters[0];
   const rollcaster = byId(data.catalog.rollcasters, activeRollcaster?.rollcaster_id);
@@ -1190,6 +1213,19 @@ function HomeScreen({ data, onCollection, onShop, onPlay, onRefresh }: { data: A
     }
   }
 
+  async function unlockSkill(owned: UserCritter, skillId: string) {
+    setSaving(true);
+    setEquipError(null);
+    try {
+      await unlockCritterSkill(owned.id, skillId);
+      await onRefresh();
+    } catch (err) {
+      setEquipError(errorMessage(err, "Unable to unlock this skill."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <><section className="home-layout">
       <div className="home-rollcaster-column">
@@ -1222,8 +1258,12 @@ function HomeScreen({ data, onCollection, onShop, onPlay, onRefresh }: { data: A
           <Gem size={24} />
           Collection
         </button>
-        <button className="menu-button" onClick={onShop}>
+        <button className="menu-button" onClick={onBag}>
           <ShoppingBag size={24} />
+          Bag
+        </button>
+        <button className="menu-button" onClick={onShop}>
+          <Coins size={24} />
           Shop
         </button>
       </nav>
@@ -1243,7 +1283,7 @@ function HomeScreen({ data, onCollection, onShop, onPlay, onRefresh }: { data: A
         })}
       </section>
     </section>
-    {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} error={equipError} onClose={() => setEquipTarget(null)} onEquip={equip} />}
+    {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} error={equipError} onClose={() => setEquipTarget(null)} onEquip={equip} onUnlockSkill={unlockSkill} />}
     </>
   );
 }
@@ -1523,12 +1563,15 @@ function unlockedAbilitySlotCount(data: AppData, owned?: UserRollcaster): number
     .sort((a, b) => b.level - a.level)[0]?.total_unlocked_ability_slots ?? 1;
 }
 
-function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void }) {
+function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSkill }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void> }) {
   const player = data.player!;
   const title = target.type === "rollcaster" ? "Choose active Rollcaster" : `Equip ${target.type} · Slot ${target.slotIndex}`;
   const [query, setQuery] = useState("");
   useEffect(() => setQuery(""), [target.type, target.slotIndex]);
   const normalizedQuery = query.trim().toLowerCase();
+  const currentSkillOwner = target.type === "skill"
+    ? player.critters.find((owned) => owned.id === target.owned.id) ?? target.owned
+    : null;
   let content: React.ReactNode;
 
   if (target.type === "critter") {
@@ -1547,32 +1590,79 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
       </button>;
     })}</div> : <p className="empty-state">No critters available</p>;
   } else if (target.type === "skill") {
-    const ids = player.unlockedSkillIdsByCritter[target.owned.id] ?? [];
-    const rows = player.skillSlots.filter((row) => row.user_critter_id === target.owned.id);
+    const skillOwner = currentSkillOwner!;
+    const ids = player.unlockedSkillIdsByCritter[skillOwner.id] ?? [];
+    const unlockedIds = new Set(ids);
+    const rows = player.skillSlots.filter((row) => row.user_critter_id === skillOwner.id);
     const current = rows.find((row) => row.slot_index === target.slotIndex)?.skill_id;
-    const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex).map((row) => row.skill_id));
+    const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex && row.skill_id).map((row) => row.skill_id));
     const equippedCount = rows.filter((row) => row.skill_id).length;
-    const eligible = ids
+    const unlocksBySkillId = new Map(
+      data.catalog.critterSkillUnlocks
+        .filter((unlock) => unlock.critter_id === skillOwner.critter_id)
+        .map((unlock) => [unlock.skill_id, unlock]),
+    );
+    const unlockedEligible = ids
       .map((id) => byId(data.catalog.skills, id))
       .filter((skill): skill is Skill => Boolean(skill))
       .filter((skill) => {
         const element = byId(data.catalog.elements, skill.element_id);
         return !normalizedQuery || `${skill.name} ${skill.element_id} ${element?.name ?? ""}`.toLowerCase().includes(normalizedQuery);
       });
-    content = eligible.length ? <SkillTileGrid ariaLabel="Available skills">{eligible.map((skill) => {
+    const eligible = [
+      ...unlockedEligible.map((skill) => ({ skill, unlock: unlocksBySkillId.get(skill.id) })),
+      ...data.catalog.critterSkillUnlocks
+        .filter((unlock) => unlock.critter_id === skillOwner.critter_id && unlock.unlock_level <= skillOwner.level && !unlockedIds.has(unlock.skill_id))
+        .map((unlock) => ({ skill: byId(data.catalog.skills, unlock.skill_id), unlock }))
+        .filter((candidate): candidate is { skill: Skill; unlock: typeof data.catalog.critterSkillUnlocks[number] } => Boolean(candidate.skill))
+        .filter(({ skill }) => {
+          const element = byId(data.catalog.elements, skill.element_id);
+          return !normalizedQuery || (skill.name + " " + skill.element_id + " " + (element?.name ?? "")).toLowerCase().includes(normalizedQuery);
+        }),
+    ].sort((left, right) =>
+      (left.unlock?.unlock_level ?? 0) - (right.unlock?.unlock_level ?? 0) ||
+      (left.unlock?.sort_order ?? left.skill.sort_order) - (right.unlock?.sort_order ?? right.skill.sort_order) ||
+      left.skill.id.localeCompare(right.skill.id),
+    );
+    content = eligible.length ? <SkillTileGrid ariaLabel="Available skills">{eligible.map(({ skill, unlock }) => {
       const selected = current === skill.id;
       const equipped = selected || equippedElsewhere.has(skill.id);
       const cannotRemoveLast = selected && equippedCount <= 1;
-      return <SkillTile
-        key={skill.id}
+      const locked = !unlockedIds.has(skill.id);
+      const unlockCost = unlock?.unlock_cost ?? 0;
+      const canUnlock = !locked || skillOwner.skill_points >= unlockCost;
+      const disabledReason = cannotRemoveLast
+        ? "At least one skill must remain equipped."
+        : equippedElsewhere.has(skill.id)
+          ? "Equipped in another slot."
+          : locked && !canUnlock
+            ? "Need " + (unlockCost - skillOwner.skill_points) + " more skill point" + (unlockCost - skillOwner.skill_points === 1 ? "" : "s") + "."
+            : undefined;
+      const tile = <SkillTile
         data={data}
         skill={skill}
         selected={selected}
         equipped={equipped}
-        disabled={saving || equippedElsewhere.has(skill.id) || cannotRemoveLast}
-        disabledReason={cannotRemoveLast ? "At least one skill must remain equipped." : equippedElsewhere.has(skill.id) ? "Equipped in another slot." : undefined}
-        onClick={() => onEquip(() => setCritterSkillSlot(target.owned.id, target.slotIndex, selected ? null : skill.id))}
+        disabled={saving || locked || equippedElsewhere.has(skill.id) || cannotRemoveLast}
+        disabledReason={disabledReason}
+        onClick={locked ? undefined : () => onEquip(() => setCritterSkillSlot(skillOwner.id, target.slotIndex, selected ? null : skill.id))}
       />;
+      if (locked && unlock) {
+        return <div className="equip-skill-option locked" key={skill.id}>
+          {tile}
+          <div className="equip-skill-unlock-row">
+            <span>Unlock at level {unlock.unlock_level} · {unlock.unlock_cost} point{unlock.unlock_cost === 1 ? "" : "s"}</span>
+            <button
+              type="button"
+              className="primary-button skill-unlock-button-inline"
+              disabled={saving || !canUnlock}
+              title={!canUnlock ? disabledReason : undefined}
+              onClick={() => onUnlockSkill(skillOwner, skill.id)}
+            >Unlock · {unlock.unlock_cost}</button>
+          </div>
+        </div>;
+      }
+      return tile;
     })}</SkillTileGrid> : <p className="empty-state">No skills available</p>;
   } else if (target.type === "relic") {
     const current = player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id;
@@ -1611,8 +1701,9 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip }: { data: 
   const currentAbility = target.type === "ability" ? player.abilitySlots.find((row) => row.user_rollcaster_id === target.owned.id && row.slot_index === target.slotIndex)?.ability_id : null;
   const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && Boolean(currentAbility));
   const clear = target.type === "critter" ? () => setSquadSlot(target.slotIndex, null) : target.type === "skill" ? () => setCritterSkillSlot(target.owned.id, target.slotIndex, null) : target.type === "relic" ? () => setCritterRelicSlot(target.owned.id, target.slotIndex, null) : target.type === "ability" ? () => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, null) : null;
-  return <Modal className={target.type === "skill" ? "equip-dialog equip-dialog-skill" : target.type === "relic" ? "equip-dialog equip-dialog-relic" : "equip-dialog"} title={title} description="Choose an eligible item for this loadout slot." onClose={onClose}>
+  return <Modal className={target.type === "skill" ? "equip-dialog equip-dialog-skill" : target.type === "relic" ? "equip-dialog equip-dialog-relic" : "equip-dialog"} title={title} description={target.type === "skill" ? "Choose an unlocked skill or unlock one available at this Critter's level." : "Choose an eligible item for this loadout slot."} onClose={onClose}>
     {error && <p className="notice error" role="alert">{error}</p>}
+    {target.type === "skill" && currentSkillOwner && <div className="equip-dialog-point-summary"><PointCounter kind="skill" points={currentSkillOwner.skill_points} inline /></div>}
     {(target.type === "skill" || target.type === "relic") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : "Search relics by name"} /></label>}
     {content}
     <div className="dialog-actions">{canUnequip && clear && <button className="danger-button" disabled={saving} onClick={() => onEquip(clear)}>Unequip</button>}<button className="secondary-button" onClick={onClose}>Cancel</button></div>
@@ -1690,6 +1781,114 @@ function CollectionScreen({
       </div>
       {detail && <DetailModal data={data} detail={detail} onRefresh={onRefresh} onClose={() => setDetail(null)} />}
     </section>
+  );
+}
+
+function BagScreen({
+  data,
+  tab,
+  setTab,
+  onBack,
+}: {
+  data: AppData;
+  tab: BagTab;
+  setTab: (tab: BagTab) => void;
+  onBack: () => void;
+}) {
+  const currencies = orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite");
+  const shardRows = [
+    ...data.catalog.critters.map((entry) => ({ type: "critter" as const, entry })),
+    ...data.catalog.rollcasters.map((entry) => ({ type: "rollcaster" as const, entry })),
+    ...data.catalog.relics.map((entry) => ({ type: "relic" as const, entry })),
+  ]
+    .filter(({ type, entry }) => shardProgress(data, type, entry.id) > 0n)
+    .sort((left, right) => left.type.localeCompare(right.type) || left.entry.id.localeCompare(right.entry.id));
+  const groups: Array<{ type: CollectibleType; label: string }> = [
+    { type: "critter", label: "Critter Shards" },
+    { type: "rollcaster", label: "Rollcaster Shards" },
+    { type: "relic", label: "Relic Shards" },
+  ];
+
+  return (
+    <section className="screen-stack collection-screen bag-screen">
+      <div className="screen-heading row">
+        <div>
+          <h1>Bag</h1>
+          <p>Review your currencies and collectible shards.</p>
+        </div>
+        <button className="secondary-button" onClick={onBack}>Back</button>
+      </div>
+      <div className="tabs bag-tabs" role="tablist" aria-label="Bag categories">
+        <button role="tab" aria-selected={tab === "currency"} className={tab === "currency" ? "active" : ""} onClick={() => setTab("currency")}>Currency</button>
+        <button role="tab" aria-selected={tab === "shards"} className={tab === "shards" ? "active" : ""} onClick={() => setTab("shards")}>Shards</button>
+      </div>
+      {tab === "currency" ? (
+        <div className="collection-grid bag-currency-grid">
+          {currencies.map((currency) => (
+            <article className="catalog-card bag-currency-card" key={currency.id} data-currency-id={currency.id}>
+              <span className="collectible-id">{currency.id}</span>
+              <div className="bag-currency-icon" aria-hidden="true">
+                <AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt="" loading="eager" fallback={currency.id === "prismite" ? <Gem size={72} /> : <Coins size={72} />} />
+              </div>
+              <div className="card-name-row"><strong>{currency.name}</strong></div>
+              <p className="bag-currency-amount">{formatAmount(currencyBalance(data, currency.id))}</p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="shop-groups bag-shard-groups">
+          {groups.map((group) => {
+            const grouped = shardRows.filter((row) => row.type === group.type);
+            if (!grouped.length) return null;
+            return (
+              <section className="shop-group" key={group.type}>
+                <h2>{group.label}</h2>
+                <div className="shop-grid bag-shard-grid">
+                  {grouped.map(({ type, entry }) => <BagShardCard key={`${type}:${entry.id}`} data={data} type={type} id={entry.id} />)}
+                </div>
+              </section>
+            );
+          })}
+          {shardRows.length === 0 && <div className="shop-empty"><Gem size={34} /><h2>No shards yet</h2><p>Collectible shards you earn will appear here.</p></div>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function shardUnlockProgress(data: AppData, type: CollectibleType, id: string, current = shardProgress(data, type, id)) {
+  const challenge = challengesFor(data, type, id).find((row) => row.challenge_type === "shop_shards");
+  const authoredGoal = challenge?.required_amount;
+  const goal = authoredGoal && BigInt(authoredGoal) > 0n ? BigInt(authoredGoal) : current;
+  return { current, goal };
+}
+
+function ShardProgressBar({ current, goal, showCompletion = false }: { current: bigint; goal: bigint; showCompletion?: boolean }) {
+  const complete = showCompletion && goal > 0n && current >= goal;
+  const pct = goal > 0n ? Number((current * 100n) / goal) : 100;
+  const clamped = Math.max(0, Math.min(100, pct));
+  return (
+    <div className={`shard-progress ${complete ? "complete" : ""}`.trim()} role="progressbar" aria-label="Shard unlock progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={clamped} aria-valuetext={`${formatAmount(current)} / ${formatAmount(goal)} shards${complete ? ", complete" : ""}`}>
+      <div className="xp-bar"><span style={{ width: `${clamped}%` }} /></div>
+      <p>{formatAmount(current)} / {formatAmount(goal)} Shards</p>
+    </div>
+  );
+}
+
+function BagShardCard({ data, type, id }: { data: AppData; type: CollectibleType; id: string }) {
+  const targetName = collectibleName(data, type, id);
+  const progress = shardUnlockProgress(data, type, id);
+  const complete = progress.goal > 0n && progress.current >= progress.goal;
+  return (
+    <article className={`shop-entry-card bag-shard-card ${complete ? "complete" : ""}`.trim()} data-collectible-type={type} data-collectible-id={id} data-shard-status={complete ? "complete" : "in-progress"}>
+      <span className="shop-entry-category">{type}</span>
+      <CollectibleSprite data={data} type={type} id={id} size="md" shard />
+      <div className="shop-entry-copy">
+        <h3>{targetName}</h3>
+        <p className="shop-target">{id}</p>
+      </div>
+      <ShardProgressBar current={progress.current} goal={progress.goal} showCompletion={complete} />
+    </article>
   );
 }
 
@@ -2092,7 +2291,9 @@ function ShopEmptyState({ hasAuthoredEntries }: { hasAuthoredEntries: boolean })
 
 function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry: ShopEntry; busy: boolean; onPurchase: () => void }) {
   const availability = shopAvailability(data, entry);
-  const soldOut = availability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || availability.code === "RELIC_MAX_OWNED_REACHED";
+  const alreadyOwned = entry.shop_type === "shard"
+    && (availability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || availability.code === "SHOP_SHARDS_CHALLENGE_COMPLETE");
+  const soldOut = entry.shop_type === "relic" && availability.code === "RELIC_MAX_OWNED_REACHED";
   const currency = currencyFor(data, entry.currency_id)!;
   const targetName = collectibleName(data, entry.target_category, entry.target_id);
   const targetCritter = entry.target_category === "critter"
@@ -2102,11 +2303,9 @@ function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry
   const showDescription = Boolean(description && !/\bshop offer for\b/i.test(description));
   const inventory = entry.target_category === "relic" ? data.player!.relicInventory.find((row) => row.relic_id === entry.target_id) : undefined;
   const relicChallenge = entry.shop_type === "relic" ? challengesFor(data, "relic", entry.target_id).find((row) => row.challenge_type === "shop_relic") : undefined;
-  const ownershipLabel = entry.shop_type === "shard"
-    ? `Shards: ${formatAmount(availability.current)} / ${formatAmount(availability.goal)}`
-    : collectibleIsOwned(data, "relic", entry.target_id)
-      ? `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(availability.goal)}`
-      : `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(relicChallenge?.required_amount ?? 0)} to unlock`;
+  const ownershipLabel = collectibleIsOwned(data, "relic", entry.target_id)
+    ? `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(availability.goal)}`
+    : `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(relicChallenge?.required_amount ?? 0)} to unlock`;
   return (
     <article className={`shop-entry-card ${soldOut ? "sold-out" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"}>
       <span className="shop-entry-category">{entry.target_category}</span>
@@ -2129,8 +2328,9 @@ function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry
         <strong>{formatAmount(entry.quantity)} × {entry.shop_type === "shard" ? "Shards" : targetName}</strong>
         <span className="shop-price"><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} />{formatAmount(entry.price)}</span>
       </div>
-      <p className="shop-owned">{ownershipLabel}</p>
-      <button className="primary-button shop-purchase" disabled={busy || !availability.enabled} onClick={onPurchase}>{busy ? "Purchasing…" : "Purchase"}</button>
+      {entry.shop_type === "shard" && <ShardProgressBar current={availability.current} goal={availability.goal} />}
+      {entry.shop_type !== "shard" && <p className="shop-owned">{ownershipLabel}</p>}
+      <button className="primary-button shop-purchase" disabled={busy || !availability.enabled} onClick={onPurchase}>{busy ? "Purchasing…" : alreadyOwned ? "Already Owned" : "Purchase"}</button>
       {!availability.enabled && <p className="shop-unavailable">{availability.reason}</p>}
     </article>
   );
@@ -3066,6 +3266,8 @@ function CombatScreen({
     && Object.keys(actions).length === activePlayer.length;
   const narrationAdvanceable = (combat.phase === "event_playback" && !submittingProgress && eventSettled)
     || (combat.phase === "roll_result" && diceSettled);
+  const playerManaRefund = event?.kind === "mana_refund" && event.manaRefund?.side === "player" ? event.manaRefund : null;
+  const opponentManaRefund = event?.kind === "mana_refund" && event.manaRefund?.side === "opponent" ? event.manaRefund : null;
 
   useEffect(() => {
     setActions({});
@@ -3111,12 +3313,22 @@ function CombatScreen({
     }
     const duration = event.kind === "skill" || event.kind === "status" || event.kind === "block"
       ? 620
+      : event.kind === "mana_refund"
+        ? 780
       : event.kind === "other" || event.kind === "wait"
         ? 420
         : 720;
     const timer = window.setTimeout(() => setEventSettled(true), duration);
     return () => window.clearTimeout(timer);
   }, [combat.phase, event?.id]);
+
+  useEffect(() => {
+    if (combat.phase !== "event_playback" || event?.kind !== "mana_refund" || submittingProgress) return;
+    const timer = window.setTimeout(() => {
+      setCombat((current) => current ? advanceDungeonEvent(current) : current);
+    }, 860);
+    return () => window.clearTimeout(timer);
+  }, [combat.phase, event?.id, submittingProgress]);
 
   function advanceNarration() {
     if (!narrationAdvanceable) return;
@@ -3240,7 +3452,7 @@ function CombatScreen({
         </div>
 
         <div className="combat-board">
-          <aside className="combat-mana-panel rollcaster-mana-panel">
+          <aside className={`combat-mana-panel rollcaster-mana-panel ${playerManaRefund ? "mana-refund-panel" : ""}`}>
             <span className="combat-sprite-frame rollcaster-combat-frame"><Sprite
               name={activeRollcaster?.name ?? "Rollcaster"}
               element="basic"
@@ -3254,7 +3466,10 @@ function CombatScreen({
               fit="portrait"
             /></span>
             <h3>{activeRollcaster?.name ?? "Rollcaster"}</h3>
-            <strong className="combat-mana-total"><AssetIcon path={manaAssetPath} alt="Player Mana" fallback={<Gem />} /> {battle.playerMana}</strong>
+            <div className="combat-mana-total-wrap">
+              <strong className={`combat-mana-total ${playerManaRefund ? "mana-refund-counter" : ""}`}><AssetIcon path={manaAssetPath} alt="Player Mana" fallback={<Gem />} /> {battle.playerMana}</strong>
+              {playerManaRefund && <span className="mana-refund-pop" aria-hidden="true">+{playerManaRefund.amount}</span>}
+            </div>
             <div className="combat-ability-list">
               {activeAbilities.length
                 ? activeAbilities.map((ability) => (
@@ -3333,10 +3548,13 @@ function CombatScreen({
                 : <CombatEmptySlot key={slot} label="Inactive enemy slot" opponent />;
             })}
           </div>
-          <aside className="combat-mana-panel enemy-mana-panel">
+          <aside className={`combat-mana-panel enemy-mana-panel ${opponentManaRefund ? "mana-refund-panel" : ""}`}>
             <span className="enemy-mana-emblem"><Skull size={44} /></span>
             <h3>Enemy Mana</h3>
-            <strong className="combat-mana-total"><AssetIcon path={manaAssetPath} alt="Enemy Mana" fallback={<Gem />} /> {battle.opponentMana}</strong>
+            <div className="combat-mana-total-wrap">
+              <strong className={`combat-mana-total ${opponentManaRefund ? "mana-refund-counter" : ""}`}><AssetIcon path={manaAssetPath} alt="Enemy Mana" fallback={<Gem />} /> {battle.opponentMana}</strong>
+              {opponentManaRefund && <span className="mana-refund-pop" aria-hidden="true">+{opponentManaRefund.amount}</span>}
+            </div>
           </aside>
         </div>
 
@@ -3354,7 +3572,7 @@ function CombatScreen({
           onSubmit={submitActions}
         />
 
-        <button
+        {!(combat.phase === "event_playback" && event?.kind === "mana_refund") && <button
           type="button"
           className={`combat-narration ${narrationAdvanceable ? "advanceable" : ""}`}
           disabled={!narrationAdvanceable}
@@ -3370,12 +3588,14 @@ function CombatScreen({
               ? "Rolling…"
               : `You rolled ${combat.rollSummary?.player ?? 0} mana and the enemy rolled ${combat.rollSummary?.opponent ?? 0} mana.`)}
             {combat.phase === "select_player_actions" && (targeting ? `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose your ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")}
-            {combat.phase === "event_playback" && (submittingProgress ? "Saving the resolved turn…" : event?.message)}
+            {combat.phase === "event_playback" && (submittingProgress ? "Saving the resolved turn…" : <>
+              <span>{event?.message}</span>
+            </>)}
             {combat.phase === "battle_result" && (recordingResult ? "Committing encounter rewards…" : "Encounter resolved.")}
             {combat.phase === "encounter_rewards" && `Encounter ${combat.run.battleIndex - 1} cleared.`}
           </span>
           {(combat.phase === "event_playback" || combat.phase === "roll_result") && <ChevronRight size={24} aria-label="Next" />}
-        </button>
+        </button>}
 
         {combat.phase === "battle_result" && !recordingResult && (
           <div className="combat-command-row">
@@ -4439,10 +4659,12 @@ function Sprite({
 function AssetIcon({
   path,
   alt,
+  loading = "lazy",
   fallback,
 }: {
   path?: string | null;
   alt: string;
+  loading?: "lazy" | "eager";
   fallback: React.ReactNode;
 }) {
   const [failedAssetPath, setFailedAssetPath] = useState<string | null>(null);
@@ -4462,7 +4684,7 @@ function AssetIcon({
           alt={alt}
           data-sprite-image
           decoding="async"
-          loading="lazy"
+          loading={loading}
           onError={() => setFailedAssetPath(path ?? null)}
         />
       ) : fallback}

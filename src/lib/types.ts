@@ -1,4 +1,4 @@
-export type View = "auth" | "starter-rollcaster" | "starter" | "home" | "collection" | "shop" | "play" | "combat" | "rewards";
+export type View = "auth" | "starter-rollcaster" | "starter" | "home" | "collection" | "bag" | "shop" | "play" | "combat" | "rewards";
 
 export type CollectibleType = "critter" | "rollcaster" | "relic";
 export type CollectibleChallengeType =
