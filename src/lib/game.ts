@@ -1172,10 +1172,27 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
     )
     .map(({ action }) => action);
 
-  return ordered.reduce(
-    (current, action) => recomputeCombatStats(resolveAction(current, action)),
-    { ...state, rngState },
-  );
+  return ordered.reduce((current, action) => {
+    const actor = findUnit(current, action.actorKey);
+    const resolved = recomputeCombatStats(resolveAction(current, action));
+    return actor && actor.active && actor.hp > 0
+      ? decrementTargetTurnRuntimeEffects(resolved, action.actorKey)
+      : resolved;
+  }, { ...state, rngState });
+}
+
+function decrementTargetTurnRuntimeEffects(state: CombatState, actorKey: string): CombatState {
+  let changed = false;
+  const runtimeEffects = state.runtimeEffects
+    .map((instance) => {
+      if (instance.targetCritterKey !== actorKey || instance.remaining === undefined) return instance;
+      const parameters = instance.state.parameters as Record<string, unknown> | undefined;
+      if (String(parameters?.duration_clock ?? "global_round") !== "target_turn") return instance;
+      changed = true;
+      return { ...instance, remaining: instance.remaining - 1 };
+    })
+    .filter((instance) => instance.remaining === undefined || instance.remaining > 0);
+  return changed ? { ...state, runtimeEffects } : state;
 }
 
 function prepareActionTarget(state: CombatState, action: CombatAction): CombatAction {
@@ -1455,6 +1472,7 @@ export function skillTargets(
   const onField = (unit: CombatUnit) => unit.active && unit.hp > 0;
   const targeting = skill.targeting ?? "single_enemy";
   if (targeting === "all_enemies") return enemies.filter(onField);
+  if (targeting === "all_critters") return [...friendlies, ...enemies].filter(onField);
   if (targeting === "all_friendlies") return friendlies.filter(onField);
   if (targeting === "self_only") return onField(actor) ? [actor] : [];
   if (targeting === "all_allies") return friendlies.filter((unit) => onField(unit) && unit.key !== actor.key);
@@ -1503,10 +1521,20 @@ function effectTargets(state: CombatState, target: string, context: RuntimeConte
       if (!source) throw new Error(`Missing source Critter for ${context.sourceOwnerType} effect from ${context.sourceOwnerId}.`);
       return active(source) || (context.allowInactiveSource && source.hp > 0) ? [source] : [];
     }
+    case "all_critters": return ordered([...friendlies, ...enemies].filter(active));
+    case "all_others": return ordered([...friendlies, ...enemies].filter((unit) => active(unit) && unit.key !== source?.key));
     case "all_enemies": return ordered(enemies.filter(active));
     case "all_allies": return ordered(friendlies.filter((unit) => active(unit) && unit.key !== source?.key));
     case "all_friendlies": return ordered(friendlies.filter(active));
     case "all_squad_friendlies": return ordered(friendlies.filter((unit) => unit.hp > 0));
+    case "targets": {
+      const selected = new Set(context.skillTargetKeys ?? []);
+      return ordered([...friendlies, ...enemies].filter((unit) => active(unit) && selected.has(unit.key)));
+    }
+    case "target_friendlies": {
+      const selected = new Set(context.skillTargetKeys ?? []);
+      return ordered(friendlies.filter((unit) => active(unit) && selected.has(unit.key)));
+    }
     case "target_enemies": {
       const selected = new Set(context.skillTargetKeys ?? []);
       return ordered(enemies.filter((unit) => active(unit) && selected.has(unit.key)));
@@ -1678,7 +1706,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   assertEffectContract(effect, context.sourceOwnerType);
   const key = `${effect.runtimeKind}@${effect.runtimeVersion}`;
   const hasTarget = effect.parameters.target !== undefined;
-  const targets = hasTarget
+  let targets = hasTarget
     ? effectTargets(state, String(effect.parameters.target), {
         ...context,
         elementIds: Array.isArray(effect.parameters.element_ids)
@@ -1687,11 +1715,27 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       })
     : [];
   if (hasTarget && !targets.length) return state;
-  const chance = rollChance(state, effect.parameters.chance === undefined ? 1 : Number(effect.parameters.chance));
-  let next = chance.state;
-  if (!chance.activated) return next;
+  let next = state;
+  const hasPerTargetChance = hasTarget && effect.parameters.chance !== undefined;
+  if (hasPerTargetChance) {
+    const activatedTargets: CombatUnit[] = [];
+    for (const target of targets) {
+      const chance = rollChance(next, Number(effect.parameters.chance));
+      next = chance.state;
+      if (chance.activated) activatedTargets.push(target);
+    }
+    targets = activatedTargets;
+    if (!targets.length) return next;
+  } else {
+    const chance = rollChance(next, effect.parameters.chance === undefined ? 1 : Number(effect.parameters.chance));
+    next = chance.state;
+    if (!chance.activated) return next;
+  }
   if (effect.execution === "root" && context.parentInstanceId) return next;
   if ((context.resolutionDepth ?? 0) > 16) return next;
+  const targetContext = hasPerTargetChance
+    ? { ...context, skillTargetKeys: targets.map((target) => target.key) }
+    : context;
   if (effect.runtimeKind === "shield_modifier") {
     const operation = String(effect.parameters.operation ?? "grant");
     const value = operation === "destroy" ? 0 : Math.max(0, roundHalfUp(Number(effect.parameters.shield_value ?? 0)));
@@ -1719,7 +1763,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       if (after.hp > before.hp) current = appendHealingProgressEvent(current, before, after.hp - before.hp, context);
       if (after.hp !== before.hp) appliedChanges.push({ target: before, before: before.hp, after: after.hp, message });
       if (result.excess > 0 && effect.parameters.overhealing_behavior === "convert") {
-        current = resolveChildEffects(current, effect, { ...context, calculatedValue: result.excess }, effect.parameters.overheal_effect_ids);
+        current = resolveChildEffects(current, effect, { ...targetContext, calculatedValue: result.excess }, effect.parameters.overheal_effect_ids);
       }
     }
     if (
@@ -1777,11 +1821,11 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
         : scalingSource === "maximum_hp" && sourceTarget ? sourceTarget.maxHp
           : Number(context.damageAttempted ?? context.hpDamage ?? context.calculatedValue ?? 0);
     const scaled = Math.max(Number(effect.parameters.minimum_value ?? -Infinity), Math.min(Number(effect.parameters.maximum_value ?? Infinity), Number(effect.parameters.base_value ?? 0) + sourceValue * Number(effect.parameters.scaling_ratio ?? 0)));
-    return resolveChildEffects(next, effect, { ...context, calculatedValue: roundHalfUp(scaled) }, effect.parameters.child_effect_ids);
+    return resolveChildEffects(next, effect, { ...targetContext, calculatedValue: roundHalfUp(scaled) }, effect.parameters.child_effect_ids);
   }
   if (effect.runtimeKind === "effect_duration") {
     const duration = Number(effect.parameters.duration_value ?? effect.parameters.turns ?? 1);
-    return resolveChildEffects(addRuntimeEffect(next, effect, context, {}, duration), effect, context, effect.parameters.child_effect_ids);
+    return resolveChildEffects(addRuntimeEffect(next, effect, targetContext, {}, duration), effect, targetContext, effect.parameters.child_effect_ids);
   }
   if (effect.runtimeKind === "conditional_effect") {
     const target = targets[0];
@@ -1794,11 +1838,11 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
             : condition === "element" ? (critterElementIds(target.critter).includes(String(effect.parameters.condition_value)) ? 1 : 0)
               : 0;
     const expected = Number(effect.parameters.condition_value ?? 1);
-    return resolveChildEffects(next, effect, { ...context }, compareValues(actual, String(effect.parameters.comparison ?? "equal"), expected) ? effect.parameters.true_effect_ids : effect.parameters.false_effect_ids);
+    return resolveChildEffects(next, effect, targetContext, compareValues(actual, String(effect.parameters.comparison ?? "equal"), expected) ? effect.parameters.true_effect_ids : effect.parameters.false_effect_ids);
   }
   if (effect.runtimeKind === "delayed_effect" || effect.runtimeKind === "repeating_effect") {
     const delay = Number(effect.parameters.delay_value ?? effect.parameters.initial_delay ?? effect.parameters.repeat_interval ?? 1);
-    return addRuntimeEffect(next, effect, { ...context, skillTargetKeys: targets.map((target) => target.key) }, { childEffectIds: effect.parameters.child_effect_ids, repeat: effect.parameters.repeat === true }, delay);
+    return addRuntimeEffect(next, effect, { ...targetContext, skillTargetKeys: targets.map((target) => target.key) }, { childEffectIds: effect.parameters.child_effect_ids, repeat: effect.parameters.repeat === true }, delay);
   }
   if (effect.runtimeKind === "resource_gain_loss") {
     const value = Math.max(0, roundHalfUp(Number(effect.parameters.value ?? 0)));
@@ -1835,15 +1879,28 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     return resolveChildEffects(next, effect, { ...context, calculatedValue: roundHalfUp(calculatedValue) }, effect.parameters.output_effect_ids ?? effect.parameters.child_effect_ids);
   }
   if (effect.runtimeKind === "effect_amplification") {
+    const durationType = String(effect.parameters.duration_type ?? "");
+    const durationValue = Number(effect.parameters.duration_value);
+    const remaining = ["turns", "rounds"].includes(durationType)
+      && Number.isInteger(durationValue)
+      && durationValue > 0
+      ? durationValue
+      : undefined;
+    return targets.reduce((current, target) => addRuntimeEffect(
+      current,
+      effect,
+      { ...context, skillTargetKeys: [target.key] },
+      { parameters: structuredClone(effect.parameters) },
+      remaining,
+    ), next);
+  }
+  if (["effect_immunity", "damage_modifier", "damage_prevention", "action_cost_modifier", "reactive_trigger", "retaliation"].includes(effect.runtimeKind)) {
     return targets.reduce((current, target) => addRuntimeEffect(
       current,
       effect,
       { ...context, skillTargetKeys: [target.key] },
       { parameters: structuredClone(effect.parameters) },
     ), next);
-  }
-  if (["effect_immunity", "damage_modifier", "damage_prevention", "action_cost_modifier", "reactive_trigger", "retaliation"].includes(effect.runtimeKind)) {
-    return addRuntimeEffect(next, effect, context, { parameters: structuredClone(effect.parameters) });
   }
   if (effect.runtimeKind === "effect_removal") {
     const category = String(effect.parameters.removal_category ?? "all_removable");
@@ -2099,15 +2156,15 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
       if (effect.runtimeKind !== "damage_over_time" || effect.parameters.timing !== timing) continue;
       const holder = findUnit(next, instance.holderKey);
       if (!holder || !holder.active || holder.hp <= 0) continue;
-      const chance = rollChance(next, Number(effect.parameters.chance));
-      next = chance.state;
-      if (!chance.activated) continue;
       const targets = effectTargets(next, String(effect.parameters.target), {
         sourceOwnerType: "status",
         sourceOwnerId: instance.statusId,
         statusHolderKey: instance.holderKey,
       });
       for (const original of targets) {
+        const chance = rollChance(next, Number(effect.parameters.chance));
+        next = chance.state;
+        if (!chance.activated) continue;
         const target = findUnit(next, original.key);
         if (!target) continue;
         const raw = effect.parameters.value_mode === "percent_max_hp"
@@ -2152,7 +2209,17 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
     }
   }
   if (timing === "end_of_turn") {
-    next = { ...next, runtimeEffects: next.runtimeEffects.map((instance) => instance.remaining === undefined ? instance : { ...instance, remaining: instance.remaining - 1 }).filter((instance) => instance.remaining === undefined || instance.remaining > 0) };
+    next = {
+      ...next,
+      runtimeEffects: next.runtimeEffects
+        .map((instance) => {
+          if (instance.remaining === undefined) return instance;
+          const parameters = instance.state.parameters as Record<string, unknown> | undefined;
+          if (String(parameters?.duration_clock ?? "global_round") === "target_turn") return instance;
+          return { ...instance, remaining: instance.remaining - 1 };
+        })
+        .filter((instance) => instance.remaining === undefined || instance.remaining > 0),
+    };
   }
   if (timing === "end_of_turn") {
     next = {

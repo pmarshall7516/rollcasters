@@ -1,5 +1,6 @@
 import { groupCombatEffectRows } from "../src/lib/effects.js";
 import {
+  calculateActionCost,
   calculateSkillDamage,
   classifyEffectiveness,
   combatEffectSummaries,
@@ -12,6 +13,7 @@ import {
   resolveTurn,
   refreshSetupRuntimeEffects,
   roundHalfUp,
+  skillTargets,
 } from "../src/lib/game.js";
 import {
   advanceDungeonEvent,
@@ -170,6 +172,100 @@ const eventResult = takeTurn(eventBattle, [{ actorKey: eventBattle.playerUnits[0
 check(eventResult.turnEvents.some((event) => event.event_type === "use_skill" && event.skill_id === "strike" && event.source_critter_id === "p1"), "A successful player skill must emit a use_skill progress event.");
 check(eventResult.turnEvents.some((event) => event.event_type === "deal_damage" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit a positive deal_damage progress event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
+
+const allCrittersSkill = { ...eventCatalog.skills[0], id: "all-critters", name: "All Critters", power: 1, targeting: "all_critters" as const };
+const allOthersSkill = { ...allCrittersSkill, id: "all-others", name: "All Others", targeting: "all_others" as const };
+const allCrittersBattle = {
+  ...eventBattle,
+  playerUnits: eventBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, skills: [...unit.skills, allCrittersSkill] } : unit),
+};
+const withUserTargets = skillTargets(allCrittersBattle, "p1", allCrittersSkill);
+const withoutUserTargets = skillTargets(allCrittersBattle, "p1", allOthersSkill);
+check(withUserTargets.length === 4 && withUserTargets.some((unit) => unit.key === "p1") && withUserTargets.some((unit) => unit.side === "opponent"), "All critters (with user) must include every active friendly and enemy Critter, including the user.");
+check(withoutUserTargets.length === 3 && !withoutUserTargets.some((unit) => unit.key === "p1") && withoutUserTargets.some((unit) => unit.side === "player") && withoutUserTargets.some((unit) => unit.side === "opponent"), "All critters (no user) must include active friendlies and enemies while excluding the user.");
+const allCrittersResult = takeTurn(allCrittersBattle, [{ actorKey: "p1", type: "skill", skillId: allCrittersSkill.id, cost: 1 }]);
+check(allCrittersResult.presentationEvents.some((event) => event.kind === "skill" && event.targetKeys.length === 4 && event.targetKeys.includes("p1") && event.targetKeys.includes("o1")), "All critters (with user) must resolve the Skill against every active Critter in combat.");
+
+const perTargetChanceCatalog = makeCatalog();
+perTargetChanceCatalog.effectsBySkill.wave = [
+  effect("skill", "wave", "per-target-defense-break", "stat_modifier", { stat: "def", value_mode: "flat", amount: -5, chance: 0.5, target: "target_enemies" }),
+];
+let foundMixedPerTargetChanceResult: ReturnType<typeof battle> | undefined;
+for (let seedIndex = 0; seedIndex < 100 && !foundMixedPerTargetChanceResult; seedIndex += 1) {
+  const result = takeTurn(battle(perTargetChanceCatalog, makePlayer(), `per-target-chance-${seedIndex}`), [
+    { actorKey: "p1", type: "skill", skillId: "wave", cost: 0 },
+  ]);
+  const reducedEnemies = result.opponentUnits.filter((unit) => unit.stats.def < unit.baseStats.def);
+  if (reducedEnemies.length === 1) foundMixedPerTargetChanceResult = result;
+}
+check(foundMixedPerTargetChanceResult, "A chance-based multi-target Skill Effect must roll independently and be able to affect exactly one of two targets.");
+
+const globalHealingCatalog = makeCatalog();
+globalHealingCatalog.skills = globalHealingCatalog.skills.map((skill) => skill.id === "ritual" ? { ...skill, targeting: "all_critters" as const } : skill);
+globalHealingCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "global-heal", "restore_hp", { value_mode: "percent_max_hp", amount: 0.3, chance: 1, target: "targets" }),
+  effect("skill", "ritual", "friendly-follow-up", "restore_hp", { value_mode: "percent_max_hp", amount: 0.1, chance: 1, target: "target_friendlies" }, 1),
+  effect("skill", "ritual", "enemy-follow-up", "restore_hp", { value_mode: "percent_max_hp", amount: 0.1, chance: 1, target: "target_enemies" }, 2),
+];
+let globalHealingBattle = battle(globalHealingCatalog, makePlayer(), "global-healing");
+globalHealingBattle = {
+  ...globalHealingBattle,
+  playerUnits: globalHealingBattle.playerUnits.map((unit) => ({ ...unit, hp: Math.floor(unit.maxHp / 2) })),
+  opponentUnits: globalHealingBattle.opponentUnits.map((unit) => ({ ...unit, hp: Math.floor(unit.maxHp / 2) })),
+};
+const globalHealingResult = takeTurn(globalHealingBattle, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(globalHealingResult.playerUnits[0].hp === 90 && globalHealingResult.playerUnits[1].hp === 72 && globalHealingResult.opponentUnits[0].hp === 90 && globalHealingResult.opponentUnits[1].hp === 108, "Skill Effects targeting targets, target_friendlies, and target_enemies must follow the Skill's resolved recipients and each target's own maximum HP percentage.");
+
+const reducedGlobalHealingCatalog = makeCatalog();
+reducedGlobalHealingCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "enemy-healing-reduction", "effect_amplification", { target: "all_enemies", affected_effect_category: "healing", direction: "received", modifier_type: "percentage", modifier_value: -0.75, chance: 1 }),
+  effect("skill", "ritual", "reduced-global-heal", "restore_hp", { value_mode: "percent_max_hp", amount: 0.3, chance: 1, target: "all_critters" }, 1),
+];
+let reducedGlobalHealingBattle = battle(reducedGlobalHealingCatalog, makePlayer(), "reduced-global-healing");
+reducedGlobalHealingBattle = {
+  ...reducedGlobalHealingBattle,
+  playerUnits: reducedGlobalHealingBattle.playerUnits.map((unit) => ({ ...unit, hp: Math.floor(unit.maxHp / 2) })),
+  opponentUnits: reducedGlobalHealingBattle.opponentUnits.map((unit) => ({ ...unit, hp: Math.floor(unit.maxHp / 2) })),
+};
+const reducedGlobalHealingResult = takeTurn(reducedGlobalHealingBattle, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(reducedGlobalHealingResult.playerUnits[0].hp === 80 && reducedGlobalHealingResult.playerUnits[1].hp === 64 && reducedGlobalHealingResult.opponentUnits[0].hp === 58 && reducedGlobalHealingResult.opponentUnits[1].hp === 69, "A negative received-healing amplification on all_enemies must reduce only enemy healing while friendly Critters receive the full global heal.");
+
+const failedAmplificationCatalog = makeCatalog();
+failedAmplificationCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "failed-enemy-healing-reduction", "effect_amplification", { target: "all_enemies", affected_effect_category: "healing", direction: "received", modifier_type: "percentage", modifier_value: -0.75, chance: 0 }),
+  effect("skill", "ritual", "unreduced-global-heal", "restore_hp", { value_mode: "percent_max_hp", amount: 0.3, chance: 1, target: "all_critters" }, 1),
+];
+let failedAmplificationBattle = battle(failedAmplificationCatalog, makePlayer(), "failed-amplification");
+failedAmplificationBattle = {
+  ...failedAmplificationBattle,
+  playerUnits: failedAmplificationBattle.playerUnits.map((unit) => ({ ...unit, hp: Math.floor(unit.maxHp / 2) })),
+  opponentUnits: failedAmplificationBattle.opponentUnits.map((unit) => ({ ...unit, hp: Math.floor(unit.maxHp / 2) })),
+};
+const failedAmplificationResult = takeTurn(failedAmplificationBattle, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(failedAmplificationResult.opponentUnits[0].hp === 80 && failedAmplificationResult.opponentUnits[1].hp === 96, "An Effect Amplification with zero activation chance must not reduce the Skill's healing.");
+
+const durationCatalog = makeCatalog();
+durationCatalog.effectsBySkill.strike = [effect("skill", "strike", "temporary-enemy-healing-reduction", "effect_amplification", {
+  target: "target_enemies",
+  affected_effect_category: "healing",
+  direction: "received",
+  modifier_type: "percentage",
+  modifier_value: -0.5,
+  chance: 1,
+  duration_type: "turns",
+  duration_clock: "target_turn",
+  duration_value: 3,
+})];
+let durationBattle = battle(durationCatalog, makePlayer(), "amplification-duration");
+durationBattle = takeTurn(durationBattle, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }]);
+const durationInstance = durationBattle.runtimeEffects.find((instance) => instance.sourceEffectId === "temporary-enemy-healing-reduction");
+check(durationInstance?.remaining === 3, "A target-turn Effect Amplification applied after the target acts must retain all three target turns.");
+durationBattle = takeTurn(durationBattle, [{ actorKey: "p1", type: "skip", cost: 0 }]);
+check(durationBattle.runtimeEffects.some((instance) => instance.sourceEffectId === "temporary-enemy-healing-reduction" && instance.remaining === 2), "A target-turn Effect Amplification must lose one remaining turn when the target acts.");
+durationBattle = takeTurn(durationBattle, [{ actorKey: "p1", type: "skip", cost: 0 }]);
+check(durationBattle.runtimeEffects.some((instance) => instance.sourceEffectId === "temporary-enemy-healing-reduction" && instance.remaining === 1), "A target-turn Effect Amplification must continue tracking the target's remaining turns.");
+durationBattle = takeTurn(durationBattle, [{ actorKey: "p1", type: "skip", cost: 0 }]);
+check(!durationBattle.runtimeEffects.some((instance) => instance.sourceEffectId === "temporary-enemy-healing-reduction"), "A temporary Effect Amplification must expire after its configured duration.");
 
 const reactiveCatalog = makeCatalog();
 reactiveCatalog.dungeonOpponents[0].skill_ids = ["strike"];
@@ -700,6 +796,27 @@ check(skilled.playerUnits[0].stats.atk === 29, "Skill modifiers must apply in st
 check(skilled.playerUnits[1].stats.def === 22 && skilled.playerUnits[0].stats.def === 25, "Skill all_allies must exclude the user.");
 check(skilled.playerUnits[0].stats.spd === 27 && skilled.playerUnits[1].stats.spd === 18, "Signed Skill percentages must round their deltas half-up for all_friendlies.");
 check(skilled.opponentUnits[0].stats.atk === 21 && skilled.opponentUnits[1].stats.atk === 23, "Skill all_enemies must affect all active enemy slots.");
+
+const selfCostCatalog = makeCatalog();
+selfCostCatalog.effectsBySkill.strike = [
+  effect("skill", "strike", "quick-retreat", "action_cost_modifier", {
+    applicable_action: "swaps",
+    cost_type: "swap",
+    modifier_type: "flat",
+    modifier_value: -1,
+    target: "self",
+  }),
+];
+const selfCostApplied = takeTurn(
+  battle(selfCostCatalog, makePlayer(), "self-action-cost"),
+  [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }],
+);
+check(
+  selfCostApplied.runtimeEffects.some((instance) => instance.sourceEffectId === "quick-retreat" && instance.targetCritterKey === "p1")
+    && calculateActionCost(selfCostApplied, { actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }) === 3
+    && calculateActionCost(selfCostApplied, { actorKey: "p2", type: "swap", swapToId: "up3", cost: 4 }) === 4,
+  "A self-targeted Skill action-cost modifier must bind to its user rather than the Skill's selected defender.",
+);
 
 const stackingCatalog = makeCatalog();
 stackingCatalog.effectsBySkill.ritual = [

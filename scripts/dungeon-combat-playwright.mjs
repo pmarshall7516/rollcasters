@@ -90,6 +90,21 @@ async function chooseActions(page) {
     if (!(await actionMenu.count())) break;
     await actionMenu.getByRole("button", { name: /^Skill$/ }).click();
     const affordableAttack = page.locator(".battle-unit .combat-skill-actions .skill-tile:has(.skill-power):not([disabled]):visible").first();
+    if (!(await affordableAttack.count())) {
+      const back = page.locator(".battle-unit .combat-back-row:visible").first();
+      await back.click();
+      const swap = page.locator(".battle-unit .combat-primary-actions:visible").first().getByRole("button", { name: /^Swap/ });
+      if (await swap.isEnabled()) {
+        await swap.click();
+        const option = page.locator(".combat-swap-actions [data-swap-to-id]:not([disabled]):visible").first();
+        if (await option.count()) {
+          await option.click();
+          continue;
+        }
+        await page.locator(".battle-unit .combat-back-row:visible").first().click();
+      }
+      await page.locator(".battle-unit .combat-primary-actions:visible").first().getByRole("button", { name: /^Skill$/ }).click();
+    }
     const affordableSkill = await affordableAttack.count()
       ? affordableAttack
       : page.locator(".battle-unit .combat-skill-actions .skill-tile:not([disabled]):visible").first();
@@ -131,6 +146,53 @@ async function chooseSwapAction(page) {
     incomingKey: incoming.key,
     battlefieldSlot: outgoing.slot,
   };
+}
+
+async function advanceToSkillPresentation(page) {
+  for (let step = 0; step < 40; step += 1) {
+    const state = await gameState(page);
+    const phase = state.combat?.phase;
+    if (phase === "event_playback" && state.combat.presentation?.kind === "skill") return state;
+    if (phase === "event_playback") {
+      await page.waitForFunction(() => !document.querySelector(".combat-narration")?.disabled);
+      const previousEventId = state.combat.presentation?.id;
+      await page.locator(".combat-narration").click();
+      await page.waitForFunction(
+        (eventId) => {
+          const combat = JSON.parse(window.render_game_to_text()).combat;
+          return combat?.phase !== "event_playback" || combat?.presentation?.id !== eventId;
+        },
+        previousEventId,
+      );
+      continue;
+    }
+    if (phase === "await_roll") {
+      await page.getByRole("button", { name: "Roll Dice" }).click();
+      await waitForPhase(page, ["roll_result"]);
+      continue;
+    }
+    if (phase === "roll_result") {
+      await page.waitForFunction(() => !document.querySelector(".combat-narration")?.disabled);
+      check(
+        await page.locator(".combat-narration").getAttribute("aria-keyshortcuts") === "Space",
+        "The combat narration must advertise Space as an advance shortcut.",
+      );
+      await page.keyboard.press("Space");
+      await waitForPhase(page, ["select_player_actions"]);
+      continue;
+    }
+    if (phase === "select_player_actions") {
+      await chooseActions(page);
+      await waitForPhase(page, ["event_playback", "forced_replacements", "await_roll", "battle_result"]);
+      continue;
+    }
+    if (phase === "lead_selection" || phase === "forced_replacements") {
+      await selectRequiredLeads(page);
+      continue;
+    }
+    throw new Error(`Unable to reach a staged Skill presentation from combat phase ${String(phase)}.`);
+  }
+  throw new Error("Timed out before reaching a staged Skill presentation.");
 }
 
 async function advanceNarration(page) {
@@ -482,11 +544,15 @@ try {
   check((await page.locator(".combat-narration").innerText()).includes("Rolling"), "The rolling state must be narrated.");
   await page.waitForTimeout(750);
   check(await page.locator(".combat-narration").isEnabled(), "Dice results must become advanceable after the settle animation.");
+  check(
+    await page.locator(".combat-narration").getAttribute("title") === "Click or press Space to continue",
+    "Ready combat narration must expose the click and Space advance hint.",
+  );
   await page.locator(".combat-screen").screenshot({
     path: path.join(outputDir, "combat-dice-result.png"),
     animations: "disabled",
   });
-  await page.locator(".combat-narration").click();
+  await page.keyboard.press("Space");
   await waitForPhase(page, ["select_player_actions"]);
   const submitBeforeActions = page.getByRole("button", { name: "Submit Actions" });
   check(
@@ -770,7 +836,6 @@ try {
   );
   const swapSelection = await chooseSwapAction(page);
   await waitForPhase(page, ["event_playback"]);
-  const savedVersion = await waitForPersistedPhase(run.data.id, "event_playback");
   const initialSwapState = await gameState(page);
   check(
     initialSwapState.combat.presentation?.kind === "swap"
@@ -818,20 +883,26 @@ try {
     path: path.join(outputDir, "combat-swap-outgoing.png"),
     animations: "allow",
   });
+  const savedVersion = await waitForPersistedPhase(run.data.id, "event_playback");
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).combat?.presentation?.swap?.revealed === true);
   const revealedSwapState = await gameState(page);
   const revealedSwapCard = page.locator(`[data-combat-unit-key="${swapSelection.incomingKey}"]`);
+  const revealedSwapChecks = {
+    outgoingInactive: revealedSwapState.combat.player.find((unit) => unit.key === swapSelection.outgoingKey)?.active === false,
+    incomingActive: revealedSwapState.combat.player.find((unit) => unit.key === swapSelection.incomingKey)?.active === true,
+    incomingSlot: revealedSwapState.combat.player.find((unit) => unit.key === swapSelection.incomingKey)?.slot,
+    expectedSlot: swapSelection.battlefieldSlot,
+    cardVisible: await revealedSwapCard.isVisible(),
+    spriteVisible: await revealedSwapCard.locator(".critter-combat-frame .sprite").isVisible(),
+    identityVisible: await revealedSwapCard.locator(".combat-identity-row").isVisible(),
+    hpVisible: await revealedSwapCard.locator('[role="progressbar"]').isVisible(),
+    summaryVisible: await revealedSwapCard.locator(".combat-action-summary").getByText("Swap complete", { exact: true }).isVisible(),
+    narrationDisabled: await page.locator(".combat-narration").isDisabled(),
+  };
   check(
-    revealedSwapState.combat.player.find((unit) => unit.key === swapSelection.outgoingKey)?.active === false
-      && revealedSwapState.combat.player.find((unit) => unit.key === swapSelection.incomingKey)?.active === true
-      && revealedSwapState.combat.player.find((unit) => unit.key === swapSelection.incomingKey)?.slot === swapSelection.battlefieldSlot
-      && await revealedSwapCard.isVisible()
-      && await revealedSwapCard.locator(".critter-combat-frame .sprite").isVisible()
-      && await revealedSwapCard.locator(".combat-identity-row").isVisible()
-      && await revealedSwapCard.locator('[role="progressbar"]').isVisible()
-      && await revealedSwapCard.locator(".combat-action-summary").getByText("Swap complete", { exact: true }).isVisible()
-      && await page.locator(".combat-narration").isDisabled(),
-    "The incoming Critter, artwork, identity, level/Mana range, and HP must fill the same slot before combat can advance.",
+    Object.entries(revealedSwapChecks).every(([key, value]) => key.endsWith("Slot") || key === "narrationDisabled" || value === true)
+      && revealedSwapChecks.incomingSlot === revealedSwapChecks.expectedSlot,
+    `The incoming Critter, artwork, identity, level/Mana range, and HP must fill the same slot before combat can advance: ${JSON.stringify(revealedSwapChecks)}`,
   );
   await page.locator(".combat-screen").screenshot({
     path: path.join(outputDir, "combat-swap-incoming.png"),
@@ -881,17 +952,7 @@ try {
       && afterSwapProgress.combat.player.find((unit) => unit.key === swapSelection.incomingKey)?.slot === swapSelection.battlefieldSlot,
     "Advancing beyond Swap must preserve the fully revealed incoming Critter for every later combat step.",
   );
-  let stagedSkill = afterSwapProgress;
-  for (let index = 0; index < 6 && stagedSkill.combat.presentation?.kind !== "skill"; index += 1) {
-    await page.waitForFunction(() => !document.querySelector(".combat-narration")?.disabled);
-    const previousEventId = stagedSkill.combat.presentation?.id;
-    await page.locator(".combat-narration").click();
-    await page.waitForFunction(
-      (eventId) => JSON.parse(window.render_game_to_text()).combat?.presentation?.id !== eventId,
-      previousEventId,
-    );
-    stagedSkill = await gameState(page);
-  }
+  const stagedSkill = await advanceToSkillPresentation(page);
   check(
     stagedSkill.combat.presentation?.kind === "skill"
       && await page.locator(".battle-unit.acting-skill").count() === 1,
@@ -1062,18 +1123,28 @@ try {
     return state.view === "combat" && state.combat?.dungeonId === "002";
   });
   const nextDungeonLeads = await gameState(page);
+  const [nextPlayerCount, nextOpponentCount] = nextDungeonLeads.combat.battleFormat.split("v").map(Number);
   check(
     nextDungeonLeads.combat.phase === "lead_selection"
+      && nextDungeonLeads.combat.requiredLeadCount === nextPlayerCount
       && await page.locator(".combat-lead-option").count() === 3,
-    "A 2v2 formation with three equipped Critters must request two leads from the full party.",
+    "The next authored formation must request its configured number of leads from the full party.",
   );
   await selectRequiredLeads(page);
   const selectedNextDungeonLeads = await gameState(page);
+  const slotsForCount = (count) => count === 1 ? [1] : count === 2 ? [0, 2] : [0, 1, 2];
+  const selectedNextDungeonFormation = {
+    phase: selectedNextDungeonLeads.combat.phase,
+    playerSlots: selectedNextDungeonLeads.combat.player.filter((unit) => unit.active).map((unit) => unit.slot).sort(),
+    opponentSlots: selectedNextDungeonLeads.combat.opponents.filter((unit) => unit.active).map((unit) => unit.slot).sort(),
+    expectedPlayerSlots: slotsForCount(nextPlayerCount),
+    expectedOpponentSlots: slotsForCount(nextOpponentCount),
+  };
   check(
-    selectedNextDungeonLeads.combat.phase === "await_roll"
-      && selectedNextDungeonLeads.combat.player.filter((unit) => unit.active).map((unit) => unit.slot).sort().join(",") === "0,2"
-      && selectedNextDungeonLeads.combat.opponents.filter((unit) => unit.active).map((unit) => unit.slot).sort().join(",") === "0,2",
-    "A selected 2v2 formation must place both sides in the top/bottom battlefield slots.",
+    selectedNextDungeonFormation.phase === "await_roll"
+      && selectedNextDungeonFormation.playerSlots.join(",") === selectedNextDungeonFormation.expectedPlayerSlots.join(",")
+      && selectedNextDungeonFormation.opponentSlots.join(",") === selectedNextDungeonFormation.expectedOpponentSlots.join(","),
+    `The selected formation must use the battlefield slots authored by its battle format: ${JSON.stringify(selectedNextDungeonFormation)}`,
   );
   check(browserErrors.length === 0, `Browser errors detected: ${browserErrors.join(" | ")}`);
 

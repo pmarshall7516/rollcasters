@@ -267,7 +267,8 @@ export function derivedChallengeProgress(data: AppData, challenge: CollectibleUn
 }
 
 export function isTrackedChallengeType(challenge: CollectibleUnlockChallenge): boolean {
-  return trackedTypes.has(challenge.challenge_type);
+  return trackedTypes.has(challenge.challenge_type)
+    && parametersOf(challenge).tracking_required !== false;
 }
 
 export function trackedChallengesForPlayer(player: PlayerState, catalog: AppData["catalog"]): CollectibleUnlockChallenge[] {

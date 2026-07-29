@@ -197,6 +197,7 @@ export type ElementEffectiveness = {
 export type SkillTargeting =
   | "single_enemy"
   | "all_enemies"
+  | "all_critters"
   | "all_others"
   | "single_any"
   | "self_only"
@@ -206,9 +207,13 @@ export type SkillTargeting =
 export type EffectOwnerType = "skill" | "ability" | "relic" | "status";
 export type EffectTarget =
   | "self"
+  | "all_critters"
+  | "all_others"
   | "all_enemies"
   | "all_allies"
   | "all_friendlies"
+  | "targets"
+  | "target_friendlies"
   | "target_enemies"
   | "all_element_friendlies"
   | "all_element_enemies"

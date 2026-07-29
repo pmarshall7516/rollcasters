@@ -503,6 +503,7 @@ export function App() {
               coordinateSystem: "Fixed battlefield slots run top-to-bottom from 0 to 2 on each side.",
               dungeonId: combat.dungeon.id,
               effectiveMode: combat.run.effectiveMode,
+              battleFormat: combat.run.battleFormat,
               encounter: combat.run.battleIndex,
               encounterCount: combat.run.battleCount,
               turn: combat.battle.turn,
@@ -756,8 +757,18 @@ function useViewportFitScale(bottomGutter = 4) {
     let animationFrame = 0;
 
     const fit = () => {
-      const naturalHeight = node.scrollHeight;
-      const availableHeight = Math.max(0, window.innerHeight - node.getBoundingClientRect().top - bottomGutter);
+      const nodeRect = node.getBoundingClientRect();
+      const currentScale = Number(node.dataset.viewportFitScale ?? 1) || 1;
+      const directContentBottom = Math.max(
+        nodeRect.top,
+        ...Array.from(node.children).map((child) => child.getBoundingClientRect().bottom),
+      );
+      // scrollHeight can omit the visual contribution of a final child's
+      // collapsed margin. Measure the direct rendered rows as well so the
+      // narration/control footer cannot fall below a short viewport.
+      const renderedNaturalHeight = (directContentBottom - nodeRect.top) / currentScale;
+      const naturalHeight = Math.max(node.scrollHeight, renderedNaturalHeight);
+      const availableHeight = Math.max(0, window.innerHeight - nodeRect.top - bottomGutter);
       const scale = naturalHeight > 0 ? Math.min(1, availableHeight / naturalHeight) : 1;
       const roundedScale = Math.floor(scale * 10_000) / 10_000;
       node.style.setProperty("--combat-fit-scale", String(roundedScale));
@@ -807,7 +818,7 @@ function SetupScreen() {
         <p>The app is built, but Supabase browser credentials are not configured yet.</p>
         <pre>{`VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY`}</pre>
-        <p>Add these to `.env`, run the SQL in `supabase/migrations`, then restart the dev server.</p>
+        <p>Add these to `.env`, run the shared SQL migration from the vault, then restart the dev server.</p>
       </section>
     </Shell>
   );
@@ -1476,7 +1487,8 @@ function AbilitySlot({ data, ability, slotIndex, onClick }: { data: AppData; abi
 function targetingDescription(skill: Skill): string {
   switch (skill.targeting ?? "single_enemy") {
     case "all_enemies": return "Targets all Enemy Critters.";
-    case "all_others": return "Targets all other Critters.";
+    case "all_critters": return "Targets all active Critters, including the user.";
+    case "all_others": return "Targets all active Critters except the user.";
     case "single_any": return "Targets one Friendly or Enemy Critter.";
     case "all_friendlies": return "Targets all Friendly Critters.";
     case "all_allies": return "Targets every active Friendly teammate except the user.";
@@ -2672,7 +2684,11 @@ function DetailModal({
         <div className="mini-grid">
           {data.catalog.critterSkillUnlocks
             .filter((row) => row.critter_id === critter.id)
-            .sort((left, right) => left.sort_order - right.sort_order)
+            .sort((left, right) =>
+              left.unlock_level - right.unlock_level ||
+              left.sort_order - right.sort_order ||
+              left.skill_id.localeCompare(right.skill_id)
+            )
             .map((unlock) => {
               const skill = byId(data.catalog.skills, unlock.skill_id)!;
               const unlocked = skillIds.includes(skill.id);
@@ -3048,6 +3064,8 @@ function CombatScreen({
     && totalCost <= battle.playerMana
     && activePlayer.length > 0
     && Object.keys(actions).length === activePlayer.length;
+  const narrationAdvanceable = (combat.phase === "event_playback" && !submittingProgress && eventSettled)
+    || (combat.phase === "roll_result" && diceSettled);
 
   useEffect(() => {
     setActions({});
@@ -3099,6 +3117,26 @@ function CombatScreen({
     const timer = window.setTimeout(() => setEventSettled(true), duration);
     return () => window.clearTimeout(timer);
   }, [combat.phase, event?.id]);
+
+  function advanceNarration() {
+    if (!narrationAdvanceable) return;
+    setCombat((current) => current
+      ? current.phase === "event_playback" ? advanceDungeonEvent(current) : continueAfterRoll(current)
+      : current);
+  }
+
+  useEffect(() => {
+    if (!narrationAdvanceable) return;
+    function handleSpacebar(event: KeyboardEvent) {
+      if (event.code !== "Space" || event.repeat) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      event.preventDefault();
+      advanceNarration();
+    }
+    window.addEventListener("keydown", handleSpacebar);
+    return () => window.removeEventListener("keydown", handleSpacebar);
+  }, [narrationAdvanceable, combat.phase, diceSettled, eventSettled, submittingProgress]);
 
   useLayoutEffect(() => {
     setSwapMotion(null);
@@ -3318,15 +3356,11 @@ function CombatScreen({
 
         <button
           type="button"
-          className={`combat-narration ${combat.phase === "event_playback" || combat.phase === "roll_result" ? "advanceable" : ""}`}
-          disabled={
-            (combat.phase !== "event_playback" && combat.phase !== "roll_result")
-            || (combat.phase === "roll_result" && !diceSettled)
-            || (combat.phase === "event_playback" && (submittingProgress || !eventSettled))
-          }
-          onClick={() => setCombat((current) => current
-            ? current.phase === "event_playback" ? advanceDungeonEvent(current) : continueAfterRoll(current)
-            : current)}
+          className={`combat-narration ${narrationAdvanceable ? "advanceable" : ""}`}
+          disabled={!narrationAdvanceable}
+          aria-keyshortcuts="Space"
+          title={narrationAdvanceable ? "Click or press Space to continue" : undefined}
+          onClick={advanceNarration}
         >
           <span>
             {combat.phase === "lead_selection" && `Choose ${combat.requiredLeadCount} healthy lead Critter${combat.requiredLeadCount === 1 ? "" : "s"} before revealing the enemy lineup.`}

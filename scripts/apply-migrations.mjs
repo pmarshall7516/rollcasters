@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createDbClient, parseArgs, resolveMigrationSelection, root } from "./db-utils.mjs";
+import { createDbClient, parseArgs, resolveMigrationSelection, sharedMigrationsDir } from "./db-utils.mjs";
 
 const args = parseArgs();
 const selected = resolveMigrationSelection(args.files);
@@ -11,7 +11,7 @@ function migrationMetadata(migration) {
   if (!match) {
     throw new Error(`Migration filename must match <version>_<name>.sql: ${basename}`);
   }
-  return { version: match[1], name: match[2] };
+  return { version: basename.slice(0, -4), legacyVersion: match[1], name: match[2] };
 }
 
 if (args.help) {
@@ -48,18 +48,21 @@ try {
   );
 
   const appliedResult = await client.query(
-    "select version from supabase_migrations.schema_migrations",
+    "select version, name from supabase_migrations.schema_migrations",
   );
-  const appliedVersions = new Set(appliedResult.rows.map((row) => row.version));
+  const appliedMigrations = appliedResult.rows;
 
   for (const migration of selected) {
-    const { version, name } = migrationMetadata(migration);
-    if (appliedVersions.has(version)) {
+    const { version, legacyVersion, name } = migrationMetadata(migration);
+    const alreadyApplied = appliedMigrations.some(
+      (row) => row.version === version || (row.version === legacyVersion && row.name === name),
+    );
+    if (alreadyApplied) {
       process.stdout.write(`Skipping ${migration} (already applied).\n`);
       continue;
     }
 
-    const sql = fs.readFileSync(path.join(root, migration), "utf8");
+    const sql = fs.readFileSync(path.join(sharedMigrationsDir, migration), "utf8");
     process.stdout.write(`Applying ${migration}...\n`);
     await client.query(sql);
     await client.query(
@@ -67,7 +70,7 @@ try {
        values($1,$2::text[],$3)`,
       [version, [sql], name],
     );
-    appliedVersions.add(version);
+    appliedMigrations.push({ version, name });
   }
   await client.query("commit");
   process.stdout.write("Migration check completed successfully.\n");

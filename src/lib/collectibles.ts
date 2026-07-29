@@ -27,6 +27,7 @@ export const TRACKED_CHALLENGE_TYPES = new Set([
   "swap_action",
   "block_action",
   "dice_roll",
+  "heal_hp",
 ]);
 
 export function safeBigInt(value: string | number | bigint | null | undefined): bigint {
@@ -301,7 +302,8 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
 }
 
 export function isTrackableChallenge(challenge: CollectibleUnlockChallenge): boolean {
-  return TRACKED_CHALLENGE_TYPES.has(challenge.challenge_type);
+  return TRACKED_CHALLENGE_TYPES.has(challenge.challenge_type)
+    && challenge.parameters?.tracking_required !== false;
 }
 
 export function trackedSlotFor(data: AppData, challengeId: string): number | null {

@@ -4,6 +4,7 @@ import {
   challengeDescription,
   challengesFor,
   formatAmount,
+  isTrackableChallenge,
   orderedCurrencies,
   safeBigInt,
   shopAvailability,
@@ -166,6 +167,42 @@ check(
     trackable: false,
   }) === "Complete all above challenges first",
   "A blocked ungated row must explain that the challenges above it are required.",
+);
+const trackedChallenge: CollectibleUnlockChallenge = {
+  ...shardChallenge,
+  id: "tracked-challenge",
+  challenge_type: "deal_damage",
+  parameters: {
+    tracking_required: true,
+    target_mode: "species",
+    any_target: true,
+    target_ids: [],
+    required_amount: 10,
+  },
+};
+check(isTrackableChallenge(trackedChallenge), "Tracked-event Challenges must remain manually trackable by default.");
+check(
+  !isTrackableChallenge({
+    ...trackedChallenge,
+    parameters: { ...trackedChallenge.parameters, tracking_required: false },
+  }),
+  "An automatically progressing Challenge must not expose player tracking.",
+);
+check(
+  isTrackableChallenge({
+    ...trackedChallenge,
+    id: "legacy-tracked-challenge",
+    parameters: { target_mode: "species", any_target: true, target_ids: [], required_amount: 10 },
+  }),
+  "Published Challenges without tracking_required must retain the legacy tracking-required default.",
+);
+check(
+  isTrackableChallenge({
+    ...trackedChallenge,
+    id: "healing-challenge",
+    challenge_type: "heal_hp",
+  }),
+  "Heal HP must use the same tracking policy as every other tracked-event Challenge.",
 );
 check(shopErrorMessage(new Error("RPC failed: INSUFFICIENT_FUNDS")) === "You do not have enough currency for this purchase.", "RPC error codes must map to safe player-facing messages.");
 

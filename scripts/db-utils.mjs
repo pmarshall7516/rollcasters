@@ -3,6 +3,9 @@ import path from "node:path";
 import pg from "pg";
 
 export const root = process.cwd();
+export const sharedMigrationsDir = path.resolve(
+  process.env.ROLLCASTER_MIGRATIONS_DIR ?? path.join(root, "..", "rollcaster-docs", "05 Database", "migrations"),
+);
 
 export function parseEnv(filePath = path.join(root, ".env")) {
   const values = {};
@@ -84,12 +87,10 @@ export function parseArgs(argv = process.argv.slice(2)) {
 }
 
 export function migrationFiles() {
-  const dir = path.join(root, "supabase", "migrations");
   return fs
-    .readdirSync(dir)
+    .readdirSync(sharedMigrationsDir)
     .filter((file) => file.endsWith(".sql"))
-    .sort()
-    .map((file) => path.join("supabase", "migrations", file));
+    .sort();
 }
 
 export function resolveMigrationSelection(filesArg) {
@@ -102,11 +103,9 @@ export function resolveMigrationSelection(filesArg) {
     .filter(Boolean);
 
   const selected = requested.map((requestedFile) => {
-    const exact = allFiles.find((file) => file === requestedFile);
+    const normalized = requestedFile.replace(/^.*[\\/]migrations[\\/]/, "");
+    const exact = allFiles.find((file) => file === requestedFile || file === normalized);
     if (exact) return exact;
-
-    const byBasename = allFiles.find((file) => path.basename(file) === requestedFile);
-    if (byBasename) return byBasename;
 
     throw new Error(`Migration not found: ${requestedFile}`);
   });

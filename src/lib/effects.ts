@@ -30,7 +30,7 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
 ]);
 
 const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
-  skill: new Set(["self", "selected_ally", "selected_enemy", "all_allies", "all_friendlies", "all_enemies", "target_enemies", "attacker", "defender", "effect_owner"]),
+  skill: new Set(["self", "all_critters", "all_others", "selected_ally", "selected_enemy", "all_allies", "all_friendlies", "all_enemies", "targets", "target_friendlies", "target_enemies", "attacker", "defender", "effect_owner"]),
   ability: new Set(["all_friendlies", "all_squad_friendlies", "all_enemies", "all_element_friendlies", "all_element_enemies", "active_ally", "active_enemy", "attacker", "defender", "effect_owner"]),
   relic: new Set(["equipped_critter", "equipped_allies", "equipped_friendlies", "all_squad_friendlies", "all_enemies", "active_ally", "active_enemy", "attacker", "defender", "effect_owner"]),
   status: new Set(["status_holder", "status_holder_allies", "status_holder_friendlies", "status_holder_enemies"]),
