@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { createDbClient, root } from "./db-utils.mjs";
+import { createDbClient, readMigration } from "./db-utils.mjs";
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -20,10 +18,7 @@ async function expectError(client, savepoint, expected, action) {
   check(matched, `Expected database error ${expected}.`);
 }
 
-const migration = fs.readFileSync(
-  path.join(root, "supabase", "migrations", "017_dungeon_game_runtime.sql"),
-  "utf8",
-);
+const migration = readMigration("017_dungeon_game_runtime.sql");
 const client = createDbClient();
 let began = false;
 

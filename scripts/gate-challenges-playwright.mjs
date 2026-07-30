@@ -137,24 +137,24 @@ async function seedContent() {
     `, [target.id]);
     await db.query(`
       insert into public.collectible_unlock_challenges(
-        id,collectible_type,collectible_id,challenge_type,required_amount,sort_order,gate_order
-      ) values($1,'critter',$2,'shop_shards',2,0,1)
-    `, [challengeIds[0], target.id]);
+        id,collectible_type,collectible_id,challenge_type,parameters,required_amount,sort_order,gate_order
+      ) values($1,'critter',$2,'shop_shards',$3::jsonb,2,0,1)
+    `, [challengeIds[0], target.id, JSON.stringify({ required_amount: 2 })]);
     await db.query(`
       insert into public.collectible_unlock_challenges(
-        id,collectible_type,collectible_id,challenge_type,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
-      ) values($1,'critter',$2,'take_damage','species',true,'{}',4,1,2)
-    `, [challengeIds[1], target.id]);
+        id,collectible_type,collectible_id,challenge_type,parameters,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
+      ) values($1,'critter',$2,'take_damage',$3::jsonb,'species',true,'{}',4,1,2)
+    `, [challengeIds[1], target.id, JSON.stringify({ target_mode: "species", any_target: true, target_ids: [], required_amount: 4 })]);
     await db.query(`
       insert into public.collectible_unlock_challenges(
-        id,collectible_type,collectible_id,challenge_type,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
-      ) values($1,'critter',$2,'deal_damage','species',true,'{}',5,2,null)
-    `, [challengeIds[2], target.id]);
+        id,collectible_type,collectible_id,challenge_type,parameters,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
+      ) values($1,'critter',$2,'deal_damage',$3::jsonb,'species',true,'{}',5,2,null)
+    `, [challengeIds[2], target.id, JSON.stringify({ target_mode: "species", any_target: true, target_ids: [], required_amount: 5 })]);
     await db.query(`
       insert into public.collectible_unlock_challenges(
-        id,collectible_type,collectible_id,challenge_type,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
-      ) values($1,'critter',$2,'knock_out_critters','species',true,'{}',3,3,null)
-    `, [challengeIds[3], target.id]);
+        id,collectible_type,collectible_id,challenge_type,parameters,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
+      ) values($1,'critter',$2,'knock_out_critters',$3::jsonb,'species',true,'{}',3,3,null)
+    `, [challengeIds[3], target.id, JSON.stringify({ target_mode: "species", any_target: true, target_ids: [], required_amount: 3 })]);
     await db.query("commit");
     contentSeeded = true;
   } catch (error) {
@@ -332,10 +332,10 @@ try {
   check(await compactPane.evaluate((entry) => entry.scrollTop) <= 5, "The custom scrollbar Home key must return to the first challenge snap position.");
   await targetCard.click();
   await waitForTargetArtwork(page.locator(".modal"));
-  let gateOne = page.locator(".challenge-detail-row").filter({ hasText: "Gate 1" });
-  let gateTwo = page.locator(".challenge-detail-row").filter({ hasText: "Gate 2" });
+  let gateOne = page.locator(".challenge-detail-row").nth(0);
+  let gateTwo = page.locator(".challenge-detail-row").nth(1);
   let trackedChallenge = page.locator(".challenge-detail-row").filter({ hasText: "Damage Critters" });
-  check((await gateOne.textContent())?.includes("Gate 1"), "The first gated row must show its Gate 1 badge.");
+  check(await page.locator(".challenge-detail-row .gate-badge").count() === 0, "Collectible popups must not show Gate pills on gated challenge rows.");
   check((await gateOne.textContent())?.includes("0 / 2"), "Gate 1 must expose its raw Shop progress.");
   check((await gateTwo.textContent())?.includes("0 / 4"), "Gate 2 must expose its raw Shop progress.");
   const detailBoundary = page.locator(".challenge-detail-gate-boundary");
@@ -413,8 +413,8 @@ try {
   await targetCard.locator(".collection-card-state").screenshot({ path: path.join(outputDir, "tracked-from-collection-card.png") });
   await targetCard.locator(".catalog-card-details").click();
   await waitForTargetArtwork(page.locator(".modal"));
-  gateOne = page.locator(".challenge-detail-row").filter({ hasText: "Gate 1" });
-  gateTwo = page.locator(".challenge-detail-row").filter({ hasText: "Gate 2" });
+  gateOne = page.locator(".challenge-detail-row").nth(0);
+  gateTwo = page.locator(".challenge-detail-row").nth(1);
   trackedChallenge = page.locator(".challenge-detail-row").filter({ hasText: "Damage Critters" });
   check((await gateOne.getAttribute("class"))?.includes("complete"), "Gate 1 must render complete after reaching its Shop goal.");
   check((await gateTwo.getAttribute("class"))?.includes("complete"), "Gate 2 must render complete after reaching its Shop goal.");

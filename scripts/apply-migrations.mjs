@@ -17,7 +17,7 @@ function migrationMetadata(migration) {
 if (args.help) {
   process.stdout.write(`Usage:
   npm run db:migrate
-  npm run db:migrate -- --files 20260719000000_rollcasters_baseline.sql
+  npm run db:migrate -- --files general/20260719000000_rollcasters_baseline.sql
   npm run db:migrate -- --dry-run
 
 Options:

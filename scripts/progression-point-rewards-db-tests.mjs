@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { createDbClient, root } from "./db-utils.mjs";
+import { createDbClient, readMigration } from "./db-utils.mjs";
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -11,8 +9,7 @@ function numeric(value) {
   return Number(value ?? 0);
 }
 
-const migrationPath = path.join(root, "supabase", "migrations", "013_level_progression_point_rewards.sql");
-const migrationSql = fs.readFileSync(migrationPath, "utf8");
+const migrationSql = readMigration("013_level_progression_point_rewards.sql");
 const client = createDbClient();
 let began = false;
 

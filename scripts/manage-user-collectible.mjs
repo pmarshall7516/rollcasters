@@ -101,7 +101,7 @@ export async function callCollectibleRpc(options, env, fetchImpl = fetch) {
     const message = data?.message ?? data?.error_description ?? data?.error ?? text ?? response.statusText;
     if (response.status === 404 && /dev_manage_user_collectible|schema cache/i.test(message)) {
       throw new Error(
-        "The collectible admin database function is unavailable. Apply supabase/migrations/005_dev_collectible_commands.sql, then retry.",
+        "The collectible admin database function is unavailable. Apply the corresponding migration from rollcaster-docs/migrations, then retry.",
       );
     }
     throw new Error(`Supabase rejected the request (${response.status}): ${message}`);

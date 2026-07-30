@@ -86,6 +86,7 @@ try {
 
   const { user_id: userId, owned_critter_id: ownedCritterId, target_type: targetType, target_id: targetId, dungeon_id: dungeonId } = fixture.rows[0];
   const gateOneId = crypto.randomUUID();
+  const gateOneSiblingId = crypto.randomUUID();
   const gateTwoId = crypto.randomUUID();
   const trackedId = crypto.randomUUID();
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
@@ -98,7 +99,7 @@ try {
 
   await client.query(`
     insert into public.collectible_unlock_requirements(collectible_type,collectible_id,required_challenges)
-    values($1,$2,3)
+    values($1,$2,4)
   `, [targetType, targetId]);
   await client.query(`
     insert into public.collectible_unlock_challenges(
@@ -112,21 +113,43 @@ try {
   `, [gateTwoId, targetType, targetId, JSON.stringify({ collectible_category: "critter", collectible_ids: [ownedCritterId], required_amount: 1, require_unique_collectibles: true, retroactive: true }), ownedCritterId]);
   await client.query(`
     insert into public.collectible_unlock_challenges(
+      id,collectible_type,collectible_id,challenge_type,parameters,target_category,target_id,required_amount,sort_order,gate_order
+    ) values($1,$2,$3,'own_collectible',$4::jsonb,'critter',$5,1,3,1)
+  `, [gateOneSiblingId, targetType, targetId, JSON.stringify({ collectible_category: "critter", collectible_ids: [ownedCritterId], required_amount: 1, require_unique_collectibles: true, retroactive: true }), ownedCritterId]);
+  await client.query(`
+    insert into public.collectible_unlock_challenges(
       id,collectible_type,collectible_id,challenge_type,parameters,target_mode,any_target,target_ids,required_amount,sort_order,gate_order
     ) values($1,$2,$3,'deal_damage',$4::jsonb,'species',true,'{}',5,1,null)
   `, [trackedId, targetType, targetId, JSON.stringify({ target_mode: "species", any_target: true, target_ids: [], required_amount: 5 })]);
   await client.query("select public.assert_collectible_gate_integrity($1,$2)", [targetType, targetId]);
+
+  // Regression: possession must not bypass the authored challenge threshold.
+  if (targetType === "critter") {
+    await client.query("insert into public.user_critters(user_id,critter_id) values($1,$2)", [userId, targetId]);
+  } else if (targetType === "rollcaster") {
+    await client.query("insert into public.user_rollcasters(user_id,rollcaster_id) values($1,$2)", [userId, targetId]);
+  } else {
+    await client.query(
+      "insert into public.user_relic_inventory(user_id,relic_id,quantity,discovered_at) values($1,$2,1,now())",
+      [userId, targetId],
+    );
+  }
+  check(!(await client.query(
+    "select public.collectible_is_unlocked($1,$2,$3) as unlocked",
+    [userId, targetType, targetId],
+  )).rows[0].unlocked, "An owned collectible must remain locked until its required challenges are complete.");
 
   await client.query(`
     insert into public.user_collectible_challenge_progress(user_id,challenge_id,progress,completed_at)
     values($1,$2,2,null)
   `, [userId, trackedId]);
   const aggregatePayload = (gateOneOrder, gateTwoOrder) => ({
-    requiredChallenges: 3,
+    requiredChallenges: 4,
     challenges: [
       { id: gateTwoId, type: "own_collectible", targetCategory: "critter", targetId: ownedCritterId, requiredAmount: 1, sortOrder: 0, gateOrder: gateTwoOrder },
       { id: trackedId, type: "deal_damage", targetMode: "species", anyTarget: true, targetIds: [], requiredAmount: 5, sortOrder: 1 },
       { id: gateOneId, type: "shop_shards", requiredAmount: 1, sortOrder: 2, gateOrder: gateOneOrder },
+      { id: gateOneSiblingId, type: "own_collectible", targetCategory: "critter", targetId: ownedCritterId, requiredAmount: 1, sortOrder: 3, gateOrder: gateOneOrder },
     ],
   });
   await client.query("select public.replace_collectible_unlocks($1,$2,$3::jsonb)", [targetType, targetId, JSON.stringify(aggregatePayload(2, 1))]);
@@ -145,7 +168,9 @@ try {
   const initialGateTwo = initialStates.find((state) => state.challenge_id === gateTwoId);
   const initialTracked = initialStates.find((state) => state.challenge_id === trackedId);
   check(initialGateOne.eligible && !initialGateOne.complete, "Gate 1 must be immediately eligible but incomplete before its raw goal is reached.");
-  check(initialGateTwo.goal_reached && !initialGateTwo.eligible && !initialGateTwo.complete && initialGateTwo.blocked_by_gate_order === 1, "A full-progress later Global gate must remain blocked by Gate 1.");
+  const initialGateOneSibling = initialStates.find((state) => state.challenge_id === gateOneSiblingId);
+  check(initialGateOneSibling.eligible && initialGateOneSibling.complete, "A second challenge in the current Gate 1 must be eligible and complete independently.");
+  check(initialGateTwo.goal_reached && !initialGateTwo.eligible && !initialGateTwo.complete && initialGateTwo.blocked_by_gate_order === 1, "A full-progress later Global gate must remain blocked by the incomplete Gate 1 group.");
   check(!initialTracked.eligible && !initialTracked.complete && initialTracked.blocked_by_gate_order === 1, "Ungated challenges must wait for the complete gate sequence.");
 
   await expectDbError(client, "blocked_tracking", "CHALLENGE_GATED", () =>
@@ -202,6 +227,7 @@ try {
     [userId, targetType, targetId],
   )).rows;
   check(eligibleStates.find((state) => state.challenge_id === gateOneId).complete, "Gate 1 must complete when its raw Shop goal is reached.");
+  check(eligibleStates.find((state) => state.challenge_id === gateOneSiblingId).complete, "Every challenge in Gate 1 must complete before the next gate opens.");
   check(eligibleStates.find((state) => state.challenge_id === gateTwoId).complete, "A previously full Global Gate 2 must complete immediately after Gate 1.");
   check(eligibleStates.find((state) => state.challenge_id === trackedId).eligible, "The ungated Tracked challenge must become eligible after every gate completes.");
 
@@ -216,7 +242,7 @@ try {
   check(finalProgress.goal_reached && finalProgress.eligible && finalProgress.completed, "Only post-tracking combat must effectively complete the now-eligible challenge.");
   check((await client.query(`
     select public.collectible_is_unlocked($1,$2,$3) as unlocked
-  `, [userId, targetType, targetId])).rows[0].unlocked, "Three effectively complete rows must unlock the collectible exactly once.");
+  `, [userId, targetType, targetId])).rows[0].unlocked, "Four effectively complete rows must unlock the collectible exactly once.");
 
   console.log(`Gate challenge runtime tests passed for user ${userId} and ${targetType} ${targetId}; all schema and fixture changes will be rolled back.`);
 } finally {

@@ -1220,7 +1220,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .game-tooltip { position: absolute; z-index: 60; left: 50%; bottom: calc(100% + 8px); display: grid; gap: 8px; width: min(330px, 78vw); padding: 11px 12px; border: 1px solid var(--border-bright); border-radius: 11px; background: #080b1d; color: var(--text-secondary); box-shadow: 0 14px 40px rgb(0 0 0 / 48%); opacity: 0; visibility: hidden; pointer-events: none; transform: translate(-50%, 4px); transition: var(--motion); font-size: 12px; line-height: 1.45; text-align: left; }
 .tooltip-anchor:hover .game-tooltip:not(.viewport-game-tooltip),
 .tooltip-anchor:focus .game-tooltip:not(.viewport-game-tooltip),
-.tooltip-anchor:focus-within .game-tooltip:not(.viewport-game-tooltip) { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition-delay: 180ms; }
+.tooltip-anchor:focus-within .game-tooltip:not(.viewport-game-tooltip),
+.tooltip-anchor.combat-keyboard-focused .game-tooltip:not(.viewport-game-tooltip),
+.tooltip-anchor.app-keyboard-focused .game-tooltip:not(.viewport-game-tooltip) { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition-delay: 180ms; }
 .viewport-game-tooltip { position: fixed; left: 12px; top: 12px; bottom: auto; width: min(330px, calc(100vw - 20px)); max-height: calc(100dvh - 20px); overflow: auto; transform: translateY(4px); }
 .viewport-game-tooltip.viewport-tooltip-visible { opacity: 1; visibility: visible; transform: translateY(0); transition-delay: 180ms; }
 .tooltip-heading { display: flex; align-items: center; gap: 7px; color: var(--text-primary); }
@@ -1465,6 +1467,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   background: rgb(8 10 24 / 54%);
 }
 .equip-skill-option {
+  position: relative;
   display: grid;
   align-content: start;
   gap: 6px;
@@ -1473,23 +1476,18 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .equip-skill-option > .tooltip-anchor {
   min-width: 0;
 }
-.equip-skill-option.locked > .tooltip-anchor {
+.equip-skill-option.locked > .tooltip-anchor .skill-tile {
   filter: grayscale(.82);
-  opacity: .5;
+  opacity: .34;
 }
 .equip-skill-unlock-row {
-  display: grid;
-  gap: 6px;
-  justify-items: center;
+  display: contents;
+}
+.equip-skill-unlock-requirement {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.25;
   text-align: center;
-}
-.skill-unlock-button-inline {
-  min-width: 118px;
-  padding: 7px 10px;
-  font-size: 12px;
 }
 .equip-dialog-relic .candidate-card > .tooltip-description {
   color: var(--text-secondary);
@@ -2753,6 +2751,55 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   width: 100%;
 }
 
+.app-keyboard-root [data-app-keyboard-control].app-keyboard-focused,
+.app-keyboard-root button.app-keyboard-focused,
+.app-keyboard-root input.app-keyboard-focused,
+.app-keyboard-root select.app-keyboard-focused,
+.app-keyboard-root textarea.app-keyboard-focused,
+.app-keyboard-root summary.app-keyboard-focused,
+.app-keyboard-root [role="button"].app-keyboard-focused,
+.app-keyboard-root [role="tab"].app-keyboard-focused,
+.app-keyboard-root [role="option"].app-keyboard-focused {
+  outline: 1px solid var(--accent-magic);
+  outline-offset: 1px;
+}
+
+.app-keyboard-root .ability-slot.app-keyboard-focused,
+.app-keyboard-root .loadout-relic-cell.app-keyboard-focused,
+.app-keyboard-root .skill-tile.app-keyboard-focused,
+.app-keyboard-root .candidate-card.app-keyboard-focused,
+.app-keyboard-root .ability-candidate.app-keyboard-focused,
+.app-keyboard-root .shop-purchase.app-keyboard-focused,
+.app-keyboard-root .dungeon-enter-button.app-keyboard-focused {
+  border-color: var(--accent-magic);
+  box-shadow: 0 0 18px rgb(167 121 255 / 18%);
+}
+
+.app-keyboard-root .catalog-card-details.app-keyboard-focused,
+.app-keyboard-root .grid-challenge-track.app-keyboard-focused,
+.app-keyboard-root .tracked-untrack.app-keyboard-focused,
+.app-keyboard-root .menu-button.app-keyboard-focused,
+.app-keyboard-root .dungeon-page-tabs button.app-keyboard-focused {
+  border-color: var(--border-bright);
+  box-shadow: 0 0 16px rgb(121 136 216 / 18%);
+}
+
+.app-keyboard-root .catalog-card.app-keyboard-focused,
+.app-keyboard-root .dungeon-card.app-keyboard-focused {
+  border-color: var(--border-bright);
+  box-shadow: 0 20px 55px rgb(0 0 0 / 34%), 0 0 24px rgb(121 136 216 / 18%);
+}
+
+.app-keyboard-focus-proxy {
+  outline: none !important;
+}
+
+.app-keyboard-root .app-keyboard-invalid {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 0 2px rgb(255 110 134 / 24%), 0 0 22px rgb(255 110 134 / 52%) !important;
+  animation: combat-invalid-selection .36s ease-out;
+}
+
 .dungeon-info-summary {
   display: grid;
   grid-template-columns: 108px minmax(0, 1fr);
@@ -3405,12 +3452,12 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .battle-unit.legal-target {
   z-index: 2;
   border-color: var(--focus);
-  box-shadow: 0 0 0 2px rgb(255 240 168 / 20%), 0 0 38px rgb(255 240 168 / 36%);
+  box-shadow: 0 0 0 1px rgb(255 240 168 / 12%), 0 0 22px rgb(255 240 168 / 22%);
   animation: combat-target-pulse 1s ease-in-out infinite alternate;
 }
 
 @keyframes combat-target-pulse {
-  to { box-shadow: 0 0 0 3px rgb(255 240 168 / 28%), 0 0 48px rgb(255 240 168 / 48%); }
+  to { box-shadow: 0 0 0 2px rgb(255 240 168 / 18%), 0 0 30px rgb(255 240 168 / 30%); }
 }
 
 .battle-unit.acting-skill {
@@ -3633,6 +3680,51 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .combat-swap-actions > button:hover:not(:disabled) {
   border-color: var(--accent-magic);
   box-shadow: 0 0 16px rgb(167 121 255 / 18%);
+}
+
+.combat-screen [data-combat-control]:focus-visible {
+  outline: 1px solid var(--accent-magic);
+  outline-offset: 1px;
+}
+
+.combat-screen [data-combat-control].combat-keyboard-focused {
+  outline: 1px solid var(--accent-magic);
+  outline-offset: 1px;
+}
+
+.combat-primary-actions > [data-combat-control].combat-keyboard-focused,
+.combat-swap-actions > [data-combat-control].combat-keyboard-focused,
+.skill-tile[data-combat-control].combat-keyboard-focused {
+  border-color: var(--accent-magic);
+  box-shadow: 0 0 16px rgb(167 121 255 / 18%);
+}
+
+.combat-lead-option[data-combat-control].combat-keyboard-focused,
+.battle-unit[data-combat-control].combat-keyboard-focused {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px rgb(255 240 168 / 14%), 0 0 20px rgb(255 240 168 / 24%);
+}
+
+.battle-unit.legal-target[data-combat-control].combat-keyboard-focused {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px rgb(255 240 168 / 16%), 0 0 30px rgb(255 240 168 / 28%);
+  animation: none;
+}
+
+.combat-keyboard-focus-proxy {
+  outline: none !important;
+}
+
+.combat-screen [data-combat-control].combat-keyboard-invalid {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 0 2px rgb(255 110 134 / 24%), 0 0 22px rgb(255 110 134 / 52%) !important;
+  animation: combat-invalid-selection .36s ease-out;
+}
+
+@keyframes combat-invalid-selection {
+  0%, 100% { filter: none; }
+  25% { filter: brightness(1.55) saturate(1.35); }
+  55% { filter: brightness(.82) saturate(1.5); }
 }
 
 .combat-mana-cost {
@@ -4033,16 +4125,20 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   align-items: center;
   gap: 12px;
   width: 100%;
-  min-height: 58px;
+  min-height: 88px;
   margin-top: 5px;
-  padding: 9px 13px;
+  padding: 16px 20px;
   border: 1px solid var(--border-bright);
   border-radius: var(--radius-md);
   background: linear-gradient(155deg, rgb(19 24 52 / 98%), rgb(7 10 25 / 98%));
   color: var(--text-primary);
-  font-size: clamp(13px, 1.05vw, 17px);
-  line-height: 1.45;
+  font-size: clamp(16px, 1.15vw, 20px);
+  line-height: 1.5;
   text-align: left;
+}
+
+.combat-narration-copy {
+  min-width: 0;
 }
 
 .combat-narration:disabled {
@@ -4578,8 +4674,8 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 
   .combat-narration {
-    min-height: 50px;
-    padding-block: 7px;
+    min-height: 76px;
+    padding-block: 12px;
   }
 
   .combat-command-row,
@@ -4968,10 +5064,11 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 
   .combat-narration {
-    min-height: 52px;
+    min-height: 70px;
     margin-top: 5px;
-    padding: 7px 9px;
-    font-size: 11px;
+    padding: 12px;
+    font-size: clamp(14px, 3.8vw, 17px);
+    line-height: 1.4;
   }
 
   .combat-command-row {
@@ -4990,7 +5087,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 
   .combat-narration.advanceable {
-    min-height: 52px;
+    min-height: 70px;
   }
 
   .combat-screen:has(.combat-command-row:not(:empty)),
@@ -5086,7 +5183,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   .combat-header h1 { font-size: 20px; }
   .combat-primary-actions > button { font-size: 8px; }
   .combat-die { min-width: 0; }
-  .combat-narration { min-height: 52px; padding: 7px 9px; }
+  .combat-narration { min-height: 66px; padding: 10px; }
 }
 
 /* Bag inventory */

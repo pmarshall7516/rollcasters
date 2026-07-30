@@ -74,6 +74,25 @@ export function collectibleIsOwned(data: AppData, type: CollectibleType, id: str
   return player.relicInventory.some((row) => row.relic_id === id && row.quantity > 0 && row.discovered_at !== null);
 }
 
+/**
+ * Ownership can exist before a challenge-gated collectible is unlocked (for
+ * example, when a Relic was granted by an older reward path). Keep that
+ * inventory state separate from the permission to use the collectible.
+ */
+export function collectibleIsUnlocked(data: AppData, type: CollectibleType, id: string): boolean {
+  if (!collectibleIsOwned(data, type, id)) return false;
+
+  const requirement = data.catalog.collectibleUnlockRequirements.find(
+    (row) => row.collectible_type === type && row.collectible_id === id,
+  );
+  if (!requirement || requirement.required_challenges <= 0) return true;
+
+  const challenges = challengesFor(data, type, id);
+  if (challenges.length === 0) return false;
+  const completed = challenges.filter((challenge) => progressFor(data, challenge.id).completed).length;
+  return completed >= requirement.required_challenges;
+}
+
 export function challengesFor(data: AppData, type: CollectibleType, id: string): CollectibleUnlockChallenge[] {
   return data.catalog.collectibleUnlockChallenges
     .filter((row) => row.collectible_type === type && row.collectible_id === id)
@@ -364,7 +383,7 @@ export function shopAvailability(data: AppData, entry: ShopEntry): ShopAvailabil
     const challenge = challengesFor(data, entry.target_category, entry.target_id).find((row) => row.challenge_type === "shop_shards");
     const current = shardProgress(data, entry.target_category, entry.target_id);
     const goal = safeBigInt(challenge?.required_amount);
-    if (collectibleIsOwned(data, entry.target_category, entry.target_id)) return unavailable("COLLECTIBLE_ALREADY_UNLOCKED", "Already unlocked", current, goal);
+    if (collectibleIsUnlocked(data, entry.target_category, entry.target_id)) return unavailable("COLLECTIBLE_ALREADY_UNLOCKED", "Already unlocked", current, goal);
     if (!challenge) return unavailable("SHOP_SHARDS_CHALLENGE_MISSING", "Shard unlock not configured", current, goal);
     if (current >= goal) return unavailable("SHOP_SHARDS_CHALLENGE_COMPLETE", "Shard goal complete", current, goal);
     if (balance < price) return unavailable("INSUFFICIENT_FUNDS", `Need ${formatAmount(price - balance)} more ${currency.name}`, current, goal);
@@ -375,7 +394,7 @@ export function shopAvailability(data: AppData, entry: ShopEntry): ShopAvailabil
   const inventory = data.player?.relicInventory.find((row) => row.relic_id === entry.target_id);
   const current = safeBigInt(inventory?.quantity);
   const goal = safeBigInt(relic?.max_owned);
-  const unlocked = collectibleIsOwned(data, "relic", entry.target_id);
+  const unlocked = collectibleIsUnlocked(data, "relic", entry.target_id);
   const challenge = challengesFor(data, "relic", entry.target_id).find((row) => row.challenge_type === "shop_relic");
   if (!unlocked && !challenge) return unavailable("SHOP_RELIC_CHALLENGE_MISSING", "Relic unlock not configured", current, goal);
   if (current + safeBigInt(entry.quantity) > goal) return unavailable("RELIC_MAX_OWNED_REACHED", "Maximum owned", current, goal);

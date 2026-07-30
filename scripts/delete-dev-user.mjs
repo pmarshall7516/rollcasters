@@ -97,7 +97,7 @@ async function authAdminRequest(path, options = {}) {
       throw new Error(
         [
           `Supabase refused to delete the Auth user because a public table still has a restrictive foreign key: ${message}`,
-          "Apply supabase/migrations/015_auth_user_delete_audit_fks.sql, then rerun this command.",
+          "Apply the corresponding migration from rollcaster-docs/migrations, then rerun this command.",
         ].join("\n"),
       );
     }

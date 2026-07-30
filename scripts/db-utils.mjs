@@ -4,7 +4,7 @@ import pg from "pg";
 
 export const root = process.cwd();
 export const sharedMigrationsDir = path.resolve(
-  process.env.ROLLCASTER_MIGRATIONS_DIR ?? path.join(root, "..", "rollcaster-docs", "05 Database", "migrations"),
+  process.env.ROLLCASTER_MIGRATIONS_DIR ?? path.join(root, "..", "rollcaster-docs", "migrations"),
 );
 
 export function parseEnv(filePath = path.join(root, ".env")) {
@@ -87,10 +87,27 @@ export function parseArgs(argv = process.argv.slice(2)) {
 }
 
 export function migrationFiles() {
-  return fs
-    .readdirSync(sharedMigrationsDir)
-    .filter((file) => file.endsWith(".sql"))
-    .sort();
+  const files = [];
+
+  function visit(directory, relativeDirectory = "") {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const relativePath = path.posix.join(relativeDirectory, entry.name);
+      if (relativePath.split("/").includes("archive")) continue;
+
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath, relativePath);
+      } else if (entry.isFile() && entry.name.endsWith(".sql")) {
+        files.push(relativePath);
+      }
+    }
+  }
+
+  visit(sharedMigrationsDir);
+  return files.sort((left, right) => {
+    const byFilename = path.basename(left).localeCompare(path.basename(right));
+    return byFilename || left.localeCompare(right);
+  });
 }
 
 export function resolveMigrationSelection(filesArg) {
@@ -103,12 +120,20 @@ export function resolveMigrationSelection(filesArg) {
     .filter(Boolean);
 
   const selected = requested.map((requestedFile) => {
-    const normalized = requestedFile.replace(/^.*[\\/]migrations[\\/]/, "");
+    const normalized = requestedFile.replace(/^.*[\\/]migrations[\\/]/, "").replaceAll("\\", "/");
     const exact = allFiles.find((file) => file === requestedFile || file === normalized);
     if (exact) return exact;
+
+    const basenameMatches = allFiles.filter((file) => path.basename(file) === path.basename(normalized));
+    if (basenameMatches.length === 1) return basenameMatches[0];
 
     throw new Error(`Migration not found: ${requestedFile}`);
   });
 
   return selected;
+}
+
+export function readMigration(file) {
+  const [resolved] = resolveMigrationSelection(file);
+  return fs.readFileSync(path.join(sharedMigrationsDir, resolved), "utf8");
 }

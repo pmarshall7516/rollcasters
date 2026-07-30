@@ -199,8 +199,15 @@ async function advanceNarration(page) {
   for (let index = 0; index < 40; index += 1) {
     const phase = (await gameState(page)).combat?.phase;
     if (phase !== "event_playback") return phase;
-    await page.waitForFunction(() => !document.querySelector(".combat-narration")?.disabled);
-    await page.locator(".combat-narration").click();
+    if (!(await page.locator(".combat-narration").count())) {
+      await page.waitForTimeout(100);
+      continue;
+    }
+    await page.waitForFunction(() => {
+      const button = document.querySelector(".combat-narration");
+      return button instanceof HTMLButtonElement && !button.disabled;
+    });
+    await page.locator(".combat-narration:not(:disabled)").click();
   }
   throw new Error("Combat event playback did not terminate.");
 }
@@ -541,9 +548,13 @@ try {
 
   await page.getByRole("button", { name: "Roll Dice" }).click();
   check(await page.locator(".combat-narration").isDisabled(), "Narration must remain gated while dice are rolling.");
-  check((await page.locator(".combat-narration").innerText()).includes("Rolling"), "The rolling state must be narrated.");
-  await page.waitForTimeout(750);
+  check((await page.locator(".combat-narration-copy").getAttribute("class"))?.includes("typing"), "The rolling state must use the combat typewriter.");
+  await page.waitForFunction(() => {
+    const button = document.querySelector(".combat-narration");
+    return button instanceof HTMLButtonElement && !button.disabled;
+  });
   check(await page.locator(".combat-narration").isEnabled(), "Dice results must become advanceable after the settle animation.");
+  check(!(await page.locator(".combat-narration-copy").getAttribute("class"))?.includes("typing"), "Combat narration must finish typing before it becomes advanceable.");
   check(
     await page.locator(".combat-narration").getAttribute("title") === "Click or press Space to continue",
     "Ready combat narration must expose the click and Space advance hint.",
@@ -646,6 +657,7 @@ try {
   await page.locator(".battle-unit .combat-back-row:visible").first().click();
   await page.setViewportSize({ width: 1912, height: 953 });
   await page.waitForFunction(() => document.querySelector(".combat-viewport-fit")?.dataset.viewportFitScale);
+  await page.waitForTimeout(120);
   const shortWideCombat = await page.evaluate(() => {
     const fit = document.querySelector(".combat-viewport-fit");
     const fitRect = fit?.getBoundingClientRect();
@@ -990,14 +1002,20 @@ try {
     }
     if (phase === "await_roll") {
       await page.getByRole("button", { name: "Roll Dice" }).click();
-      await page.waitForTimeout(700);
-      await page.locator(".combat-narration").click();
+      await page.waitForFunction(() => {
+        const button = document.querySelector(".combat-narration");
+        return button instanceof HTMLButtonElement && !button.disabled;
+      });
+      await page.locator(".combat-narration:not(:disabled)").click();
       await waitForPhase(page, ["select_player_actions"]);
       continue;
     }
     if (phase === "roll_result") {
-      await page.waitForTimeout(700);
-      await page.locator(".combat-narration").click();
+      await page.waitForFunction(() => {
+        const button = document.querySelector(".combat-narration");
+        return button instanceof HTMLButtonElement && !button.disabled;
+      });
+      await page.locator(".combat-narration:not(:disabled)").click();
       await waitForPhase(page, ["select_player_actions"]);
       continue;
     }

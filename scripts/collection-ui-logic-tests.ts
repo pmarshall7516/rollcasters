@@ -1,5 +1,5 @@
 import { calculateLoadoutStats } from "../src/lib/loadout.js";
-import { challengeDescription, progressFor } from "../src/lib/collectibles.js";
+import { challengeDescription, collectibleIsUnlocked, progressFor } from "../src/lib/collectibles.js";
 import { relicSlotUnlocks, xpProgress } from "../src/lib/progression.js";
 import type { AppData, Catalog, CollectibleUnlockChallenge, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
@@ -158,5 +158,73 @@ const quantityRelicChallenge = {
   required_amount: "3",
 } satisfies CollectibleUnlockChallenge;
 check(challengeDescription(ownershipData, quantityRelicChallenge) === "Own 3 of: Guard Charm.", "Quantity-based Relic ownership text must match the dev default.");
+
+const gatedRelic = {
+  ...catalog.relics[0],
+  id: "polished-ivory-gated-relic",
+};
+const gatedRelicChallenge = {
+  ...quantityRelicChallenge,
+  id: "polished-ivory-gate",
+  collectible_type: "relic",
+  collectible_id: gatedRelic.id,
+  parameters: {
+    collectible_category: "relic",
+    collectible_ids: ["guard"],
+    required_amount: 3,
+    require_unique_collectibles: false,
+  },
+  target_category: "relic",
+  target_id: "guard",
+  required_amount: "3",
+} satisfies CollectibleUnlockChallenge;
+const gatedRelicData = {
+  catalog: {
+    ...catalog,
+    relics: [...catalog.relics, gatedRelic],
+    collectibleUnlockRequirements: [{ collectible_type: "relic", collectible_id: gatedRelic.id, required_challenges: 1 }],
+    collectibleUnlockChallenges: [gatedRelicChallenge],
+  },
+  player: {
+    ...player,
+    relicInventory: [{ user_id: "user", relic_id: gatedRelic.id, quantity: 1, discovered_at: "now" }],
+    collectibleSnapshot: {
+      ...player.collectibleSnapshot,
+      progress: [{ challenge_id: gatedRelicChallenge.id, current: "0", goal: "3", completed: false, eligible: true }],
+    },
+  },
+} as AppData;
+check(!collectibleIsUnlocked(gatedRelicData, "relic", gatedRelic.id), "Owning a gated Relic must not unlock it before its required challenges are complete.");
+gatedRelicData.player!.collectibleSnapshot.progress[0].current = "3";
+gatedRelicData.player!.collectibleSnapshot.progress[0].goal_reached = true;
+gatedRelicData.player!.collectibleSnapshot.progress[0].completed = true;
+check(collectibleIsUnlocked(gatedRelicData, "relic", gatedRelic.id), "A gated Relic must unlock after the required challenge count is complete.");
+
+const thresholdChallenges = [
+  gatedRelicChallenge,
+  { ...gatedRelicChallenge, id: "polished-ivory-gate-two", sort_order: 1 },
+  { ...gatedRelicChallenge, id: "polished-ivory-gate-three", sort_order: 2 },
+];
+const thresholdData = {
+  catalog: {
+    ...gatedRelicData.catalog,
+    collectibleUnlockRequirements: [{ collectible_type: "relic", collectible_id: gatedRelic.id, required_challenges: 2 }],
+    collectibleUnlockChallenges: thresholdChallenges,
+  },
+  player: {
+    ...gatedRelicData.player!,
+    collectibleSnapshot: {
+      ...gatedRelicData.player!.collectibleSnapshot,
+      progress: thresholdChallenges.map((challenge, index) => ({
+        challenge_id: challenge.id,
+        current: index < 2 ? "1" : "0",
+        goal: "1",
+        completed: index < 2,
+        eligible: true,
+      })),
+    },
+  },
+} as AppData;
+check(collectibleIsUnlocked(thresholdData, "relic", gatedRelic.id), "A collectible must unlock when its configured required challenge count, not necessarily every authored row, is complete.");
 
 console.log("Collection progression and loadout stat tests passed.");

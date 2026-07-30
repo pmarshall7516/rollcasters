@@ -1,17 +1,12 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { createDbClient, root } from "./db-utils.mjs";
+import { createDbClient, readMigration } from "./db-utils.mjs";
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
 }
 
 const client = createDbClient();
-const migrationSql = fs.readFileSync(
-  path.join(root, "supabase", "migrations", "009_two_critter_elements.sql"),
-  "utf8",
-);
+const migrationSql = readMigration("009_two_critter_elements.sql");
 let began = false;
 
 async function expectFailure(sql, params, expectedMessage) {

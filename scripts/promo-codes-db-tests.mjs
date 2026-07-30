@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { createDbClient, root } from "./db-utils.mjs";
+import { createDbClient, readMigration } from "./db-utils.mjs";
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -28,10 +26,7 @@ try {
   await client.connect();
   await client.query("begin");
   began = true;
-  const migrationSql = fs.readFileSync(
-    path.join(root, "supabase", "migrations", "018_promo_code_player_uses.sql"),
-    "utf8",
-  );
+  const migrationSql = readMigration("018_promo_code_player_uses.sql");
   await client.query(migrationSql);
   await client.query(migrationSql);
 

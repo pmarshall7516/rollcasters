@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { createDbClient, root } from "./db-utils.mjs";
+import { createDbClient, readMigration } from "./db-utils.mjs";
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -11,7 +9,7 @@ const client = createDbClient();
 const migrationSql = [
   "20260720030000_fix_indirect_player_revision_trigger.sql",
   "20260727020000_clear_relics_on_squad_unequip.sql",
-].map((file) => fs.readFileSync(path.join(root, "supabase", "migrations", file), "utf8")).join("\n");
+].map((file) => readMigration(file)).join("\n");
 let began = false;
 
 try {
