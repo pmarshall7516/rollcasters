@@ -1,5 +1,5 @@
 import { challengeDescription, challengeGoal } from "../src/lib/collectibles.js";
-import { challengeEventIncrement } from "../src/lib/challenges.js";
+import { challengeEventIncrement, derivedChallengeProgress } from "../src/lib/challenges.js";
 import type { AppData, CollectibleUnlockChallenge } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -111,4 +111,49 @@ check(challengeEventIncrement(friendlyVileHealing, {
   payload: { source_side: "player", recipient_side: "enemy" },
 }) === 0, "Heal HP must reject healing on the wrong recipient side.");
 
-console.log(`Challenge text audit passed for ${cases.length + 2} representative definitions.`);
+const frostTeraDiversity = challenge("collection_diversity", {
+  diversity_mode: "specific_types",
+  required_per_type: 1,
+  require_unique_critters: true,
+  required_element_ids: ["frost", "tera"],
+});
+const frostTeraData = {
+  ...data,
+  catalog: {
+    ...data.catalog,
+    critters: [
+      { id: "brumbear", name: "Brumbear", element_1_id: "frost", element_2_id: "tera" },
+      { id: "frostling", name: "Frostling", element_1_id: "frost", element_2_id: null },
+    ],
+  },
+  player: {
+    critters: [{ id: "owned-brumbear", user_id: "user", critter_id: "brumbear", level: 1, xp: 0, skill_points: 0 }],
+    collectibleSnapshot: { progress: [], shards: [], tracked: [] },
+  },
+} as unknown as AppData;
+check(derivedChallengeProgress(frostTeraData, frostTeraDiversity) === 1n, "A dual-element Critter must fill only one unique Frost/Tera requirement.");
+check(derivedChallengeProgress({ ...frostTeraData, player: { ...frostTeraData.player, critters: [...frostTeraData.player!.critters, { id: "owned-frostling", user_id: "user", critter_id: "frostling", level: 1, xp: 0, skill_points: 0 }] } }, frostTeraDiversity) === 2n, "Two distinct Critters must satisfy the Frost/Tera ownership requirements.");
+
+const dungeonFrostTera = challenge("squad_composition", {
+  completion_event: "dungeon_clear",
+  required_completions: 1,
+  required_element_ids: ["frost", "tera"],
+  required_matching_critters: 2,
+  required_distinct_elements: 2,
+});
+const dungeonEvent = (squad: Array<Record<string, unknown>>, type: "dungeon_completed" | "battle_completed" = "dungeon_completed") => challengeEventIncrement(dungeonFrostTera, {
+  eventId: "dungeon:1",
+  type,
+  payload: { won: true, squad },
+});
+check(dungeonEvent([{ critter_id: "brumbear", element_ids: ["frost", "tera"] }]) === 0, "A single dual-element Critter must not satisfy the two-Critter dungeon challenge.");
+check(dungeonEvent([
+  { critter_id: "brumbear", element_ids: ["frost", "tera"] },
+  { critter_id: "frostling", element_ids: ["frost"] },
+]) === 1, "Two unique Critters covering Frost and Tera must satisfy the dungeon challenge.");
+check(dungeonEvent([
+  { critter_id: "brumbear", element_ids: ["frost", "tera"] },
+  { critter_id: "frostling", element_ids: ["frost"] },
+], "battle_completed") === 0, "The dungeon challenge must ignore battle-completed events.");
+
+console.log(`Challenge text and progression audit passed for ${cases.length + 7} representative definitions.`);

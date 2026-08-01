@@ -8,14 +8,17 @@ import {
   critterElementIds,
   critterHasElement,
   elementEffectiveness,
+  isActorRecharging,
   matchesSelectedElements,
   orderedActiveCombatUnits,
   resolveTurn,
   refreshSetupRuntimeEffects,
   roundHalfUp,
   rollDamagePercent,
+  rollManaDie,
   MULTI_TARGET_DAMAGE_MULTIPLIER,
   skillTargets,
+  skillAvailability,
 } from "../src/lib/game.js";
 import {
   advanceDungeonEvent,
@@ -719,14 +722,78 @@ const grouped = groupCombatEffectRows([
 ]);
 check(grouped.skill.strike.map((item) => item.id).join(",") === "first,later", "combat_effects_v1 rows must group by owner and preserve ascending sort order.");
 check(grouped.relic.carrier[0].id === "first", "Inline effect IDs may be reused by different owners without becoming shared definitions.");
-check(!("element_ids" in grouped.relic["002"][0].parameters), "Hidden element picker defaults must be removed from non-element effect targets.");
+check(Array.isArray(grouped.relic["002"][0].parameters.target_element_ids) && grouped.relic["002"][0].parameters.element_ids === undefined, "Legacy element filters must normalize to explicit target Critter filters.");
+
+const composableElementCatalog = makeCatalog();
+composableElementCatalog.effectsByAbility = {
+  "friendly-stat": [effect("ability", "friendly-stat", "bloom-friendly", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 7, target: "all_friendlies", target_element_ids: ["bloom"] })],
+  "enemy-stat": [effect("ability", "enemy-stat", "aqua-enemy", "stat_modifier", { stat: "def", value_mode: "flat", amount: -4, target: "all_enemies", target_element_ids: ["aqua"] })],
+};
+composableElementCatalog.effectsByRelic = {
+  carrier: [effect("relic", "carrier", "aqua-carrier", "stat_modifier", { stat: "hp", value_mode: "flat", amount: 10, target: "equipped_critter", target_element_ids: ["aqua"] })],
+};
+composableElementCatalog.effectsBySkill.wave = [
+  effect("skill", "wave", "aqua-target-defense", "stat_modifier", { stat: "def", value_mode: "flat", amount: -5, chance: 1, target: "target_enemies", target_element_ids: ["aqua"] }),
+];
+const composablePlayer = makePlayer();
+composablePlayer.abilitySlots = [
+  { user_rollcaster_id: "ur", slot_index: 1, ability_id: "friendly-stat" },
+  { user_rollcaster_id: "ur", slot_index: 2, ability_id: "enemy-stat" },
+];
+composablePlayer.relicSlots = [{ user_critter_id: "up2", slot_index: 1, relic_id: "carrier" }];
+const composableBattle = battle(composableElementCatalog, composablePlayer, "composable-element-filters");
+check(composableBattle.playerUnits[0].stats.atk === 25 && composableBattle.playerUnits[1].stats.atk === 27, "An Ability element filter must apply a friendly stat modifier only to matching Critters.");
+check(composableBattle.opponentUnits[0].stats.def === 25 && composableBattle.opponentUnits[1].stats.def === 16, "An Ability element filter must apply an enemy stat modifier only to matching Critters.");
+check(composableBattle.playerUnits[1].maxHp === 90 && composableBattle.playerUnits[0].maxHp === 100, "A Relic element filter must apply only when its equipped Critter matches the selected Elements.");
+const composableSkillResult = takeTurn(composableBattle, [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }]);
+check(composableSkillResult.opponentUnits[0].stats.def === 25 && composableSkillResult.opponentUnits[1].stats.def === 11, "A Skill Effect element filter must compose with its target selection and affect only matching enemy recipients.");
+
+const sourceGateCatalog = makeCatalog();
+sourceGateCatalog.effectsBySkill.wave = [
+  effect("skill", "wave", "attuned-pressure", "stat_modifier", {
+    stat: "def", value_mode: "flat", amount: -5, chance: 1, target: "all_enemies",
+    source_element_ids: ["bloom", "aqua"], target_element_ids: ["basic"],
+  }),
+];
+const inactiveSourceResult = takeTurn(
+  battle(sourceGateCatalog, makePlayer(), "inactive-skill-source-gate"),
+  [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }],
+);
+check(inactiveSourceResult.opponentUnits[0].stats.def === 25, "A source-gated Skill Effect must remain inactive for a non-matching user without preventing the Skill action.");
+const activeSourceResult = takeTurn(
+  battle(sourceGateCatalog, makePlayer(), "active-skill-source-gate"),
+  [{ actorKey: "p2", type: "skill", skillId: "wave", cost: 0 }],
+);
+check(
+  activeSourceResult.opponentUnits[0].stats.def === 20 && activeSourceResult.opponentUnits[1].stats.def === 20,
+  "A dual-element Skill user matching both source requirements must activate the Effect once, and only Basic enemy targets may receive it.",
+);
+
+const relicSourceCatalog = makeCatalog();
+relicSourceCatalog.effectsByRelic.carrier = [
+  effect("relic", "carrier", "rising-current", "mana_dice_modifier", {
+    minimum_delta: 1, maximum_delta: 2, target: "equipped_critter",
+    source_element_ids: ["bloom", "aqua"], target_element_ids: ["bloom", "aqua"],
+  }),
+];
+const inactiveRelicPlayer = makePlayer();
+inactiveRelicPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "carrier" }];
+const inactiveRelicBattle = battle(relicSourceCatalog, inactiveRelicPlayer, "inactive-relic-source-gate");
+check(inactiveRelicBattle.playerUnits[0].stats.diceMin === 2 && inactiveRelicBattle.playerUnits[0].stats.diceMax === 4, "A Relic Effect must remain inactive when its bearer misses the equipped-Critter Element requirement.");
+const activeRelicPlayer = makePlayer();
+activeRelicPlayer.relicSlots = [{ user_critter_id: "up2", slot_index: 1, relic_id: "carrier" }];
+const activeRelicBattle = battle(relicSourceCatalog, activeRelicPlayer, "active-relic-source-gate");
+check(
+  activeRelicBattle.playerUnits[1].stats.diceMin === 2 && activeRelicBattle.playerUnits[1].stats.diceMax === 5,
+  "A dual-element Relic bearer matching both requirements must receive the Mana-die Effect exactly once.",
+);
 
 const passiveCatalog = makeCatalog();
 passiveCatalog.effectsByAbility = {
   "friendly-stat": [effect("ability", "friendly-stat", "friendly-stat", "stat_modifier", { stat: "def", value_mode: "percentage", amount: 0.1, target: "all_friendlies" })],
   "enemy-stat": [effect("ability", "enemy-stat", "enemy-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: -2, target: "all_enemies" })],
-  "friendly-dice": [effect("ability", "friendly-dice", "friendly-dice", "mana_dice_modifier", { minimum_delta: 1, maximum_delta: 2, target: "all_element_friendlies", element_ids: ["bloom"] })],
-  "enemy-dice": [effect("ability", "enemy-dice", "enemy-dice", "mana_dice_modifier", { minimum_delta: 2, maximum_delta: 3, target: "all_element_enemies", element_ids: ["bloom"] })],
+  "friendly-dice": [effect("ability", "friendly-dice", "friendly-dice", "mana_dice_modifier", { minimum_delta: 1, maximum_delta: 2, target: "all_element_friendlies", target_element_ids: ["bloom"] })],
+  "enemy-dice": [effect("ability", "enemy-dice", "enemy-dice", "mana_dice_modifier", { minimum_delta: 2, maximum_delta: 3, target: "all_element_enemies", target_element_ids: ["bloom"] })],
 };
 passiveCatalog.effectsByRelic = {
   carrier: [effect("relic", "carrier", "carrier", "stat_modifier", { stat: "hp", value_mode: "flat", amount: 10, target: "equipped_critter" })],
@@ -750,6 +817,21 @@ check(passive.playerUnits[0].stats.diceMin === 3 && passive.playerUnits[1].stats
 check(passive.opponentUnits[0].stats.atk === 22 && passive.opponentUnits[1].stats.atk === 24, "Ability all_enemies must affect every active opponent.");
 check(passive.opponentUnits[0].stats.spd === 10 && passive.opponentUnits[1].stats.spd === 8, "Relic all_enemies must resolve relative to its carrier.");
 check(passive.opponentUnits[0].stats.diceMin === 1 && passive.opponentUnits[1].stats.diceMin === 4 && passive.opponentUnits[1].stats.diceMax === 8, "Ability element enemy targeting must filter active opponents by element.");
+const cappedDiceCatalog = makeCatalog();
+cappedDiceCatalog.effectsByAbility["capped-dice"] = [
+  effect("ability", "capped-dice", "capped-dice", "mana_dice_modifier", { minimum_delta: 10, maximum_delta: 0, target: "all_friendlies" }),
+];
+cappedDiceCatalog.rollcasterAbilities.push({ id: "capped-dice", name: "Capped Dice", description: "Capped Dice.", sort_order: 4 });
+const cappedDicePlayer = makePlayer();
+cappedDicePlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "capped-dice" }];
+const cappedDiceBattle = battle(cappedDiceCatalog, cappedDicePlayer, "capped-dice");
+check(
+  cappedDiceBattle.playerUnits.slice(0, 2).every((unit) => unit.stats.diceMin === unit.stats.diceMax)
+    && cappedDiceBattle.playerUnits[0].stats.diceMin === 4
+    && cappedDiceBattle.playerUnits[1].stats.diceMin === 3,
+  "A Mana minimum boost above the maximum must cap the minimum at the maximum for every affected Critter.",
+);
+check(rollManaDie(10, 4, () => 0) === 4, "Combat die rolls must also cap an over-maximum minimum instead of raising the maximum.");
 const passiveSwapSlot = passive.playerUnits[0].battlefieldSlot;
 passive = takeTurn(passive, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }]);
 check(passive.playerUnits[0].maxHp === 110 && passive.playerUnits[1].stats.atk === 23, "Equipped Relic stat effects must remain sourced from the equipped Critter after it leaves active play.");
@@ -844,6 +926,137 @@ check(skilled.playerUnits[1].stats.def === 22 && skilled.playerUnits[0].stats.de
 check(skilled.playerUnits[0].stats.spd === 27 && skilled.playerUnits[1].stats.spd === 18, "Signed Skill percentages must round their deltas half-up for all_friendlies.");
 check(skilled.opponentUnits[0].stats.atk === 21 && skilled.opponentUnits[1].stats.atk === 23, "Skill all_enemies must affect all active enemy slots.");
 
+const revivalCatalog = makeCatalog();
+revivalCatalog.effectsBySkill.mark = [
+  effect("skill", "mark", "second-wind", "critter_revival", {
+    target: "target_friendlies",
+    value_mode: "percent_max_hp",
+    amount: 0.5,
+    chance: 1,
+  }),
+];
+let revivalBattle = battle(revivalCatalog, makePlayer(), "revival-percent");
+revivalBattle = {
+  ...revivalBattle,
+  playerUnits: revivalBattle.playerUnits.map((unit) => unit.key === "p3" ? { ...unit, hp: 0 } : unit),
+};
+check(
+  skillTargets(revivalBattle, "p1", revivalBattle.playerUnits[0].skills.find((skill) => skill.id === "mark")!)
+    .some((unit) => unit.key === "p3"),
+  "A single-target revival Skill must expose knocked-out friendly bench Critters as legal targets.",
+);
+const revived = takeTurn(revivalBattle, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p3", cost: 2 }]);
+check(
+  revived.playerUnits.find((unit) => unit.key === "p3")?.hp === 45
+    && revived.playerUnits.find((unit) => unit.key === "p3")?.active === false,
+  "Percentage revival must restore the configured maximum-HP percentage without forcing a benched Critter active.",
+);
+check(
+  revived.presentationEvents.some((event) => event.kind === "heal" && event.targetKeys.includes("p3") && event.hpChanges.some((change) => change.before === 0 && change.after === 45)),
+  "Revival must publish a visible HP-change presentation event.",
+);
+
+const flatRevivalCatalog = makeCatalog();
+flatRevivalCatalog.effectsBySkill.mark = [
+  effect("skill", "mark", "flat-revive", "critter_revival", {
+    target: "target_friendlies",
+    value_mode: "flat",
+    amount: 17,
+    chance: 1,
+  }),
+];
+let flatRevivalBattle = battle(flatRevivalCatalog, makePlayer(), "revival-flat");
+flatRevivalBattle = {
+  ...flatRevivalBattle,
+  playerUnits: flatRevivalBattle.playerUnits.map((unit) => unit.key === "p2" ? { ...unit, hp: 0 } : unit),
+};
+const flatRevived = takeTurn(flatRevivalBattle, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p2", cost: 2 }]);
+check(flatRevived.playerUnits.find((unit) => unit.key === "p2")?.hp === 17, "Flat revival must restore exactly the authored HP amount.");
+
+const failedRevivalCatalog = makeCatalog();
+failedRevivalCatalog.effectsBySkill.mark = [
+  effect("skill", "mark", "failed-revive", "critter_revival", {
+    target: "target_friendlies",
+    value_mode: "percent_max_hp",
+    amount: 1,
+    chance: 0,
+  }),
+];
+let failedRevivalBattle = battle(failedRevivalCatalog, makePlayer(), "revival-failure");
+failedRevivalBattle = {
+  ...failedRevivalBattle,
+  playerUnits: failedRevivalBattle.playerUnits.map((unit) => unit.key === "p2" ? { ...unit, hp: 0 } : unit),
+};
+const failedRevival = takeTurn(failedRevivalBattle, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p2", cost: 2 }]);
+check(failedRevival.playerUnits.find((unit) => unit.key === "p2")?.hp === 0, "A failed revival chance roll must leave the target knocked out.");
+
+const rechargeCatalog = makeCatalog();
+rechargeCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "recharge", "skill_usage_restriction", {
+    recharge_chance: 1,
+    recharge_turns: 1,
+    usage_limit: null,
+    usage_limit_scope: "encounter",
+  }),
+];
+let recharging = takeTurn(battle(rechargeCatalog, makePlayer(), "skill-recharge"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(isActorRecharging(recharging, "p1") && recharging.turn === 2, "A one-turn recharge must lock the Skill user on the following turn.");
+const hpBeforeRecharge = recharging.opponentUnits[0].hp;
+recharging = takeTurn(recharging, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }], 10);
+check(
+  recharging.opponentUnits[0].hp === hpBeforeRecharge
+    && recharging.playerMana === 10
+    && recharging.presentationEvents.some((event) => event.message.includes("must recharge")),
+  "A recharging Critter must be forced to wait without spending Mana even if a stale action submits a Skill.",
+);
+check(!isActorRecharging(recharging, "p1") && recharging.turn === 3, "Recharge must expire after exactly the configured number of following turns.");
+
+const encounterLimitCatalog = makeCatalog();
+encounterLimitCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "encounter-limit", "skill_usage_restriction", {
+    recharge_chance: 0,
+    recharge_turns: 0,
+    usage_limit: 1,
+    usage_limit_scope: "encounter",
+  }),
+];
+let encounterLimited = takeTurn(battle(encounterLimitCatalog, makePlayer(), "encounter-limit"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(
+  !skillAvailability(encounterLimited, "p1", "ritual").valid
+    && skillAvailability(encounterLimited, "p1", "ritual").reason === "Encounter use limit reached.",
+  "An exhausted encounter use cap must make the Skill invalid with a player-facing reason.",
+);
+const encounterUseCount = encounterLimited.skillUsage.encounter["p1:ritual"];
+encounterLimited = takeTurn(encounterLimited, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(encounterLimited.skillUsage.encounter["p1:ritual"] === encounterUseCount, "A forged use of an exhausted Skill must not increment usage or resolve the Skill again.");
+
+const dungeonLimitCatalog = makeCatalog();
+dungeonLimitCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "dungeon-limit", "skill_usage_restriction", {
+    recharge_chance: 0,
+    recharge_turns: 0,
+    usage_limit: 2,
+    usage_limit_scope: "dungeon",
+  }),
+];
+const firstDungeonUse = takeTurn(battle(dungeonLimitCatalog, makePlayer(), "dungeon-limit-1"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+let nextEncounter = battle(dungeonLimitCatalog, makePlayer(), "dungeon-limit-2");
+nextEncounter = {
+  ...nextEncounter,
+  skillUsage: { encounter: {}, dungeon: { ...firstDungeonUse.skillUsage.dungeon } },
+};
+check(
+  skillAvailability(nextEncounter, "p1", "ritual").valid
+    && skillAvailability(nextEncounter, "p1", "ritual").remainingUses === 1,
+  "Dungeon use counts must remain applicable after encounter counters reset.",
+);
+nextEncounter = takeTurn(nextEncounter, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(
+  !skillAvailability(nextEncounter, "p1", "ritual").valid
+    && skillAvailability(nextEncounter, "p1", "ritual").reason === "Dungeon use limit reached.",
+  "A Dungeon-scoped cap must disable the Skill after its final use across encounters.",
+);
+
 const selfCostCatalog = makeCatalog();
 selfCostCatalog.effectsBySkill.strike = [
   effect("skill", "strike", "quick-retreat", "action_cost_modifier", {
@@ -863,6 +1076,98 @@ check(
     && calculateActionCost(selfCostApplied, { actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }) === 3
     && calculateActionCost(selfCostApplied, { actorKey: "p2", type: "swap", swapToId: "up3", cost: 4 }) === 4,
   "A self-targeted Skill action-cost modifier must bind to its user rather than the Skill's selected defender.",
+);
+
+const filteredCostCatalog = makeCatalog();
+filteredCostCatalog.effectsBySkill.strike = [
+  effect("skill", "strike", "basic-attacks", "action_cost_modifier", {
+    applicable_action: "skills_attack",
+    skill_element_ids: ["basic"],
+    modifier_type: "flat",
+    modifier_value: -1,
+    minimum_cost: 1,
+    target: "self",
+  }),
+  effect("skill", "strike", "basic-support", "action_cost_modifier", {
+    applicable_action: "skills_support",
+    skill_element_ids: ["basic"],
+    modifier_type: "flat",
+    modifier_value: -1,
+    minimum_cost: 0,
+    target: "self",
+  }, 1),
+  effect("skill", "strike", "bloom-attacks", "action_cost_modifier", {
+    applicable_action: "skills_attack",
+    skill_element_ids: ["bloom"],
+    modifier_type: "flat",
+    modifier_value: -1,
+    minimum_cost: 0,
+    target: "self",
+  }, 2),
+];
+const filteredCostState = battle(filteredCostCatalog, makePlayer(), "filtered-action-cost");
+filteredCostState.playerUnits = filteredCostState.playerUnits.map((unit) => unit.key === "p1"
+  ? { ...unit, skills: [...unit.skills, { ...unit.skills[0], id: "bloom-strike", name: "Bloom Strike", element_id: "bloom", mana_cost: 4 }] }
+  : unit);
+const filteredCostApplied = takeTurn(
+  filteredCostState,
+  [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }],
+);
+check(
+  calculateActionCost(filteredCostApplied, { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }) === 4
+    && calculateActionCost(filteredCostApplied, { actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p1", cost: 2 }) === 1
+    && calculateActionCost(filteredCostApplied, { actorKey: "p1", type: "skill", skillId: "bloom-strike", targetKey: "o1", cost: 4 }) === 3
+    && calculateActionCost(filteredCostApplied, { actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }) === 0
+    && calculateActionCost(filteredCostApplied, { actorKey: "p1", type: "block", cost: 3 }) === 3,
+  "Action Cost Modifier must match Skill action category and Skill Element without affecting other Skill categories or Block.",
+);
+
+const basicOpeningCatalog = makeCatalog();
+basicOpeningCatalog.rollcasterAbilities.push({ id: "false-opening", name: "False Opening", description: "False Opening.", sort_order: 4 });
+basicOpeningCatalog.effectsByAbility["false-opening"] = [
+  effect("ability", "false-opening", "familiar-rhythm", "action_cost_modifier", {
+    applicable_action: "skills_all", skill_element_ids: ["basic"], modifier_type: "flat",
+    modifier_value: -1, minimum_cost: 0, maximum_cost: null, target: "all_enemies",
+    target_element_ids: ["basic"],
+  }),
+  effect("ability", "false-opening", "open-guard", "stat_modifier", {
+    stat: "def", value_mode: "percentage", amount: -0.1, target: "all_enemies",
+    target_element_ids: ["basic"],
+  }, 1),
+];
+const basicOpeningPlayer = makePlayer();
+basicOpeningPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "false-opening" }];
+const basicOpeningState = battle(basicOpeningCatalog, basicOpeningPlayer, "basic-opening");
+basicOpeningState.opponentUnits = basicOpeningState.opponentUnits.map((unit) => ({
+  ...unit,
+  skills: [...unit.skills, basicOpeningCatalog.skills[0], { ...basicOpeningCatalog.skills[0], id: "bloom-strike", element_id: "bloom", mana_cost: 4 }],
+}));
+check(
+  basicOpeningState.opponentUnits[0].stats.def < 25
+    && basicOpeningState.opponentUnits[1].stats.def === 20
+    && calculateActionCost(basicOpeningState, { actorKey: "o1", type: "skill", skillId: "strike", targetKey: "p1", cost: 5 }) === 4
+    && calculateActionCost(basicOpeningState, { actorKey: "o1", type: "skill", skillId: "wave", targetKey: "p1", cost: 0 }) === 0
+    && calculateActionCost(basicOpeningState, { actorKey: "o1", type: "skill", skillId: "bloom-strike", targetKey: "p1", cost: 4 }) === 4
+    && calculateActionCost(basicOpeningState, { actorKey: "o2", type: "skill", skillId: "strike", targetKey: "p1", cost: 5 }) === 5,
+  "A Basic-targeting Ability must modify DEF and Basic Skill costs only for Basic enemy Critters, while respecting a zero minimum cost.",
+);
+
+const forestTotemCatalog = makeCatalog();
+forestTotemCatalog.effectsByRelic.carrier = [
+  effect("relic", "carrier", "forest-discount", "action_cost_modifier", {
+    applicable_action: "skills_all", skill_element_ids: ["bloom"], modifier_type: "flat",
+    modifier_value: -2, minimum_cost: 1, maximum_cost: null, target: "equipped_critter",
+  }),
+];
+const forestTotemPlayer = makePlayer();
+forestTotemPlayer.relicSlots = [{ user_critter_id: "up2", slot_index: 1, relic_id: "carrier" }];
+const forestTotemState = battle(forestTotemCatalog, forestTotemPlayer, "forest-minimum");
+forestTotemState.playerUnits = forestTotemState.playerUnits.map((unit) => unit.key === "p2"
+  ? { ...unit, skills: [...unit.skills, { ...unit.skills[0], id: "bloom-strike", element_id: "bloom", mana_cost: 2 }] }
+  : unit);
+check(
+  calculateActionCost(forestTotemState, { actorKey: "p2", type: "skill", skillId: "bloom-strike", targetKey: "o1", cost: 2 }) === 1,
+  "Forest Totem-style Skill discounts must honor the authored minimum cost after applying their flat modifier.",
 );
 
 const stackingCatalog = makeCatalog();

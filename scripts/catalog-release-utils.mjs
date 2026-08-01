@@ -35,9 +35,11 @@ export function groupEffects(rows) {
   for (const row of rows) {
     if (!grouped[row.owner_type]) throw new Error(`Unsupported effect owner: ${row.owner_type}.`);
     const parameters = { ...row.parameters };
-    const usesElementTarget = row.owner_type === "ability"
-      && ["all_element_friendlies", "all_element_enemies"].includes(parameters.target);
-    if (!usesElementTarget) delete parameters.element_ids;
+    if (parameters.element_ids !== undefined) {
+      if (row.runtime_kind === "action_cost_modifier" && parameters.skill_element_ids === undefined) parameters.skill_element_ids = parameters.element_ids;
+      else if (row.runtime_kind !== "action_cost_modifier" && parameters.target_element_ids === undefined) parameters.target_element_ids = parameters.element_ids;
+      delete parameters.element_ids;
+    }
     const effect = {
       id: row.id,
       name: row.name,
@@ -151,10 +153,22 @@ export function validateCatalog(catalog) {
         "delayed_effect@1", "effect_duration@1", "effect_removal@1", "effect_copy@1", "effect_transfer@1",
         "damage_prevention@1", "action_cost_modifier@1", "resource_gain_loss@1", "resource_conversion@1",
         "effect_scaling@1", "repeating_effect@1", "effect_immunity@1", "effect_amplification@1",
+        "critter_revival@1", "skill_usage_restriction@1",
       ]);
       if (!supported.has(`${effect.runtimeKind}@${effect.runtimeVersion}`)) throw new Error(`Unsupported ${ownerType} effect runtime ${effect.runtimeKind}@${effect.runtimeVersion}.`);
       if (!["positive", "negative", "mixed"].includes(effect.classification)) throw new Error(`Effect ${effect.id} has invalid classification.`);
       if (!["root", "child"].includes(effect.execution)) throw new Error(`Effect ${effect.id} has invalid execution mode.`);
+      for (const key of ["target_element_ids", "skill_element_ids", "source_element_ids"]) {
+        const selected = effect.parameters[key];
+        if (selected === undefined) continue;
+        if (!Array.isArray(selected) || selected.some((id) => typeof id !== "string" || !elementIds.has(id))) {
+          throw new Error(`Effect ${effect.id} has invalid ${key}.`);
+        }
+        if (new Set(selected).size !== selected.length) throw new Error(`Effect ${effect.id} has duplicate ${key}; Element selections are sets.`);
+      }
+      if (ownerType === "ability" && (effect.parameters.source_element_ids?.length ?? 0) > 0) {
+        throw new Error(`Ability Effect ${effect.id} cannot require a source Critter Element.`);
+      }
     }
   }
 }

@@ -102,13 +102,19 @@ try {
   await client.query("delete from public.collectible_unlock_requirements where collectible_type='critter' and collectible_id=$1", [combatUnlockTargetId]);
   await client.query(`
     insert into public.collectible_unlock_requirements(collectible_type,collectible_id,required_challenges)
-    values('critter',$1,1)
+    values('critter',$1,2)
   `, [combatUnlockTargetId]);
+  const completionHoldChallengeId = crypto.randomUUID();
   await client.query(`
     insert into public.collectible_unlock_challenges(
       id,collectible_type,collectible_id,challenge_type,target_mode,any_target,target_ids,required_amount,sort_order
     ) values($1,'critter',$2,'deal_damage','species',true,'{}',5,0)
   `, [combatChallengeId, combatUnlockTargetId]);
+  await client.query(`
+    insert into public.collectible_unlock_challenges(
+      id,collectible_type,collectible_id,challenge_type,required_amount,sort_order
+    ) values($1,'critter',$2,'shop_shards',99,1)
+  `, [completionHoldChallengeId, combatUnlockTargetId]);
   const tracked = (await client.query("select public.track_collectible_challenge($1) as result", [combatChallengeId])).rows[0].result;
   check(tracked.challenge_id === combatChallengeId && tracked.slot_order === 1, "A combat challenge must occupy the first available tracking slot.");
 
@@ -146,8 +152,18 @@ try {
   const combatSnapshot = (await client.query("select public.submit_collectible_combat_events($1,1,$2::jsonb) as snapshot", [runId, JSON.stringify(finalCombatEvent)])).rows[0].snapshot;
   const combatEventCount = await client.query("select count(*)::int as count from public.collectible_combat_events where run_id=$1", [runId]);
   check(combatEventCount.rows[0].count === 3, "Only unique combat event keys must be persisted, while mixed aliases remain one gameplay outcome.");
-  check(combatSnapshot.unlock_events.some((event) => event.collectible_type === "critter" && event.collectible_id === combatUnlockTargetId), "Completing tracked combat progress must return the new unlock notification.");
-  check((await client.query("select count(*)::int as count from public.user_critters where user_id=$1 and critter_id=$2", [userId, combatUnlockTargetId])).rows[0].count === 1, "Completed combat progress must grant the target collectible.");
+  check(combatSnapshot.progress.find((progress) => progress.challenge_id === combatChallengeId)?.completed, "The final combat event must complete the tracked challenge.");
+  check(!combatSnapshot.tracked.some((trackedRow) => trackedRow.challenge_id === combatChallengeId), "Completing a tracked challenge must automatically release its tracking slot.");
+  check(combatSnapshot.progress.find((progress) => progress.challenge_id === combatChallengeId)?.trackable === false, "A completed challenge must no longer be trackable.");
+
+  await client.query(`
+    insert into public.user_collectible_shards(user_id,collectible_type,collectible_id,quantity)
+    values($1,'critter',$2,99)
+    on conflict(user_id,collectible_type,collectible_id) do update set quantity=excluded.quantity
+  `, [userId, combatUnlockTargetId]);
+  const completionSnapshot = (await client.query("select public.get_collectible_player_snapshot() as snapshot")).rows[0].snapshot;
+  check(completionSnapshot.unlock_events.some((event) => event.collectible_type === "critter" && event.collectible_id === combatUnlockTargetId), "Completing the remaining challenge must return the new unlock notification.");
+  check((await client.query("select count(*)::int as count from public.user_critters where user_id=$1 and critter_id=$2", [userId, combatUnlockTargetId])).rows[0].count === 1, "Completed challenges must grant the target collectible.");
 
   const relic = (await client.query("select id,max_owned from public.relics where is_active and not is_archived order by sort_order,id limit 1")).rows[0];
   check(Boolean(relic), "The development catalog needs one active Relic for max-owned verification.");

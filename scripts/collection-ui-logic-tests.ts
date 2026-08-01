@@ -51,9 +51,15 @@ function effect(
 
 const catalog = {
   currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [],
-  elements: [{ id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 }],
+  elements: [
+    { id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 },
+    { id: "bloom", name: "Bloom", description: null, asset_path: null, sort_order: 2 },
+  ],
   elementEffectiveness: [{ attacking_element_id: "ember", defending_element_id: "ember", multiplier: 1 }],
-  skills: [{ id: "starter-skill", name: "Starter Skill", element_id: "ember", skill_type: "support", power: 0, mana_cost: 3, targeting: "self_only", description: "Starter Skill", sort_order: 0 }],
+  skills: [
+    { id: "starter-skill", name: "Starter Skill", element_id: "ember", skill_type: "support", power: 0, mana_cost: 3, targeting: "self_only", description: "Starter Skill", sort_order: 0 },
+    { id: "bloom-attack", name: "Bloom Attack", element_id: "bloom", skill_type: "attack", power: 40, mana_cost: 4, targeting: "single_enemy", description: "Bloom Attack", sort_order: 1 },
+  ],
   critters: [
     { id: "hero", name: "Hero", element_1_id: "ember", element_2_id: null, base_hp: 30, base_atk: 25, base_def: 20, base_spd: 15, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 1 },
     { id: "ally", name: "Ally", element_1_id: "ember", element_2_id: null, base_hp: 20, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 2 },
@@ -74,6 +80,7 @@ const catalog = {
       effect("ability", "high-roll", "Maximum Roll", "mana_dice_modifier", { target: "all_friendlies", minimum_delta: 0, maximum_delta: 3 }, 0),
       effect("ability", "high-roll", "Defense Cost", "stat_modifier", { target: "all_friendlies", stat: "def", value_mode: "flat", amount: -2 }, 1),
       effect("ability", "high-roll", "Block Cost", "action_cost_modifier", { target: "all_friendlies", cost_type: "block", applicable_action: "all_actions", modifier_type: "flat", modifier_value: -1 }, 2),
+      effect("ability", "high-roll", "Bloom Attack Cost", "action_cost_modifier", { target: "all_friendlies", cost_type: "skill_mana", applicable_action: "skills_attack", element_ids: ["bloom"], modifier_type: "flat", modifier_value: -2 }, 3),
     ],
   },
   effectsByRelic: {
@@ -114,9 +121,14 @@ check(calculated.stats.hp === 32, "An ally Relic must affect the selected squad 
 check(calculated.stats.atk === 24, "The equipped Relic ATK penalty must be reflected on the home card.");
 check(calculated.stats.def === 21, "Positive and negative DEF deltas must combine into the combat value.");
 check(calculated.stats.diceMin === 1 && calculated.stats.diceMax === 9, "Only the modified Mana maximum must change.");
+catalog.effectsByRelic.guard.push(effect("relic", "guard", "capped-minimum", "mana_dice_modifier", { target: "equipped_critter", minimum_delta: 10, maximum_delta: 0 }, 3));
+const cappedCalculated = calculateLoadoutStats({ catalog, player } as AppData, player.critters[0]);
+check(cappedCalculated.stats.diceMin === 9 && cappedCalculated.stats.diceMax === 9, "Loadout Mana stats must cap an over-maximum minimum at the displayed maximum.");
+check(cappedCalculated.breakdowns.diceMin?.final === 9 && cappedCalculated.breakdowns.diceMax?.final === 9, "Loadout Mana breakdowns must retain the capped final values for stat tooltips.");
 check(calculated.stats.blockCost === 1, "A Block action-cost discount must reduce the home stat value.");
 check(calculated.skillCosts["starter-skill"]?.final === 2, "A Mana Talisman-style Skill cost discount must reduce the home Skill tile cost.");
 check(calculated.skillCosts["starter-skill"]?.sources[0]?.amount === -1 && calculated.skillCosts["starter-skill"]?.sources[0]?.sourceName === "Guard Charm", "Skill cost breakdowns must retain the discount source.");
+check(calculated.skillCosts["bloom-attack"]?.final === 1, "Skill action-cost filters must match the Skill type and Element in loadout previews without filtering the receiving Critter by Skill Element.");
 check(calculated.breakdowns.def?.sources.map((source) => source.amount).join(",") === "3,-2", "The DEF tooltip must retain positive and negative source deltas in resolution order.");
 
 const ownershipChallenge: CollectibleUnlockChallenge = {

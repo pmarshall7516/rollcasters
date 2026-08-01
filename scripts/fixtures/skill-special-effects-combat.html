@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Skill special effects combat fixture</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <style>
+      body { min-height: 100vh; margin: 0; padding: 22px; overflow: hidden; background: #080b1d; }
+      .fixture { width: min(1120px, calc(100vw - 44px)); margin: 0 auto; color: var(--text-primary); }
+      .fixture .combat-screen { height: auto; min-height: 670px; }
+      .fixture .combat-header { margin-bottom: 14px; }
+      .fixture-board { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+      .fixture .battle-unit { min-height: 250px; }
+      .fixture-sprite {
+        display: grid; width: 100%; height: 100%; place-items: center; border-radius: inherit;
+        background: radial-gradient(circle, #80efe2 0 17%, #7451d8 19% 48%, #171d3d 50%);
+        color: white; font: 900 18px/1 sans-serif;
+      }
+      .fixture .combat-skill-actions { margin-top: 14px; }
+      .fixture .combat-knocked-out-targets { margin-top: 16px; }
+      .fixture .combat-knocked-out-targets[hidden] { display: none; }
+      .fixture .combat-narration { margin-top: 16px; width: 100%; }
+      .fixture .skill-tile:disabled { opacity: .48; filter: saturate(.65); }
+      .fixture-result { color: var(--success); font-weight: 800; }
+    </style>
+  </head>
+  <body>
+    <main class="fixture">
+      <section class="combat-screen">
+        <div class="combat-header">
+          <span></span>
+          <div>
+            <p class="eyebrow">Special Effect verification</p>
+            <h1>Moonlit Hollow</h1>
+            <p>Encounter 2 / 3 · Turn 4 · 1v1</p>
+          </div>
+          <span class="combat-phase-badge">select player actions</span>
+        </div>
+        <div class="fixture-board">
+          <article class="battle-unit">
+            <div class="combat-unit-top">
+              <span class="combat-sprite-stack"><span class="combat-sprite-frame critter-combat-frame"><span class="fixture-sprite">MEDIC</span></span></span>
+              <div class="battle-unit-info">
+                <span class="combat-identity-row"><span class="critter-name">Bloomedic</span><strong class="combat-level">Lv 18</strong></span>
+                <div class="hp-bar healthy"><span style="width: 82%"></span></div>
+                <p>82 / 100 HP</p>
+              </div>
+            </div>
+            <div class="combat-action-space">
+              <div class="combat-skill-actions">
+                <span class="tooltip-anchor">
+                  <button id="revival-skill" class="skill-tile" data-combat-control="true" data-combat-focus-role="skill">
+                    <span class="skill-title"><strong>Reviving Light</strong></span>
+                    <span class="skill-power">Support</span>
+                    <span class="skill-mana">4 Mana</span>
+                  </button>
+                  <span class="game-tooltip"><strong>Reviving Light</strong><span>Revive a knocked-out friendly Critter to 50% HP.</span></span>
+                </span>
+                <span class="tooltip-anchor">
+                  <button id="limited-skill" class="skill-tile" data-combat-control="true" data-combat-focus-role="skill" disabled>
+                    <span class="skill-title"><strong>Dungeon Miracle</strong></span>
+                    <span class="skill-power">Support</span>
+                    <span class="skill-mana">6 Mana</span>
+                  </button>
+                  <span class="game-tooltip"><strong>Dungeon Miracle</strong><span>Revives one Critter to 50% HP.</span><span class="tooltip-disabled">Dungeon use limit reached.</span></span>
+                </span>
+              </div>
+            </div>
+          </article>
+          <article class="battle-unit opponent">
+            <div class="combat-unit-top">
+              <span class="combat-sprite-stack"><span class="combat-sprite-frame critter-combat-frame"><span class="fixture-sprite">FOE</span></span></span>
+              <div class="battle-unit-info">
+                <span class="combat-identity-row"><span class="critter-name">Cragram</span><strong class="combat-level">Lv 16</strong></span>
+                <div class="hp-bar healthy"><span style="width: 64%"></span></div>
+                <p>64 / 100 HP</p>
+              </div>
+            </div>
+          </article>
+        </div>
+        <div id="revival-targets" class="combat-knocked-out-targets" aria-label="Knocked-out revival targets" hidden>
+          <span>Knocked-out targets</span>
+          <button id="ko-target" type="button" data-combat-control="true" data-combat-focus-role="target">
+            <span class="sprite-frame xs"><span class="fixture-sprite">KO</span></span>
+            <span><strong>Ramber</strong><small id="ko-hp">0 / 100 HP</small></span>
+          </button>
+        </div>
+        <button class="combat-narration" type="button" disabled>
+          <span id="narration">Dungeon Miracle is unavailable: Dungeon use limit reached.</span>
+        </button>
+      </section>
+    </main>
+    <script>
+      const state = {
+        phase: "select_player_actions",
+        selectedSkill: null,
+        knockedOutTarget: { key: "p2", name: "Ramber", hp: 0, maxHp: 100, active: false },
+        skills: [
+          { id: "reviving-light", valid: true },
+          { id: "dungeon-miracle", valid: false, reason: "Dungeon use limit reached.", remainingUses: 0, scope: "dungeon" },
+        ],
+      };
+      document.querySelector("#revival-skill").addEventListener("click", () => {
+        state.selectedSkill = "reviving-light";
+        document.querySelector("#revival-targets").hidden = false;
+        document.querySelector("#narration").textContent = "Choose a knocked-out friendly Critter.";
+      });
+      document.querySelector("#ko-target").addEventListener("click", () => {
+        state.phase = "event_playback";
+        state.knockedOutTarget.hp = 50;
+        document.querySelector("#ko-hp").textContent = "50 / 100 HP";
+        document.querySelector("#ko-hp").classList.add("fixture-result");
+        document.querySelector("#narration").textContent = "Ramber was revived with 50 HP by Reviving Light.";
+      });
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown" && state.selectedSkill === "reviving-light") {
+          event.preventDefault();
+          document.querySelector("#ko-target").focus();
+        }
+      });
+      window.render_game_to_text = () => JSON.stringify({
+        coordinateSystem: "DOM fixture coordinates; origin top-left.",
+        ...state,
+      });
+      window.advanceTime = () => undefined;
+    </script>
+  </body>
+</html>

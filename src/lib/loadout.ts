@@ -1,4 +1,4 @@
-import { actionCostModifierApplies, applyActionCostModifiers, byId, critterElementIds, critterStats, roundHalfUp, type ActionCostBreakdown, type ActionCostModifier, type StatBlock } from "./game.js";
+import { actionCostModifierApplies, applyActionCostModifiers, byId, critterElementIds, critterStats, normalizeManaDiceBounds, roundHalfUp, type ActionCostBreakdown, type ActionCostModifier, type StatBlock } from "./game.js";
 import type { AppData, ResolvedEffectRef, UserCritter } from "./types.js";
 
 export type LoadoutStatKey = keyof StatBlock;
@@ -11,6 +11,7 @@ export type StatDeltaSource = {
 export type StatBreakdown = {
   base: number;
   sources: StatDeltaSource[];
+  final?: number;
 };
 
 export type CalculatedLoadoutStats = {
@@ -31,8 +32,13 @@ function targetsCritter(
   effect: ResolvedEffectRef,
   target: UserCritter,
   targetElementIds: string[],
+  filterByEffectElements = true,
 ): boolean {
   const effectTarget = String(effect.parameters.target ?? "");
+  const elementFilter = Array.isArray(effect.parameters.element_ids)
+    ? effect.parameters.element_ids.filter((id): id is string => typeof id === "string")
+    : [];
+  if (filterByEffectElements && elementFilter.length > 0 && !elementFilter.some((elementId) => targetElementIds.includes(elementId))) return false;
   if (source.ownerType === "relic") {
     if (effectTarget === "equipped_critter") return source.sourceCritterId === target.id;
     if (effectTarget === "equipped_allies") return source.sourceCritterId !== target.id;
@@ -42,10 +48,7 @@ function targetsCritter(
 
   if (effectTarget === "all_friendlies" || effectTarget === "all_squad_friendlies") return true;
   if (effectTarget === "all_element_friendlies") {
-    const elementIds = Array.isArray(effect.parameters.element_ids)
-      ? effect.parameters.element_ids.filter((id): id is string => typeof id === "string")
-      : [];
-    return elementIds.some((elementId) => targetElementIds.includes(elementId));
+    return elementFilter.some((elementId) => targetElementIds.includes(elementId));
   }
   return false;
 }
@@ -112,7 +115,9 @@ function actionCostSources(
 ): ActionCostModifier[] {
   return sources.flatMap((source) => source.effects
     .filter((effect) => effect.execution !== "child" && effect.runtimeKind === "action_cost_modifier")
-    .filter((effect) => targetsCritter(source, effect, target, elementIds))
+    // Action Cost Modifier element_ids describe the Skill being priced, not
+    // the Critter receiving the modifier.
+    .filter((effect) => targetsCritter(source, effect, target, elementIds, false))
     .map((effect) => ({
       parameters: effect.parameters,
       sourceName: source.sourceName,
@@ -163,8 +168,9 @@ export function calculateLoadoutStats(data: AppData, owned: UserCritter): Calcul
     }
   }
 
-  stats.diceMin = Math.max(1, roundHalfUp(stats.diceMin));
-  stats.diceMax = Math.max(stats.diceMin, roundHalfUp(stats.diceMax));
+  ({ diceMin: stats.diceMin, diceMax: stats.diceMax } = normalizeManaDiceBounds(stats.diceMin, stats.diceMax));
+  if (breakdowns.diceMin) breakdowns.diceMin.final = stats.diceMin;
+  if (breakdowns.diceMax) breakdowns.diceMax.final = stats.diceMax;
   const blockCostModifiers = actionCostSources(sources, owned, elementIds)
     .filter((modifier) => actionCostModifierApplies(modifier.parameters, { type: "block" }));
   const swapCostModifiers = actionCostSources(sources, owned, elementIds)
@@ -181,7 +187,7 @@ export function calculateLoadoutStats(data: AppData, owned: UserCritter): Calcul
     applyActionCostModifiers(
       skill.mana_cost,
       actionCostSources(sources, owned, elementIds)
-        .filter((modifier) => actionCostModifierApplies(modifier.parameters, { type: "skill", skillId: skill.id, skillType: skill.skill_type })),
+        .filter((modifier) => actionCostModifierApplies(modifier.parameters, { type: "skill", skillId: skill.id, skillType: skill.skill_type, skillElementId: skill.element_id })),
     ),
   ]));
   return { stats, breakdowns, skillCosts };

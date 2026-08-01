@@ -11,6 +11,7 @@ import {
   shopErrorMessage,
   sortByCollectibleId,
 } from "../src/lib/collectibles.js";
+import { derivedChallengeProgress } from "../src/lib/challenges.js";
 import type { AppData, CollectibleUnlockChallenge, ShopEntry } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -204,6 +205,44 @@ check(
   }),
   "Heal HP must use the same tracking policy as every other tracked-event Challenge.",
 );
+
+const ownershipBase: Omit<CollectibleUnlockChallenge, "id" | "collectible_type" | "collectible_id" | "parameters" | "target_category" | "target_id"> = {
+  challenge_type: "own_collectible",
+  required_amount: "1",
+  required_level: null,
+  target_mode: null,
+  target_ids: [],
+  any_target: false,
+  sort_order: 0,
+  gate_order: null,
+};
+const ownershipData = data();
+ownershipData.catalog.rollcasters = [{ id: "rollcaster-001", name: "Pippa", asset_path: null, description: null, sort_order: 1, is_active: true, is_archived: false }];
+ownershipData.catalog.relics = [{ id: "relic-001", name: "Moon Lens", description: "A lens.", max_owned: 2, asset_path: null, sort_order: 1, is_active: true, is_archived: false }];
+ownershipData.player!.rollcasters = [{ id: "owned-rollcaster", user_id: "user", rollcaster_id: "rollcaster-001", level: 1, xp: 0, ability_points: 0 }];
+ownershipData.player!.relicInventory = [{ user_id: "user", relic_id: "relic-001", quantity: 2, discovered_at: "now" }];
+const ownRollcaster: CollectibleUnlockChallenge = {
+  ...ownershipBase,
+  id: "own-rollcaster",
+  collectible_type: "critter",
+  collectible_id: "002",
+  target_category: "rollcaster",
+  target_id: "rollcaster-001",
+  parameters: { collectible_category: "rollcaster", collectible_ids: ["rollcaster-001"], required_amount: 1, require_unique_collectibles: true, retroactive: true },
+};
+const ownRelic: CollectibleUnlockChallenge = {
+  ...ownershipBase,
+  id: "own-relic",
+  collectible_type: "rollcaster",
+  collectible_id: "rollcaster-001",
+  target_category: "relic",
+  target_id: "relic-001",
+  parameters: { collectible_category: "relic", collectible_ids: ["relic-001"], required_amount: 2, require_unique_collectibles: false, retroactive: true },
+};
+check(derivedChallengeProgress(ownershipData, ownRollcaster) === 1n, "Own Collectible must count owned Rollcasters for a Critter unlock.");
+check(derivedChallengeProgress(ownershipData, ownRelic) === 2n, "Own Collectible must count owned Relic quantity for a cross-category unlock.");
+check(challengeDescription(ownershipData, ownRollcaster) === "Own Pippa.", "Own Collectible descriptions must name a selected Rollcaster.");
+check(challengeDescription(ownershipData, ownRelic) === "Own 2 of: Moon Lens.", "Quantity-based Relic ownership must retain its authored goal in player-facing text.");
 check(shopErrorMessage(new Error("RPC failed: INSUFFICIENT_FUNDS")) === "You do not have enough currency for this purchase.", "RPC error codes must map to safe player-facing messages.");
 
 console.log("Collectible and shop business-rule tests passed.");

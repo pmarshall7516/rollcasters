@@ -97,6 +97,7 @@ function createEncounterBattle(
   dungeon: Dungeon,
   run: DungeonRunSnapshot,
   persistentHp?: Record<string, number>,
+  dungeonSkillUsage: Record<string, number> = {},
 ): CombatState {
   const battle = createInitialCombatState(
     catalog,
@@ -124,6 +125,8 @@ function createEncounterBattle(
     playerMana: 0,
     opponentMana: 0,
     turn: 1,
+    skillUsage: { encounter: {}, dungeon: { ...dungeonSkillUsage } },
+    rechargeUntilTurn: {},
   };
 }
 
@@ -495,7 +498,14 @@ export function applyDungeonBattleResult(
   const persistentHp = Object.fromEntries(state.battle.playerUnits
     .filter((unit) => unit.userCritter)
     .map((unit) => [unit.userCritter!.id, unit.hp]));
-  const battle = createEncounterBattle(catalog, player, state.dungeon, result.run, persistentHp);
+  const battle = createEncounterBattle(
+    catalog,
+    player,
+    state.dungeon,
+    result.run,
+    persistentHp,
+    state.battle.skillUsage?.dungeon ?? {},
+  );
   const requiredLeadCount = leadRequirement(battle, result.run);
   const healthyCount = battle.playerUnits.filter((unit) => unit.hp > 0).length;
   const automatic = requiredLeadCount > 0
@@ -575,6 +585,8 @@ export function restoreDungeonRunState(
       presentationEvents: persisted.battle.presentationEvents ?? [],
       runtimeEffects: persisted.battle.runtimeEffects ?? [],
       effectSequence: persisted.battle.effectSequence ?? 0,
+      skillUsage: persisted.battle.skillUsage ?? { encounter: {}, dungeon: {} },
+      rechargeUntilTurn: persisted.battle.rechargeUntilTurn ?? {},
       playerUnits: persisted.battle.playerUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0, blockStreak: unit.blockStreak ?? 0 })),
       opponentUnits: persisted.battle.opponentUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0, blockStreak: unit.blockStreak ?? 0 })),
     } as CombatState,
@@ -585,6 +597,8 @@ export function restoreDungeonRunState(
           presentationEvents: persisted.pendingBattle.presentationEvents ?? [],
           runtimeEffects: persisted.pendingBattle.runtimeEffects ?? [],
           effectSequence: persisted.pendingBattle.effectSequence ?? 0,
+          skillUsage: persisted.pendingBattle.skillUsage ?? { encounter: {}, dungeon: {} },
+          rechargeUntilTurn: persisted.pendingBattle.rechargeUntilTurn ?? {},
           playerUnits: persisted.pendingBattle.playerUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0, blockStreak: unit.blockStreak ?? 0 })),
           opponentUnits: persisted.pendingBattle.opponentUnits.map((unit) => ({ ...unit, shield: unit.shield ?? 0, maxShield: unit.maxShield ?? 0, blockStreak: unit.blockStreak ?? 0 })),
         } as CombatState

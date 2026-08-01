@@ -1,5 +1,6 @@
 import { critterElementIds } from "./game.js";
 import { safeBigInt } from "./collectibles.js";
+import { maximumDistinctElementMatches } from "./element-matching.js";
 import type {
   AppData,
   CollectibleUnlockChallenge,
@@ -192,10 +193,15 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
     if (!stringArray(p.required_critter_ids).every((id) => includedCritters.has(id))) return 0;
     const elements = new Set(squad.flatMap((unit) => stringArray(unit.element_ids)));
     if (!stringArray(p.required_element_ids).every((id) => elements.has(id))) return 0;
-    const matching = squad.filter((unit) => stringArray(p.required_critter_ids).includes(String(unit.critter_id)) || stringArray(p.required_element_ids).some((id) => stringArray(unit.element_ids).includes(id))).length;
-    if (p.required_matching_critters != null && matching < Number(p.required_matching_critters)) return 0;
+    const requiredCritterIds = stringArray(p.required_critter_ids);
+    const requiredElementIds = stringArray(p.required_element_ids);
+    const matchingRows = squad.filter((unit) => requiredCritterIds.includes(String(unit.critter_id)) || requiredElementIds.some((id) => stringArray(unit.element_ids).includes(id)));
+    const matchingCritterIds = new Set(matchingRows.map((unit) => String(unit.critter_id ?? "")).filter(Boolean));
+    if (p.required_matching_critters != null && matchingCritterIds.size < Number(p.required_matching_critters)) return 0;
+    if (p.required_matching_critters != null && Number(p.required_matching_critters) >= requiredElementIds.length &&
+      maximumDistinctElementMatches(squad.map((unit) => ({ id: String(unit.critter_id ?? ""), elementIds: stringArray(unit.element_ids) })), requiredElementIds) < requiredElementIds.length) return 0;
     if (p.required_distinct_elements != null && elements.size < Number(p.required_distinct_elements)) return 0;
-    if (p.all_squad_members_must_match === true && matching !== squad.length) return 0;
+    if (p.all_squad_members_must_match === true && matchingRows.length !== squad.length) return 0;
     if (p.require_survival === true && event.payload?.survivors_complete !== true) return 0;
     return 1;
   }
@@ -259,6 +265,10 @@ export function derivedChallengeProgress(data: AppData, challenge: CollectibleUn
     const mode = String(p.diversity_mode ?? "different_types");
     if (mode === "amount_of_type") return BigInt((buckets.get(stringArray(p.element_ids)[0]) ?? new Set()).size);
     const selected = mode === "specific_types" ? stringArray(p.required_element_ids) : [...buckets.keys()];
+    if (p.require_unique_critters === true && mode === "specific_types" && requiredPerType === 1) {
+      const candidates = ownedCritters(data).map(({ critter }) => ({ id: critter.id, elementIds: critterElementIds(critter) }));
+      return BigInt(maximumDistinctElementMatches(candidates, selected));
+    }
     return BigInt(selected.filter((element) => (buckets.get(element)?.size ?? 0) >= requiredPerType).length);
   }
   if (challenge.challenge_type === "shop_shards") return safeBigInt(player.collectibleSnapshot.shards.find((row) => row.collectible_type === challenge.collectible_type && row.collectible_id === challenge.collectible_id)?.quantity);

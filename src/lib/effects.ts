@@ -1,4 +1,4 @@
-import type { CombatEffectRow, EffectOwnerType, EffectTarget, ResolvedEffectRef } from "./types.js";
+import type { CombatEffectRow, Critter, EffectOwnerType, EffectTarget, ResolvedEffectRef } from "./types.js";
 
 export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "stat_modifier@1",
@@ -27,6 +27,8 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "restore_hp@1",
   "damage_over_time@1",
   "skip_action_chance@1",
+  "critter_revival@1",
+  "skill_usage_restriction@1",
 ]);
 
 const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
@@ -78,16 +80,56 @@ function validateElementIds(value: unknown, label: string): void {
   }
 }
 
-function normalizeEffectParameters(row: CombatEffectRow): Record<string, unknown> {
-  const parameters = { ...requireRecord(row.parameters, `Effect ${row.id} parameters`) };
-  const target = parameters.target;
-  const usesElementTarget = row.owner_type === "ability"
-    && (target === "all_element_friendlies" || target === "all_element_enemies");
+function validateOptionalElementIds(value: unknown, label: string): void {
+  if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || !id)) {
+    throw new Error(`${label} must be a string array when present.`);
+  }
+}
 
-  // The Content Studio can persist its hidden element picker default on templates
-  // that do not expose elemental targeting. It has no combat meaning there.
-  if (!usesElementTarget) delete parameters.element_ids;
+function stringIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string" && id.length > 0) : [];
+}
+
+export function targetElementIds(effect: ResolvedEffectRef): string[] {
+  return stringIds(effect.parameters.target_element_ids);
+}
+
+export function skillElementIds(parameters: Record<string, unknown>): string[] {
+  return stringIds(parameters.skill_element_ids);
+}
+
+export function sourceElementIds(effect: ResolvedEffectRef): string[] {
+  return stringIds(effect.parameters.source_element_ids);
+}
+
+export function effectMatchesSourceCritter(
+  effect: ResolvedEffectRef,
+  critter: Pick<Critter, "element_1_id" | "element_2_id"> | undefined,
+): boolean {
+  const required = new Set(sourceElementIds(effect));
+  if (required.size === 0) return true;
+  if (!critter) return false;
+  return required.has(critter.element_1_id) || Boolean(critter.element_2_id && required.has(critter.element_2_id));
+}
+
+export function normalizeEffectElementParameters(runtimeKind: string, input: Record<string, unknown>): Record<string, unknown> {
+  const parameters = { ...input };
+  // Older releases used one ambiguous element_ids field for both recipient
+  // Critters and the Skill being priced. Normalize that shape at the catalog
+  // seam so the combat runtime only needs the explicit contracts.
+  if (parameters.element_ids !== undefined) {
+    if (runtimeKind === "action_cost_modifier" && parameters.skill_element_ids === undefined) {
+      parameters.skill_element_ids = parameters.element_ids;
+    } else if (runtimeKind !== "action_cost_modifier" && parameters.target_element_ids === undefined) {
+      parameters.target_element_ids = parameters.element_ids;
+    }
+    delete parameters.element_ids;
+  }
   return parameters;
+}
+
+function normalizeEffectParameters(row: CombatEffectRow): Record<string, unknown> {
+  return normalizeEffectElementParameters(row.runtime_kind, { ...requireRecord(row.parameters, `Effect ${row.id} parameters`) });
 }
 
 export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: EffectOwnerType): void {
@@ -105,7 +147,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   // resolution context rather than directly selecting a Critter. Their
   // schemas intentionally do not include `target`; do not force them through
   // the owner-scoped Critter target vocabulary.
-  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1"]);
+  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1", "skill_usage_restriction@1"]);
   const target = parameters.target;
   if (!targetlessRuntimes.has(runtimeKey) || parameters.target !== undefined) {
     const validatedTarget = requireChoice(
@@ -116,6 +158,22 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     if (!TARGETS_BY_OWNER[effect.ownerType].has(validatedTarget)) {
       throw new Error(`Effect ${effect.id} cannot target ${validatedTarget} as ${effect.ownerType}.`);
     }
+  }
+  if (parameters.target_element_ids !== undefined) {
+    if (effect.ownerType === "status" || parameters.target === undefined) {
+      throw new Error(`Effect ${effect.id} target_element_ids requires a Skill, Ability, or Relic target.`);
+    }
+    validateOptionalElementIds(parameters.target_element_ids, `Effect ${effect.id} target_element_ids`);
+  }
+  if (parameters.skill_element_ids !== undefined) {
+    if (runtimeKey !== "action_cost_modifier@1") throw new Error(`Effect ${effect.id} skill_element_ids requires Action Cost Modifier.`);
+    validateOptionalElementIds(parameters.skill_element_ids, `Effect ${effect.id} skill_element_ids`);
+  }
+  if (parameters.source_element_ids !== undefined) {
+    if (effect.ownerType !== "skill" && effect.ownerType !== "relic") {
+      throw new Error(`Effect ${effect.id} source_element_ids requires a Skill or Relic owner.`);
+    }
+    validateOptionalElementIds(parameters.source_element_ids, `Effect ${effect.id} source_element_ids`);
   }
 
   // The expanded runtime contract is intentionally validated here as a
@@ -128,7 +186,8 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     "effect_removal@1", "effect_copy@1", "effect_transfer@1",
     "damage_prevention@1", "action_cost_modifier@1", "resource_gain_loss@1",
     "resource_conversion@1", "effect_scaling@1", "repeating_effect@1",
-    "effect_immunity@1", "effect_amplification@1",
+    "effect_immunity@1", "effect_amplification@1", "critter_revival@1",
+    "skill_usage_restriction@1",
   ]);
   if (expandedKey.has(runtimeKey)) {
     if (runtimeKey === "stat_modifier@2" && effect.classification === undefined && effect.execution === undefined) {
@@ -166,15 +225,54 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       requireChoice(parameters.operation, ["heal", "lose_hp", "set_hp", "drain"], `Effect ${effect.id} operation`);
       requireChoice(parameters.value_type, ["flat", "percent_max_hp", "percent_current_hp", "percent_missing_hp", "percent_damage_dealt"], `Effect ${effect.id} value_type`);
     }
+    if (runtimeKey === "critter_revival@1") {
+      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
+      requireChoice(parameters.target, ["target_friendlies", "all_allies", "all_friendlies"], `Effect ${effect.id} target`);
+      const mode = requireChoice(parameters.value_mode, ["flat", "percent_max_hp"], `Effect ${effect.id} value_mode`);
+      const amount = requireFinite(parameters.amount, `Effect ${effect.id} amount`);
+      if (amount <= 0 || (mode === "flat" && !Number.isInteger(amount))) {
+        throw new Error(`Effect ${effect.id} amount must be positive${mode === "flat" ? " whole HP" : ""}.`);
+      }
+      validateChance(parameters.chance, `Effect ${effect.id} chance`);
+    }
+    if (runtimeKey === "action_cost_modifier@1") {
+      requireChoice(parameters.applicable_action, ["all_actions", "skills_all", "skills_support", "skills_attack", "blocks", "swaps", "matching_skills", "attacks"], `Effect ${effect.id} applicable_action`);
+      requireChoice(parameters.modifier_type, ["flat", "percentage", "set", "minimum", "maximum"], `Effect ${effect.id} modifier_type`);
+      requireFinite(parameters.modifier_value, `Effect ${effect.id} modifier_value`);
+      for (const key of ["minimum_cost", "maximum_cost"] as const) {
+        const value = parameters[key];
+        if (value !== null && value !== undefined && (!Number.isInteger(value) || Number(value) < 0)) {
+          throw new Error(`Effect ${effect.id} ${key} must be a nonnegative integer when present.`);
+        }
+      }
+      if (typeof parameters.minimum_cost === "number" && typeof parameters.maximum_cost === "number" && parameters.minimum_cost > parameters.maximum_cost) {
+        throw new Error(`Effect ${effect.id} minimum_cost cannot exceed maximum_cost.`);
+      }
+    }
+    if (runtimeKey === "skill_usage_restriction@1") {
+      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
+      if (effect.execution === "child") throw new Error(`Effect ${effect.id} must use root execution.`);
+      const rechargeChance = requireFinite(parameters.recharge_chance, `Effect ${effect.id} recharge_chance`);
+      validateChance(rechargeChance, `Effect ${effect.id} recharge_chance`);
+      const rechargeTurns = requireFinite(parameters.recharge_turns, `Effect ${effect.id} recharge_turns`);
+      if (!Number.isInteger(rechargeTurns) || rechargeTurns < 0) throw new Error(`Effect ${effect.id} recharge_turns must be a nonnegative integer.`);
+      if (parameters.usage_limit !== null && parameters.usage_limit !== undefined) {
+        validateDuration(parameters.usage_limit, `Effect ${effect.id} usage_limit`);
+        requireChoice(parameters.usage_limit_scope, ["encounter", "dungeon"], `Effect ${effect.id} usage_limit_scope`);
+      }
+      if (rechargeChance <= 0 && (parameters.usage_limit === null || parameters.usage_limit === undefined)) {
+        throw new Error(`Effect ${effect.id} must enable recharge or a usage limit.`);
+      }
+    }
     return;
   }
 
   if (runtimeKey === "stat_modifier@1") {
     const allowed = effect.ownerType === "ability"
-      ? ["stat", "value_mode", "amount", "target", "element_ids"]
+      ? ["stat", "value_mode", "amount", "target", "target_element_ids"]
       : effect.ownerType === "skill"
-        ? ["stat", "value_mode", "amount", "chance", "target"]
-        : ["stat", "value_mode", "amount", "target"];
+        ? ["stat", "value_mode", "amount", "chance", "target", "target_element_ids", "source_element_ids"]
+        : ["stat", "value_mode", "amount", "target", "target_element_ids", "source_element_ids"];
     if (effect.ownerType === "status") throw new Error(`Effect ${effect.id} cannot use ${runtimeKey} as a status effect.`);
     rejectUnknownKeys(parameters, allowed, `Effect ${effect.id}`);
     requireChoice(parameters.stat, ["hp", "atk", "def", "spd"], `Effect ${effect.id} stat`);
@@ -182,7 +280,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     const amount = requireFinite(parameters.amount, `Effect ${effect.id} amount`);
     if (valueMode === "flat" && !Number.isInteger(amount)) throw new Error(`Effect ${effect.id} flat amount must be an integer.`);
     if (effect.ownerType === "skill") validateChance(parameters.chance, `Effect ${effect.id} chance`);
-    if (target === "all_element_friendlies" || target === "all_element_enemies") validateElementIds(parameters.element_ids, `Effect ${effect.id} element_ids`);
+    if (target === "all_element_friendlies" || target === "all_element_enemies") validateElementIds(parameters.target_element_ids, `Effect ${effect.id} target_element_ids`);
     return;
   }
 
@@ -190,18 +288,18 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     if (effect.ownerType !== "ability" && effect.ownerType !== "relic") throw new Error(`Effect ${effect.id} cannot use ${runtimeKey} as a ${effect.ownerType} effect.`);
     // Older authored rows persisted the hidden element picker as an empty
     // array for Relics. It is inert unless the target is explicitly elemental.
-    rejectUnknownKeys(parameters, ["minimum_delta", "maximum_delta", "target", "element_ids"], `Effect ${effect.id}`);
+    rejectUnknownKeys(parameters, ["minimum_delta", "maximum_delta", "target", "target_element_ids", "source_element_ids"], `Effect ${effect.id}`);
     const minimum = requireFinite(parameters.minimum_delta, `Effect ${effect.id} minimum_delta`);
     const maximum = requireFinite(parameters.maximum_delta, `Effect ${effect.id} maximum_delta`);
     if (!Number.isInteger(minimum) || !Number.isInteger(maximum)) throw new Error(`Effect ${effect.id} Mana deltas must be integers.`);
     if (minimum === 0 && maximum === 0) throw new Error(`Effect ${effect.id} must change at least one Mana bound.`);
-    if (target === "all_element_friendlies" || target === "all_element_enemies") validateElementIds(parameters.element_ids, `Effect ${effect.id} element_ids`);
+    if (target === "all_element_friendlies" || target === "all_element_enemies") validateElementIds(parameters.target_element_ids, `Effect ${effect.id} target_element_ids`);
     return;
   }
 
   if (runtimeKey === "apply_status@1") {
     if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
-    rejectUnknownKeys(parameters, ["status_id", "chance", "target", "indefinite", "turns"], `Effect ${effect.id}`);
+    rejectUnknownKeys(parameters, ["status_id", "chance", "target", "target_element_ids", "source_element_ids", "indefinite", "turns"], `Effect ${effect.id}`);
     if (typeof parameters.status_id !== "string" || !parameters.status_id) {
       throw new Error(`Effect ${effect.id} status_id must be a non-empty string.`);
     }
@@ -216,7 +314,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
 
   if (runtimeKey === "restore_hp@1") {
     if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
-    rejectUnknownKeys(parameters, ["value_mode", "amount", "chance", "target"], `Effect ${effect.id}`);
+    rejectUnknownKeys(parameters, ["value_mode", "amount", "chance", "target", "target_element_ids", "source_element_ids"], `Effect ${effect.id}`);
     const mode = requireChoice(parameters.value_mode, ["flat", "percent_max_hp", "percent_damage_done"], `Effect ${effect.id} value_mode`);
     const amount = requireFinite(parameters.amount, `Effect ${effect.id} amount`);
     if (amount < 0) throw new Error(`Effect ${effect.id} amount is outside the allowed range.`);

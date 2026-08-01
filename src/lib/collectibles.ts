@@ -6,6 +6,7 @@ import type {
   ShopEntry,
   UserCollectibleChallengeProgress,
 } from "./types.js";
+import { maximumDistinctElementMatches } from "./element-matching.js";
 
 const collectibleIdCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -262,6 +263,13 @@ function derivedChallengeCurrent(data: AppData, challenge: CollectibleUnlockChal
     const selected = parameters.diversity_mode === "specific_types" && Array.isArray(parameters.required_element_ids)
       ? parameters.required_element_ids.filter((id): id is string => typeof id === "string")
       : [...buckets.keys()];
+    if (parameters.require_unique_critters === true && parameters.diversity_mode === "specific_types" && requiredPerType === 1) {
+      const candidates = player.critters.map((owned) => {
+        const critter = data.catalog.critters.find((row) => row.id === owned.critter_id);
+        return { id: owned.critter_id, elementIds: critter ? [critter.element_1_id, critter.element_2_id].filter((id): id is string => Boolean(id)) : [] };
+      });
+      return BigInt(maximumDistinctElementMatches(candidates, selected));
+    }
     return BigInt(selected.filter((id) => (buckets.get(id)?.size ?? 0) >= requiredPerType).length);
   }
   if (challenge.challenge_type === "shop_shards") return shardProgress(data, challenge.collectible_type, challenge.collectible_id);

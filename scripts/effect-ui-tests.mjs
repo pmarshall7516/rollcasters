@@ -19,7 +19,7 @@ const critter = icon("C", "#3d9ca5");
 const browser = await chromium.launch({ headless: true });
 
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 });
+  const page = await browser.newPage({ viewport: { width: 1540, height: 900 }, deviceScaleFactor: 1 });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   await page.setContent(`<!doctype html><html><head><style>${css}</style><style>
@@ -28,7 +28,7 @@ try {
     .battlefield { width: 560px; grid-template-columns: 1fr; }
     .battle-unit { width: 520px; }
     .preview-art { position: absolute; inset: 5px; width: calc(100% - 10px); height: calc(100% - 10px); object-fit: contain; }
-    .owner-tooltip-grid { display: grid; grid-template-columns: repeat(3, 250px); gap: 20px; }
+    .owner-tooltip-grid { display: grid; grid-template-columns: repeat(4, 230px); gap: 20px; }
     .preview-owner { min-height: 84px; padding: 14px; border: 1px solid var(--border-soft); border-radius: 12px; background: #151b36; color: #fff; }
     .owner-tooltip-grid .game-tooltip { opacity: 1; visibility: visible; position: relative; left: auto; bottom: auto; width: 100%; margin-top: 10px; transform: none; }
   </style></head><body><main>
@@ -43,7 +43,8 @@ try {
       <div class="battle-unit-info"><span class="critter-name"><strong>Bloomling</strong></span><p>Lv 8 / Mana 2–6: 4</p><div class="hp-bar"><span style="width:72%"></span></div><p>72 / 100 HP</p></div>
     </article></div></section>
     <section class="owner-tooltip-grid" aria-label="Owner effect tooltips">
-      <span class="tooltip-anchor"><button class="preview-owner">Skill: Vampire Bite</button><span class="game-tooltip"><span class="tooltip-heading"><strong>Vampire Bite - Attack - 55 Power</strong></span><span class="tooltip-description">Bite one enemy and drain its strength.</span><span class="tooltip-description"><strong>Vampire:</strong> Restores 25% of damage actually dealt.</span></span></span>
+      <span class="tooltip-anchor"><button class="preview-owner">Vile user: Blight Echo</button><span class="game-tooltip"><span class="tooltip-heading"><strong>Blight Echo - Attack - 60 Power</strong></span><span class="tooltip-description">Strike one enemy with corrupted energy.</span><span class="tooltip-description effect-conditional-row effect-classification-negative" data-source-state="active"><span class="effect-element-requirement active"><small>Requires</small>Vile</span><span><strong>Corruptive Resonance:</strong> Active enemy Vile Critters pay +1 Mana for Vile Skills.</span></span></span></span>
+      <span class="tooltip-anchor"><button class="preview-owner">Basic user: Blight Echo</button><span class="game-tooltip"><span class="tooltip-heading"><strong>Blight Echo - Attack - 60 Power</strong></span><span class="tooltip-description">Strike one enemy with corrupted energy.</span><span class="tooltip-description effect-conditional-row effect-condition-inactive effect-classification-negative" data-source-state="inactive"><span class="effect-element-requirement inactive"><small>Requires</small>Vile</span><span><strong>Corruptive Resonance:</strong> Active enemy Vile Critters pay +1 Mana for Vile Skills.</span></span></span></span>
       <span class="tooltip-anchor"><button class="preview-owner">Ability: High Roller</button><span class="game-tooltip"><span class="tooltip-heading"><strong>High Roller</strong></span><span class="tooltip-description">Improves compatible Mana.</span><span class="tooltip-description"><strong>Loaded Dice:</strong> Bloom friendlies gain +2 minimum and +3 maximum.</span></span></span>
       <span class="tooltip-anchor"><button class="preview-owner">Relic: Expanded Pouch</button><span class="game-tooltip"><span class="tooltip-heading"><strong>Expanded Pouch</strong></span><span class="tooltip-description">A surprisingly roomy enchanted pouch.</span><span class="tooltip-description"><strong>Extra Dice:</strong> Equipped allies gain -1 minimum and +5 maximum.</span></span></span>
     </section>
@@ -76,10 +77,22 @@ try {
   });
   const statusTooltipVisible = statusTooltipState.visibility === "visible" && Number(statusTooltipState.opacity) > 0.9;
   if (!statusTooltipVisible) throw new Error(`The focused Status icon did not expose its tooltip: ${JSON.stringify(statusTooltipState)}`);
+  const sourceGateStyles = await page.locator("[data-source-state]").evaluateAll((nodes) => nodes.map((node) => {
+    const badge = node.querySelector(".effect-element-requirement");
+    return {
+      state: node.dataset.sourceState,
+      descriptionColor: getComputedStyle(node.querySelector("span:last-child")).color,
+      badgeColor: getComputedStyle(badge).color,
+      badgeText: badge.textContent.trim(),
+    };
+  }));
+  if (sourceGateStyles.length !== 2 || sourceGateStyles.some((row) => row.badgeText !== "RequiresVile") || sourceGateStyles[0].badgeColor === sourceGateStyles[1].badgeColor || sourceGateStyles[0].descriptionColor === sourceGateStyles[1].descriptionColor) {
+    throw new Error(`Source-gated Effect active/inactive styling is not visually distinct: ${JSON.stringify(sourceGateStyles)}`);
+  }
   await mkdir(outputDir, { recursive: true });
   await page.screenshot({ path: screenshot, fullPage: true });
   if (errors.length) throw new Error(`Browser errors: ${errors.join(" | ")}`);
-  console.log(JSON.stringify({ screenshot, geometry, statusNames, statusTooltipVisible }));
+  console.log(JSON.stringify({ screenshot, geometry, statusNames, statusTooltipVisible, sourceGateStyles }));
 } finally {
   await browser.close();
 }
