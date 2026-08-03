@@ -2160,8 +2160,10 @@ function ShopScreen({
   const [query, setQuery] = useState("");
   const [busyEntry, setBusyEntry] = useState<string | null>(null);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  const [purchasedLootboxEntries, setPurchasedLootboxEntries] = useState<Set<string>>(() => new Set());
   const [selectedLootboxEntry, setSelectedLootboxEntry] = useState<ShopEntry | null>(null);
   const requestIds = useRef(new Map<string, string>());
+  const lootboxRequestIds = useRef(new Map<string, string>());
   const normalized = query.trim().toLocaleLowerCase();
   const authoredEntries = data.catalog.shopEntries.filter((entry): entry is Extract<ShopEntry,{ shop_type: "shard" | "relic" }> => (
     tab === "shard" || tab === "relic"
@@ -2204,6 +2206,25 @@ function ShopScreen({
     }
   }
 
+  async function purchaseLootbox(entry: ShopEntry) {
+    if (entry.shop_type !== "lootbox") return;
+    if (busyEntry) return;
+    setBusyEntry(entry.id); setPurchaseError(null);
+    const requestId = lootboxRequestIds.current.get(entry.id) ?? createRequestId();
+    lootboxRequestIds.current.set(entry.id, requestId);
+    try {
+      const receipt = await purchaseShopEntry(entry.id, requestId);
+      if (receipt.shop_type !== "lootbox" || receipt.target_category !== "lootbox") throw new Error("Unexpected Lootbox purchase receipt.");
+      lootboxRequestIds.current.delete(entry.id);
+      setPurchasedLootboxEntries((current) => new Set(current).add(entry.id));
+      await onRefresh();
+    } catch (lootboxFailure) {
+      setPurchaseError(shopErrorMessage(lootboxFailure));
+    } finally {
+      setBusyEntry(null);
+    }
+  }
+
   const groups: Array<{ type: CollectibleType; label: string }> = [
     { type: "critter", label: "Critter Shards" },
     { type: "rollcaster", label: "Rollcaster Shards" },
@@ -2220,7 +2241,7 @@ function ShopScreen({
         <button role="tab" aria-selected={tab === "promo"} className={tab === "promo" ? "active" : ""} onClick={() => setTab("promo")}><Ticket size={17} aria-hidden="true" /> Promo Codes</button>
       </div>
       {(tab === "shard" || tab === "relic" || tab === "lootbox") && <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, name, or ID" /></label>}
-      {(tab === "shard" || tab === "relic") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
+      {(tab === "shard" || tab === "relic" || tab === "lootbox") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
       {tab === "promo" ? (
         <PromoCodesPanel
           data={data}
@@ -2232,25 +2253,33 @@ function ShopScreen({
         const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.target_id)!;
         const currency = currencyFor(data, entry.currency_id);
         if (!currency) return null;
+        const purchased = purchasedLootboxEntries.has(entry.id);
+        const busy = busyEntry === entry.id;
         const openDetails = () => setSelectedLootboxEntry(entry);
         return <article
-          className="lootbox-shop-card"
+          className={`lootbox-shop-card ${purchased ? "purchased" : ""}`.trim()}
           key={entry.id}
           tabIndex={0}
           role="button"
           aria-label={`${lootbox.name}, ${formatAmount(entry.price)} ${currency.name}`}
           onClick={openDetails}
           onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
               openDetails();
             }
           }}
         >
-          <LootboxSprite lootbox={lootbox} variant="closed" />
+          <span className="lootbox-card-sprite" onClick={(event) => event.stopPropagation()}><LootboxSprite lootbox={lootbox} variant="closed" /></span>
           <strong className="lootbox-shop-name">{lootbox.name}</strong>
           <b className="shop-price lootbox-shop-price"><span className="lootbox-price-icon" aria-hidden="true"><Coins /><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={null} /></span>{formatAmount(entry.price)}</b>
-          <button className="primary-button shop-purchase" onClick={(event) => { event.stopPropagation(); openDetails(); }}>Purchase</button>
+          <div className="lootbox-shop-actions">
+            {purchased ? <>
+              <button className="primary-button" disabled={busy} onClick={(event) => { event.stopPropagation(); openDetails(); }}>Open Now</button>
+              <button className="secondary-button" disabled={busy} onClick={(event) => { event.stopPropagation(); setPurchasedLootboxEntries((current) => { const next = new Set(current); next.delete(entry.id); return next; }); }}>Send to Bag</button>
+            </> : <button className="primary-button shop-purchase" disabled={busy} onClick={(event) => { event.stopPropagation(); void purchaseLootbox(entry); }}>{busy ? "Purchasing…" : "Purchase"}</button>}
+          </div>
         </article>;
       })}{lootboxEntries.length===0 && <ShopEmptyState hasAuthoredEntries={false} />}</div> : tab === "shard" ? (
         <div className="shop-groups">
@@ -2262,7 +2291,7 @@ function ShopScreen({
           {entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}
         </div>
       ) : <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>}
-      {selectedLootboxEntry && <LootboxModal data={data} lootboxId={selectedLootboxEntry.target_id} mode="purchase" shopEntry={selectedLootboxEntry} onRefresh={onRefresh} onClose={() => setSelectedLootboxEntry(null)} />}
+      {selectedLootboxEntry && <LootboxModal data={data} lootboxId={selectedLootboxEntry.target_id} mode="purchase" initialPurchased={purchasedLootboxEntries.has(selectedLootboxEntry.id)} shopEntry={selectedLootboxEntry} onRefresh={onRefresh} onClose={() => setSelectedLootboxEntry(null)} />}
     </section>
   );
 }
@@ -2297,17 +2326,18 @@ function lootboxPoolEntryName(data: AppData, entry: LootboxPoolEntry): string {
   return collectibleName(data,"relic",entry.target_id);
 }
 
-function LootboxModal({ data, lootboxId, mode, shopEntry, onRefresh, onClose }: {
+function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, onRefresh, onClose }: {
   data: AppData;
   lootboxId: string;
   mode: "purchase" | "owned";
+  initialPurchased?: boolean;
   shopEntry?: ShopEntry;
   onRefresh: () => Promise<void>;
   onClose: () => void;
 }) {
   const lootbox = data.catalog.lootboxes.find((row) => row.id === lootboxId);
   const pool = data.catalog.lootboxPoolEntries.filter((entry) => entry.lootbox_id === lootboxId).sort((left,right) => left.sort_order-right.sort_order);
-  const [purchased, setPurchased] = useState(mode === "owned");
+  const [purchased, setPurchased] = useState(mode === "owned" || initialPurchased);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<LootboxModalPhase>("idle");
@@ -2330,7 +2360,7 @@ function LootboxModal({ data, lootboxId, mode, shopEntry, onRefresh, onClose }: 
     try {
       await purchaseShopEntry(shopEntry.id,purchaseRequest.current);
       setPurchased(true);
-      await onRefresh();
+      void onRefresh().catch((refreshFailure) => console.error("Lootbox purchase succeeded but refresh failed.", refreshFailure));
     } catch (purchaseFailure) {
       setError(shopErrorMessage(purchaseFailure));
     } finally { setBusy(false); }
@@ -2343,10 +2373,9 @@ function LootboxModal({ data, lootboxId, mode, shopEntry, onRefresh, onClose }: 
       const opening = await openLootbox(lootbox.id,openingRequest.current);
       setReceipt(opening);
       setPhase("shaking");
-      await onRefresh();
-      timers.current.push(window.setTimeout(() => setPhase("opened"),900));
-      timers.current.push(window.setTimeout(() => setPhase("reel"),1300));
-      timers.current.push(window.setTimeout(() => setPhase("result"),7300));
+      void onRefresh().catch((refreshFailure) => console.error("Lootbox opening succeeded but refresh failed.", refreshFailure));
+      timers.current.push(window.setTimeout(() => setPhase("opened"),650));
+      timers.current.push(window.setTimeout(() => setPhase("reel"),950));
     } catch (openingFailure) {
       setError(errorMessage(openingFailure,"Unable to open this Lootbox."));
     } finally { setBusy(false); }
@@ -2355,7 +2384,7 @@ function LootboxModal({ data, lootboxId, mode, shopEntry, onRefresh, onClose }: 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (event.code !== "Space" || event.repeat || target?.matches("input,textarea,select,[contenteditable=true]")) return;
+      if (event.code !== "Space" || event.repeat || target?.matches("input,textarea,select,button,[contenteditable=true]")) return;
       if (canOpen) { event.preventDefault(); void openBox(); }
     };
     window.addEventListener("keydown",onKey);
@@ -2377,19 +2406,39 @@ function LootboxModal({ data, lootboxId, mode, shopEntry, onRefresh, onClose }: 
   }).filter((item): item is { entry: LootboxPoolEntry; amount: number; index: number } => Boolean(item.entry)),[receipt?.openingId,lootboxId]);
   if (!lootbox) return null;
   const showingAnimation = phase !== "idle";
+  const duplicateUnits = BigInt(receipt?.reward.discarded ?? "0");
+  const duplicateCurrency = receipt ? currencyFor(data, receipt.reward.dupeCurrencyId ?? "") : null;
   return <div className="modal-backdrop lootbox-modal-backdrop" onMouseDown={showingAnimation ? undefined : onClose}>
     <section className={`lootbox-modal phase-${phase}`} role="dialog" aria-modal="true" aria-label={lootbox.name} onMouseDown={(event) => event.stopPropagation()}>
       {!showingAnimation && <button className="modal-close" aria-label="Close" onClick={onClose}><X /></button>}
       <header><p className="eyebrow">{mode==="purchase"&&!purchased?"Lootbox Shop":purchased?"Lootbox acquired":"Bag"}</p><h2>{lootbox.name}</h2><p>{lootbox.description}</p></header>
       {showingAnimation ? <div className="lootbox-opening-stage">
         <button className={`lootbox-click-target ${phase==="shaking"?"shaking":""}`} disabled><LootboxSprite lootbox={lootbox} variant={phase==="shaking"?"closed":"open"} /></button>
-        {(phase==="reel"||phase==="result") && <div className={`lootbox-reel ${phase==="result"?"finished":"spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div className="lootbox-reel-track">{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===16?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
-        {phase==="result"&&receipt&&<div className="lootbox-result"><span>YOU WON</span><h3>{receipt.reward.name}</h3><strong>×{formatAmount(receipt.reward.granted)}</strong>{BigInt(receipt.reward.discarded||"0")>0n&&<p>{formatAmount(receipt.reward.discarded)} duplicate units converted into {formatAmount(receipt.reward.convertedCurrencyAmount)} {currencyFor(data,receipt.reward.dupeCurrencyId??"")?.name??receipt.reward.dupeCurrencyId}.</p>}<button className="primary-button" onClick={onClose}>Continue</button></div>}
+        {(phase==="reel"||phase==="result") && <div className={`lootbox-reel ${phase==="result"?"finished":"spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div className="lootbox-reel-track" onAnimationEnd={(event) => { if (event.animationName === "lootbox-reel-spin" && phase === "reel") setPhase("result"); }}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===16?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
+        {phase === "result" && receipt && (
+          <div className="lootbox-result">
+            <span>YOU WON</span>
+            <h3>{receipt.reward.name}</h3>
+            <div className={`lootbox-reward-summary ${duplicateUnits > 0n ? "duplicate" : ""}`.trim()}>
+              <strong className="lootbox-reward-amount">×{formatAmount(receipt.reward.amount)}</strong>
+              {duplicateUnits > 0n && (
+                <div className="lootbox-duplicate-conversion">
+                  <span className="lootbox-duplicate-currency" aria-hidden="true">
+                    <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
+                  </span>
+                  <strong>+{formatAmount(receipt.reward.convertedCurrencyAmount)}</strong>
+                  <small>{formatAmount(receipt.reward.discarded)} duplicate {receipt.reward.discarded === "1" ? "unit" : "units"} converted to {duplicateCurrency?.name ?? receipt.reward.dupeCurrencyId ?? "currency"}</small>
+                </div>
+              )}
+            </div>
+            <button className="primary-button" onClick={onClose}>Continue</button>
+          </div>
+        )}
       </div> : <>
         <button className="lootbox-click-target" disabled={!canOpen} aria-label={canOpen?`Open ${lootbox.name}`:lootbox.name} onClick={() => void openBox()}><LootboxSprite lootbox={lootbox} variant="closed" /></button>
-        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
         {error&&<p className="notice error" role="alert">{error}</p>}
         <footer>{!purchased&&shopEntry&&currency?<button className="primary-button lootbox-purchase-button" disabled={busy} onClick={() => void purchaseBox()}>{busy?"Purchasing…":<><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /> Purchase · {formatAmount(shopEntry.price)}</>}</button>:<><button ref={openButtonRef} className="primary-button" disabled={busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":"Open Now"}</button><button className="secondary-button" onClick={onClose}>Send to Bag</button></>}</footer>
+        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
       </>}
     </section>
   </div>;
