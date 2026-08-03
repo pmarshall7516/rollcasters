@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   ArrowUp,
   Check,
@@ -36,6 +36,7 @@ import {
   getSession,
   hasSupabaseConfig,
   loadAppData,
+  openLootbox,
   purchaseShopEntry,
   recordDungeonBattleResult,
   redeemPromoCode,
@@ -138,6 +139,9 @@ import type {
   Dungeon,
   DungeonDrop,
   DungeonRewardSummary,
+  Lootbox,
+  LootboxOpeningReceipt,
+  LootboxPoolEntry,
   PlayerState,
   PromoCodeRedemption,
   PromoCodeReward,
@@ -153,7 +157,7 @@ import type {
 import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
-type BagTab = "currency" | "shards";
+type BagTab = "currency" | "shards" | "lootboxes";
 type ShopTab = "shard" | "relic" | "lootbox" | "promo";
 type CollectionDetail = { type: "critter" | "rollcaster" | "relic"; id: string };
 type PromoRenderState = {
@@ -644,6 +648,7 @@ export function App() {
         catalogRelease: data?.catalogRelease ?? null,
         playerStateRevision: data?.player?.playerStateRevision ?? null,
         serverCatalogVersion: data?.player?.serverCatalogVersion ?? null,
+        lootboxOpeningPhase: document.documentElement.dataset.lootboxOpeningPhase ?? null,
         starterRollcasterSelected: data?.player?.profile.starter_rollcaster_selected_at != null,
         starterSelected: data?.player?.profile.starter_selected_at != null,
         onboarding: view === "starter-rollcaster"
@@ -672,6 +677,7 @@ export function App() {
               tab: bagTab,
               currencies: data ? orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite").length : 0,
               shards: data?.player?.collectibleSnapshot.shards.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
+              lootboxes: data?.player?.collectibleSnapshot.lootboxes.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
             }
           : null,
         unlockNotification: notificationQueue[0]?.kind === "collectible-unlock"
@@ -861,6 +867,7 @@ export function App() {
           data={data}
           tab={bagTab}
           setTab={setBagTab}
+          onRefresh={() => refresh("bag")}
           onBack={() => navigate("home")}
         />
       )}
@@ -2015,12 +2022,15 @@ function BagScreen({
   tab,
   setTab,
   onBack,
+  onRefresh,
 }: {
   data: AppData;
   tab: BagTab;
   setTab: (tab: BagTab) => void;
   onBack: () => void;
+  onRefresh: () => Promise<void>;
 }) {
+  const [selectedLootbox, setSelectedLootbox] = useState<string | null>(null);
   const currencies = orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite");
   const shardRows = [
     ...data.catalog.critters.map((entry) => ({ type: "critter" as const, entry })),
@@ -2040,13 +2050,14 @@ function BagScreen({
       <div className="screen-heading row">
         <div>
           <h1>Bag</h1>
-          <p>Review your currencies and collectible shards.</p>
+          <p>Review your currencies, collectible shards, and owned Lootboxes.</p>
         </div>
         <button className="secondary-button" onClick={onBack}>Back</button>
       </div>
       <div className="tabs bag-tabs" role="tablist" aria-label="Bag categories">
         <button role="tab" aria-selected={tab === "currency"} className={tab === "currency" ? "active" : ""} onClick={() => setTab("currency")}>Currency</button>
         <button role="tab" aria-selected={tab === "shards"} className={tab === "shards" ? "active" : ""} onClick={() => setTab("shards")}>Shards</button>
+        <button role="tab" aria-selected={tab === "lootboxes"} className={tab === "lootboxes" ? "active" : ""} onClick={() => setTab("lootboxes")}>Lootboxes</button>
       </div>
       {tab === "currency" ? (
         <div className="collection-grid bag-currency-grid">
@@ -2061,7 +2072,7 @@ function BagScreen({
             </article>
           ))}
         </div>
-      ) : (
+      ) : tab === "shards" ? (
         <div className="shop-groups bag-shard-groups">
           {groups.map((group) => {
             const grouped = shardRows.filter((row) => row.type === group.type);
@@ -2077,7 +2088,18 @@ function BagScreen({
           })}
           {shardRows.length === 0 && <div className="shop-empty"><Gem size={34} /><h2>No shards yet</h2><p>Collectible shards you earn will appear here.</p></div>}
         </div>
-      )}
+      ) : <div className="shop-grid lootbox-bag-grid">
+        {data.player!.collectibleSnapshot.lootboxes.map((owned) => {
+          const lootbox = data.catalog.lootboxes.find((row) => row.id === owned.lootbox_id);
+          if (!lootbox || BigInt(owned.quantity || "0") < 1n) return null;
+          return <button className="lootbox-bag-card" key={lootbox.id} onClick={() => setSelectedLootbox(lootbox.id)}>
+            <LootboxSprite lootbox={lootbox} variant="closed" />
+            <strong>{lootbox.name}</strong><b>×{formatAmount(owned.quantity)}</b>
+          </button>;
+        })}
+        {data.player!.collectibleSnapshot.lootboxes.length === 0 && <div className="shop-empty"><Gift /><h2>No Lootboxes yet</h2><p>Purchased and earned Lootboxes will appear here.</p></div>}
+      </div>}
+      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
     </section>
   );
 }
@@ -2138,11 +2160,13 @@ function ShopScreen({
   const [query, setQuery] = useState("");
   const [busyEntry, setBusyEntry] = useState<string | null>(null);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  const [selectedLootboxEntry, setSelectedLootboxEntry] = useState<ShopEntry | null>(null);
   const requestIds = useRef(new Map<string, string>());
   const normalized = query.trim().toLocaleLowerCase();
-  const authoredEntries = data.catalog.shopEntries.filter((entry) => (
+  const authoredEntries = data.catalog.shopEntries.filter((entry): entry is Extract<ShopEntry,{ shop_type: "shard" | "relic" }> => (
     tab === "shard" || tab === "relic"
   ) && entry.shop_type === tab);
+  const lootboxEntries = data.catalog.shopEntries.filter((entry) => entry.shop_type === "lootbox" && data.catalog.lootboxes.some((lootbox) => lootbox.id === entry.target_id));
   const validEntries = authoredEntries.filter((entry) => currencyFor(data, entry.currency_id) && collectibleTargetAvailable(data, entry.target_category, entry.target_id));
   const entries = validEntries.filter((entry) => !normalized
     || entry.name.toLocaleLowerCase().includes(normalized)
@@ -2155,12 +2179,13 @@ function ShopScreen({
     });
   }, [authoredEntries.map((entry) => entry.id).join("|"), validEntries.map((entry) => entry.id).join("|")]);
 
-  async function purchase(entry: ShopEntry) {
+  async function purchase(entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>) {
     setBusyEntry(entry.id); setPurchaseError(null);
     const requestId = requestIds.current.get(entry.id) ?? createRequestId();
     requestIds.current.set(entry.id, requestId);
     try {
       const receipt = await purchaseShopEntry(entry.id, requestId);
+      if (receipt.shop_type === "lootbox" || receipt.target_category === "lootbox") throw new Error("Unexpected Lootbox purchase receipt.");
       requestIds.current.delete(entry.id);
       onNotify({
         id: `shop:${receipt.request_id}`,
@@ -2191,10 +2216,10 @@ function ShopScreen({
       <div className="tabs shop-tabs" role="tablist" aria-label="Shop categories">
         <button role="tab" aria-selected={tab === "shard"} className={tab === "shard" ? "active" : ""} onClick={() => setTab("shard")}>Shard Shop</button>
         <button role="tab" aria-selected={tab === "relic"} className={tab === "relic" ? "active" : ""} onClick={() => setTab("relic")}>Relic Shop</button>
-        <button role="tab" aria-selected={tab === "lootbox"} className={tab === "lootbox" ? "active" : ""} disabled title="Coming later">Lootbox Shop <small>Coming later</small></button>
+        <button role="tab" aria-selected={tab === "lootbox"} className={tab === "lootbox" ? "active" : ""} onClick={() => setTab("lootbox")}>Lootbox Shop</button>
         <button role="tab" aria-selected={tab === "promo"} className={tab === "promo" ? "active" : ""} onClick={() => setTab("promo")}><Ticket size={17} aria-hidden="true" /> Promo Codes</button>
       </div>
-      {(tab === "shard" || tab === "relic") && <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or collectible ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, collectible name, or ID" /></label>}
+      {(tab === "shard" || tab === "relic" || tab === "lootbox") && <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, name, or ID" /></label>}
       {(tab === "shard" || tab === "relic") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
       {tab === "promo" ? (
         <PromoCodesPanel
@@ -2203,7 +2228,31 @@ function ShopScreen({
           onStateChange={onPromoStateChange}
           onNotify={onNotify}
         />
-      ) : tab === "lootbox" ? <div className="shop-empty"><ShoppingBag size={38} /><h2>Lootbox Shop</h2><p>Coming later. Lootboxes, rolls, pity rules, and awards are intentionally reserved for a separate system.</p></div> : tab === "shard" ? (
+      ) : tab === "lootbox" ? <div className="shop-grid lootbox-shop-grid">{lootboxEntries.filter((entry) => !normalized || `${entry.name} ${entry.target_id}`.toLocaleLowerCase().includes(normalized)).map((entry) => {
+        const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.target_id)!;
+        const currency = currencyFor(data, entry.currency_id);
+        if (!currency) return null;
+        const openDetails = () => setSelectedLootboxEntry(entry);
+        return <article
+          className="lootbox-shop-card"
+          key={entry.id}
+          tabIndex={0}
+          role="button"
+          aria-label={`${lootbox.name}, ${formatAmount(entry.price)} ${currency.name}`}
+          onClick={openDetails}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openDetails();
+            }
+          }}
+        >
+          <LootboxSprite lootbox={lootbox} variant="closed" />
+          <strong className="lootbox-shop-name">{lootbox.name}</strong>
+          <b className="shop-price lootbox-shop-price"><span className="lootbox-price-icon" aria-hidden="true"><Coins /><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={null} /></span>{formatAmount(entry.price)}</b>
+          <button className="primary-button shop-purchase" onClick={(event) => { event.stopPropagation(); openDetails(); }}>Purchase</button>
+        </article>;
+      })}{lootboxEntries.length===0 && <ShopEmptyState hasAuthoredEntries={false} />}</div> : tab === "shard" ? (
         <div className="shop-groups">
           {groups.map((group) => {
             const grouped = entries.filter((entry) => entry.target_category === group.type);
@@ -2213,8 +2262,137 @@ function ShopScreen({
           {entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}
         </div>
       ) : <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>}
+      {selectedLootboxEntry && <LootboxModal data={data} lootboxId={selectedLootboxEntry.target_id} mode="purchase" shopEntry={selectedLootboxEntry} onRefresh={onRefresh} onClose={() => setSelectedLootboxEntry(null)} />}
     </section>
   );
+}
+
+type LootboxModalPhase = "idle" | "shaking" | "opened" | "reel" | "result";
+
+function LootboxSprite({ lootbox, variant, className = "" }: { lootbox: Lootbox; variant: "closed" | "open"; className?: string }) {
+  const path = variant === "closed" ? lootbox.closed_asset_path : lootbox.open_asset_path;
+  return <span className={`lootbox-sprite ${variant} ${className}`.trim()}><span className="lootbox-sprite-fallback" aria-hidden="true">{variant === "closed" ? <Gift /> : <Sparkles />}</span><AssetIcon path={path} alt={`${lootbox.name} ${variant}`} loading="eager" fallback={null} /></span>;
+}
+
+function LootboxPoolArt({ data, entry }: { data: AppData; entry: LootboxPoolEntry }) {
+  if (entry.reward_type === "currency") {
+    const currency = currencyFor(data, entry.target_id);
+    return <span className="lootbox-pool-art"><SpriteFrame size="sm"><AssetIcon path={currency ? catalogAssetPath(data,"currency",currency.id,currency.asset_path) : null} alt="" fallback={<Coins />} /></SpriteFrame></span>;
+  }
+  if (entry.reward_type === "lootbox") {
+    const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.target_id);
+    return <span className="lootbox-pool-art">{lootbox ? <LootboxSprite lootbox={lootbox} variant="closed" /> : <SpriteFrame size="sm"><Gift /></SpriteFrame>}</span>;
+  }
+  if (entry.reward_type === "shard" && entry.target_category && entry.target_category !== "lootbox") {
+    return <span className="lootbox-pool-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="sm" shard /></span>;
+  }
+  const relic = byId(data.catalog.relics, entry.target_id);
+  return <span className="lootbox-pool-art"><SpriteFrame size="sm"><Sprite name={relic?.name ?? entry.target_id} element="metal" assetPath={relic ? (findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)) : null} size="small" /></SpriteFrame></span>;
+}
+
+function lootboxPoolEntryName(data: AppData, entry: LootboxPoolEntry): string {
+  if (entry.reward_type === "currency") return currencyFor(data, entry.target_id)?.name ?? entry.target_id;
+  if (entry.reward_type === "lootbox") return data.catalog.lootboxes.find((row) => row.id === entry.target_id)?.name ?? entry.target_id;
+  if (entry.reward_type === "shard" && entry.target_category && entry.target_category !== "lootbox") return `${collectibleName(data,entry.target_category,entry.target_id)} Shards`;
+  return collectibleName(data,"relic",entry.target_id);
+}
+
+function LootboxModal({ data, lootboxId, mode, shopEntry, onRefresh, onClose }: {
+  data: AppData;
+  lootboxId: string;
+  mode: "purchase" | "owned";
+  shopEntry?: ShopEntry;
+  onRefresh: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const lootbox = data.catalog.lootboxes.find((row) => row.id === lootboxId);
+  const pool = data.catalog.lootboxPoolEntries.filter((entry) => entry.lootbox_id === lootboxId).sort((left,right) => left.sort_order-right.sort_order);
+  const [purchased, setPurchased] = useState(mode === "owned");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<LootboxModalPhase>("idle");
+  const [receipt, setReceipt] = useState<LootboxOpeningReceipt | null>(null);
+  const purchaseRequest = useRef(createRequestId());
+  const openingRequest = useRef(createRequestId());
+  const openButtonRef = useRef<HTMLButtonElement>(null);
+  const timers = useRef<number[]>([]);
+  const canOpen = purchased && phase === "idle" && !busy;
+
+  useEffect(() => () => timers.current.forEach((timer) => window.clearTimeout(timer)), []);
+  useEffect(() => {
+    document.documentElement.dataset.lootboxOpeningPhase = phase;
+    return () => { delete document.documentElement.dataset.lootboxOpeningPhase; };
+  }, [phase]);
+
+  async function purchaseBox() {
+    if (!shopEntry || busy) return;
+    setBusy(true); setError(null);
+    try {
+      await purchaseShopEntry(shopEntry.id,purchaseRequest.current);
+      setPurchased(true);
+      await onRefresh();
+    } catch (purchaseFailure) {
+      setError(shopErrorMessage(purchaseFailure));
+    } finally { setBusy(false); }
+  }
+
+  async function openBox() {
+    if (!canOpen || !lootbox) return;
+    setBusy(true); setError(null);
+    try {
+      const opening = await openLootbox(lootbox.id,openingRequest.current);
+      setReceipt(opening);
+      setPhase("shaking");
+      await onRefresh();
+      timers.current.push(window.setTimeout(() => setPhase("opened"),900));
+      timers.current.push(window.setTimeout(() => setPhase("reel"),1300));
+      timers.current.push(window.setTimeout(() => setPhase("result"),7300));
+    } catch (openingFailure) {
+      setError(errorMessage(openingFailure,"Unable to open this Lootbox."));
+    } finally { setBusy(false); }
+  }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.code !== "Space" || event.repeat || target?.matches("input,textarea,select,[contenteditable=true]")) return;
+      if (canOpen) { event.preventDefault(); void openBox(); }
+    };
+    window.addEventListener("keydown",onKey);
+    return () => window.removeEventListener("keydown",onKey);
+  }, [canOpen,lootbox?.id]);
+
+  useEffect(() => {
+    if (purchased && phase === "idle" && !busy) {
+      requestAnimationFrame(() => openButtonRef.current?.focus());
+    }
+  }, [purchased, phase, busy]);
+
+  const currency = shopEntry ? currencyFor(data,shopEntry.currency_id) : null;
+  const winningEntry = receipt ? pool.find((entry) => entry.id === receipt.reward.poolEntryId) : undefined;
+  const reel = useMemo(() => Array.from({ length: 20 },(_,index) => {
+    const entry = index===16 && winningEntry ? winningEntry : pool[Math.floor(Math.random()*Math.max(1,pool.length))] ?? winningEntry;
+    const amount = index===16 && receipt ? Number(receipt.reward.amount) : entry ? entry.min_amount+Math.floor(Math.random()*(entry.max_amount-entry.min_amount+1)) : 1;
+    return { entry,amount,index };
+  }).filter((item): item is { entry: LootboxPoolEntry; amount: number; index: number } => Boolean(item.entry)),[receipt?.openingId,lootboxId]);
+  if (!lootbox) return null;
+  const showingAnimation = phase !== "idle";
+  return <div className="modal-backdrop lootbox-modal-backdrop" onMouseDown={showingAnimation ? undefined : onClose}>
+    <section className={`lootbox-modal phase-${phase}`} role="dialog" aria-modal="true" aria-label={lootbox.name} onMouseDown={(event) => event.stopPropagation()}>
+      {!showingAnimation && <button className="modal-close" aria-label="Close" onClick={onClose}><X /></button>}
+      <header><p className="eyebrow">{mode==="purchase"&&!purchased?"Lootbox Shop":purchased?"Lootbox acquired":"Bag"}</p><h2>{lootbox.name}</h2><p>{lootbox.description}</p></header>
+      {showingAnimation ? <div className="lootbox-opening-stage">
+        <button className={`lootbox-click-target ${phase==="shaking"?"shaking":""}`} disabled><LootboxSprite lootbox={lootbox} variant={phase==="shaking"?"closed":"open"} /></button>
+        {(phase==="reel"||phase==="result") && <div className={`lootbox-reel ${phase==="result"?"finished":"spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div className="lootbox-reel-track">{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===16?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
+        {phase==="result"&&receipt&&<div className="lootbox-result"><span>YOU WON</span><h3>{receipt.reward.name}</h3><strong>×{formatAmount(receipt.reward.granted)}</strong>{BigInt(receipt.reward.discarded||"0")>0n&&<p>{formatAmount(receipt.reward.discarded)} duplicate units converted into {formatAmount(receipt.reward.convertedCurrencyAmount)} {currencyFor(data,receipt.reward.dupeCurrencyId??"")?.name??receipt.reward.dupeCurrencyId}.</p>}<button className="primary-button" onClick={onClose}>Continue</button></div>}
+      </div> : <>
+        <button className="lootbox-click-target" disabled={!canOpen} aria-label={canOpen?`Open ${lootbox.name}`:lootbox.name} onClick={() => void openBox()}><LootboxSprite lootbox={lootbox} variant="closed" /></button>
+        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
+        {error&&<p className="notice error" role="alert">{error}</p>}
+        <footer>{!purchased&&shopEntry&&currency?<button className="primary-button lootbox-purchase-button" disabled={busy} onClick={() => void purchaseBox()}>{busy?"Purchasing…":<><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /> Purchase · {formatAmount(shopEntry.price)}</>}</button>:<><button ref={openButtonRef} className="primary-button" disabled={busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":"Open Now"}</button><button className="secondary-button" onClick={onClose}>Send to Bag</button></>}</footer>
+      </>}
+    </section>
+  </div>;
 }
 
 function PromoCodesPanel({
@@ -2515,7 +2693,7 @@ function ShopEmptyState({ hasAuthoredEntries }: { hasAuthoredEntries: boolean })
   return <div className="shop-empty"><ShoppingBag size={34} /><h2>{hasAuthoredEntries ? "No shop entries match" : "No offers available yet"}</h2><p>{hasAuthoredEntries ? "Try a different name or collectible ID." : "Active offers authored in Content Studio will appear here."}</p></div>;
 }
 
-function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry: ShopEntry; busy: boolean; onPurchase: () => void }) {
+function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>; busy: boolean; onPurchase: () => void }) {
   const availability = shopAvailability(data, entry);
   const alreadyOwned = entry.shop_type === "shard"
     && (availability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || availability.code === "SHOP_SHARDS_CHALLENGE_COMPLETE");
@@ -3415,16 +3593,20 @@ function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
   const currency = drop.kind === "currency" ? currencyFor(data, drop.targetId) : undefined;
   const targetName = drop.kind === "currency"
     ? currency?.name ?? drop.targetId
-    : collectibleName(data, drop.targetCategory ?? "relic", drop.targetId);
+    : drop.kind === "lootbox"
+      ? data.catalog.lootboxes.find((lootbox) => lootbox.id === drop.targetId)?.name ?? drop.targetId
+    : collectibleName(data, (drop.targetCategory ?? "relic") as CollectibleType, drop.targetId);
   return (
     <div className="dungeon-drop-row">
       {drop.kind === "currency"
         ? <AssetIcon path={catalogAssetPath(data, "currency", currency?.id, currency?.asset_path, "icon")} alt="" fallback={<Coins size={17} />} />
-        : <CollectibleSprite data={data} type={drop.targetCategory ?? "relic"} id={drop.targetId} size="xs" shard={drop.kind === "shard"} />}
+        : drop.kind === "lootbox"
+          ? <LootboxSprite lootbox={data.catalog.lootboxes.find((lootbox) => lootbox.id === drop.targetId)!} variant="closed" />
+        : <CollectibleSprite data={data} type={(drop.targetCategory ?? "relic") as CollectibleType} id={drop.targetId} size="xs" shard={drop.kind === "shard"} />}
       <span>
         <strong>{dropAmountLabel(drop.minAmount, drop.maxAmount)} {drop.kind === "shard" ? `${targetName} Shards` : targetName}</strong>
         <small>{Math.round(drop.probability * 10000) / 100}% chance</small>
-        {drop.kind !== "currency" && drop.dupeCurrencyId && <small>Duplicates convert to {drop.dupeCurrencyAmount ?? 0} {currencyFor(data, drop.dupeCurrencyId)?.name ?? drop.dupeCurrencyId} each.</small>}
+        {(drop.kind === "shard" || drop.kind === "relic") && drop.dupeCurrencyId && <small>Duplicates convert to {drop.dupeCurrencyAmount ?? 0} {currencyFor(data, drop.dupeCurrencyId)?.name ?? drop.dupeCurrencyId} each.</small>}
       </span>
     </div>
   );
@@ -4670,7 +4852,9 @@ function RewardSummary({ data, rewards }: { data: AppData; rewards: DungeonRewar
             ? `${entry.amount} Rollcaster XP`
             : entry.kind === "currency"
               ? `${entry.amount} ${currencyFor(data, entry.targetId)?.name ?? entry.targetId}`
-              : `${entry.amount} ${entry.kind === "shard" ? `${collectibleName(data, entry.targetCategory ?? "relic", entry.targetId)} Shards` : collectibleName(data, "relic", entry.targetId)}`;
+              : entry.kind === "lootbox"
+                ? `${entry.amount} ${data.catalog.lootboxes.find((lootbox) => lootbox.id === entry.targetId)?.name ?? entry.targetId}`
+                : `${entry.amount} ${entry.kind === "shard" ? `${collectibleName(data, (entry.targetCategory ?? "relic") as CollectibleType, entry.targetId)} Shards` : collectibleName(data, "relic", entry.targetId)}`;
         return <span key={entry.id}><RewardEntryIcon data={data} entry={entry} /><strong>{label}</strong>{entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}</span>;
       })}
     </div>
@@ -5054,9 +5238,13 @@ function RewardEntryIcon({ data, entry }: { data: AppData; entry: DungeonRewardS
   }
   if (entry.kind === "critter_xp") return <Sparkles size={15} />;
   if (entry.kind === "rollcaster_xp") return <UserRound size={15} />;
+  if (entry.kind === "lootbox") {
+    const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.targetId);
+    return lootbox ? <LootboxSprite lootbox={lootbox} variant="closed" /> : <Gift size={15} />;
+  }
   return <CollectibleSprite
     data={data}
-    type={entry.targetCategory ?? "relic"}
+    type={(entry.targetCategory ?? "relic") as CollectibleType}
     id={entry.targetId}
     size="xs"
     shard={entry.kind === "shard"}
@@ -5171,15 +5359,24 @@ function Modal({
   className?: string;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
   const titleId = `modal-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose;
+  });
+  useLayoutEffect(() => {
+    if (modalRef.current) modalRef.current.scrollTop = 0;
+  }, [title]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const modal = modalRef.current;
-    const initial = modal?.querySelector<HTMLElement>("button:not([aria-label='Close']), summary, [role='button'], [role='tab'], [role='option'], [tabindex='0']")
+    const initial = modal?.querySelector<HTMLElement>("button[aria-label='Close']")
+      ?? modal?.querySelector<HTMLElement>("button, summary, [role='button'], [role='tab'], [role='option'], [tabindex='0']")
       ?? modal?.querySelector<HTMLElement>("input, select, textarea, button, [href], [tabindex]:not([tabindex='-1'])");
-    initial?.focus();
+    initial?.focus({ preventScroll: true });
+    if (modal) modal.scrollTop = 0;
     function keydown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
       if (event.key !== "Tab" || !modal) return;
       const focusable = [...modal.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input, [tabindex]:not([tabindex='-1'])")];
       if (!focusable.length) return;
@@ -5190,7 +5387,7 @@ function Modal({
     }
     document.addEventListener("keydown", keydown);
     return () => { document.removeEventListener("keydown", keydown); previous?.focus(); };
-  }, [onClose]);
+  }, [title]);
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className={`modal ${className}`.trim()} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={`${titleId}-description`}>
@@ -5250,7 +5447,7 @@ function Sprite({
           className={`sprite-box__image ${fit === "portrait" ? "portrait-sprite-image" : ""}`.trim()}
           data-sprite-image
           decoding="async"
-          loading={size === "hero" ? "eager" : "lazy"}
+          loading={size === "hero" || size === "small" ? "eager" : "lazy"}
           onError={() => setFailedAssetPath(assetPath ?? null)}
         />
       ) : locked ? "?" : initials}

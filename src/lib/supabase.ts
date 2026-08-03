@@ -19,6 +19,7 @@ import type {
   ElementDef,
   ElementEffectiveness,
   PlayerState,
+  LootboxOpeningReceipt,
   PromoCodeRedemption,
   PromoCodeReward,
   ShopPurchaseReceipt,
@@ -130,7 +131,7 @@ function normalizeCritter(row: Record<string, unknown>): Critter {
 }
 
 function emptyCollectibleSnapshot(): CollectiblePlayerSnapshot {
-  return { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] };
+  return { currencies: [], shards: [], lootboxes: [], progress: [], tracked: [], unlock_events: [], unlocked_collectibles: [] };
 }
 
 type RawDungeonOpponentSkill = { opponent_id: string; skill_id: string; slot_index: number };
@@ -147,7 +148,7 @@ type RawDungeonCurrencyDrop = {
 type RawDungeonItemDrop = {
   id: string;
   opponent_id: string;
-  drop_type: "shard" | "relic";
+  drop_type: "shard" | "relic" | "lootbox";
   target_category: "critter" | "rollcaster" | "relic";
   target_id: string;
   min_amount: number;
@@ -208,7 +209,7 @@ function normalizeCompletionDrop(row: RawDungeonCompletionDrop): DungeonCompleti
 }
 
 type CollectibleShopCatalog = Pick<Catalog,
-  "currencies" | "collectibleUnlockRequirements" | "collectibleUnlockChallenges" | "shopEntries" | "unlockChallengeTemplates"
+  "currencies" | "collectibleUnlockRequirements" | "collectibleUnlockChallenges" | "shopEntries" | "lootboxes" | "lootboxPoolEntries" | "unlockChallengeTemplates"
 >;
 
 async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
@@ -219,6 +220,8 @@ async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
     requirements?: Catalog["collectibleUnlockRequirements"];
     challenges?: Catalog["collectibleUnlockChallenges"];
     shop_entries?: Catalog["shopEntries"];
+    lootboxes?: Catalog["lootboxes"];
+    lootbox_pool_entries?: Catalog["lootboxPoolEntries"];
     challenge_templates?: Catalog["unlockChallengeTemplates"];
   } | null;
   return {
@@ -226,6 +229,12 @@ async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
     collectibleUnlockRequirements: payload?.requirements ?? [],
     collectibleUnlockChallenges: payload?.challenges ?? [],
     shopEntries: payload?.shop_entries ?? [],
+    lootboxes: (payload?.lootboxes ?? []).map((lootbox) => ({ ...lootbox, sell_value: String(lootbox.sell_value) })),
+    lootboxPoolEntries: (payload?.lootbox_pool_entries ?? []).map((entry) => ({
+      ...entry,
+      probability: Number(entry.probability),
+      dupe_currency_amount: entry.dupe_currency_amount == null ? null : String(entry.dupe_currency_amount),
+    })),
     unlockChallengeTemplates: payload?.challenge_templates ?? [],
   };
 }
@@ -908,6 +917,15 @@ export async function purchaseShopEntry(entryId: string, requestId: string): Pro
   });
   if (error) throw error;
   return data as ShopPurchaseReceipt;
+}
+
+export async function openLootbox(lootboxId: string, requestId: string): Promise<LootboxOpeningReceipt> {
+  const { data, error } = await requireClient().rpc("open_lootbox", {
+    p_lootbox_id: lootboxId,
+    p_request_id: requestId,
+  });
+  if (error) throw error;
+  return data as LootboxOpeningReceipt;
 }
 
 function normalizePromoCodeReward(value: unknown): PromoCodeReward {

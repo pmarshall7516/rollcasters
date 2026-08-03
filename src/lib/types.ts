@@ -73,12 +73,10 @@ export type CollectibleUnlockChallenge = {
   display_text?: string | null;
 };
 
-export type ShopEntry = {
+type ShopEntryBase = {
   id: string;
-  shop_type: "shard" | "relic";
   name: string;
   description: string;
-  target_category: CollectibleType;
   target_id: string;
   quantity: number;
   currency_id: string;
@@ -88,8 +86,14 @@ export type ShopEntry = {
   is_archived: boolean;
 };
 
+export type ShopEntry = ShopEntryBase & (
+  | { shop_type: "shard" | "relic"; target_category: CollectibleType }
+  | { shop_type: "lootbox"; target_category: "lootbox" }
+);
+
 export type UserCurrency = { currency_id: string; balance: string };
 export type UserCollectibleShard = { collectible_type: CollectibleType; collectible_id: string; quantity: string };
+export type UserLootbox = { lootbox_id: string; quantity: string };
 export type UserCollectibleChallengeProgress = {
   challenge_id: string;
   current: string;
@@ -107,20 +111,26 @@ export type CollectibleUnlockEvent = {
   collectible_id: string;
   created_at: string;
 };
+export type UserUnlockedCollectible = {
+  collectible_type: CollectibleType;
+  collectible_id: string;
+};
 
 export type CollectiblePlayerSnapshot = {
   currencies: UserCurrency[];
   shards: UserCollectibleShard[];
+  lootboxes: UserLootbox[];
   progress: UserCollectibleChallengeProgress[];
   tracked: UserTrackedCollectibleChallenge[];
   unlock_events: CollectibleUnlockEvent[];
+  unlocked_collectibles: UserUnlockedCollectible[];
 };
 
 export type ShopPurchaseReceipt = {
   request_id: string;
   entry_id: string;
-  shop_type: "shard" | "relic";
-  target_category: CollectibleType;
+  shop_type: "shard" | "relic" | "lootbox";
+  target_category: CollectibleType | "lootbox";
   target_id: string;
   currency_id: string;
   price: string;
@@ -132,6 +142,59 @@ export type ShopPurchaseReceipt = {
 };
 
 export type PromoCodeRewardType = "currency" | "shard" | "critter" | "rollcaster" | "relic";
+
+export type Lootbox = {
+  id: string;
+  name: string;
+  description: string;
+  closed_asset_path: string | null;
+  open_asset_path: string | null;
+  sell_currency_id: string;
+  sell_value: string;
+  sort_order: number;
+  is_active: boolean;
+  is_archived: boolean;
+};
+
+export type LootboxPoolEntry = {
+  id: string;
+  lootbox_id: string;
+  reward_type: "currency" | "shard" | "relic" | "lootbox";
+  target_category: CollectibleType | "lootbox" | null;
+  target_id: string;
+  min_amount: number;
+  max_amount: number;
+  probability: number;
+  dupe_currency_id: string | null;
+  dupe_currency_amount: string | null;
+  sort_order: number;
+};
+
+export type LootboxReward = {
+  poolEntryId: string;
+  type: LootboxPoolEntry["reward_type"];
+  targetCategory: LootboxPoolEntry["target_category"];
+  targetId: string;
+  name: string;
+  assetPath: string | null;
+  amount: string;
+  granted: string;
+  discarded: string;
+  dupeCurrencyId: string | null;
+  dupeCurrencyAmount: string | null;
+  convertedCurrencyAmount: string;
+};
+
+export type LootboxOpeningReceipt = {
+  openingId: string;
+  requestId: string;
+  lootboxId: string;
+  lootboxName: string;
+  closedAssetPath: string | null;
+  openAssetPath: string | null;
+  reward: LootboxReward;
+  createdAt: string;
+};
 
 export type PromoCodeReward = {
   type: PromoCodeRewardType;
@@ -407,12 +470,12 @@ export type Dungeon = {
   version: number;
 };
 
-export type DungeonDropKind = "currency" | "shard" | "relic";
+export type DungeonDropKind = "currency" | "shard" | "relic" | "lootbox";
 
 export type DungeonDrop = {
   id: string;
   kind: DungeonDropKind;
-  targetCategory?: CollectibleType;
+  targetCategory?: CollectibleType | "lootbox";
   targetId: string;
   minAmount: number;
   maxAmount: number;
@@ -485,8 +548,8 @@ export type DungeonRunSnapshot = {
 export type DungeonRewardEntry = {
   id: string;
   source: "opponent" | "completion" | "duplicate_conversion";
-  kind: "currency" | "shard" | "relic" | "critter_xp" | "rollcaster_xp";
-  targetCategory?: CollectibleType;
+  kind: "currency" | "shard" | "relic" | "lootbox" | "critter_xp" | "rollcaster_xp";
+  targetCategory?: CollectibleType | "lootbox";
   targetId: string;
   amount: number;
   convertedAmount?: number;
@@ -531,7 +594,7 @@ export type GameAsset = {
   id: string;
   bucket_id: string;
   path: string;
-  category: "critter" | "rollcaster" | "relic" | "status" | "element" | "currency" | "mana" | "ui" | "other";
+  category: "critter" | "rollcaster" | "relic" | "lootbox" | "status" | "element" | "currency" | "mana" | "ui" | "other";
   owner_table: string | null;
   owner_id: string | null;
   variant: string;
@@ -618,6 +681,8 @@ export type Catalog = {
   collectibleUnlockChallenges: CollectibleUnlockChallenge[];
   unlockChallengeTemplates?: UnlockChallengeTemplate[];
   shopEntries: ShopEntry[];
+  lootboxes: Lootbox[];
+  lootboxPoolEntries: LootboxPoolEntry[];
   elements: ElementDef[];
   elementEffectiveness: ElementEffectiveness[];
   skills: Skill[];

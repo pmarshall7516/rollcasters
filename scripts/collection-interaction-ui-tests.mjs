@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = path.join(root, "output", "collection-interaction-ui");
 const css = await readFile(path.join(root, "src", "styles.css"), "utf8");
+const appSource = await readFile(path.join(root, "src", "App.tsx"), "utf8");
 const skill = (name, classes = "", disabled = false) => `<button class="skill-tile ${classes}" ${disabled ? "disabled" : ""}><span class="skill-title"><strong>${name}</strong></span><span class="skill-power">PWR 50</span><span class="skill-mana">3</span>${classes.includes("equipped") ? '<span class="selection-check">✓</span>' : ""}</button>`;
 
 const browser = await chromium.launch({ headless: true });
@@ -44,7 +45,10 @@ try {
               ${skill("Fire Rush")}
             </div>
             <h3>Equipped Ability</h3>
+            <button class="ability-slot"><span><small>Slot 1</small><strong>Sharpen</strong></span></button>
             <button class="ability-candidate selected equipped"><span><strong>Sharpen</strong><small>Equipped in this slot; select again to remove.</small></span><span>✓</span></button>
+            <span class="starter-ability-card"><strong>Starter Ability</strong><span>Each Critter gains ATK.</span></span>
+            <span class="combat-ability-slot">Sharpen</span>
             <h3>Calculated Stats</h3>
             <div class="stat-grid compact">
               <span class="stat-cell">HP <strong>30</strong></span>
@@ -91,6 +95,12 @@ try {
         const requirementRect = tile.querySelector(".unlock-requirement").getBoundingClientRect();
         return requirementRect.top >= cardRect.bottom && requirementRect.width > 0;
       }),
+      skillAbilityCardsAreSolidAndMatching: (() => {
+        const selectors = [".skill-tile", ".detail-ability-card", ".ability-slot", ".ability-candidate", ".starter-ability-card", ".combat-ability-slot"];
+        const styles = selectors.map((selector) => getComputedStyle(document.querySelector(selector)));
+        return styles.every((cardStyle) => cardStyle.backgroundImage === "none")
+          && styles.every((cardStyle) => cardStyle.backgroundColor === styles[0].backgroundColor);
+      })(),
       challengeProgressRightAligned: [...document.querySelectorAll(".ui-test-challenges .challenge-detail-row")].every((row) => {
         const rowRect = row.getBoundingClientRect();
         const progressRect = row.querySelector(":scope > strong").getBoundingClientRect();
@@ -110,7 +120,9 @@ try {
   if (result.modal.width !== 900 || result.modal.height !== 760 || !result.modal.scrollable || result.modal.scrollbarWidth !== "none") throw new Error(`Modal pane contract failed: ${JSON.stringify(result.modal)}`);
   if (result.unlockedSkillOpacity !== 1 || !result.unlockButtonOpaque || !result.unlockButtonCentered) throw new Error(`Skill detail presentation failed: ${JSON.stringify(result)}`);
   if (!result.tooltipVisible || !result.effectRowsNamed || !result.abilityRequirementsBelowCards || !result.uniformHomeStatBorders) throw new Error(`Tooltip, effect rows, ability metadata, or stat borders failed: ${JSON.stringify(result)}`);
+  if (!result.skillAbilityCardsAreSolidAndMatching) throw new Error(`Skill and ability card background contract failed: ${JSON.stringify(result)}`);
   if (!result.challengeProgressRightAligned || !result.challengeActionBeforeProgress) throw new Error(`Challenge progress alignment failed: ${JSON.stringify(result)}`);
+  if (!appSource.includes("initial?.focus({ preventScroll: true });") || !appSource.includes("if (modal) modal.scrollTop = 0;")) throw new Error("Modal opening must focus without scrolling and reset the pane to the top.");
 
   const screenshot = path.join(outputDir, "skills-abilities-stats-modal.png");
   await page.screenshot({ path: screenshot, fullPage: true });

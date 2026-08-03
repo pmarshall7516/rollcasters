@@ -100,9 +100,11 @@ function data(options: { balance?: string; shards?: string; ownsCritter?: boolea
       collectibleSnapshot: {
         currencies: [{ currency_id: "coins", balance: options.balance ?? "9007199254740993" }],
         shards: [{ collectible_type: "critter", collectible_id: "002", quantity: options.shards ?? "4" }],
+        lootboxes: [],
         progress: [],
         tracked: [],
         unlock_events: [],
+        unlocked_collectibles: [],
       },
     },
   };

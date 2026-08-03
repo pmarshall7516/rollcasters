@@ -128,7 +128,7 @@ const frostTeraData = {
   },
   player: {
     critters: [{ id: "owned-brumbear", user_id: "user", critter_id: "brumbear", level: 1, xp: 0, skill_points: 0 }],
-    collectibleSnapshot: { progress: [], shards: [], tracked: [] },
+    collectibleSnapshot: { progress: [], shards: [], lootboxes: [], tracked: [] },
   },
 } as unknown as AppData;
 check(derivedChallengeProgress(frostTeraData, frostTeraDiversity) === 1n, "A dual-element Critter must fill only one unique Frost/Tera requirement.");

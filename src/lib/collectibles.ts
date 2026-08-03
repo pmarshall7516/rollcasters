@@ -83,6 +83,14 @@ export function collectibleIsOwned(data: AppData, type: CollectibleType, id: str
 export function collectibleIsUnlocked(data: AppData, type: CollectibleType, id: string): boolean {
   if (!collectibleIsOwned(data, type, id)) return false;
 
+  // The server records successful challenge grants permanently. This prevents
+  // a later catalog goal increase from making an already-granted collectible
+  // appear locked in the client while retaining the legacy pre-gate fallback
+  // below for inventory rows that were never challenge-granted.
+  if (data.player?.collectibleSnapshot.unlocked_collectibles.some(
+    (row) => row.collectible_type === type && row.collectible_id === id,
+  )) return true;
+
   const requirement = data.catalog.collectibleUnlockRequirements.find(
     (row) => row.collectible_type === type && row.collectible_id === id,
   );
@@ -383,8 +391,16 @@ export function shopAvailability(data: AppData, entry: ShopEntry): ShopAvailabil
   const unavailable = (code: string, reason: string, current = 0n, goal = 0n): ShopAvailability => ({
     enabled: false, code, reason, current, goal,
   });
-  if (!entry.is_active || entry.is_archived || !currency || !collectibleTargetAvailable(data, entry.target_category, entry.target_id)) {
+  const targetAvailable = entry.shop_type === "lootbox"
+    ? data.catalog.lootboxes.some((lootbox) => lootbox.id === entry.target_id && lootbox.is_active && !lootbox.is_archived)
+    : collectibleTargetAvailable(data, entry.target_category, entry.target_id);
+  if (!entry.is_active || entry.is_archived || !currency || !targetAvailable) {
     return unavailable("SHOP_ENTRY_UNAVAILABLE", "Offer unavailable");
+  }
+
+  if (entry.shop_type === "lootbox") {
+    if (balance < price) return unavailable("INSUFFICIENT_FUNDS", `Need ${formatAmount(price-balance)} more ${currency.name}`);
+    return { enabled: true, code: null, reason: null, current: 0n, goal: 0n };
   }
 
   if (entry.shop_type === "shard") {

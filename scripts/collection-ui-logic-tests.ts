@@ -50,7 +50,7 @@ function effect(
 }
 
 const catalog = {
-  currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [],
+  currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], lootboxes: [], lootboxPoolEntries: [],
   elements: [
     { id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 },
     { id: "bloom", name: "Bloom", description: null, asset_path: null, sort_order: 2 },
@@ -113,7 +113,7 @@ const player = {
     { user_critter_id: "owned-ally", slot_index: 1, relic_id: "ally-aura" },
   ],
   unlockedSkillIdsByCritter: {}, unlockedAbilityIdsByRollcaster: {}, dungeonProgress: [],
-  collectibleSnapshot: { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] },
+  collectibleSnapshot: { currencies: [], shards: [], lootboxes: [], progress: [], tracked: [], unlock_events: [], unlocked_collectibles: [] },
 } as PlayerState;
 
 const calculated = calculateLoadoutStats({ catalog, player } as AppData, player.critters[0]);
@@ -207,6 +207,17 @@ const gatedRelicData = {
   },
 } as AppData;
 check(!collectibleIsUnlocked(gatedRelicData, "relic", gatedRelic.id), "Owning a gated Relic must not unlock it before its required challenges are complete.");
+const historicallyUnlockedRelicData = {
+  ...gatedRelicData,
+  player: {
+    ...gatedRelicData.player!,
+    collectibleSnapshot: {
+      ...gatedRelicData.player!.collectibleSnapshot,
+      unlocked_collectibles: [{ collectible_type: "relic" as const, collectible_id: gatedRelic.id }],
+    },
+  },
+} as AppData;
+check(collectibleIsUnlocked(historicallyUnlockedRelicData, "relic", gatedRelic.id), "A server-recorded unlock must remain usable even when the live goal changes.");
 gatedRelicData.player!.collectibleSnapshot.progress[0].current = "3";
 gatedRelicData.player!.collectibleSnapshot.progress[0].goal_reached = true;
 gatedRelicData.player!.collectibleSnapshot.progress[0].completed = true;

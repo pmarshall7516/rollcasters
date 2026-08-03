@@ -57,7 +57,7 @@ function effect(
 
 function makeCatalog(): Catalog {
   return {
-    currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [],
+    currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], lootboxes: [], lootboxPoolEntries: [],
     elements: [
       { id: "basic", name: "Basic", description: null, asset_path: null, sort_order: 0 },
       { id: "bloom", name: "Bloom", description: null, asset_path: null, sort_order: 1 },
@@ -152,7 +152,7 @@ function makePlayer(): PlayerState {
     unlockedSkillIdsByCritter: {},
     unlockedAbilityIdsByRollcaster: {},
     dungeonProgress: [],
-    collectibleSnapshot: { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] },
+    collectibleSnapshot: { currencies: [], shards: [], lootboxes: [], progress: [], tracked: [], unlock_events: [], unlocked_collectibles: [] },
   };
 }
 
