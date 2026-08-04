@@ -240,9 +240,24 @@ async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
 }
 
 export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
-  const { data, error } = await requireClient().rpc("get_collectible_player_snapshot");
-  if (error) throw error;
-  return { ...emptyCollectibleSnapshot(), ...(data as Partial<CollectiblePlayerSnapshot> | null) };
+  const client = requireClient();
+  const [snapshotResult, lootboxResult] = await Promise.all([
+    client.rpc("get_collectible_player_snapshot"),
+    client.from("user_lootboxes").select("lootbox_id,quantity").gt("quantity", 0),
+  ]);
+  if (snapshotResult.error) throw snapshotResult.error;
+  if (lootboxResult.error) throw lootboxResult.error;
+  return {
+    ...emptyCollectibleSnapshot(),
+    ...(snapshotResult.data as Partial<CollectiblePlayerSnapshot> | null),
+    // Keep this projection independent of the snapshot RPC so a deployed
+    // function that predates Lootboxes cannot hide a successfully purchased
+    // Bag item from the player.
+    lootboxes: (lootboxResult.data ?? []).map((row) => ({
+      lootbox_id: String(row.lootbox_id),
+      quantity: String(row.quantity),
+    })),
+  };
 }
 
 async function loadCombatEffects(): Promise<CombatEffectRow[]> {
@@ -621,10 +636,25 @@ function playerStateFromBootstrap(payload: PlayerBootstrapPayload): PlayerState 
 }
 
 async function loadPlayerBootstrapV1(): Promise<PlayerState> {
-  const { data, error } = await requireClient().rpc("player_bootstrap_v1");
+  const client = requireClient();
+  const [{ data, error }, lootboxResult] = await Promise.all([
+    client.rpc("player_bootstrap_v1"),
+    client.from("user_lootboxes").select("lootbox_id,quantity").gt("quantity", 0),
+  ]);
   if (error) throw error;
+  if (lootboxResult.error) throw lootboxResult.error;
   if (!data || typeof data !== "object") throw new Error("Player bootstrap returned no state.");
-  return playerStateFromBootstrap(data as PlayerBootstrapPayload);
+  const payload = data as PlayerBootstrapPayload;
+  return playerStateFromBootstrap({
+    ...payload,
+    collectible_snapshot: {
+      ...payload.collectible_snapshot,
+      lootboxes: (lootboxResult.data ?? []).map((row) => ({
+        lootbox_id: String(row.lootbox_id),
+        quantity: String(row.quantity),
+      })),
+    },
+  });
 }
 
 async function loadLegacyPlayerState(): Promise<PlayerState> {

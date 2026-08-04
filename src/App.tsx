@@ -878,6 +878,7 @@ export function App() {
           setTab={(tab) => navigate("shop", tab)}
           onBack={() => navigate("home")}
           onRefresh={() => refresh("shop")}
+          onBag={() => navigate("bag")}
           onPromoStateChange={setPromoState}
           onNotify={enqueueNotification}
         />
@@ -1795,10 +1796,34 @@ function unlockedAbilitySlotCount(data: AppData, owned?: UserRollcaster): number
     .sort((a, b) => b.level - a.level)[0]?.total_unlocked_ability_slots ?? 1;
 }
 
+function useUnlockButtonFlash() {
+  const [flashingId, setFlashingId] = useState<string | null>(null);
+  const flashTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+  }, []);
+
+  function flash(id: string) {
+    setFlashingId(null);
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => {
+      setFlashingId(id);
+      flashTimer.current = window.setTimeout(() => {
+        setFlashingId(null);
+        flashTimer.current = null;
+      }, 700);
+    }, 0);
+  }
+
+  return { flashingId, flash };
+}
+
 function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSkill }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void> }) {
   const player = data.player!;
   const title = target.type === "rollcaster" ? "Choose active Rollcaster" : `Equip ${target.type} · Slot ${target.slotIndex}`;
   const [query, setQuery] = useState("");
+  const { flashingId, flash } = useUnlockButtonFlash();
   useEffect(() => setQuery(""), [target.type, target.slotIndex]);
   const normalizedQuery = query.trim().toLowerCase();
   const currentSkillOwner = target.type === "skill"
@@ -1829,46 +1854,35 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     const current = rows.find((row) => row.slot_index === target.slotIndex)?.skill_id;
     const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex && row.skill_id).map((row) => row.skill_id));
     const equippedCount = rows.filter((row) => row.skill_id).length;
-    const unlocksBySkillId = new Map(
-      data.catalog.critterSkillUnlocks
-        .filter((unlock) => unlock.critter_id === skillOwner.critter_id)
-        .map((unlock) => [unlock.skill_id, unlock]),
-    );
-    const unlockedEligible = ids
-      .map((id) => byId(data.catalog.skills, id))
-      .filter((skill): skill is Skill => Boolean(skill))
-      .filter((skill) => {
+    const eligible = data.catalog.critterSkillUnlocks
+      .filter((unlock) => unlock.critter_id === skillOwner.critter_id)
+      .map((unlock) => ({ skill: byId(data.catalog.skills, unlock.skill_id), unlock }))
+      .filter((candidate): candidate is { skill: Skill; unlock: typeof data.catalog.critterSkillUnlocks[number] } => Boolean(candidate.skill))
+      .filter(({ skill }) => {
         const element = byId(data.catalog.elements, skill.element_id);
         return !normalizedQuery || `${skill.name} ${skill.element_id} ${element?.name ?? ""}`.toLowerCase().includes(normalizedQuery);
-      });
-    const eligible = [
-      ...unlockedEligible.map((skill) => ({ skill, unlock: unlocksBySkillId.get(skill.id) })),
-      ...data.catalog.critterSkillUnlocks
-        .filter((unlock) => unlock.critter_id === skillOwner.critter_id && unlock.unlock_level <= skillOwner.level && !unlockedIds.has(unlock.skill_id))
-        .map((unlock) => ({ skill: byId(data.catalog.skills, unlock.skill_id), unlock }))
-        .filter((candidate): candidate is { skill: Skill; unlock: typeof data.catalog.critterSkillUnlocks[number] } => Boolean(candidate.skill))
-        .filter(({ skill }) => {
-          const element = byId(data.catalog.elements, skill.element_id);
-          return !normalizedQuery || (skill.name + " " + skill.element_id + " " + (element?.name ?? "")).toLowerCase().includes(normalizedQuery);
-        }),
-    ].sort((left, right) =>
+      })
+      .sort((left, right) =>
       (left.unlock?.unlock_level ?? 0) - (right.unlock?.unlock_level ?? 0) ||
       (left.unlock?.sort_order ?? left.skill.sort_order) - (right.unlock?.sort_order ?? right.skill.sort_order) ||
       left.skill.id.localeCompare(right.skill.id),
-    );
+      );
     content = eligible.length ? <SkillTileGrid ariaLabel="Available skills">{eligible.map(({ skill, unlock }) => {
       const selected = current === skill.id;
       const equipped = selected || equippedElsewhere.has(skill.id);
       const cannotRemoveLast = selected && equippedCount <= 1;
       const locked = !unlockedIds.has(skill.id);
+      const levelEligible = skillOwner.level >= unlock.unlock_level;
       const unlockCost = unlock?.unlock_cost ?? 0;
-      const canUnlock = !locked || skillOwner.skill_points >= unlockCost;
+      const canUnlock = !locked || (levelEligible && skillOwner.skill_points >= unlockCost);
       const disabledReason = cannotRemoveLast
         ? "At least one skill must remain equipped."
         : equippedElsewhere.has(skill.id)
           ? "Equipped in another slot."
-          : locked && !canUnlock
-            ? "Need " + (unlockCost - skillOwner.skill_points) + " more skill point" + (unlockCost - skillOwner.skill_points === 1 ? "" : "s") + "."
+          : locked && !levelEligible
+            ? `Unlocks at level ${unlock.unlock_level}.`
+            : locked && !canUnlock
+              ? "Need " + (unlockCost - skillOwner.skill_points) + " more skill point" + (unlockCost - skillOwner.skill_points === 1 ? "" : "s") + "."
             : undefined;
       const tile = <SkillTile
         data={data}
@@ -1880,18 +1894,24 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
         disabledReason={disabledReason}
         onClick={locked ? undefined : () => onEquip(() => setCritterSkillSlot(skillOwner.id, target.slotIndex, selected ? null : skill.id))}
       />;
-      if (locked && unlock) {
-        return <div className="equip-skill-option locked" key={skill.id}>
+      if (locked) {
+        return <div className={`equip-skill-option locked ${levelEligible ? "unlockable" : "level-locked"}`.trim()} key={skill.id}>
           {tile}
           <div className="equip-skill-unlock-row">
             <span className="equip-skill-unlock-requirement">Unlock at level {unlock.unlock_level} · {unlock.unlock_cost} point{unlock.unlock_cost === 1 ? "" : "s"}</span>
-            <button
-              type="button"
-              className="primary-button skill-unlock-button"
-              disabled={saving || !canUnlock}
-              title={!canUnlock ? disabledReason : undefined}
-              onClick={() => onUnlockSkill(skillOwner, skill.id)}
-            >Unlock · {unlock.unlock_cost}</button>
+            {levelEligible && <button
+                type="button"
+                className={`primary-button skill-unlock-button ${flashingId === skill.id ? "insufficient-points" : ""}`.trim()}
+                disabled={saving}
+                title={!canUnlock ? disabledReason : undefined}
+                onClick={() => {
+                  if (!canUnlock) {
+                    flash(skill.id);
+                    return;
+                  }
+                  void onUnlockSkill(skillOwner, skill.id);
+                }}
+              >Unlock · {unlock.unlock_cost}</button>}
           </div>
         </div>;
       }
@@ -1938,7 +1958,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     {error && <p className="notice error" role="alert">{error}</p>}
     {target.type === "skill" && currentSkillOwner && <div className="equip-dialog-point-summary"><PointCounter kind="skill" points={currentSkillOwner.skill_points} inline /></div>}
     {(target.type === "skill" || target.type === "relic") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : "Search relics by name"} /></label>}
-    {content}
+    {target.type === "skill" ? <div className="equip-skill-list">{content}</div> : content}
     <div className="dialog-actions">{canUnequip && clear && <button className="danger-button" disabled={saving} onClick={() => onEquip(clear)}>Unequip</button>}<button className="secondary-button" onClick={onClose}>Cancel</button></div>
   </Modal>;
 }
@@ -2093,10 +2113,26 @@ function BagScreen({
         {ownedLootboxes.map((owned) => {
           const lootbox = data.catalog.lootboxes.find((row) => row.id === owned.lootbox_id);
           if (!lootbox) return null;
-          return <button type="button" className="lootbox-bag-card" key={lootbox.id} onClick={() => setSelectedLootbox(lootbox.id)}>
+          const openDetails = () => setSelectedLootbox(lootbox.id);
+          return <article
+            className="lootbox-bag-card"
+            key={lootbox.id}
+            tabIndex={0}
+            role="button"
+            aria-label={`${lootbox.name}, ${formatAmount(owned.quantity)} in Bag`}
+            onClick={openDetails}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openDetails();
+              }
+            }}
+          >
             <LootboxSprite lootbox={lootbox} variant="closed" />
             <strong>{lootbox.name}</strong><b>×{formatAmount(owned.quantity)}</b>
-          </button>;
+            <button type="button" className="primary-button lootbox-bag-open" onClick={(event) => { event.stopPropagation(); openDetails(); }}>Open</button>
+          </article>;
         })}
         {ownedLootboxes.length === 0 && <div className="shop-empty"><Gift /><h2>No Lootboxes yet</h2><p>Purchased and earned Lootboxes will appear here.</p></div>}
       </div>}
@@ -2147,6 +2183,7 @@ function ShopScreen({
   setTab,
   onBack,
   onRefresh,
+  onBag,
   onPromoStateChange,
   onNotify,
 }: {
@@ -2155,6 +2192,7 @@ function ShopScreen({
   setTab: (tab: ShopTab) => void;
   onBack: () => void;
   onRefresh: () => Promise<void>;
+  onBag: () => void;
   onPromoStateChange: (state: PromoRenderState) => void;
   onNotify: (notification: BannerNotification) => void;
 }) {
@@ -2164,12 +2202,6 @@ function ShopScreen({
   const [purchasedLootboxEntries, setPurchasedLootboxEntries] = useState<Set<string>>(() => new Set());
   const [selectedLootboxEntry, setSelectedLootboxEntry] = useState<ShopEntry | null>(null);
   const requestIds = useRef(new Map<string, string>());
-  const lootboxRequestIds = useRef(new Map<string, string>());
-  const ownedLootboxIds = new Set(
-    (data.player?.collectibleSnapshot.lootboxes ?? [])
-      .filter((owned) => BigInt(owned.quantity || "0") > 0n)
-      .map((owned) => owned.lootbox_id),
-  );
   const normalized = query.trim().toLocaleLowerCase();
   const authoredEntries = data.catalog.shopEntries.filter((entry): entry is Extract<ShopEntry,{ shop_type: "shard" | "relic" }> => (
     tab === "shard" || tab === "relic"
@@ -2212,30 +2244,6 @@ function ShopScreen({
     }
   }
 
-  async function purchaseLootbox(entry: ShopEntry) {
-    if (entry.shop_type !== "lootbox") return;
-    if (busyEntry) return;
-    setBusyEntry(entry.id); setPurchaseError(null);
-    const requestId = lootboxRequestIds.current.get(entry.id) ?? createRequestId();
-    lootboxRequestIds.current.set(entry.id, requestId);
-    try {
-      const receipt = await purchaseShopEntry(entry.id, requestId);
-      if (receipt.shop_type !== "lootbox" || receipt.target_category !== "lootbox") throw new Error("Unexpected Lootbox purchase receipt.");
-      lootboxRequestIds.current.delete(entry.id);
-      setPurchasedLootboxEntries((current) => new Set(current).add(entry.id));
-      // The purchase RPC writes the Lootbox into the user's Bag atomically with
-      // the currency debit. A refresh failure must not make a successful
-      // purchase look retryable and risk a second debit.
-      await onRefresh().catch((refreshFailure) => {
-        console.error("Lootbox purchase succeeded but refresh failed.", refreshFailure);
-      });
-    } catch (lootboxFailure) {
-      setPurchaseError(shopErrorMessage(lootboxFailure));
-    } finally {
-      setBusyEntry(null);
-    }
-  }
-
   const groups: Array<{ type: CollectibleType; label: string }> = [
     { type: "critter", label: "Critter Shards" },
     { type: "rollcaster", label: "Rollcaster Shards" },
@@ -2264,7 +2272,11 @@ function ShopScreen({
         const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.target_id)!;
         const currency = currencyFor(data, entry.currency_id);
         if (!currency) return null;
-        const purchased = purchasedLootboxEntries.has(entry.id) || ownedLootboxIds.has(entry.target_id);
+        // Bag ownership is durable inventory state, not an in-progress shop
+        // decision. Every visit to the shop should start with Purchase; only
+        // the purchase made from this card may temporarily expose the choice
+        // to open it or send it to the Bag.
+        const purchased = purchasedLootboxEntries.has(entry.id);
         const busy = busyEntry === entry.id;
         const openDetails = () => setSelectedLootboxEntry(entry);
         return <article
@@ -2299,15 +2311,20 @@ function ShopScreen({
                 disabled={busy}
                 onClick={(event) => {
                   event.stopPropagation();
-                  // Purchase already placed the box in the Bag. Keep the
-                  // acquired row visible so the user can safely refresh or
-                  // open it later without losing the local affordance.
-                  void onRefresh().catch((refreshFailure) => {
-                    console.error("Lootbox Bag refresh failed.", refreshFailure);
+                  setPurchasedLootboxEntries((current) => {
+                    const next = new Set(current);
+                    next.delete(entry.id);
+                    return next;
                   });
+                  // Purchase already placed the box in the Bag. Keep the
+                  // acquired row durable, then show the user the saved Bag
+                  // item instead of making a refresh feel like a no-op.
+                  void onRefresh()
+                    .catch((refreshFailure) => console.error("Lootbox Bag refresh failed.", refreshFailure))
+                    .finally(onBag);
                 }}
               >Send to Bag</button>
-            </> : <button className="primary-button shop-purchase" disabled={busy} onClick={(event) => { event.stopPropagation(); void purchaseLootbox(entry); }}>{busy ? "Purchasing…" : "Purchase"}</button>}
+            </> : <button className="primary-button shop-purchase" disabled={busy} onClick={(event) => { event.stopPropagation(); openDetails(); }}>Purchase</button>}
           </div>
         </article>;
       })}{lootboxEntries.length===0 && <ShopEmptyState hasAuthoredEntries={false} />}</div> : tab === "shard" ? (
@@ -2324,9 +2341,11 @@ function ShopScreen({
         data={data}
         lootboxId={selectedLootboxEntry.target_id}
         mode="purchase"
-        initialPurchased={purchasedLootboxEntries.has(selectedLootboxEntry.id) || ownedLootboxIds.has(selectedLootboxEntry.target_id)}
+        initialPurchased={purchasedLootboxEntries.has(selectedLootboxEntry.id)}
         shopEntry={selectedLootboxEntry}
         onRefresh={onRefresh}
+        onBag={onBag}
+        onPurchased={() => setPurchasedLootboxEntries((current) => new Set(current).add(selectedLootboxEntry.id))}
         onOpened={() => setPurchasedLootboxEntries((current) => {
           const next = new Set(current);
           next.delete(selectedLootboxEntry.id);
@@ -2355,7 +2374,7 @@ function LootboxPoolArt({ data, entry }: { data: AppData; entry: LootboxPoolEntr
     return <span className="lootbox-pool-art">{lootbox ? <LootboxSprite lootbox={lootbox} variant="closed" /> : <SpriteFrame size="sm"><Gift /></SpriteFrame>}</span>;
   }
   if (entry.reward_type === "shard" && entry.target_category && entry.target_category !== "lootbox") {
-    return <span className="lootbox-pool-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="sm" shard /></span>;
+    return <span className="lootbox-pool-art lootbox-pool-shard-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="sm" shard /></span>;
   }
   const relic = byId(data.catalog.relics, entry.target_id);
   return <span className="lootbox-pool-art"><SpriteFrame size="sm"><Sprite name={relic?.name ?? entry.target_id} element="metal" assetPath={relic ? (findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)) : null} size="small" /></SpriteFrame></span>;
@@ -2368,13 +2387,15 @@ function lootboxPoolEntryName(data: AppData, entry: LootboxPoolEntry): string {
   return collectibleName(data,"relic",entry.target_id);
 }
 
-function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, onRefresh, onOpened, onClose }: {
+function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, onRefresh, onBag, onPurchased, onOpened, onClose }: {
   data: AppData;
   lootboxId: string;
   mode: "purchase" | "owned";
   initialPurchased?: boolean;
   shopEntry?: ShopEntry;
   onRefresh: () => Promise<void>;
+  onBag?: () => void;
+  onPurchased?: () => void;
   onOpened?: () => void;
   onClose: () => void;
 }) {
@@ -2391,10 +2412,14 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   const openButtonRef = useRef<HTMLButtonElement>(null);
   const reelViewportRef = useRef<HTMLDivElement>(null);
   const reelTrackRef = useRef<HTMLDivElement>(null);
+  const reelAnimationRef = useRef<Animation | null>(null);
   const timers = useRef<number[]>([]);
   const canOpen = purchased && phase === "idle" && !busy;
 
-  useEffect(() => () => timers.current.forEach((timer) => window.clearTimeout(timer)), []);
+  useEffect(() => () => {
+    timers.current.forEach((timer) => window.clearTimeout(timer));
+    reelAnimationRef.current?.cancel();
+  }, []);
   useEffect(() => {
     document.documentElement.dataset.lootboxOpeningPhase = phase;
     return () => { delete document.documentElement.dataset.lootboxOpeningPhase; };
@@ -2406,6 +2431,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
     try {
       await purchaseShopEntry(shopEntry.id,purchaseRequest.current);
       setPurchased(true);
+      onPurchased?.();
       // The purchase and Bag write happen in one server transaction. Refresh
       // is only a view update and must not turn a successful purchase into a
       // retryable error.
@@ -2426,7 +2452,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
       // sequence starts so an animation can never represent an uncommitted
       // reward or leave a stale Open Now button behind.
       onOpened?.();
-      await onRefresh().catch((refreshFailure) => console.error("Lootbox opening succeeded but refresh failed.", refreshFailure));
+      // The RPC has already consumed the box and granted the reward atomically.
+      // Refresh the view in the background so network latency never delays the
+      // opening animation or creates a window where a second open is possible.
+      void onRefresh().catch((refreshFailure) => console.error("Lootbox opening succeeded but refresh failed.", refreshFailure));
+      timers.current.forEach((timer) => window.clearTimeout(timer));
+      timers.current = [];
       setPhase("shaking");
       timers.current.push(window.setTimeout(() => setPhase("opened"),650));
       timers.current.push(window.setTimeout(() => setPhase("reel"),950));
@@ -2438,6 +2469,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   async function sendToBag() {
     if (busy) return;
     setBusy(true);
+    onOpened?.();
     try {
       // Purchases are already written to the Bag by the purchase RPC. Awaiting
       // the refresh here ensures the Bag screen sees that row before the modal
@@ -2451,6 +2483,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
     } finally {
       setBusy(false);
       onClose();
+      if (mode === "purchase") onBag?.();
     }
   }
 
@@ -2472,11 +2505,23 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
 
   const currency = shopEntry ? currencyFor(data,shopEntry.currency_id) : null;
   const winningEntry = receipt ? pool.find((entry) => entry.id === receipt.reward.poolEntryId) : undefined;
-  const reelWinnerIndex = 24;
+  const reelWinnerIndex = 34;
   const poolKey = pool.map((entry) => entry.id).join("|");
-  const reel = useMemo(() => Array.from({ length: 32 },(_,index) => {
-    const entry = index===reelWinnerIndex && winningEntry ? winningEntry : pool[Math.floor(Math.random()*Math.max(1,pool.length))] ?? winningEntry;
-    const amount = index===reelWinnerIndex && receipt ? Number(receipt.reward.amount) : entry ? entry.min_amount+Math.floor(Math.random()*(entry.max_amount-entry.min_amount+1)) : 1;
+  const reel = useMemo(() => Array.from({ length: 40 },(_,index) => {
+    const seedText = `${receipt?.openingId ?? lootboxId}:${index}`;
+    let seed = 2166136261;
+    for (let charIndex = 0; charIndex < seedText.length; charIndex += 1) {
+      seed ^= seedText.charCodeAt(charIndex);
+      seed = Math.imul(seed, 16777619);
+    }
+    const random = () => {
+      seed += 0x6D2B79F5;
+      let value = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      value ^= value + Math.imul(value ^ value >>> 7, 61 | value);
+      return ((value ^ value >>> 14) >>> 0) / 4294967296;
+    };
+    const entry = index===reelWinnerIndex && winningEntry ? winningEntry : pool[Math.floor(random()*Math.max(1,pool.length))] ?? winningEntry;
+    const amount = index===reelWinnerIndex && receipt ? Number(receipt.reward.amount) : entry ? entry.min_amount+Math.floor(random()*(entry.max_amount-entry.min_amount+1)) : 1;
     return { entry,amount,index };
   }).filter((item): item is { entry: LootboxPoolEntry; amount: number; index: number } => Boolean(item.entry)),[receipt?.openingId,lootboxId,winningEntry?.id,poolKey]);
   useLayoutEffect(() => {
@@ -2494,6 +2539,30 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
     const target = viewportBounds.left + viewportBounds.width / 2 - (winnerBounds.left + winnerBounds.width / 2);
     setReelTarget(Math.round(target));
   }, [phase,reel.length,receipt?.openingId]);
+  useEffect(() => {
+    reelAnimationRef.current?.cancel();
+    reelAnimationRef.current = null;
+    if (phase !== "reel" || reelTarget === null) return;
+    const track = reelTrackRef.current;
+    if (!track) return;
+    track.style.transform = "translate3d(0,0,0)";
+    const animation = track.animate(
+      [
+        { transform: "translate3d(0,0,0)" },
+        { transform: `translate3d(${reelTarget}px,0,0)` },
+      ],
+      { duration: 6800, easing: "cubic-bezier(.16,.76,.2,1)", fill: "forwards" },
+    );
+    animation.onfinish = () => {
+      track.style.transform = `translate3d(${reelTarget}px,0,0)`;
+      if (phase === "reel") setPhase("result");
+    };
+    reelAnimationRef.current = animation;
+    return () => {
+      animation.cancel();
+      if (reelAnimationRef.current === animation) reelAnimationRef.current = null;
+    };
+  }, [phase,reelTarget]);
   if (!lootbox) return null;
   const showingAnimation = phase !== "idle";
   const duplicateUnits = BigInt(receipt?.reward.discarded ?? "0");
@@ -2503,10 +2572,14 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
       {!showingAnimation && <button className="modal-close" aria-label="Close" onClick={onClose}><X /></button>}
       <header><p className="eyebrow">{mode==="purchase"&&!purchased?"Lootbox Shop":purchased?"Lootbox acquired":"Bag"}</p><h2>{lootbox.name}</h2><p>{lootbox.description}</p></header>
       {showingAnimation ? <div className="lootbox-opening-stage">
-        <button className={`lootbox-click-target ${phase==="shaking"?"shaking":""}`} disabled><LootboxSprite lootbox={lootbox} variant={phase==="shaking"?"closed":"open"} /></button>
-        {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties} onAnimationEnd={(event) => { if (event.animationName === "lootbox-reel-spin" && phase === "reel") setPhase("result"); }}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
-        {phase === "result" && receipt && (
-          <div className="lootbox-result">
+        <div className="lootbox-opening-box-slot">
+          <button className={`lootbox-click-target ${phase==="shaking"?"shaking":""}`} disabled><LootboxSprite lootbox={lootbox} variant={phase==="shaking"?"closed":"open"} /></button>
+        </div>
+        <div className="lootbox-opening-reel-slot">
+          {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
+        </div>
+        <div className="lootbox-opening-result-slot">
+          {phase === "result" && receipt && <div className="lootbox-result">
             <span>YOU WON</span>
             <h3>{receipt.reward.name}</h3>
             <div className={`lootbox-reward-summary ${duplicateUnits > 0n ? "duplicate" : ""}`.trim()}>
@@ -2525,12 +2598,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
               )}
             </div>
             <button className="primary-button" onClick={onClose}>Continue</button>
-          </div>
-        )}
+          </div>}
+        </div>
       </div> : <>
         <button className="lootbox-click-target" disabled={!canOpen} aria-label={canOpen?`Open ${lootbox.name}`:lootbox.name} onClick={() => void openBox()}><LootboxSprite lootbox={lootbox} variant="closed" /></button>
         {error&&<p className="notice error" role="alert">{error}</p>}
-        <footer>{!purchased&&shopEntry&&currency?<button className="primary-button lootbox-purchase-button" disabled={busy} onClick={() => void purchaseBox()}>{busy?"Purchasing…":<><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /> Purchase · {formatAmount(shopEntry.price)}</>}</button>:<><button ref={openButtonRef} className="primary-button" disabled={busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":"Open Now"}</button><button className="secondary-button" disabled={busy} onClick={() => void sendToBag()}>Send to Bag</button></>}</footer>
+        <footer>{!purchased&&shopEntry&&currency?<button className="primary-button lootbox-purchase-button" disabled={busy} onClick={() => void purchaseBox()}>{busy?"Purchasing…":<><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /> Purchase · {formatAmount(shopEntry.price)}</>}</button>:<><button ref={openButtonRef} className="primary-button" disabled={busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy} onClick={() => void sendToBag()}>Send to Bag</button>}</>}</footer>
         <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
       </>}
     </section>
@@ -3381,9 +3454,11 @@ function DetailModal({
 }) {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { flashingId, flash } = useUnlockButtonFlash();
 
   async function purchaseSkill(owned: UserCritter, skillId: string, cost: number) {
     if (owned.skill_points < cost) {
+      flash(skillId);
       setDetailError(`Not enough skill points. This skill costs ${cost}.`);
       return;
     }
@@ -3448,7 +3523,7 @@ function DetailModal({
                 <div key={skill.id} className={`detail-tile ${unlocked ? "unlocked" : "locked"} ${canPurchase ? "unlockable" : "level-locked"}`}>
                   <SkillTile data={data} skill={skill} sourceCritter={critter} />
                   <span className="unlock-requirement">Unlock level {unlock.unlock_level} · {unlock.unlock_cost} points</span>
-                  {canPurchase && owned && <button className="primary-button skill-unlock-button" disabled={saving} onClick={() => purchaseSkill(owned, skill.id, unlock.unlock_cost)}>Unlock · {unlock.unlock_cost}</button>}
+                  {canPurchase && owned && <button className={`primary-button skill-unlock-button ${flashingId === skill.id ? "insufficient-points" : ""}`.trim()} disabled={saving} onClick={() => purchaseSkill(owned, skill.id, unlock.unlock_cost)}>Unlock · {unlock.unlock_cost}</button>}
                 </div>
               );
             })}
