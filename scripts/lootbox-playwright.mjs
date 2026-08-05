@@ -57,6 +57,8 @@ try {
   await page.getByRole('tab',{name:'Lootbox Shop'}).click()
   await page.getByRole('button',{name:/Common Lootbox/}).waitFor()
   const shopCard = page.locator('.lootbox-shop-card')
+  const displayedPrice = Number((await shopCard.locator('.lootbox-shop-price').textContent()).replace(/[^0-9]/g,''))
+  check(Number.isSafeInteger(displayedPrice) && displayedPrice > 0,`Lootbox Shop must display a valid integer price: ${displayedPrice}.`)
   await page.screenshot({path:path.join(outputDir,'01-shop-grid.png'),fullPage:true})
   const cardHeight = await shopCard.evaluate((node)=>node.getBoundingClientRect().height)
   const shopCardWidth = await shopCard.evaluate((node)=>node.getBoundingClientRect().width)
@@ -86,9 +88,17 @@ try {
   const purchasedInventory = await player.from('user_lootboxes').select('lootbox_id,quantity').eq('lootbox_id','001').gt('quantity',0).maybeSingle()
   if (purchasedInventory.error) throw purchasedInventory.error
   check(Boolean(purchasedInventory.data),'Popup Purchase must be present in the server Bag inventory before a refresh.')
+  const chargedBalance = await player.from('user_currencies').select('balance').eq('user_id',userId).eq('currency_id','coins').single()
+  if (chargedBalance.error) throw chargedBalance.error
+  check(String(chargedBalance.data.balance) === String(500 - displayedPrice),`Lootbox purchase must charge the displayed price ${displayedPrice}; balance was ${chargedBalance.data.balance}.`)
 
   await purchaseModal.getByRole('button',{name:'Send to Bag'}).click()
-  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === 'bag', { timeout: 10000 })
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === 'shop', { timeout: 10000 })
+  await page.getByRole('heading',{name:'Shop',exact:true}).waitFor()
+  check(await page.locator('.lootbox-shop-card').getByRole('button',{name:'Purchase'}).count()===1,'Sending a purchased Lootbox to the Bag must keep the user on the Lootbox Shop.')
+
+  await page.getByRole('button',{name:'Back',exact:true}).click()
+  await page.getByRole('button',{name:'Bag',exact:true}).click()
   await page.getByRole('heading',{name:'Bag',exact:true}).waitFor()
   await page.getByRole('tab',{name:'Lootboxes'}).click()
   const bagCard = page.locator('.lootbox-bag-card')
@@ -158,8 +168,24 @@ try {
   })
   check(resultModalLayout.width === reelModalLayout.width && resultModalLayout.height === reelModalLayout.height && resultModalLayout.boxTop === reelModalLayout.boxTop && resultModalLayout.reelTop === reelModalLayout.reelTop && resultModalLayout.resultTop === reelModalLayout.resultTop,`Opening slots shifted between reel and result: ${JSON.stringify({ reel: reelModalLayout, result: resultModalLayout })}`)
   const winningAmount = await page.locator('.lootbox-reel-cell.winner strong').textContent()
-  const resultAmount = await page.locator('.lootbox-reward-amount').textContent()
-  check(winningAmount===resultAmount,`Reel winner ${winningAmount} did not match the predetermined reward ${resultAmount}.`)
+  const winningName = await page.locator('.lootbox-reel-cell.winner small').textContent()
+  const resultLabel = await page.locator('.lootbox-result > span').textContent()
+  const resultText = await page.locator('.lootbox-result h3').textContent()
+  const expectedResultText = `x${(winningAmount ?? '').replace(/^×/,'')} ${winningName}`
+  check(resultLabel==='YOU WON' && resultText===expectedResultText,`Lootbox reward text ${resultLabel} ${resultText} did not match the predetermined reward YOU WON ${expectedResultText}.`)
+  const rewardType = await page.locator('.lootbox-result').getAttribute('data-reward-type')
+  if (rewardType === 'shard' || rewardType === 'relic') {
+    const rewardProgress = page.locator('[data-lootbox-reward-progress]')
+    await rewardProgress.waitFor()
+    check(await rewardProgress.getAttribute('data-lootbox-reward-progress')===rewardType,`Expected a ${rewardType} reward progress bar.`)
+    check(await rewardProgress.getByRole('progressbar').count()===1,'Lootbox reward progress must expose one accessible progress bar.')
+  }
+  const continueBounds = await modal.getByRole('button',{name:'Continue'}).evaluate((node) => {
+    const button = node.getBoundingClientRect()
+    const dialog = node.closest('.lootbox-modal')?.getBoundingClientRect()
+    return { buttonBottom: button.bottom, dialogBottom: dialog?.bottom ?? 0 }
+  })
+  check(continueBounds.buttonBottom <= continueBounds.dialogBottom + 1,`Lootbox result content overflowed the popup: ${JSON.stringify(continueBounds)}`)
   const alignment = await page.evaluate(() => {
     const winnerNode = document.querySelector('.lootbox-reel-cell.winner')
     const markerNode = document.querySelector('.lootbox-reel-center')
@@ -192,6 +218,8 @@ try {
   await page.keyboard.press('Space')
   await page.waitForFunction(()=>JSON.parse(window.render_game_to_text()).lootboxOpeningPhase==='reel',{timeout:5000})
   await page.waitForFunction(()=>JSON.parse(window.render_game_to_text()).lootboxOpeningPhase==='result',{timeout:9000})
+  await page.waitForTimeout(500)
+  await page.screenshot({path:path.join(outputDir,'06-second-result.png'),fullPage:true})
   const finalOpeningCount = await admin.from('lootbox_openings').select('id',{count:'exact',head:true}).eq('user_id',userId)
   check(finalOpeningCount.count===2,'Space activation must consume exactly one additional persisted Lootbox.')
   check(!errors.length,`Browser errors: ${errors.join(' | ')}`)

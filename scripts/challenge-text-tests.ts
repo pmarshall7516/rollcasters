@@ -111,6 +111,32 @@ check(challengeEventIncrement(friendlyVileHealing, {
   payload: { source_side: "player", recipient_side: "enemy" },
 }) === 0, "Heal HP must reject healing on the wrong recipient side.");
 
+const filteredResourceSpend = challenge("resource_spending", {
+  spending_context: "shop",
+  resource_type: "custom_currency",
+  custom_currency_id: "tickets",
+  shop_ids: ["shop-entry-1"],
+  purchased_collectible_categories: ["lootbox"],
+  required_amount: 50,
+  tracking_scope: "lifetime",
+});
+check(challengeEventIncrement(filteredResourceSpend, {
+  eventId: "spend:1",
+  type: "resource_spent",
+  amount: 9,
+  shopId: "shop-entry-1",
+  purchasedCollectibleCategory: "lootbox",
+  payload: { spending_context: "shop", resource_type: "custom_currency", custom_currency_id: "tickets" },
+}) === 9, "Resource Spending must count a matching custom-currency shop event.");
+check(challengeEventIncrement(filteredResourceSpend, {
+  eventId: "spend:2",
+  type: "resource_spent",
+  amount: 9,
+  shopId: "shop-entry-2",
+  purchasedCollectibleCategory: "lootbox",
+  payload: { spending_context: "shop", resource_type: "custom_currency", custom_currency_id: "tickets" },
+}) === 0, "Resource Spending must reject a shop event outside its authored Shop filter.");
+
 const frostTeraDiversity = challenge("collection_diversity", {
   diversity_mode: "specific_types",
   required_per_type: 1,

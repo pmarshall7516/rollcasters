@@ -37,6 +37,8 @@ export type ChallengeEvent = {
   skillId?: string;
   abilityId?: string;
   rollcasterId?: string;
+  shopId?: string;
+  purchasedCollectibleCategory?: string;
   amount?: number;
   payload?: Record<string, unknown>;
 };
@@ -140,12 +142,16 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   }
 
   if (type === "resource_spending") {
-    if (String(p.spending_context) !== String(event.payload?.spending_context ?? event.payload?.context)) return 0;
-    if (String(p.resource_type) !== String(event.payload?.resource_type)) return 0;
-    if (!includesOrAny(stringArray(p.dungeon_ids), event.dungeonId)) return 0;
-    if (!includesOrAny(stringArray(p.ability_ids), event.abilityId)) return 0;
-    if (!includesOrAny(stringArray(p.critter_ids), event.sourceCritterId)) return 0;
-    if (!includesOrAny(stringArray(p.rollcaster_ids), event.rollcasterId)) return 0;
+    const payload = event.payload ?? {};
+    if (String(p.spending_context) !== String(payload.spending_context ?? payload.context)) return 0;
+    if (String(p.resource_type) !== String(payload.resource_type)) return 0;
+    if (p.resource_type === "custom_currency" && String(p.custom_currency_id) !== String(payload.custom_currency_id ?? payload.currency_id)) return 0;
+    if (!includesOrAny(stringArray(p.dungeon_ids), event.dungeonId ?? String(payload.dungeon_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.ability_ids), event.abilityId ?? String(payload.ability_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.critter_ids), event.sourceCritterId ?? String(payload.critter_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.rollcaster_ids), event.rollcasterId ?? String(payload.rollcaster_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.shop_ids), event.shopId ?? String(payload.shop_id ?? payload.shop_entry_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.purchased_collectible_categories), event.purchasedCollectibleCategory ?? String(payload.purchased_collectible_category ?? ""))) return 0;
     return Math.max(0, Math.floor(event.amount ?? 0));
   }
 

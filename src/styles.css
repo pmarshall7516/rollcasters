@@ -1449,8 +1449,12 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .equip-dialog-skill > .equip-dialog-point-summary,
 .equip-dialog-skill > .equip-search,
 .equip-dialog-skill > .dialog-actions { flex-shrink: 0; }
-.equip-dialog-skill .equip-skill-list { min-height: 0; overflow-y: auto; padding: 2px 5px 2px 0; scrollbar-color: var(--border-bright) transparent; }
-.equip-dialog-skill .equip-skill-list > .skill-tile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.equip-dialog-skill .equip-skill-list { min-height: 0; overflow-y: auto; padding: 2px 5px 2px 8px; scrollbar-color: var(--border-bright) transparent; }
+.equip-dialog-skill .equip-skill-list .skill-tile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.equip-skill-sections { display: grid; gap: 18px; min-width: 0; }
+.equip-skill-section { display: grid; gap: 8px; min-width: 0; }
+.equip-skill-section-label { margin: 0; color: var(--text-secondary); font-size: 12px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.equip-skill-divider { height: 1px; background: var(--border-soft); }
 .equip-search {
   position: sticky;
   z-index: 2;
@@ -1493,10 +1497,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   min-width: 0;
 }
 .equip-skill-option.locked > .tooltip-anchor .skill-tile {
-  filter: grayscale(.82);
-  opacity: .34;
+  filter: grayscale(.72);
+  opacity: .48;
 }
-.equip-skill-option.locked > .tooltip-anchor .skill-tile:disabled { opacity: 1; }
 .equip-skill-option.level-locked > .equip-skill-unlock-row { opacity: .74; }
 .equip-skill-unlock-row {
   display: contents;
@@ -2208,10 +2211,10 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .lootbox-modal > footer > button { flex:0 1 250px; width:100%; min-width:0; min-height:38px; padding:8px 14px; font-size:14px; }
 .lootbox-modal footer kbd { margin-left:8px; padding:2px 7px; border:1px solid rgb(255 255 255 / 20%); border-radius:5px; background:rgb(0 0 0 / 18%); }
 .lootbox-purchase-button .asset-icon,.lootbox-purchase-button img { width:22px; height:22px; }
-.lootbox-opening-stage { display:grid; grid-template-rows:248px 168px minmax(0,1fr); align-items:center; justify-items:stretch; gap:12px; min-height:0; height:100%; overflow:hidden; }
+.lootbox-opening-stage { display:grid; grid-template-rows:248px 168px minmax(0,1fr); align-items:center; justify-items:stretch; gap:24px; min-height:0; height:100%; overflow:hidden; }
 .lootbox-opening-box-slot,.lootbox-opening-reel-slot,.lootbox-opening-result-slot { display:grid; place-items:center; align-self:stretch; height:100%; min-width:0; min-height:0; overflow:hidden; }
 .lootbox-opening-reel-slot { width:100%; }
-.lootbox-opening-result-slot { width:100%; }
+.lootbox-opening-result-slot { width:100%; align-items:start; }
 .lootbox-reel { position:relative; width:100%; overflow:hidden; padding:14px 0; border-block:1px solid rgb(246 194 82 / 35%); background:rgb(5 8 20 / 80%); }
 .lootbox-reel-center { position:absolute; z-index:4; inset:-6px auto -6px 50%; width:126px; transform:translateX(-50%); border:3px solid var(--accent-gold); border-radius:14px; box-shadow:0 0 22px rgb(246 194 82 / 75%),inset 0 0 20px rgb(246 194 82 / 18%); pointer-events:none; }
 .lootbox-reel-track { display:flex; gap:0; width:max-content; transform:translate3d(0,0,0); will-change:transform; backface-visibility:hidden; }
@@ -2222,20 +2225,25 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .lootbox-reel-cell .lootbox-sprite { width:58px; height:58px; }
 .lootbox-reel-cell small { width:100%; overflow:hidden; color:var(--text-secondary); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
 .lootbox-result { display:grid; justify-items:center; gap:6px; text-align:center; animation:unlock-banner-in .35s ease-out; }
+.lootbox-result.has-duplicate { gap:4px; }
 .lootbox-result > span { color:var(--accent-gold); font-weight:900; letter-spacing:.18em; }
-.lootbox-result h3 { margin:0; font-size:28px; }
-.lootbox-result > strong { font-size:34px; }
-.lootbox-reward-summary { display:flex; align-items:center; justify-content:center; gap:18px; min-height:72px; }
-.lootbox-reward-won { display:grid; justify-items:center; gap:2px; color:var(--text-primary); text-align:center; }
-.lootbox-reward-amount { font-size:34px; }
-.lootbox-reward-won > span { font-size:14px; font-weight:800; }
-.lootbox-reward-summary.duplicate .lootbox-reward-won { color:var(--text-secondary); text-decoration:line-through; text-decoration-thickness:2px; text-decoration-color:var(--accent-gold); }
+.lootbox-result h3 { max-width:100%; margin:0; font-size:28px; line-height:1.2; overflow-wrap:anywhere; }
+.lootbox-reward-progress { display:grid; gap:6px; width:min(460px,100%); padding:10px 12px; border:1px solid rgb(79 228 225 / 38%); border-radius:14px; background:linear-gradient(145deg,rgb(79 228 225 / 8%),rgb(10 14 34 / 68%)); text-align:left; }
+.lootbox-reward-progress.duplicate-shaking { border-color:var(--accent-gold); box-shadow:0 0 18px rgb(246 194 82 / 45%); animation:lootbox-progress-shake .1s linear 0s 8; }
+.lootbox-reward-progress-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; color:var(--text-secondary); font-size:12px; }
+.lootbox-reward-progress-heading strong { color:var(--text-primary); font-size:14px; font-variant-numeric:tabular-nums; }
+.lootbox-reward-progress .xp-bar { width:100%; height:12px; }
+.lootbox-progress-duplicate { min-width:0; margin-top:2px; }
+.lootbox-progress-duplicate .lootbox-duplicate-currency { width:36px; height:36px; }
+.lootbox-progress-duplicate > strong { font-size:24px; }
+.lootbox-progress-duplicate small { font-size:11px; }
+@keyframes lootbox-progress-shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }
 .lootbox-duplicate-conversion { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:2px 8px; min-width:190px; text-align:left; }
 .lootbox-duplicate-currency { display:grid; grid-row:span 2; place-items:center; width:42px; height:42px; padding:5px; border:1px solid rgb(246 194 82 / 55%); border-radius:10px; background:rgb(246 194 82 / 10%); color:var(--accent-gold); }
 .lootbox-duplicate-currency .asset-icon,.lootbox-duplicate-currency .asset-icon__image { width:100%; height:100%; object-fit:contain; }
 .lootbox-duplicate-conversion > strong { color:var(--accent-gold); font-size:27px; }
 .lootbox-duplicate-conversion small { grid-column:2; max-width:260px; color:var(--text-secondary); font-size:12px; line-height:1.25; }
-@media (max-width:640px) { .lootbox-shop-card,.lootbox-bag-card{padding:12px} .lootbox-shop-card .lootbox-sprite,.lootbox-bag-card .lootbox-sprite{width:104px;height:104px} .lootbox-modal{padding:18px} .lootbox-modal[class*="phase-"]:not(.phase-idle){height:min(760px,calc(100vh - 20px));padding:18px} .lootbox-modal > footer > button{flex:1 1 0} .lootbox-click-target{min-height:220px} .lootbox-click-target .lootbox-sprite{width:220px;height:220px} .lootbox-opening-stage{grid-template-rows:220px 160px minmax(0,1fr);gap:10px} .lootbox-pool-preview > div{grid-template-columns:repeat(2,minmax(0,1fr))} .lootbox-pool-preview article{min-height:155px;padding:10px 7px} .lootbox-reward-summary.duplicate{gap:10px} .lootbox-duplicate-conversion{min-width:0} }
+@media (max-width:640px) { .lootbox-shop-card,.lootbox-bag-card{padding:12px} .lootbox-shop-card .lootbox-sprite,.lootbox-bag-card .lootbox-sprite{width:104px;height:104px} .lootbox-modal{padding:18px} .lootbox-modal[class*="phase-"]:not(.phase-idle){height:min(760px,calc(100vh - 20px));padding:18px} .lootbox-modal > footer > button{flex:1 1 0} .lootbox-click-target{min-height:220px} .lootbox-click-target .lootbox-sprite{width:220px;height:220px} .lootbox-opening-stage{grid-template-rows:220px 160px minmax(0,1fr);gap:20px} .lootbox-pool-preview > div{grid-template-columns:repeat(2,minmax(0,1fr))} .lootbox-pool-preview article{min-height:155px;padding:10px 7px} .lootbox-duplicate-conversion{min-width:0} }
 .promo-reward-copy h3, .promo-reward-copy span { margin: 0; overflow-wrap: anywhere; }
 .promo-reward-copy h3 { color: var(--text-primary); font-size: 15px; }
 .promo-reward-copy span { color: var(--success); font-size: 12px; font-weight: 850; }

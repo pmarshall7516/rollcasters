@@ -1057,6 +1057,27 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
     presentationEvents: [],
   };
 
+  for (const action of normalizedActions) {
+    if (action.cost <= 0 || action.type === "skip") continue;
+    const actor = findUnit(next, action.actorKey);
+    if (!actor || actor.side !== "player") continue;
+    next = appendProgressEvent(next, {
+      event_type: "resource_spent",
+      source_critter_id: actor.critter.id,
+      target_critter_id: null,
+      skill_id: action.skillId ?? null,
+      amount: action.cost,
+      payload: {
+        spending_context: "combat",
+        resource_type: "mana",
+        dungeon_id: state.dungeon.id,
+        critter_id: actor.critter.id,
+        ability_id: null,
+        action_type: action.type,
+      },
+    });
+  }
+
   const enemyActions = chooseEnemyActions(next);
   const enemyCost = enemyActions.reduce((sum, action) => sum + action.cost, 0);
   next = {

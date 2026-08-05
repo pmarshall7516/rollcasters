@@ -55,3 +55,44 @@ The working progress log is maintained in the shared Obsidian vault:
 - Added live browser assertions for popup size stability, anchored slot positions, predetermined reel alignment, persisted opening counts, and browser errors. Build, smoke check, and full Lootbox browser flow pass; inspected idle, reel, and result screenshots.
 - Main-page equipped-skill popups now show every skill authored for that Critter, including future level-locked skills. Level-eligible unowned skills retain their centered Unlock action, while future skills stay greyed out with their level requirement. The skill list is now the scroll surface so the popup header, search, point balance, and actions remain usable with large skill catalogs.
 - Typecheck, skill-equip layout, and home-loadout layout checks pass. The live point-unlock flow passed the Critter skill popup checks and later stopped at an unrelated Rollcaster Ability fixture assertion; the shell's Node 20 run was also replaced with the bundled Node 24 runtime for that check.
+- Matched popup-locked skill tiles to the existing equipped-disabled treatment: the same grayscale and opacity values, removing the extra yellowish/different tint. Rebuilt, reran the focused layout check, rendered an isolated comparison fixture, and inspected the smoke capture.
+- Split the main-page skill picker into labeled Unlocked skills and Locked skills sections with a horizontal divider. Added left scroll padding so first-column equipped circles are fully visible. Typecheck, focused layout validation, isolated visual comparison, and smoke capture pass.
+- Made the Locked skills header use the same left-aligned label component and typography as Unlocked skills, with the divider rendered beneath it. Build, focused layout validation, and final visual smoke checks pass.
+
+## 2026-08-04 — Lootbox reward copy and Bag handoff
+
+- Lootbox result popups now use one reward line in the format `You Won x<amount> <reward name>`, with collectible shard rewards explicitly ending in `Shards`.
+- Sending a purchased Lootbox to the Bag refreshes durable inventory state but keeps the user on the Lootbox Shop so they can continue purchasing.
+- Updated the disposable Lootbox browser flow to assert the Shop stay-on-page behavior and exact reel/result reward copy. Build, typecheck, live Lootbox flow, and local Chromium smoke check pass.
+
+## 2026-08-04 — Lootbox result spacing polish
+
+- Restored the yellow `YOU WON` label above the single `x<amount> <name> Shards` reward line.
+- Matched the vertical spacing above and below the reel by top-aligning the reward slot and using the same opening-stage gap.
+- Re-ran the live Lootbox flow and inspected the result screenshot; copy, spacing, alignment, and browser assertions pass.
+
+## 2026-08-04 — Lootbox reward inventory progress
+
+- Shard and Relic lootbox rewards now show animated progress against the shard unlock cap or Relic `max_owned` cap, using the pre-opening count and server-confirmed granted amount.
+- Maxed or overflowing rewards animate the bar to the cap, shake the progress panel, and show the converted duplicate currency amount inside the panel.
+- Added live assertions for reward progress presence and result-content bounds. Shard and Relic screenshots were inspected; build, typecheck, and live flow pass.
+
+## 2026-08-04 — Receive Damage challenge progress
+
+- Reproduced the missing Doc `Receive Damage (Any Species)` progress through the live combat-progress RPC: a first `hp_damage_taken` event was accepted but skipped because a challenge with no history row projected `complete = NULL`, so `NOT state.complete` filtered it out.
+- Added shared migration `20260804120000_null_safe_challenge_progress_state.sql` to normalize missing event progress to zero and make challenge state booleans null-safe.
+- Added `npm run test:challenge-progress:db`, a rollback-only regression that submits a first normalized damage event and verifies persisted progress. The regression passes after migration.
+
+## 2026-08-04 — Collectible challenge runtime audit
+
+- Combat actions that consume Mana now emit normalized `resource_spent` events with the actual cost and authored Critter/action context.
+- Shop purchases now emit normalized coin, Prismite, or custom-currency spend events, allowing global Resource Spending challenges to advance without occupying a tracking slot.
+- Shared collectible challenge runtime migrations now evaluate global event challenges for every submitted event, enforce Resource Spending filters, and project unique Critter requirements correctly for collection-diversity challenges.
+- Audited the live catalog across all collectible challenge types and tracking configurations. Added rollback-only coverage for global versus selected Resource Spending, real shop purchases, Dungeon Clear, authored Critter filters, gating, persistence, and duplicate event handling.
+
+## 2026-08-04 — Lootbox release pricing
+
+- Reproduced Common Lootbox pricing drift: the active release snapshot charges 40 Coins while the editable live Shop row was changed to 100.
+- Added `20260804170000_release_shop_purchase_pricing.sql` to charge Lootbox purchases from the active production release snapshot and fail closed when no released price exists; editable Shop prices remain available for future releases.
+- Added `npm run test:release-shop-pricing:db`, a rollback-only regression that passes with release=40 and unpublished=100. Typecheck and production build pass.
+- The live browser flow was not run because its disposable authenticated purchase was blocked by the safety review; the database regression exercises the real purchase RPC.

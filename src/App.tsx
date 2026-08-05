@@ -118,6 +118,7 @@ import {
   orderedCurrencies,
   progressFor,
   requirementFor,
+  safeBigInt,
   shardProgress,
   shopAvailability,
   shopErrorMessage,
@@ -133,6 +134,7 @@ import type {
   AppData,
   CombatAction,
   CollectibleUnlockEvent,
+  CurrencyDef,
   CollectibleType,
   CollectibleUnlockChallenge,
   Critter,
@@ -878,7 +880,6 @@ export function App() {
           setTab={(tab) => navigate("shop", tab)}
           onBack={() => navigate("home")}
           onRefresh={() => refresh("shop")}
-          onBag={() => navigate("bag")}
           onPromoStateChange={setPromoState}
           onNotify={enqueueNotification}
         />
@@ -1867,7 +1868,9 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       (left.unlock?.sort_order ?? left.skill.sort_order) - (right.unlock?.sort_order ?? right.skill.sort_order) ||
       left.skill.id.localeCompare(right.skill.id),
       );
-    content = eligible.length ? <SkillTileGrid ariaLabel="Available skills">{eligible.map(({ skill, unlock }) => {
+    const unlockedEligible = eligible.filter(({ skill }) => unlockedIds.has(skill.id));
+    const lockedEligible = eligible.filter(({ skill }) => !unlockedIds.has(skill.id));
+    const renderSkill = ({ skill, unlock }: { skill: Skill; unlock: typeof data.catalog.critterSkillUnlocks[number] }) => {
       const selected = current === skill.id;
       const equipped = selected || equippedElsewhere.has(skill.id);
       const cannotRemoveLast = selected && equippedCount <= 1;
@@ -1916,7 +1919,18 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
         </div>;
       }
       return tile;
-    })}</SkillTileGrid> : <p className="empty-state">No skills available</p>;
+    };
+    content = eligible.length ? <div className="equip-skill-sections">
+      {unlockedEligible.length > 0 && <section className="equip-skill-section" aria-label="Unlocked skills">
+        <p className="equip-skill-section-label">Unlocked skills</p>
+        <SkillTileGrid ariaLabel="Unlocked skills">{unlockedEligible.map(renderSkill)}</SkillTileGrid>
+      </section>}
+      {lockedEligible.length > 0 && <section className="equip-skill-section" aria-label="Locked skills">
+        <p className="equip-skill-section-label">Locked skills</p>
+        {unlockedEligible.length > 0 && <div className="equip-skill-divider" role="separator" aria-label="Locked skills divider" />}
+        <SkillTileGrid ariaLabel="Locked skills">{lockedEligible.map(renderSkill)}</SkillTileGrid>
+      </section>}
+    </div> : <p className="empty-state">No skills available</p>;
   } else if (target.type === "relic") {
     const current = player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id;
     const eligible = sortByCollectibleId(data.catalog.relics)
@@ -2183,7 +2197,6 @@ function ShopScreen({
   setTab,
   onBack,
   onRefresh,
-  onBag,
   onPromoStateChange,
   onNotify,
 }: {
@@ -2192,7 +2205,6 @@ function ShopScreen({
   setTab: (tab: ShopTab) => void;
   onBack: () => void;
   onRefresh: () => Promise<void>;
-  onBag: () => void;
   onPromoStateChange: (state: PromoRenderState) => void;
   onNotify: (notification: BannerNotification) => void;
 }) {
@@ -2318,10 +2330,9 @@ function ShopScreen({
                   });
                   // Purchase already placed the box in the Bag. Keep the
                   // acquired row durable, then show the user the saved Bag
-                  // item instead of making a refresh feel like a no-op.
+                  // item without leaving the shop so they can keep buying.
                   void onRefresh()
                     .catch((refreshFailure) => console.error("Lootbox Bag refresh failed.", refreshFailure))
-                    .finally(onBag);
                 }}
               >Send to Bag</button>
             </> : <button className="primary-button shop-purchase" disabled={busy} onClick={(event) => { event.stopPropagation(); openDetails(); }}>Purchase</button>}
@@ -2344,7 +2355,6 @@ function ShopScreen({
         initialPurchased={purchasedLootboxEntries.has(selectedLootboxEntry.id)}
         shopEntry={selectedLootboxEntry}
         onRefresh={onRefresh}
-        onBag={onBag}
         onPurchased={() => setPurchasedLootboxEntries((current) => new Set(current).add(selectedLootboxEntry.id))}
         onOpened={() => setPurchasedLootboxEntries((current) => {
           const next = new Set(current);
@@ -2387,14 +2397,110 @@ function lootboxPoolEntryName(data: AppData, entry: LootboxPoolEntry): string {
   return collectibleName(data,"relic",entry.target_id);
 }
 
-function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, onRefresh, onBag, onPurchased, onOpened, onClose }: {
+function lootboxRewardName(data: AppData, receipt: LootboxOpeningReceipt, winningEntry?: LootboxPoolEntry): string {
+  if (winningEntry) return lootboxPoolEntryName(data, winningEntry);
+  if (receipt.reward.type === "shard" && receipt.reward.targetCategory && receipt.reward.targetCategory !== "lootbox") {
+    return `${receipt.reward.name} Shards`;
+  }
+  return receipt.reward.name;
+}
+
+type LootboxRewardProgressState = {
+  kind: "shard" | "relic";
+  current: bigint;
+  max: bigint;
+  final: bigint;
+};
+
+function lootboxRewardProgress(data: AppData, reward: LootboxOpeningReceipt["reward"]): LootboxRewardProgressState | null {
+  const granted = safeBigInt(reward.granted);
+  if (reward.type === "shard" && reward.targetCategory && reward.targetCategory !== "lootbox") {
+    const challenge = challengesFor(data, reward.targetCategory, reward.targetId).find((row) => row.challenge_type === "shop_shards");
+    const max = safeBigInt(challenge?.required_amount);
+    if (max <= 0n) return null;
+    const current = shardProgress(data, reward.targetCategory, reward.targetId) > max
+      ? max
+      : shardProgress(data, reward.targetCategory, reward.targetId);
+    return { kind: "shard", current, max, final: current + granted > max ? max : current + granted };
+  }
+  if (reward.type === "relic") {
+    const max = safeBigInt(data.catalog.relics.find((relic) => relic.id === reward.targetId)?.max_owned);
+    if (max <= 0n) return null;
+    const owned = safeBigInt(data.player?.relicInventory.find((row) => row.relic_id === reward.targetId)?.quantity);
+    const current = owned > max ? max : owned;
+    return { kind: "relic", current, max, final: current + granted > max ? max : current + granted };
+  }
+  return null;
+}
+
+function LootboxRewardProgress({ data, progress, duplicateAmount, duplicateCurrency, convertedCurrencyAmount }: {
+  data: AppData;
+  progress: LootboxRewardProgressState;
+  duplicateAmount: bigint;
+  duplicateCurrency: CurrencyDef | null | undefined;
+  convertedCurrencyAmount: string;
+}) {
+  const [visualCurrent, setVisualCurrent] = useState(progress.current);
+  const [shaking, setShaking] = useState(false);
+  const animationKey = `${progress.current}:${progress.final}:${progress.max}:${duplicateAmount}`;
+  useEffect(() => {
+    let frame = 0;
+    let shakeTimer = 0;
+    let cancelled = false;
+    const start = progress.current;
+    const span = progress.final - start;
+    const duration = span > 0n ? 1200 : 180;
+    const startedAt = performance.now();
+    setVisualCurrent(start);
+    setShaking(false);
+
+    const animate = (now: number) => {
+      if (cancelled) return;
+      const pct = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - pct, 3);
+      const scaled = BigInt(Math.round(eased * 1000));
+      setVisualCurrent(start + (span * scaled) / 1000n);
+      if (pct < 1) {
+        frame = window.requestAnimationFrame(animate);
+        return;
+      }
+      setVisualCurrent(progress.final);
+      if (duplicateAmount > 0n) {
+        setShaking(true);
+        shakeTimer = window.setTimeout(() => setShaking(false), 900);
+      }
+    };
+
+    frame = window.requestAnimationFrame(animate);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(shakeTimer);
+    };
+  }, [animationKey, duplicateAmount, progress.current, progress.final]);
+
+  const pct = progress.max > 0n ? Math.min(100, Number((visualCurrent * 100n) / progress.max)) : 100;
+  const label = progress.kind === "shard" ? "Shards" : "Relics";
+  return <div className={`lootbox-reward-progress ${shaking ? "duplicate-shaking" : ""}`.trim()} data-lootbox-reward-progress={progress.kind}>
+    <div className="lootbox-reward-progress-heading"><span>{progress.kind === "shard" ? "Shard progress" : "Relic ownership"}</span><strong>{formatAmount(visualCurrent)} / {formatAmount(progress.max)} {label}</strong></div>
+    <div className="xp-bar" role="progressbar" aria-label={`${label} reward progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-valuetext={`${formatAmount(visualCurrent)} / ${formatAmount(progress.max)} ${label}`}><span style={{ width: `${pct}%` }} /></div>
+    {duplicateAmount > 0n && <div className="lootbox-duplicate-conversion lootbox-progress-duplicate">
+      <span className="lootbox-duplicate-currency" aria-hidden="true">
+        <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
+      </span>
+      <strong>+{formatAmount(convertedCurrencyAmount)} {duplicateCurrency?.name ?? "currency"}</strong>
+      <small>{formatAmount(duplicateAmount)} duplicate {label.toLowerCase()} converted</small>
+    </div>}
+  </div>;
+}
+
+function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, onRefresh, onPurchased, onOpened, onClose }: {
   data: AppData;
   lootboxId: string;
   mode: "purchase" | "owned";
   initialPurchased?: boolean;
   shopEntry?: ShopEntry;
   onRefresh: () => Promise<void>;
-  onBag?: () => void;
   onPurchased?: () => void;
   onOpened?: () => void;
   onClose: () => void;
@@ -2406,6 +2512,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<LootboxModalPhase>("idle");
   const [receipt, setReceipt] = useState<LootboxOpeningReceipt | null>(null);
+  const [rewardProgress, setRewardProgress] = useState<LootboxRewardProgressState | null>(null);
   const [reelTarget, setReelTarget] = useState<number | null>(null);
   const purchaseRequest = useRef(createRequestId());
   const openingRequest = useRef(createRequestId());
@@ -2446,6 +2553,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
     setBusy(true); setError(null);
     try {
       const opening = await openLootbox(lootbox.id,openingRequest.current);
+      setRewardProgress(lootboxRewardProgress(data, opening.reward));
       setReceipt(opening);
       // The opening RPC consumes the Bag item and grants the reward in one
       // idempotent transaction. Update the shop affordance before the visual
@@ -2483,7 +2591,6 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
     } finally {
       setBusy(false);
       onClose();
-      if (mode === "purchase") onBag?.();
     }
   }
 
@@ -2567,6 +2674,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   const showingAnimation = phase !== "idle";
   const duplicateUnits = BigInt(receipt?.reward.discarded ?? "0");
   const duplicateCurrency = receipt ? currencyFor(data, receipt.reward.dupeCurrencyId ?? "") : null;
+  const rewardName = receipt ? lootboxRewardName(data, receipt, winningEntry) : null;
   return <div className="modal-backdrop lootbox-modal-backdrop" onMouseDown={showingAnimation ? undefined : onClose}>
     <section className={`lootbox-modal phase-${phase}`} role="dialog" aria-modal="true" aria-label={lootbox.name} onMouseDown={(event) => event.stopPropagation()}>
       {!showingAnimation && <button className="modal-close" aria-label="Close" onClick={onClose}><X /></button>}
@@ -2579,24 +2687,16 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
           {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
         </div>
         <div className="lootbox-opening-result-slot">
-          {phase === "result" && receipt && <div className="lootbox-result">
+          {phase === "result" && receipt && <div className={`lootbox-result ${duplicateUnits > 0n ? "has-duplicate" : ""}`.trim()} data-reward-type={receipt.reward.type}>
             <span>YOU WON</span>
-            <h3>{receipt.reward.name}</h3>
-            <div className={`lootbox-reward-summary ${duplicateUnits > 0n ? "duplicate" : ""}`.trim()}>
-              <div className="lootbox-reward-won">
-                <strong className="lootbox-reward-amount">×{formatAmount(receipt.reward.amount)}</strong>
-                <span>{receipt.reward.name}</span>
-              </div>
-              {duplicateUnits > 0n && (
-                <div className="lootbox-duplicate-conversion">
-                  <span className="lootbox-duplicate-currency" aria-hidden="true">
-                    <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
-                  </span>
-                  <strong>+{formatAmount(receipt.reward.convertedCurrencyAmount)}</strong>
-                  <small>{formatAmount(receipt.reward.discarded)} duplicate {receipt.reward.discarded === "1" ? "unit" : "units"} converted to {duplicateCurrency?.name ?? receipt.reward.dupeCurrencyId ?? "currency"}</small>
-                </div>
-              )}
-            </div>
+            <h3>x{formatAmount(receipt.reward.amount)} {rewardName}</h3>
+            {rewardProgress ? <LootboxRewardProgress data={data} progress={rewardProgress} duplicateAmount={duplicateUnits} duplicateCurrency={duplicateCurrency} convertedCurrencyAmount={receipt.reward.convertedCurrencyAmount} /> : duplicateUnits > 0n && <div className="lootbox-duplicate-conversion">
+              <span className="lootbox-duplicate-currency" aria-hidden="true">
+                <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
+              </span>
+              <strong>+{formatAmount(receipt.reward.convertedCurrencyAmount)}</strong>
+              <small>{formatAmount(receipt.reward.discarded)} duplicate {receipt.reward.discarded === "1" ? "unit" : "units"} converted to {duplicateCurrency?.name ?? receipt.reward.dupeCurrencyId ?? "currency"}</small>
+            </div>}
             <button className="primary-button" onClick={onClose}>Continue</button>
           </div>}
         </div>
