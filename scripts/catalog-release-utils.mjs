@@ -124,7 +124,7 @@ export function validateCatalog(catalog) {
     if (!challenge.parameters || typeof challenge.parameters !== "object" || Array.isArray(challenge.parameters)) throw new Error(`Challenge ${challenge.id} has invalid parameters.`);
     const parameters = challenge.parameters;
     const goal = challenge.challenge_type === "level_up_critter" ? parameters.required_level
-      : challenge.challenge_type === "collection_diversity" && parameters.diversity_mode === "specific_types" ? parameters.required_element_ids?.length
+      : challenge.challenge_type === "collection_diversity" && parameters.diversity_mode === "specific_types" ? (parameters.required_element_ids?.length ?? 0) * (parameters.required_per_type ?? 1)
         : challenge.challenge_type === "collection_diversity" ? parameters.required_distinct_types ?? parameters.required_per_type
           : challenge.challenge_type === "squad_composition" ? parameters.required_completions
             : challenge.challenge_type === "dungeon_clear" ? parameters.required_clears

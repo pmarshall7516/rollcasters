@@ -276,6 +276,7 @@ export type EffectTarget =
   | "all_allies"
   | "all_friendlies"
   | "targets"
+  | "attacker_and_targets"
   | "target_friendlies"
   | "target_enemies"
   | "all_element_friendlies"

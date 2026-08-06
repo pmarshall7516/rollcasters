@@ -22,12 +22,14 @@ import {
 } from "../src/lib/game.js";
 import {
   advanceDungeonEvent,
+  confirmDungeonLeads,
+  createDungeonRunState,
   currentDungeonEvent,
   revealDungeonSwapEvent,
   type DungeonRunState,
 } from "../src/lib/dungeon-run.js";
 import { battlefieldSlotsForCount, effectiveDungeon, parseBattleFormat, sortDungeonsNaturally } from "../src/lib/dungeons.js";
-import type { BattleFormat, Catalog, CombatAction, DungeonOpponent, EffectOwnerType, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
+import type { BattleFormat, Catalog, CombatAction, DungeonOpponent, DungeonRunSnapshot, EffectOwnerType, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -179,6 +181,31 @@ check(eventResult.turnEvents.some((event) => event.event_type === "resource_spen
 check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit one normalized hp_damage_dealt progress event.");
 check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
+
+const mechanicalPressCatalog = makeCatalog();
+const mechanicalPress = { ...mechanicalPressCatalog.skills[0], id: "mechanical-press", name: "Mechanical Press" };
+mechanicalPressCatalog.skills = [...mechanicalPressCatalog.skills, mechanicalPress];
+mechanicalPressCatalog.effectsBySkill[mechanicalPress.id] = [effect("skill", mechanicalPress.id, "shield-smash", "shield_modifier", {
+  target: "targets",
+  operation: "destroy",
+  shield_value: 1,
+  can_stack: false,
+  replace_existing_shield: false,
+})];
+const mechanicalPressPlayer = makePlayer();
+mechanicalPressPlayer.skillSlots = mechanicalPressPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: mechanicalPress.id } : slot
+));
+let mechanicalPressBattle = battle(mechanicalPressCatalog, mechanicalPressPlayer, "mechanical-press");
+mechanicalPressBattle = {
+  ...mechanicalPressBattle,
+  opponentUnits: mechanicalPressBattle.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, shield: 10, maxShield: 10 } : unit),
+};
+const pressTargetBefore = mechanicalPressBattle.opponentUnits[0];
+const mechanicalPressResult = takeTurn(mechanicalPressBattle, [{ actorKey: "p1", type: "skill", skillId: mechanicalPress.id, targetKey: "o1", cost: 0 }]);
+const pressTargetAfter = mechanicalPressResult.opponentUnits[0];
+check(pressTargetAfter.shield === 0 && pressTargetAfter.hp < pressTargetBefore.hp, "Mechanical Press must destroy the enemy Shield before its attack damage is applied to HP.");
+check(!mechanicalPressResult.presentationEvents.some((event) => event.kind === "damage" && event.targetKeys.includes("o1") && event.message.includes("Shield absorbed")), "An attack Skill that destroys Shield must not report its damage as Shield-absorbed.");
 
 const allCrittersSkill = { ...eventCatalog.skills[0], id: "all-critters", name: "All Critters", power: 1, targeting: "all_critters" as const };
 const allOthersSkill = { ...allCrittersSkill, id: "all-others", name: "All Others", targeting: "all_others" as const };
@@ -789,6 +816,41 @@ check(
   "A dual-element Relic bearer matching both requirements must receive the Mana-die Effect exactly once.",
 );
 
+const allCrittersAbilityCatalog = makeCatalog();
+allCrittersAbilityCatalog.rollcasterAbilities.push({ id: "global-stat", name: "Global Stat", description: "Global Stat.", sort_order: 4 });
+allCrittersAbilityCatalog.effectsByAbility["global-stat"] = [
+  effect("ability", "global-stat", "global-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 1, target: "all_critters" }),
+];
+const allCrittersAbilityPlayer = makePlayer();
+allCrittersAbilityPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "global-stat" }];
+const allCrittersAbilityBattle = battle(allCrittersAbilityCatalog, allCrittersAbilityPlayer, "all-critters-ability");
+check(
+  allCrittersAbilityBattle.playerUnits[0].stats.atk === 26
+    && allCrittersAbilityBattle.playerUnits[1].stats.atk === 21
+    && allCrittersAbilityBattle.opponentUnits[0].stats.atk === 25
+    && allCrittersAbilityBattle.opponentUnits[1].stats.atk === 27
+    && allCrittersAbilityBattle.playerUnits[2].stats.atk === 22,
+  "An Ability targeting all_critters must affect every living active Critter on both sides while excluding the inactive bench.",
+);
+
+const attackerAndTargetsCatalog = makeCatalog();
+attackerAndTargetsCatalog.effectsBySkill.wave = [
+  effect("skill", "wave", "attacker-and-targets", "stat_modifier", {
+    stat: "atk", value_mode: "flat", amount: 1, chance: 1, target: "attacker_and_targets",
+  }),
+];
+const attackerAndTargetsBattle = takeTurn(
+  battle(attackerAndTargetsCatalog, makePlayer(), "attacker-and-targets"),
+  [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }],
+);
+check(
+  attackerAndTargetsBattle.playerUnits[0].stats.atk === 26
+    && attackerAndTargetsBattle.playerUnits[1].stats.atk === 20
+    && attackerAndTargetsBattle.opponentUnits[0].stats.atk === 25
+    && attackerAndTargetsBattle.opponentUnits[1].stats.atk === 27,
+  "An Effect targeting attacker_and_targets must affect the Skill attacker and every Critter hit by the Skill exactly once.",
+);
+
 const passiveCatalog = makeCatalog();
 passiveCatalog.effectsByAbility = {
   "friendly-stat": [effect("ability", "friendly-stat", "friendly-stat", "stat_modifier", { stat: "def", value_mode: "percentage", amount: 0.1, target: "all_friendlies" })],
@@ -818,6 +880,94 @@ check(passive.playerUnits[0].stats.diceMin === 3 && passive.playerUnits[1].stats
 check(passive.opponentUnits[0].stats.atk === 22 && passive.opponentUnits[1].stats.atk === 24, "Ability all_enemies must affect every active opponent.");
 check(passive.opponentUnits[0].stats.spd === 10 && passive.opponentUnits[1].stats.spd === 8, "Relic all_enemies must resolve relative to its carrier.");
 check(passive.opponentUnits[0].stats.diceMin === 1 && passive.opponentUnits[1].stats.diceMin === 4 && passive.opponentUnits[1].stats.diceMax === 8, "Ability element enemy targeting must filter active opponents by element.");
+
+const mechCoreCatalog = makeCatalog();
+mechCoreCatalog.elements.push(
+  { id: "mechanical", name: "Mechanical", description: null, asset_path: null, sort_order: 3 },
+  { id: "thunder", name: "Thunder", description: null, asset_path: null, sort_order: 4 },
+);
+mechCoreCatalog.elementEffectiveness = mechCoreCatalog.elements.flatMap((attacking) =>
+  mechCoreCatalog.elements.map((defending) => ({ attacking_element_id: attacking.id, defending_element_id: defending.id, multiplier: 1 })),
+);
+mechCoreCatalog.critters = mechCoreCatalog.critters.map((critter) => (
+  critter.id === "p1" ? { ...critter, element_1_id: "mechanical" }
+    : critter.id === "p2" ? { ...critter, element_1_id: "thunder", element_2_id: null }
+      : critter
+));
+mechCoreCatalog.effectsByRelic["mech-core"] = [
+  effect("relic", "mech-core", "healthy-heart", "shield_modifier", {
+    target: "equipped_critter",
+    operation: "grant",
+    shield_value: 10,
+    can_stack: false,
+    replace_existing_shield: false,
+    source_element_ids: ["mechanical"],
+  }),
+  {
+    ...effect("relic", "mech-core", "power-surge", "stat_modifier", {
+      target: "equipped_critter",
+      stat: "atk",
+      value_mode: "percentage",
+      amount: 0.1,
+      source_element_ids: ["mechanical", "thunder"],
+    }),
+    runtimeVersion: 2,
+    classification: "positive",
+    execution: "root",
+  },
+];
+const mechCorePlayer = makePlayer();
+mechCorePlayer.relicSlots = [
+  { user_critter_id: "up1", slot_index: 1, relic_id: "mech-core" },
+  { user_critter_id: "up2", slot_index: 1, relic_id: "mech-core" },
+];
+const mechCoreBattle = battle(mechCoreCatalog, mechCorePlayer, "mech-core");
+check(mechCoreBattle.playerUnits[0].shield === 10, "Mech Core must grant exactly 10 Shield to a Mechanical Critter at encounter setup.");
+check(mechCoreBattle.playerUnits[0].stats.atk === 28, "Mech Core must grant a rounded 10% ATK boost to a Mechanical Critter.");
+check(mechCoreBattle.playerUnits[1].shield === 0 && mechCoreBattle.playerUnits[1].stats.atk === 22, "Mech Core must boost a Thunder Critter's ATK without granting it the Mechanical-only Shield.");
+const mechCoreExistingShield = refreshSetupRuntimeEffects({
+  ...mechCoreBattle,
+  playerUnits: mechCoreBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, shield: 15, maxShield: 15 } : unit),
+}, { applyRootShields: true });
+check(mechCoreExistingShield.playerUnits[0].shield === 15, "A non-stacking Shield grant must not reduce an existing Shield of 10 or more.");
+const mechCorePartialShield = refreshSetupRuntimeEffects({
+  ...mechCoreBattle,
+  playerUnits: mechCoreBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, shield: 6, maxShield: 6 } : unit),
+}, { applyRootShields: true });
+check(mechCorePartialShield.playerUnits[0].shield === 10, "A non-stacking Shield grant must raise a smaller existing Shield to its authored value.");
+const mechCoreSwappedOut = refreshSetupRuntimeEffects({
+  ...mechCoreBattle,
+  playerUnits: mechCoreBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, active: false, shield: 0, maxShield: 0 } : unit),
+});
+const mechCoreSwappedBack = refreshSetupRuntimeEffects({
+  ...mechCoreSwappedOut,
+  playerUnits: mechCoreSwappedOut.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, active: true } : unit),
+});
+check(mechCoreSwappedBack.playerUnits[0].shield === 0, "A Shield Relic must not reapply when its Critter is swapped back in during the same encounter.");
+const mechRun = {
+  id: "mech-run",
+  dungeonId: "d",
+  dungeonVersion: 1,
+  effectiveMode: "regular",
+  battleFormat: "2v2",
+  battleCount: 1,
+  battleIndex: 0,
+  selectedOpponents: mechCoreCatalog.dungeonOpponents.map((opponent, index) => ({
+    ...opponent,
+    instanceId: `mech-opponent-${index}`,
+    battleIndex: 0,
+    battlefieldSlot: index + 1,
+  })),
+  randomSeed: "mech-run-seed",
+  randomCursor: 0,
+  status: "started",
+  version: 1,
+  rewards: {},
+} as DungeonRunSnapshot;
+const mechDungeonState = createDungeonRunState(mechCoreCatalog, mechCorePlayer, mechCoreCatalog.dungeons[0], mechRun);
+check(mechDungeonState.battle.playerUnits.every((unit) => unit.shield === 0), "Dungeon lead selection must not apply a Shield before the encounter starts.");
+const confirmedMechDungeon = confirmDungeonLeads({ ...mechDungeonState, selectedLeadIds: ["up1", "up2"] });
+check(confirmedMechDungeon.battle.playerUnits[0].shield === 10 && confirmedMechDungeon.battle.playerUnits[1].shield === 0, "Dungeon encounter start must apply Mech Core only to the selected Mechanical lead.");
 const cappedDiceCatalog = makeCatalog();
 cappedDiceCatalog.effectsByAbility["capped-dice"] = [
   effect("ability", "capped-dice", "capped-dice", "mana_dice_modifier", { minimum_delta: 10, maximum_delta: 0, target: "all_friendlies" }),

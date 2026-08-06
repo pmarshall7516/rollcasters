@@ -39,7 +39,7 @@ try {
   if (coins.error) throw coins.error
 
   browser = await chromium.launch({headless:process.env.HEADED!=='1'})
-  const page = await browser.newPage({viewport:{width:1440,height:900}})
+  const page = await browser.newPage({viewport:{width:Number(process.env.VIEWPORT_WIDTH ?? 1440),height:Number(process.env.VIEWPORT_HEIGHT ?? 900)}})
   page.on('pageerror',(error)=>errors.push(String(error)))
   page.on('console',(message)=>{ if(message.type()==='error') errors.push(message.text()) })
   await page.goto(baseUrl,{waitUntil:'networkidle'})
@@ -55,32 +55,50 @@ try {
   }
   await page.getByRole('button',{name:'Shop',exact:true}).click()
   await page.getByRole('tab',{name:'Lootbox Shop'}).click()
-  await page.getByRole('button',{name:/Common Lootbox/}).waitFor()
-  const shopCard = page.locator('.lootbox-shop-card')
+  const shopCard = page.locator('.lootbox-shop-card').filter({hasText:/\bCommon Lootbox\b/})
+  await shopCard.waitFor()
   const displayedPrice = Number((await shopCard.locator('.lootbox-shop-price').textContent()).replace(/[^0-9]/g,''))
   check(Number.isSafeInteger(displayedPrice) && displayedPrice > 0,`Lootbox Shop must display a valid integer price: ${displayedPrice}.`)
   await page.screenshot({path:path.join(outputDir,'01-shop-grid.png'),fullPage:true})
   const cardHeight = await shopCard.evaluate((node)=>node.getBoundingClientRect().height)
   const shopCardWidth = await shopCard.evaluate((node)=>node.getBoundingClientRect().width)
   const shopPurchaseWidth = await shopCard.getByRole('button',{name:'Purchase'}).evaluate((node)=>node.getBoundingClientRect().width)
-  check(cardHeight < 240,`Lootbox shop cards should stay compact; height was ${cardHeight}px.`)
-  check(shopCardWidth < 240 && shopPurchaseWidth < 200,`Lootbox shop cards and Purchase buttons should stay narrow; widths were ${shopCardWidth}px / ${shopPurchaseWidth}px.`)
+  check(cardHeight >= 400,`Lootbox shop cards should use the shared Shop card height; height was ${cardHeight}px.`)
+  check(shopCardWidth <= 260 && shopPurchaseWidth < 200,`Lootbox shop cards and Purchase buttons should stay within the shared Shop width; widths were ${shopCardWidth}px / ${shopPurchaseWidth}px.`)
+  const infoButton = shopCard.getByRole('button',{name:'View Common Lootbox details'})
+  check(await infoButton.count() === 1, 'Each Lootbox Shop card must expose one top-right info button.')
+  const infoLayout = await infoButton.evaluate((node) => {
+    const card = node.closest('.lootbox-shop-card')
+    const button = node.getBoundingClientRect()
+    const cardBounds = card?.getBoundingClientRect()
+    return { topOffset: button.top - (cardBounds?.top ?? 0), rightOffset: (cardBounds?.right ?? 0) - button.right, width: button.width, height: button.height }
+  })
+  check(infoLayout.topOffset <= 12 && infoLayout.rightOffset <= 12 && infoLayout.width === infoLayout.height && infoLayout.width <= 34, `Lootbox info button must be a small top-right circle: ${JSON.stringify(infoLayout)}`)
+  await infoButton.click()
+  const infoModal = page.getByRole('dialog',{name:'Common Lootbox'})
+  await infoModal.getByText('Possible rewards').waitFor()
+  check(await page.evaluate(() => JSON.parse(window.render_game_to_text()).lootboxOpeningPhase === 'idle'), 'The Lootbox info button must open the idle details popup.')
+  await infoModal.getByRole('button',{name:'Close'}).click()
   const spriteControls = await shopCard.locator('.lootbox-card-sprite').evaluate((node)=>node.querySelectorAll('button,input,select,textarea,[tabindex]').length)
   check(spriteControls===0,'Shop card sprites must not contain keyboard-focusable controls.')
+  await shopCard.locator('.lootbox-card-sprite').click()
+  const spriteModal = page.getByRole('dialog',{name:'Common Lootbox'})
+  await spriteModal.getByText('Possible rewards').waitFor()
+  await spriteModal.getByRole('button',{name:'Close'}).click()
   await shopCard.getByRole('button',{name:'Purchase'}).click()
   const purchaseModal = page.getByRole('dialog',{name:'Common Lootbox'})
   await purchaseModal.getByText('Possible rewards').waitFor()
   const purchaseModalWidth = await purchaseModal.evaluate((node)=>node.getBoundingClientRect().width)
   check(purchaseModalWidth <= 820,`Lootbox shop popup should fit the fixed opening footprint; width was ${purchaseModalWidth}px.`)
   check(await page.evaluate(() => JSON.parse(window.render_game_to_text()).lootboxOpeningPhase === 'idle'),'The shop-grid Purchase button should open an idle popup.')
-  check(await purchaseModal.getByRole('button',{name:/Purchase/}).count()===1,'An unowned Lootbox popup must show its Purchase action.')
+  check(await purchaseModal.getByRole('button',{name:'Open Now'}).count()===1 && await purchaseModal.getByRole('button',{name:'Send to Bag'}).count()===1,'The shop-grid Purchase button must purchase immediately and show the post-purchase actions.')
+  check(await purchaseModal.locator('.lootbox-modal-currencies .currency-pill').count()>0,'Lootbox purchase popup must keep currency balances visible.')
   const shardShape = await purchaseModal.locator('.lootbox-pool-shard-art .shard-sprite-frame').first().evaluate((node) => ({
     clipPath: getComputedStyle(node).clipPath,
     aspectRatio: getComputedStyle(node).aspectRatio,
   }))
   check(shardShape.clipPath.includes('polygon') && shardShape.aspectRatio.includes('1.7'),`Lootbox shard art must use the shared diamond sprite frame: ${JSON.stringify(shardShape)}`)
   await page.screenshot({path:path.join(outputDir,'01-purchase-popup.png'),fullPage:true})
-  await purchaseModal.getByRole('button',{name:/Purchase/}).click()
   await purchaseModal.getByRole('button',{name:'Open Now'}).waitFor()
   await purchaseModal.getByRole('button',{name:'Send to Bag'}).waitFor()
   await shopCard.getByRole('button',{name:'Open Now'}).waitFor()
@@ -129,12 +147,15 @@ try {
   const modal = page.getByRole('dialog',{name:'Common Lootbox'})
   await modal.getByText('Possible rewards').waitFor()
   check(await modal.locator('.lootbox-pool-preview article').count()===5,'Lootbox detail must show all five possible rewards.')
+  check(await modal.locator('.lootbox-modal-currencies .currency-pill').count()===0,'Bag Lootbox popup must hide currency balances.')
   check(await page.evaluate(() => JSON.parse(window.render_game_to_text()).lootboxOpeningPhase === 'idle'),'Opening animation must remain idle until the user activates it.')
   const modalLayout = await page.evaluate(() => {
     const footer = document.querySelector('.lootbox-modal > footer')
     const pool = document.querySelector('.lootbox-modal > .lootbox-pool-preview')
     const modal = document.querySelector('.lootbox-modal')
     const bounds = modal?.getBoundingClientRect()
+    const poolGrid = pool?.querySelector(':scope > div')
+    const closedSprite = modal?.querySelector('.lootbox-sprite.closed')
     return footer && pool ? {
       footerBeforePool: Boolean(footer.compareDocumentPosition(pool) & Node.DOCUMENT_POSITION_FOLLOWING),
       footerDisplay: getComputedStyle(footer).display,
@@ -142,9 +163,12 @@ try {
       modalWidth: bounds?.width ?? 0,
       modalHeight: bounds?.height ?? 0,
       footerButtonWidth: footer.querySelector('button')?.getBoundingClientRect().width ?? 0,
+      poolBottomPadding: Number.parseFloat(getComputedStyle(pool).paddingBottom),
+      poolBottomGap: (pool?.getBoundingClientRect().bottom ?? 0) - (poolGrid?.getBoundingClientRect().bottom ?? 0),
+      closedSpriteTransform: getComputedStyle(closedSprite).transform,
     } : null
   })
-  check(modalLayout?.footerBeforePool && modalLayout.footerDisplay==='flex' && modalLayout.footerButtons===1 && modalLayout.modalWidth <= 820 && modalLayout.footerButtonWidth < 300 && await modal.getByRole('button',{name:'Send to Bag'}).count()===0,`Bag Lootbox popup must stay consistent and only offer Open Now: ${JSON.stringify(modalLayout)}`)
+  check(modalLayout?.footerBeforePool && modalLayout.footerDisplay==='flex' && modalLayout.footerButtons===1 && modalLayout.modalWidth <= 820 && modalLayout.footerButtonWidth < 300 && modalLayout.poolBottomPadding >= 12 && modalLayout.poolBottomGap >= 12 && modalLayout.closedSpriteTransform !== 'none' && await modal.getByRole('button',{name:'Send to Bag'}).count()===0,`Bag Lootbox popup must stay consistent and only offer Open Now: ${JSON.stringify(modalLayout)}`)
   await page.screenshot({path:path.join(outputDir,'03-popup-idle.png'),fullPage:true})
   await modal.locator('.lootbox-click-target').click()
   await page.waitForFunction(()=>JSON.parse(window.render_game_to_text()).lootboxOpeningPhase==='reel',{timeout:5000})
@@ -179,13 +203,16 @@ try {
     await rewardProgress.waitFor()
     check(await rewardProgress.getAttribute('data-lootbox-reward-progress')===rewardType,`Expected a ${rewardType} reward progress bar.`)
     check(await rewardProgress.getByRole('progressbar').count()===1,'Lootbox reward progress must expose one accessible progress bar.')
+    check((await rewardProgress.locator('.xp-bar > span').evaluate((node)=>getComputedStyle(node).transitionProperty)).includes('width'),'Lootbox reward progress must animate its fill continuously.')
+    if (await rewardProgress.locator('.lootbox-progress-duplicate').count() > 0) check(await rewardProgress.getAttribute('data-lootbox-reward-capped') === 'true','Duplicate shard or relic rewards must mark the progress bar as capped.')
   }
   const continueBounds = await modal.getByRole('button',{name:'Continue'}).evaluate((node) => {
     const button = node.getBoundingClientRect()
     const dialog = node.closest('.lootbox-modal')?.getBoundingClientRect()
-    return { buttonBottom: button.bottom, dialogBottom: dialog?.bottom ?? 0 }
+    const resultSlot = node.closest('.lootbox-opening-result-slot')?.getBoundingClientRect()
+    return { buttonBottom: button.bottom, dialogBottom: dialog?.bottom ?? 0, resultSlotBottom: resultSlot?.bottom ?? 0 }
   })
-  check(continueBounds.buttonBottom <= continueBounds.dialogBottom + 1,`Lootbox result content overflowed the popup: ${JSON.stringify(continueBounds)}`)
+  check(continueBounds.buttonBottom <= continueBounds.dialogBottom + 1 && continueBounds.buttonBottom <= continueBounds.resultSlotBottom + 1,`Lootbox result content overflowed the popup or its result slot: ${JSON.stringify(continueBounds)}`)
   const alignment = await page.evaluate(() => {
     const winnerNode = document.querySelector('.lootbox-reel-cell.winner')
     const markerNode = document.querySelector('.lootbox-reel-center')

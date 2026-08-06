@@ -1,4 +1,4 @@
-import { challengeDescription, challengeGoal } from "../src/lib/collectibles.js";
+import { challengeDescription, challengeGoal, progressFor } from "../src/lib/collectibles.js";
 import { challengeEventIncrement, derivedChallengeProgress } from "../src/lib/challenges.js";
 import type { AppData, CollectibleUnlockChallenge } from "../src/lib/types.js";
 
@@ -159,6 +159,54 @@ const frostTeraData = {
 } as unknown as AppData;
 check(derivedChallengeProgress(frostTeraData, frostTeraDiversity) === 1n, "A dual-element Critter must fill only one unique Frost/Tera requirement.");
 check(derivedChallengeProgress({ ...frostTeraData, player: { ...frostTeraData.player, critters: [...frostTeraData.player!.critters, { id: "owned-frostling", user_id: "user", critter_id: "frostling", level: 1, xp: 0, skill_points: 0 }] } }, frostTeraDiversity) === 2n, "Two distinct Critters must satisfy the Frost/Tera ownership requirements.");
+
+const voltaDiversity = challenge("collection_diversity", {
+  diversity_mode: "specific_types",
+  required_per_type: 2,
+  require_unique_critters: true,
+  required_element_ids: ["thunder", "mechanical"],
+});
+const voltaCatalog = {
+  ...data.catalog,
+  elements: [
+    { id: "thunder", name: "Thunder" },
+    { id: "mechanical", name: "Mechanical" },
+  ],
+  critters: [
+    { id: "thunder-1", name: "Thunder 1", element_1_id: "thunder", element_2_id: null },
+    { id: "thunder-2", name: "Thunder 2", element_1_id: "thunder", element_2_id: null },
+    { id: "thunder-3", name: "Thunder 3", element_1_id: "thunder", element_2_id: null },
+    { id: "mechanical-1", name: "Mechanical 1", element_1_id: "mechanical", element_2_id: null },
+    { id: "mechanical-2", name: "Mechanical 2", element_1_id: "mechanical", element_2_id: null },
+    { id: "mechanical-3", name: "Mechanical 3", element_1_id: "mechanical", element_2_id: null },
+  ],
+};
+const voltaData = (critterIds: string[]) => ({
+  catalog: { ...voltaCatalog, collectibleUnlockChallenges: [voltaDiversity], collectibleUnlockRequirements: [] },
+  player: {
+    critters: critterIds.map((critter_id, index) => ({ id: `owned-${index}`, user_id: "user", critter_id, level: 1, xp: 0, skill_points: 0 })),
+    collectibleSnapshot: { progress: [], shards: [], lootboxes: [], tracked: [], unlocked_collectibles: [] },
+  },
+} as unknown as AppData);
+check(challengeGoal(voltaDiversity) === 4n, "Specific diversity goal must multiply the required Elements by Critters required per Element.");
+check(derivedChallengeProgress(voltaData(["mechanical-1", "mechanical-2", "mechanical-3", "thunder-1"]), voltaDiversity) === 3n, "Specific diversity progress must cap each Element at its per-Element quota instead of allowing overflow to cover another Element.");
+check(progressFor(voltaData(["mechanical-1", "mechanical-2", "mechanical-3", "thunder-1"]), voltaDiversity.id).current === "3", "Player-facing diversity progress must show capped per-Element ownership.");
+check(!progressFor(voltaData(["mechanical-1", "mechanical-2", "mechanical-3", "thunder-1"]), voltaDiversity.id).completed, "Three Mechanical and one Thunder Critter must not complete a two-per-Element challenge.");
+check(progressFor(voltaData(["mechanical-1", "mechanical-2", "thunder-1", "thunder-2"]), voltaDiversity.id).goal_reached, "Two Critters from each required Element must complete the diversity challenge.");
+const staleVoltaProgressData = voltaData(["thunder-1", "thunder-2", "thunder-3"]);
+staleVoltaProgressData.player!.collectibleSnapshot.progress = [{
+  challenge_id: voltaDiversity.id,
+  current: "3",
+  goal: "2",
+  goal_reached: true,
+  eligible: true,
+  completed: false,
+  blocked_by_gate_order: null,
+  trackable: false,
+}];
+const staleVoltaProgress = progressFor(staleVoltaProgressData, voltaDiversity.id);
+check(staleVoltaProgress.current === "2" && staleVoltaProgress.goal === "4", "Player-facing diversity progress must recompute capped ownership and use the authored X*Y goal when a stale snapshot exists.");
+check(!staleVoltaProgress.completed, "Overflow from one Element must not complete a specific-types diversity challenge through a stale snapshot.");
 
 const dungeonFrostTera = challenge("squad_composition", {
   completion_event: "dungeon_clear",

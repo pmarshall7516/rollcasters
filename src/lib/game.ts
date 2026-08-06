@@ -689,7 +689,11 @@ function resolveChildEffects(state: CombatState, parent: ResolvedEffectRef, cont
   return next;
 }
 
-function installRootEffects(state: CombatState): CombatState {
+type SetupRuntimeRefreshOptions = {
+  applyRootShields?: boolean;
+};
+
+function installRootEffects(state: CombatState, options: SetupRuntimeRefreshOptions = {}): CombatState {
   let next = state;
   for (const source of activeSetupSources(state)) {
     for (const effect of source.effects) {
@@ -701,8 +705,8 @@ function installRootEffects(state: CombatState): CombatState {
       };
       const sourceCritter = source.sourceKey ? findUnit(next, source.sourceKey)?.critter : undefined;
       if (!effectMatchesSourceCritter(effect, sourceCritter)) continue;
-      if (effect.runtimeKind === "shield_modifier") next = resolveEffect(next, effect, context);
-      else if (effect.runtimeKind === "direct_health_modifier" && effect.parameters.target === "attacker") {
+      if (effect.runtimeKind === "shield_modifier" && options.applyRootShields !== false) next = resolveEffect(next, effect, context);
+      else if (effect.runtimeKind === "direct_health_modifier" && ["attacker", "attacker_and_targets"].includes(String(effect.parameters.target))) {
         // A root Direct Health Modifier targeting the attacker is an
         // attack-triggered retaliation (for example, Spiky Shield's Thorns).
         // Keep it installed until an incoming attack supplies the attacker
@@ -793,7 +797,7 @@ export function recomputeCombatStats(state: CombatState): CombatState {
 }
 
 /** Reinstall root Relic/Ability runtime Effects after lead activation or a formation change. */
-export function refreshSetupRuntimeEffects(state: CombatState): CombatState {
+export function refreshSetupRuntimeEffects(state: CombatState, options: SetupRuntimeRefreshOptions = {}): CombatState {
   const setupEffectIds = new Set(
     state.setupSources.flatMap((source) => source.effects
       .filter((effect) => effect.execution !== "child")
@@ -806,7 +810,7 @@ export function refreshSetupRuntimeEffects(state: CombatState): CombatState {
       || !setupEffectIds.has(instance.sourceEffectId)
     )),
   };
-  return installRootEffects(withoutSetup);
+  return installRootEffects(withoutSetup, { ...options, applyRootShields: options.applyRootShields === true });
 }
 
 export function combatEffectSummaries(state: CombatState, unitKey: string): CombatEffectSummary[] {
@@ -1455,6 +1459,24 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
       skillId: skill.id,
       hpChanges: [],
     });
+    const effects = state.runEffects.skill[skill.id] ?? [];
+    const preDamageEffectIds = new Set(
+      skill.skill_type === "attack"
+        ? effects
+          .filter((effect) => effect.execution !== "child" && effect.runtimeKind === "shield_modifier" && effect.parameters.operation === "destroy")
+          .map((effect) => effect.id)
+        : [],
+    );
+    let preDamageState = actionState;
+    for (const effect of effects.filter((candidate) => preDamageEffectIds.has(candidate.id))) {
+      preDamageState = resolveEffect(preDamageState, effect, {
+        sourceOwnerType: "skill",
+        sourceOwnerId: skill.id,
+        sourceCritterKey: actor.key,
+        skillTargetKeys: targets.map((target) => target.key),
+        attackerKey: actor.key,
+      });
+    }
     let damageDone = 0;
     let next = targets.reduce((current, originalTarget) => {
       const target = findUnit(current, originalTarget.key);
@@ -1521,7 +1543,7 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
           : reacted;
       }
       return { ...current, log: [`${combatantName(actor)} used ${skill.name} on ${combatantName(target, false)}.`, ...current.log] };
-    }, actionState);
+    }, preDamageState);
     if (actor.side === "player") {
       next = appendProgressEvent(next, {
         event_type: "skill_resolved",
@@ -1533,13 +1555,13 @@ function resolveAction(state: CombatState, action: CombatAction): CombatState {
       });
     }
     next = recomputeCombatStats(next);
-    const effects = next.runEffects.skill[skill.id] ?? [];
     if (effects.length) {
-      for (const effect of effects.filter((effect) => effect.runtimeKind !== "skill_usage_restriction")) next = resolveEffect(next, effect, {
+      for (const effect of effects.filter((effect) => effect.runtimeKind !== "skill_usage_restriction" && !preDamageEffectIds.has(effect.id))) next = resolveEffect(next, effect, {
         sourceOwnerType: "skill",
         sourceOwnerId: skill.id,
         sourceCritterKey: actor.key,
         skillTargetKeys: targets.map((target) => target.key),
+        attackerKey: actor.key,
         damageDone,
       });
     }
@@ -1718,6 +1740,10 @@ function effectTargets(state: CombatState, target: string, context: RuntimeConte
     case "all_allies": return finish(ordered(friendlies.filter((unit) => active(unit) && unit.key !== source?.key)));
     case "all_friendlies": return finish(ordered(friendlies.filter(active)));
     case "all_squad_friendlies": return finish(ordered(friendlies.filter((unit) => unit.hp > 0)));
+    case "attacker_and_targets": {
+      const selected = new Set([context.attackerKey, ...(context.skillTargetKeys ?? [])].filter((key): key is string => Boolean(key)));
+      return finish(ordered([...friendlies, ...enemies].filter((unit) => active(unit) && selected.has(unit.key))));
+    }
     case "targets": {
       const selected = new Set(context.skillTargetKeys ?? []);
       return finish(ordered([...friendlies, ...enemies].filter((unit) => active(unit) && selected.has(unit.key))));
@@ -1844,6 +1870,28 @@ function amplifiedHealingAmount(
   return Math.max(1, amount);
 }
 
+function amplifiedShieldAmount(
+  state: CombatState,
+  targetKey: string,
+  rawAmount: number,
+  context: RuntimeContext,
+): number {
+  let amount = Math.max(0, roundHalfUp(rawAmount));
+  for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "effect_amplification")) {
+    const parameters = instance.state.parameters as Record<string, unknown> | undefined;
+    if (parameters?.affected_effect_category !== "shields") continue;
+    const direction = String(parameters.direction ?? "received");
+    const applies = direction === "received"
+      ? instance.targetCritterKey === targetKey
+      : instance.targetCritterKey === context.sourceCritterKey;
+    if (!applies) continue;
+    const modifier = Number(parameters.modifier_value ?? 0);
+    const boosted = parameters.modifier_type === "percentage" ? amount + amount * modifier : amount + modifier;
+    amount = Math.max(0, roundHalfUp(boosted));
+  }
+  return amount;
+}
+
 function compareValues(value: number, operator: string, target: number): boolean {
   if (operator === "equal") return value === target;
   if (operator === "not_equal") return value !== target;
@@ -1854,14 +1902,28 @@ function compareValues(value: number, operator: string, target: number): boolean
   return false;
 }
 
-function applyShieldValue(state: CombatState, targetKey: string, operation: string, value: number, maximum?: number): CombatState {
+function applyShieldValue(
+  state: CombatState,
+  targetKey: string,
+  operation: string,
+  value: number,
+  maximum?: number,
+  canStack = false,
+  replaceExistingShield = false,
+): CombatState {
   const target = findUnit(state, targetKey);
   if (!target) return state;
   const before = target.shield;
   const nextShield = operation === "destroy"
     ? 0
-    : operation === "set" || operation === "grant"
+    : operation === "set"
       ? value
+      : operation === "grant"
+        ? replaceExistingShield
+          ? value
+          : canStack
+            ? before + value
+            : Math.max(before, value)
       : operation === "subtract"
         ? before - value
         : before + value;
@@ -1990,18 +2052,25 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   }
   if (effect.runtimeKind === "shield_modifier") {
     const operation = String(effect.parameters.operation ?? "grant");
-    const value = operation === "destroy" ? 0 : Math.max(0, roundHalfUp(Number(effect.parameters.shield_value ?? 0)));
+    const authoredValue = operation === "destroy" ? 0 : Math.max(0, roundHalfUp(Number(effect.parameters.shield_value ?? 0)));
     const rawMaximum = effect.parameters.maximum_shield;
     const maximum = rawMaximum === null || rawMaximum === undefined || rawMaximum === ""
       ? undefined
       : Number.isFinite(Number(rawMaximum)) ? Number(rawMaximum) : undefined;
-    return targets.reduce((current, target) => applyShieldValue(
-      current,
-      target.key,
-      operation,
-      value,
-      maximum,
-    ), next);
+    return targets.reduce((current, target) => {
+      const value = ["grant", "add"].includes(operation)
+        ? amplifiedShieldAmount(current, target.key, authoredValue, context)
+        : authoredValue;
+      return applyShieldValue(
+        current,
+        target.key,
+        operation,
+        value,
+        maximum,
+        effect.parameters.can_stack === true,
+        effect.parameters.replace_existing_shield === true,
+      );
+    }, next);
   }
   if (effect.runtimeKind === "direct_health_modifier") {
     let current = next;
@@ -2156,9 +2225,65 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   }
   if (effect.runtimeKind === "effect_removal") {
     const category = String(effect.parameters.removal_category ?? "all_removable");
-    const removable = next.runtimeEffects.filter((instance) => instance.sourceEffectId !== effect.id && (category === "all_removable" || category === instance.classification || instance.runtimeKind.includes(category.replace("_modifiers", "_modifier"))));
-    const remove = new Set(removable.slice(0, Number(effect.parameters.maximum_effects_removed ?? 1)).map((instance) => instance.instanceId));
-    return { ...next, runtimeEffects: next.runtimeEffects.filter((instance) => !remove.has(instance.instanceId)) };
+    const specificEffectId = String(effect.parameters.specific_effect_id ?? "");
+    const targetKeys = new Set(targets.map((target) => target.key));
+    const matchesCategory = (candidate: { id: string; runtimeKind: string; classification?: string }) => {
+      if (candidate.id === effect.id || (specificEffectId && candidate.id !== specificEffectId)) return false;
+      if (category === "all_removable") return true;
+      if (category === "stat_modifiers") return candidate.runtimeKind === "stat_modifier";
+      if (category === "statuses") return candidate.runtimeKind === "apply_status";
+      if (category === "shields") return candidate.runtimeKind === "shield_modifier";
+      if (category === "delayed") return ["delayed_effect", "repeating_effect"].includes(candidate.runtimeKind);
+      if (category === "reactive") return ["reactive_trigger", "retaliation"].includes(candidate.runtimeKind);
+      return candidate.classification === category;
+    };
+    const candidates: Array<{
+      kind: "modifier" | "runtime";
+      id: string;
+      sequence: number;
+      strength: number;
+    }> = [];
+    for (const [index, modifier] of next.modifiers.entries()) {
+      if (!targetKeys.has(modifier.holderKey) || !matchesCategory(modifier.effect)) continue;
+      candidates.push({
+        kind: "modifier",
+        id: modifier.instanceId,
+        sequence: index,
+        strength: Math.abs(Number(modifier.effect.parameters.amount ?? modifier.effect.parameters.value ?? 0)),
+      });
+    }
+    for (const instance of next.runtimeEffects) {
+      if (!instance.targetCritterKey || !targetKeys.has(instance.targetCritterKey)) continue;
+      const candidate = effectForReference(next, instance.sourceOwnerType, instance.sourceOwnerId, instance.sourceEffectId);
+      if (!candidate || !matchesCategory(candidate)) continue;
+      candidates.push({
+        kind: "runtime",
+        id: instance.instanceId,
+        sequence: instance.appliedAtSequence,
+        strength: Math.abs(Number(candidate.parameters.amount ?? candidate.parameters.value ?? candidate.parameters.shield_value ?? 0)),
+      });
+    }
+    const selection = String(effect.parameters.selection_method ?? "oldest");
+    const ordered = [...candidates];
+    if (selection === "newest") ordered.sort((a, b) => b.sequence - a.sequence);
+    else if (selection === "strongest") ordered.sort((a, b) => b.strength - a.strength || a.sequence - b.sequence);
+    else if (selection === "weakest") ordered.sort((a, b) => a.strength - b.strength || a.sequence - b.sequence);
+    else if (selection === "random") {
+      for (let index = ordered.length - 1; index > 0; index -= 1) {
+        const roll = nextRandom(next.rngState);
+        next = { ...next, rngState: roll.state };
+        const swapIndex = Math.floor(roll.value * (index + 1));
+        [ordered[index], ordered[swapIndex]] = [ordered[swapIndex], ordered[index]];
+      }
+    }
+    const rawLimit = effect.parameters.maximum_effects_removed;
+    const limit = rawLimit === null || rawLimit === undefined ? ordered.length : Math.max(0, Number(rawLimit));
+    const remove = new Set(ordered.slice(0, limit).map((candidate) => `${candidate.kind}:${candidate.id}`));
+    return {
+      ...next,
+      modifiers: next.modifiers.filter((modifier) => !remove.has(`modifier:${modifier.instanceId}`)),
+      runtimeEffects: next.runtimeEffects.filter((instance) => !remove.has(`runtime:${instance.instanceId}`)),
+    };
   }
   if (effect.runtimeKind === "effect_copy") {
     const copies = next.runtimeEffects.filter((instance) => instance.targetCritterKey && targets.some((target) => target.key === instance.targetCritterKey)).slice(0, Number(effect.parameters.maximum_effects_copied ?? 1));
@@ -2251,7 +2376,7 @@ function resolveReactiveEffects(
     if (!parent) continue;
     const p = parent.parameters;
     const isAttackRetaliation = instance.runtimeKind === "direct_health_modifier";
-    if (isAttackRetaliation && p.target !== "attacker") continue;
+    if (isAttackRetaliation && !["attacker", "attacker_and_targets"].includes(String(p.target))) continue;
     if (isAttackRetaliation && instance.sourceCritterKey !== defender.key) continue;
     const trigger = instance.runtimeKind === "retaliation" ? String(p.trigger_condition ?? "hit") : String(p.trigger_event ?? "owner_hp_damaged");
     const isDefeatTrigger = trigger === "owner_defeats_enemy";
@@ -2307,7 +2432,7 @@ function resolveReactiveEffects(
         sourceOwnerType: instance.sourceOwnerType,
         sourceOwnerId: instance.sourceOwnerId,
         sourceCritterKey: instance.sourceCritterKey,
-        skillTargetKeys: [attacker.key],
+        skillTargetKeys: p.target === "attacker_and_targets" ? [defender.key] : [attacker.key],
         attackerKey: attacker.key,
         defenderKey: defender.key,
         damageAttempted: attempted,

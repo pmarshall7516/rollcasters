@@ -62,6 +62,7 @@ try {
             <span class="effect-list effect-summary"><span class="effect-list-row"><strong>Minor Hardening:</strong> Equipped Critter gains +5 DEF.</span><span class="effect-list-row"><strong>Steady Guard:</strong> Reduces incoming damage.</span></span>
           </div>
         </section>
+        <section class="collectible-description-section"><h3>Description</h3><p>A durable description section for the collectible detail popup.</p></section>
         <div style="height:260px" aria-hidden="true"></div>
       </div>
     </main>
@@ -74,11 +75,14 @@ try {
     const modal = document.querySelector(".ui-test-modal");
     const unlockable = document.querySelector(".detail-tile.unlockable");
     const unlockButton = document.querySelector(".skill-unlock-button");
+    const descriptionSection = document.querySelector(".collectible-description-section");
+    const bottomSpacer = document.querySelector(".ui-test-modal > [aria-hidden='true']");
     const unlockRect = unlockable.querySelector(".skill-tile").getBoundingClientRect();
     const buttonRect = unlockButton.getBoundingClientRect();
     const style = (selector) => getComputedStyle(document.querySelector(selector));
     return {
       modal: { width: modal.getBoundingClientRect().width, height: modal.getBoundingClientRect().height, scrollable: modal.scrollHeight > modal.clientHeight, scrollbarWidth: getComputedStyle(modal).scrollbarWidth },
+      descriptionSection: { title: descriptionSection.querySelector("h3")?.textContent.trim(), text: descriptionSection.querySelector("p")?.textContent.trim(), visible: descriptionSection.getBoundingClientRect().height > 0, beforeBottomSpacer: descriptionSection.getBoundingClientRect().bottom <= bottomSpacer.getBoundingClientRect().top },
       unlockedSkillOpacity: Number(style(".detail-tile.unlocked .skill-tile").opacity),
       unlockButtonOpaque: Number(getComputedStyle(unlockButton).opacity) === 1,
       unlockButtonCentered: Math.abs((buttonRect.left + buttonRect.width / 2) - (unlockRect.left + unlockRect.width / 2)) < 1 && Math.abs((buttonRect.top + buttonRect.height / 2) - (unlockRect.top + unlockRect.height / 2)) < 1,
@@ -122,6 +126,8 @@ try {
   if (!result.tooltipVisible || !result.effectRowsNamed || !result.abilityRequirementsBelowCards || !result.uniformHomeStatBorders) throw new Error(`Tooltip, effect rows, ability metadata, or stat borders failed: ${JSON.stringify(result)}`);
   if (!result.skillAbilityCardsAreSolidAndMatching) throw new Error(`Skill and ability card background contract failed: ${JSON.stringify(result)}`);
   if (!result.challengeProgressRightAligned || !result.challengeActionBeforeProgress) throw new Error(`Challenge progress alignment failed: ${JSON.stringify(result)}`);
+  if (result.descriptionSection.title !== "Description" || !result.descriptionSection.text || !result.descriptionSection.visible || !result.descriptionSection.beforeBottomSpacer) throw new Error(`Collectible description section failed: ${JSON.stringify(result.descriptionSection)}`);
+  if ((appSource.match(/<CollectibleDescriptionSection description=/g) ?? []).length !== 3) throw new Error("Critter, Relic, and Rollcaster detail popups must each render the shared description section.");
   if (!appSource.includes("initial?.focus({ preventScroll: true });") || !appSource.includes("if (modal) modal.scrollTop = 0;")) throw new Error("Modal opening must focus without scrolling and reset the pane to the top.");
 
   const screenshot = path.join(outputDir, "skills-abilities-stats-modal.png");
