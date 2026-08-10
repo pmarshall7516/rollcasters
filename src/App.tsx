@@ -69,9 +69,11 @@ import {
   critterStats,
   isActorRecharging,
   isSingleTarget,
+  healthyFriendlySwapTargets,
   matchesSelectedElements,
   orderedActiveCombatUnits,
   skillAvailability,
+  skillHasPostAttackSwap,
   skillTargets,
   squadCritters,
   type ActionCostBreakdown,
@@ -4112,7 +4114,7 @@ function CombatScreen({
   const combatRootRef = useRef<HTMLElement>(null);
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
   const [menu, setMenu] = useState<"actions" | "skills" | "swap">("actions");
-  const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill } | null>(null);
+  const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill; phase: "primary" | "swap"; primaryTargetKey?: string } | null>(null);
   const [submittingProgress, setSubmittingProgress] = useState(false);
   const [loadingDots, setLoadingDots] = useState(1);
   const [recordingResult, setRecordingResult] = useState(false);
@@ -4145,7 +4147,11 @@ function CombatScreen({
     .sort((left, right) => left.slot_index - right.slot_index)
     .map((slot) => byId(data.catalog.rollcasterAbilities, slot.ability_id))
     .filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
-  const legalTargets = targeting ? skillTargets(battle, targeting.actorKey, targeting.skill) : [];
+  const legalTargets = targeting
+    ? targeting.phase === "swap"
+      ? healthyFriendlySwapTargets(battle, targeting.actorKey)
+      : skillTargets(battle, targeting.actorKey, targeting.skill)
+    : [];
   const legalTargetKeys = new Set(legalTargets.map((unit) => unit.key));
   const inactiveLegalTargets = legalTargets.filter((unit) => !unit.active);
   const queuedSwapIds = new Set(Object.values(actions).map((action) => action.swapToId).filter(Boolean));
@@ -4173,8 +4179,8 @@ function CombatScreen({
           ? (!diceSettled
             ? "Rolling…"
             : `You rolled ${combat.rollSummary?.player ?? 0} mana and the enemy rolled ${combat.rollSummary?.opponent ?? 0} mana.`)
-          : combat.phase === "select_player_actions"
-            ? (targeting ? `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose your ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")
+      : combat.phase === "select_player_actions"
+            ? (targeting ? targeting.phase === "swap" ? `Choose a healthy friendly Critter to swap in after ${targeting.skill.name}.` : `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose your ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")
             : combat.phase === "event_playback"
               ? (event?.message ?? "")
               : combat.phase === "battle_result"
@@ -4602,14 +4608,43 @@ function CombatScreen({
     setMenu("actions");
   }
 
+  function selectSkillTarget(targetKey: string) {
+    if (!targeting) return;
+    if (targeting.phase === "primary") {
+      const needsSwapTarget = skillHasPostAttackSwap(battle, targeting.actorKey, targeting.skill.id)
+        && healthyFriendlySwapTargets(battle, targeting.actorKey).length > 0;
+      if (needsSwapTarget) {
+        setTargeting({ ...targeting, phase: "swap", primaryTargetKey: targetKey });
+        return;
+      }
+      const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey, cost: targeting.skill.mana_cost };
+      setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
+      return;
+    }
+    const action = {
+      actorKey: targeting.actorKey,
+      type: "skill" as const,
+      skillId: targeting.skill.id,
+      targetKey: targeting.primaryTargetKey,
+      swapTargetKey: targetKey,
+      cost: targeting.skill.mana_cost,
+    };
+    setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
+  }
+
   function chooseSkill(actorKey: string, skill: Skill) {
     lastSkillByActorKeyRef.current[actorKey] = skill.id;
     const targets = skillTargets(battle, actorKey, skill);
     if (isSingleTarget(skill) && targets.length > 1) {
-      setTargeting({ actorKey, skill });
+      setTargeting({ actorKey, skill, phase: "primary" });
       return;
     }
-    const action = { actorKey, type: "skill" as const, skillId: skill.id, targetKey: isSingleTarget(skill) ? targets[0]?.key : undefined, cost: skill.mana_cost };
+    const targetKey = isSingleTarget(skill) ? targets[0]?.key : undefined;
+    if (skillHasPostAttackSwap(battle, actorKey, skill.id) && healthyFriendlySwapTargets(battle, actorKey).length > 0) {
+      setTargeting({ actorKey, skill, phase: "swap", primaryTargetKey: targetKey });
+      return;
+    }
+    const action = { actorKey, type: "skill" as const, skillId: skill.id, targetKey, cost: skill.mana_cost };
     setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
   }
 
@@ -4752,10 +4787,7 @@ function CombatScreen({
                   ? () => reselectAction(unit.key)
                   : undefined}
                 targetable={legalTargetKeys.has(unit.key)}
-                onTarget={() => targeting && (() => {
-                  const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost };
-                  setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
-                })()}
+                onTarget={() => targeting && selectSkillTarget(unit.key)}
                 statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
                 manaAssetPath={manaAssetPath}
                 presentation={event}
@@ -4780,10 +4812,7 @@ function CombatScreen({
                     allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
                     opponent
                     targetable={legalTargetKeys.has(unit.key)}
-                    onTarget={() => targeting && (() => {
-                      const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost };
-                      setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
-                    })()}
+                    onTarget={() => targeting && selectSkillTarget(unit.key)}
                     statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
                     manaAssetPath={manaAssetPath}
                     presentation={event}
@@ -4801,7 +4830,26 @@ function CombatScreen({
           </aside>
         </div>
 
-        {targeting && inactiveLegalTargets.length > 0 && (
+        {targeting && targeting.phase === "swap" && legalTargets.length > 0 && (
+          <div className="combat-knocked-out-targets" aria-label="Healthy friendly swap targets">
+            <span>Healthy friendly Critters</span>
+            {inactiveLegalTargets.map((candidate) => (
+              <button
+                key={candidate.key}
+                type="button"
+                data-combat-control="true"
+                data-combat-focus-role="target"
+                data-combat-unit-key={candidate.key}
+                onClick={() => selectSkillTarget(candidate.key)}
+              >
+                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
+                <span><strong>{candidate.name}</strong><small>{candidate.hp} / {candidate.maxHp} HP</small></span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {targeting && targeting.phase === "primary" && inactiveLegalTargets.length > 0 && (
           <div className="combat-knocked-out-targets" aria-label="Knocked-out revival targets">
             <span>Knocked-out targets</span>
             {inactiveLegalTargets.map((candidate) => (
@@ -4811,16 +4859,7 @@ function CombatScreen({
                 data-combat-control="true"
                 data-combat-focus-role="target"
                 data-combat-unit-key={candidate.key}
-                onClick={() => {
-                  const action = {
-                    actorKey: targeting.actorKey,
-                    type: "skill" as const,
-                    skillId: targeting.skill.id,
-                    targetKey: candidate.key,
-                    cost: targeting.skill.mana_cost,
-                  };
-                  setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
-                }}
+                onClick={() => selectSkillTarget(candidate.key)}
               >
                 <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
                 <span><strong>{candidate.name}</strong><small>0 / {candidate.maxHp} HP</small></span>

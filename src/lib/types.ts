@@ -289,6 +289,7 @@ export type EffectTarget =
   | "status_holder_friendlies"
   | "status_holder_enemies"
   | "selected_ally"
+  | "selected_healthy_ally"
   | "selected_enemy"
   | "all_squad_friendlies"
   | "active_ally"
@@ -749,6 +750,7 @@ export type CombatAction = {
   skillId?: string;
   targetKey?: string;
   swapToId?: string;
+  swapTargetKey?: string;
   targetSlotSide?: "player" | "opponent";
   targetSlotIndex?: number;
   cost: number;

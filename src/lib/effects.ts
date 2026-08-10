@@ -29,10 +29,11 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "skip_action_chance@1",
   "critter_revival@1",
   "skill_usage_restriction@1",
+  "swap_after_attack@1",
 ]);
 
 const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
-  skill: new Set(["self", "all_critters", "all_others", "selected_ally", "selected_enemy", "all_allies", "all_friendlies", "all_enemies", "targets", "attacker_and_targets", "target_friendlies", "target_enemies", "attacker", "defender", "effect_owner"]),
+  skill: new Set(["self", "all_critters", "all_others", "selected_ally", "selected_healthy_ally", "selected_enemy", "all_allies", "all_friendlies", "all_enemies", "targets", "attacker_and_targets", "target_friendlies", "target_enemies", "attacker", "defender", "effect_owner"]),
   ability: new Set(["all_friendlies", "all_critters", "all_squad_friendlies", "all_enemies", "all_element_friendlies", "all_element_enemies", "active_ally", "active_enemy", "attacker", "attacker_and_targets", "defender", "effect_owner"]),
   relic: new Set(["equipped_critter", "equipped_allies", "equipped_friendlies", "all_squad_friendlies", "all_enemies", "active_ally", "active_enemy", "attacker", "attacker_and_targets", "defender", "effect_owner"]),
   status: new Set(["status_holder", "status_holder_allies", "status_holder_friendlies", "status_holder_enemies"]),
@@ -188,6 +189,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     "resource_conversion@1", "effect_scaling@1", "repeating_effect@1",
     "effect_immunity@1", "effect_amplification@1", "critter_revival@1",
     "skill_usage_restriction@1",
+    "swap_after_attack@1",
   ]);
   if (expandedKey.has(runtimeKey)) {
     if (runtimeKey === "stat_modifier@2" && effect.classification === undefined && effect.execution === undefined) {
@@ -197,14 +199,32 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       throw new Error(`Effect ${effect.id} has an invalid execution mode.`);
     }
     const childKeys = ["child_effect_ids", "true_effect_ids", "false_effect_ids", "output_effect_ids", "overheal_effect_ids"];
+    const requiredChildKeys = new Set(["child_effect_ids", "true_effect_ids", "output_effect_ids"]);
     for (const childKey of childKeys) {
       if (parameters[childKey] === undefined) continue;
       if (childKey === "overheal_effect_ids" && parameters.overhealing_behavior !== "convert" && Array.isArray(parameters[childKey]) && parameters[childKey].length === 0) continue;
-      if (!Array.isArray(parameters[childKey]) || parameters[childKey].length === 0 || parameters[childKey].some((id) => typeof id !== "string" || !id)) {
+      if (!Array.isArray(parameters[childKey]) || (requiredChildKeys.has(childKey) && parameters[childKey].length === 0) || parameters[childKey].some((id) => typeof id !== "string" || !id)) {
         throw new Error(`Effect ${effect.id} ${childKey} must be a non-empty string array.`);
       }
     }
     if (parameters.chance !== undefined) validateChance(parameters.chance, `Effect ${effect.id} chance`);
+    if (runtimeKey === "resource_gain_loss@1") {
+      validateChance(
+        parameters.activation_chance === undefined ? 1 : parameters.activation_chance,
+        `Effect ${effect.id} activation_chance`,
+      );
+      requireChoice(parameters.resource, ["squad_mana", "currency", "other"], `Effect ${effect.id} resource`);
+      requireChoice(parameters.operation, ["gain", "lose", "set", "refund", "drain", "reserve"], `Effect ${effect.id} operation`);
+      requireChoice(parameters.target_squad, ["user", "enemy", "owner"], `Effect ${effect.id} target_squad`);
+      requireChoice(parameters.trigger_timing, ["immediate", "through_parent"], `Effect ${effect.id} trigger_timing`);
+      const value = requireFinite(parameters.value, `Effect ${effect.id} value`);
+      if (value < 0) throw new Error(`Effect ${effect.id} value must be nonnegative.`);
+      const minimumRemaining = parameters.minimum_remaining_resource;
+      if (minimumRemaining !== undefined && minimumRemaining !== null) {
+        const minimum = requireFinite(minimumRemaining, `Effect ${effect.id} minimum_remaining_resource`);
+        if (minimum < 0) throw new Error(`Effect ${effect.id} minimum_remaining_resource must be nonnegative.`);
+      }
+    }
     for (const key of ["delay_value", "repeat_interval", "initial_delay", "number_of_activations", "activation_limit", "usage_limit", "maximum_effects_copied", "required_occurrences"]) {
       if (parameters[key] !== undefined && parameters[key] !== null) validateDuration(parameters[key], `Effect ${effect.id} ${key}`);
     }
@@ -224,6 +244,21 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     if (runtimeKey === "direct_health_modifier@1") {
       requireChoice(parameters.operation, ["heal", "lose_hp", "set_hp", "drain"], `Effect ${effect.id} operation`);
       requireChoice(parameters.value_type, ["flat", "percent_max_hp", "percent_current_hp", "percent_missing_hp", "percent_damage_dealt"], `Effect ${effect.id} value_type`);
+    }
+    if (runtimeKey === "conditional_effect@1") {
+      const condition = requireChoice(parameters.condition, ["hp_percent", "shield_present", "shield_value", "mana", "active_state", "has_status", "has_relic", "relic_count", "last_squad_member", "action_order", "ally_defeated", "enemy_defeated", "turn_interval", "round_interval", "element", "previous_action", "previous_mana_roll"], `Effect ${effect.id} condition`);
+      const comparison = requireChoice(parameters.comparison, ["equal", "not_equal", "above", "below", "at_least", "at_most"], `Effect ${effect.id} comparison`);
+      if (["shield_present", "active_state", "has_status", "has_relic", "last_squad_member", "ally_defeated", "enemy_defeated", "element", "action_order", "previous_action"].includes(condition) && !["equal", "not_equal"].includes(comparison)) {
+        throw new Error(`Effect ${effect.id} comparison ${comparison} is not valid for ${condition}.`);
+      }
+      const conditionValue = String(parameters.condition_value ?? "");
+      if (!conditionValue) throw new Error(`Effect ${effect.id} condition_value must be configured.`);
+      if (condition === "hp_percent") {
+        const value = Number(conditionValue);
+        if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`Effect ${effect.id} hp_percent condition_value must be between 0 and 1 (or legacy percentage points 0 and 100).`);
+      }
+      if (condition === "action_order" && !["first", "last", "1", "0", "-1"].includes(conditionValue)) throw new Error(`Effect ${effect.id} action_order condition_value must be first or last.`);
+      requireChoice(parameters.check_timing, ["continuous", "turn_start", "turn_end", "when_applied", "before_action"], `Effect ${effect.id} check_timing`);
     }
     if (runtimeKey === "critter_revival@1") {
       if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
@@ -263,6 +298,12 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       if (rechargeChance <= 0 && (parameters.usage_limit === null || parameters.usage_limit === undefined)) {
         throw new Error(`Effect ${effect.id} must enable recharge or a usage limit.`);
       }
+    }
+    if (runtimeKey === "swap_after_attack@1") {
+      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
+      requireChoice(parameters.target, ["selected_healthy_ally"], `Effect ${effect.id} target`);
+      if (effect.execution === "child") throw new Error(`Effect ${effect.id} must use root execution.`);
+      validateChance(parameters.chance, `Effect ${effect.id} chance`);
     }
     return;
   }

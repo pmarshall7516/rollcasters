@@ -182,6 +182,258 @@ check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dea
 check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
 
+const cycloneBaseCatalog = makeCatalog();
+const cyclone = { ...cycloneBaseCatalog.skills[0], id: "cyclone", name: "Cyclone", element_id: "basic", power: 100, mana_cost: 0, targeting: "single_enemy" as const };
+cycloneBaseCatalog.skills = [...cycloneBaseCatalog.skills, cyclone];
+const cyclonePlayer = makePlayer();
+cyclonePlayer.skillSlots = cyclonePlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: "cyclone" } : slot
+));
+const cycloneConditionalId = "cyclone-conditional";
+const cycloneDamageModifierId = "cyclone-damage-modifier";
+cycloneBaseCatalog.effectsBySkill.cyclone = [
+  effect("skill", "cyclone", cycloneConditionalId, "conditional_effect", {
+    target: "self",
+    condition: "action_order",
+    comparison: "equal",
+    condition_value: "first",
+    true_effect_ids: [cycloneDamageModifierId],
+    false_effect_ids: [],
+    check_timing: "continuous",
+    remove_effects_when_false: true,
+  }),
+  { ...effect("skill", "cyclone", cycloneDamageModifierId, "damage_modifier", {
+    target: "self",
+    direction: "dealt",
+    modifier_type: "percentage",
+    modifier_value: 0.25,
+    applicable_source: "skill",
+    applicable_target: "any",
+    condition: "none",
+    duration_type: "current_action",
+    duration_clock: "owner_turn",
+  }, 1), execution: "child" },
+];
+const cycloneBaselineCatalog = structuredClone(cycloneBaseCatalog);
+cycloneBaselineCatalog.effectsBySkill.cyclone = [];
+const cycloneProbeBattle = battle(cycloneBaseCatalog, cyclonePlayer, "cyclone-target");
+const cycloneActorKey = cycloneProbeBattle.playerUnits[0].key;
+const cycloneTargetKey = cycloneProbeBattle.opponentUnits[0].key;
+const cycloneActions = [{ actorKey: cycloneActorKey, type: "skill" as const, skillId: "cyclone", targetKey: cycloneTargetKey, cost: 0 }];
+const cycloneWithEffect = takeTurn(battle(cycloneBaseCatalog, cyclonePlayer, "cyclone-effect"), cycloneActions, 0);
+const cycloneWithoutEffect = takeTurn(battle(cycloneBaselineCatalog, cyclonePlayer, "cyclone-baseline"), cycloneActions, 0);
+const cycloneWithEffectDamage = 100 - cycloneWithEffect.opponentUnits[0].hp;
+const cycloneWithoutEffectDamage = 100 - cycloneWithoutEffect.opponentUnits[0].hp;
+check(cycloneWithEffectDamage > cycloneWithoutEffectDamage, `Cyclone's first-action conditional should increase damage (got ${cycloneWithEffectDamage} vs ${cycloneWithoutEffectDamage}).`);
+check(cycloneWithEffect.runtimeEffects.every((instance) => instance.sourceEffectId !== cycloneDamageModifierId), "Cyclone's current-action damage modifier must expire after its Skill resolves.");
+
+const shieldConditionalCatalog = structuredClone(cycloneBaseCatalog);
+shieldConditionalCatalog.effectsBySkill.cyclone[0].parameters = {
+  ...shieldConditionalCatalog.effectsBySkill.cyclone[0].parameters,
+  target: "targets",
+  condition: "shield_present",
+  comparison: "equal",
+  condition_value: "true",
+};
+const shieldBattle = battle(shieldConditionalCatalog, cyclonePlayer, "cyclone-shield");
+const shieldBaselineBattle = battle(cycloneBaselineCatalog, cyclonePlayer, "cyclone-shield-baseline");
+const withShield = (state: ReturnType<typeof battle>, shield = 10) => ({
+  ...state,
+  opponentUnits: state.opponentUnits.map((unit) => unit.key === state.opponentUnits[0].key ? { ...unit, shield, maxShield: shield } : unit),
+});
+const shieldedResult = takeTurn(withShield(shieldBattle), cycloneActions, 0);
+const unmodifiedShieldedResult = takeTurn(withShield(shieldBaselineBattle), cycloneActions, 0);
+check(
+  shieldedResult.opponentUnits[0].shield < unmodifiedShieldedResult.opponentUnits[0].shield,
+  "A Conditional Effect targeting the Skill's selected enemy must detect Shield presence before damage and amplify the hit.",
+);
+
+const icebreakerCatalog = makeCatalog();
+const icebreaker = { ...icebreakerCatalog.skills[0], id: "icebreaker", name: "Icebreaker", element_id: "basic", power: 70, mana_cost: 0, targeting: "single_enemy" as const };
+icebreakerCatalog.skills = [...icebreakerCatalog.skills, icebreaker];
+const icebreakerPlayer = makePlayer();
+icebreakerPlayer.skillSlots = icebreakerPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: icebreaker.id } : slot
+));
+const icebreakerModifierId = "icebreaker-damage-modifier";
+icebreakerCatalog.effectsBySkill[icebreaker.id] = [
+  effect("skill", icebreaker.id, "icebreaker-condition", "conditional_effect", {
+    target: "targets",
+    condition: "shield_present",
+    comparison: "equal",
+    condition_value: "true",
+    true_effect_ids: [icebreakerModifierId],
+    false_effect_ids: [],
+    check_timing: "continuous",
+    remove_effects_when_false: true,
+  }),
+  { ...effect("skill", icebreaker.id, icebreakerModifierId, "damage_modifier", {
+    target: "self",
+    direction: "dealt",
+    modifier_type: "percentage",
+    modifier_value: 0.25,
+    applicable_source: "skill",
+    applicable_target: "any",
+    condition: "none",
+    duration_type: "current_action",
+    duration_clock: "owner_turn",
+  }, 1), execution: "child" },
+];
+const icebreakerBaselineCatalog = structuredClone(icebreakerCatalog);
+icebreakerBaselineCatalog.effectsBySkill[icebreaker.id][1].parameters = {
+  ...icebreakerBaselineCatalog.effectsBySkill[icebreaker.id][1].parameters,
+  modifier_value: 0,
+};
+const icebreakerAction = (state: ReturnType<typeof battle>) => [{ actorKey: state.playerUnits[0].key, type: "skill" as const, skillId: icebreaker.id, targetKey: state.opponentUnits[0].key, cost: 0 }];
+const icebreakerShield = 100;
+const icebreakerBattle = battle(icebreakerCatalog, icebreakerPlayer, "icebreaker-shield");
+const icebreakerBaselineBattle = battle(icebreakerBaselineCatalog, icebreakerPlayer, "icebreaker-shield");
+const icebreakerWithShield = takeTurn(withShield(icebreakerBattle, icebreakerShield), icebreakerAction(icebreakerBattle), 0);
+const icebreakerWithoutEffect = takeTurn(withShield(icebreakerBaselineBattle, icebreakerShield), icebreakerAction(icebreakerBaselineBattle), 0);
+const icebreakerShieldDamage = icebreakerShield - icebreakerWithShield.opponentUnits[0].shield;
+const icebreakerBaselineShieldDamage = icebreakerShield - icebreakerWithoutEffect.opponentUnits[0].shield;
+check(
+  icebreakerShieldDamage === icebreakerBaselineShieldDamage + roundHalfUp(icebreakerBaselineShieldDamage * 0.25),
+  `Icebreaker must deal exactly 25% more damage to a shielded target (got ${icebreakerShieldDamage} vs ${icebreakerBaselineShieldDamage}).`,
+);
+const icebreakerUnshielded = takeTurn(battle(icebreakerCatalog, icebreakerPlayer, "icebreaker-unshielded"), icebreakerAction(battle(icebreakerCatalog, icebreakerPlayer, "icebreaker-unshielded-action")), 0);
+const icebreakerUnshieldedBaseline = takeTurn(battle(icebreakerBaselineCatalog, icebreakerPlayer, "icebreaker-unshielded"), icebreakerAction(battle(icebreakerBaselineCatalog, icebreakerPlayer, "icebreaker-unshielded-action")), 0);
+check(
+  icebreakerUnshielded.opponentUnits[0].hp === icebreakerUnshieldedBaseline.opponentUnits[0].hp,
+  "Icebreaker's shield conditional must not increase damage against an unshielded target.",
+);
+check(icebreakerWithShield.runtimeEffects.every((instance) => instance.sourceEffectId !== icebreakerModifierId), "Icebreaker's current-action modifier must expire after the Skill resolves.");
+
+const lastActionCatalog = structuredClone(cycloneBaseCatalog);
+lastActionCatalog.effectsBySkill.cyclone[0].parameters = { ...lastActionCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "last" };
+const lastActionResult = takeTurn(battle(lastActionCatalog, cyclonePlayer, "cyclone-last"), cycloneActions, 0);
+check(100 - lastActionResult.opponentUnits[0].hp > cycloneWithoutEffectDamage, "Action-order conditionals must also resolve the last Skill action.");
+
+const lowHpCatalog = structuredClone(cycloneBaseCatalog);
+lowHpCatalog.effectsBySkill.cyclone[0].parameters = {
+  ...lowHpCatalog.effectsBySkill.cyclone[0].parameters,
+  target: "targets",
+  condition: "hp_percent",
+  comparison: "below",
+  condition_value: "0.5",
+};
+const lowHpBattle = battle(lowHpCatalog, cyclonePlayer, "cyclone-low-hp");
+const lowHpBaselineBattle = battle(cycloneBaselineCatalog, cyclonePlayer, "cyclone-low-hp-baseline");
+const woundTarget = lowHpBattle.opponentUnits[0].key;
+const wounded = (state: ReturnType<typeof battle>) => ({
+  ...state,
+  opponentUnits: state.opponentUnits.map((unit) => unit.key === woundTarget ? { ...unit, hp: 20 } : unit),
+});
+const lowHpResult = takeTurn(wounded(lowHpBattle), cycloneActions, 0);
+const lowHpBaselineResult = takeTurn(wounded(lowHpBaselineBattle), cycloneActions, 0);
+check(
+  20 - lowHpResult.opponentUnits[0].hp > 20 - lowHpBaselineResult.opponentUnits[0].hp,
+  "HP percentage conditionals must compare against a decimal fraction threshold before the hit.",
+);
+
+const mightyFuryCatalog = makeCatalog();
+const mightyFury = { ...mightyFuryCatalog.skills[0], id: "mighty-fury", name: "Mighty Fury", power: 50, mana_cost: 0, targeting: "single_enemy" as const };
+mightyFuryCatalog.skills = [...mightyFuryCatalog.skills, mightyFury];
+const mightyFuryPlayer = makePlayer();
+mightyFuryPlayer.skillSlots = mightyFuryPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: mightyFury.id } : slot
+));
+const mightyFuryModifierId = "mighty-fury-modifier";
+mightyFuryCatalog.effectsBySkill[mightyFury.id] = [
+  effect("skill", mightyFury.id, "mighty-fury-condition", "conditional_effect", {
+    target: "self",
+    condition: "hp_percent",
+    comparison: "below",
+    condition_value: "0.25",
+    true_effect_ids: [mightyFuryModifierId],
+    false_effect_ids: [],
+    check_timing: "continuous",
+    remove_effects_when_false: true,
+  }),
+  { ...effect("skill", mightyFury.id, mightyFuryModifierId, "damage_modifier", {
+    target: "self",
+    direction: "dealt",
+    modifier_type: "percentage",
+    modifier_value: 1,
+    applicable_source: "skill",
+    applicable_target: "any",
+    condition: "none",
+    duration_type: "current_action",
+    duration_clock: "owner_turn",
+  }, 1), execution: "child" },
+];
+const mightyFuryBaselineCatalog = structuredClone(mightyFuryCatalog);
+mightyFuryBaselineCatalog.effectsBySkill[mightyFury.id] = [];
+const mightyFuryAction = (state: ReturnType<typeof battle>) => [{ actorKey: state.playerUnits[0].key, type: "skill" as const, skillId: mightyFury.id, targetKey: state.opponentUnits[0].key, cost: 0 }];
+const lowMightyFuryBattle = battle(mightyFuryCatalog, mightyFuryPlayer, "mighty-fury-low");
+const lowMightyFuryBaselineBattle = battle(mightyFuryBaselineCatalog, mightyFuryPlayer, "mighty-fury-low-baseline");
+const lowMightyFury = { ...lowMightyFuryBattle, playerUnits: lowMightyFuryBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 20 } : unit) };
+const lowMightyFuryBaseline = { ...lowMightyFuryBaselineBattle, playerUnits: lowMightyFuryBaselineBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 20 } : unit) };
+const mightyFuryLowResult = takeTurn(lowMightyFury, mightyFuryAction(lowMightyFury), 0);
+const mightyFuryLowBaselineResult = takeTurn(lowMightyFuryBaseline, mightyFuryAction(lowMightyFuryBaseline), 0);
+const mightyFuryLowDamage = 100 - mightyFuryLowResult.opponentUnits[0].hp;
+const mightyFuryLowBaselineDamage = 100 - mightyFuryLowBaselineResult.opponentUnits[0].hp;
+check(mightyFuryLowDamage === mightyFuryLowBaselineDamage * 2, `Mighty Fury must double damage below 25% HP (got ${mightyFuryLowDamage} vs ${mightyFuryLowBaselineDamage}).`);
+check(mightyFuryLowResult.runtimeEffects.every((instance) => instance.sourceEffectId !== mightyFuryModifierId), "Mighty Fury's current-action damage modifier must not persist or stack across Skills.");
+const thresholdMightyFuryBattle = battle(mightyFuryCatalog, mightyFuryPlayer, "mighty-fury-threshold");
+const thresholdMightyFuryBaseline = battle(mightyFuryBaselineCatalog, mightyFuryPlayer, "mighty-fury-threshold");
+const thresholdMightyFury = { ...thresholdMightyFuryBattle, playerUnits: thresholdMightyFuryBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 25 } : unit) };
+const thresholdMightyFuryBaselineState = { ...thresholdMightyFuryBaseline, playerUnits: thresholdMightyFuryBaseline.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 25 } : unit) };
+const thresholdMightyFuryResult = takeTurn(thresholdMightyFury, mightyFuryAction(thresholdMightyFury), 0);
+const thresholdMightyFuryBaselineResult = takeTurn(thresholdMightyFuryBaselineState, mightyFuryAction(thresholdMightyFuryBaselineState), 0);
+check(100 - thresholdMightyFuryResult.opponentUnits[0].hp === 100 - thresholdMightyFuryBaselineResult.opponentUnits[0].hp, `Mighty Fury's below-25% condition must not activate at exactly 25% HP (got ${100 - thresholdMightyFuryResult.opponentUnits[0].hp} vs ${100 - thresholdMightyFuryBaselineResult.opponentUnits[0].hp}; actor ${thresholdMightyFury.playerUnits[0].hp}/${thresholdMightyFury.playerUnits[0].maxHp}).`);
+
+const manaForceCatalog = makeCatalog();
+const manaForce = { ...manaForceCatalog.skills[0], id: "mana-force", name: "Mana Force", skill_type: "support" as const, power: 0, mana_cost: 0, targeting: "single_enemy" as const };
+manaForceCatalog.skills = [...manaForceCatalog.skills, manaForce];
+const manaForcePlayer = makePlayer();
+manaForcePlayer.skillSlots = manaForcePlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: manaForce.id } : slot
+));
+const manaForceParameters = {
+  resource: "squad_mana",
+  resource_id: "",
+  operation: "drain",
+  value: 1,
+  target_squad: "enemy",
+  can_exceed_maximum: false,
+  minimum_remaining_resource: 0,
+  activation_chance: 0.5,
+  trigger_timing: "immediate",
+};
+manaForceCatalog.effectsBySkill[manaForce.id] = [effect("skill", manaForce.id, "mana-force-drain", "resource_gain_loss", manaForceParameters)];
+const manaForceAction = (state: ReturnType<typeof battle>) => [{ actorKey: state.playerUnits[0].key, type: "skill" as const, skillId: manaForce.id, targetKey: state.opponentUnits[0].key, cost: 0 }];
+let manaForceActivated = false;
+let manaForceSkipped = false;
+for (let seedIndex = 0; seedIndex < 100 && (!manaForceActivated || !manaForceSkipped); seedIndex += 1) {
+  const result = takeTurn({ ...battle(manaForceCatalog, manaForcePlayer, `mana-force-${seedIndex}`), opponentMana: 3 }, manaForceAction(battle(manaForceCatalog, manaForcePlayer, `mana-force-action-${seedIndex}`)), 5);
+  manaForceActivated ||= result.playerMana === 6 && result.opponentMana === 2;
+  manaForceSkipped ||= result.playerMana === 5 && result.opponentMana === 3;
+}
+check(manaForceActivated && manaForceSkipped, "Mana Force's 50% activation chance must produce both transfer and no-transfer outcomes.");
+const guaranteedManaForceCatalog = structuredClone(manaForceCatalog);
+guaranteedManaForceCatalog.effectsBySkill[manaForce.id][0].parameters = { ...manaForceParameters, activation_chance: 0 };
+const guaranteedManaForce = takeTurn({ ...battle(guaranteedManaForceCatalog, manaForcePlayer, "mana-force-zero"), opponentMana: 3 }, manaForceAction(battle(guaranteedManaForceCatalog, manaForcePlayer, "mana-force-zero-action")), 5);
+check(guaranteedManaForce.playerMana === 5 && guaranteedManaForce.opponentMana === 3, "Mana Force activation chance zero must not transfer Mana.");
+
+const voltSwitchCatalog = makeCatalog();
+const voltSwitch = { ...voltSwitchCatalog.skills[0], id: "volt-switch", name: "Volt Switch", power: 50, mana_cost: 0, targeting: "single_enemy" as const };
+voltSwitchCatalog.skills = [...voltSwitchCatalog.skills, voltSwitch];
+const voltSwitchPlayer = makePlayer();
+voltSwitchPlayer.skillSlots = voltSwitchPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: voltSwitch.id } : slot
+));
+voltSwitchCatalog.effectsBySkill[voltSwitch.id] = [effect("skill", voltSwitch.id, "volt-switch-effect", "swap_after_attack", {
+  target: "selected_healthy_ally",
+  chance: 1,
+})];
+const voltSwitchBattle = battle(voltSwitchCatalog, voltSwitchPlayer, "volt-switch");
+const voltSwitchResult = takeTurn(voltSwitchBattle, [{ actorKey: "p1", type: "skill", skillId: voltSwitch.id, targetKey: "o1", swapTargetKey: "p3", cost: 0 }], 0);
+check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p1")?.active === false, "Swap After Attack must bench the Skill user after its attack resolves.");
+check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p3")?.active === true, "Swap After Attack must activate the selected healthy friendly Critter.");
+check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p3")?.battlefieldSlot === 0, "Swap After Attack must preserve the outgoing Critter's battlefield slot.");
+check(voltSwitchResult.presentationEvents.findIndex((event) => event.kind === "damage") < voltSwitchResult.presentationEvents.findIndex((event) => event.kind === "swap"), "Swap After Attack must present the attack before the forced swap.");
+
 const mechanicalPressCatalog = makeCatalog();
 const mechanicalPress = { ...mechanicalPressCatalog.skills[0], id: "mechanical-press", name: "Mechanical Press" };
 mechanicalPressCatalog.skills = [...mechanicalPressCatalog.skills, mechanicalPress];
@@ -328,6 +580,7 @@ reactiveCatalog.effectsByRelic["gambler"] = [
     resource: "squad_mana",
     operation: "lose",
     target_squad: "owner",
+    trigger_timing: "through_parent",
   }, 1), execution: "child" },
   { ...effect("relic", "gambler", "rage", "stat_modifier", {
     stat: "atk",
@@ -775,6 +1028,39 @@ check(composableBattle.opponentUnits[0].stats.def === 25 && composableBattle.opp
 check(composableBattle.playerUnits[1].maxHp === 90 && composableBattle.playerUnits[0].maxHp === 100, "A Relic element filter must apply only when its equipped Critter matches the selected Elements.");
 const composableSkillResult = takeTurn(composableBattle, [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }]);
 check(composableSkillResult.opponentUnits[0].stats.def === 25 && composableSkillResult.opponentUnits[1].stats.def === 11, "A Skill Effect element filter must compose with its target selection and affect only matching enemy recipients.");
+
+const passiveConditionalCatalog = makeCatalog();
+passiveConditionalCatalog.effectsByRelic.carrier = [
+  effect("relic", "carrier", "passive-gate", "conditional_effect", {
+    target: "equipped_critter",
+    condition: "active_state",
+    comparison: "equal",
+    condition_value: "active",
+    true_effect_ids: ["passive-boost"],
+    false_effect_ids: [],
+    check_timing: "continuous",
+    remove_effects_when_false: true,
+  }),
+  effect("relic", "carrier", "passive-boost", "damage_modifier", {
+    target: "equipped_critter",
+    direction: "dealt",
+    modifier_type: "percentage",
+    modifier_value: 0.25,
+    applicable_source: "skill",
+    applicable_target: "any",
+    condition: "none",
+    duration_type: "end_of_battle",
+    duration_clock: "global_round",
+  }, 1),
+];
+const passiveConditionalPlayer = makePlayer();
+passiveConditionalPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "carrier" }];
+const passiveConditionalBaseline = takeTurn(battle(makeCatalog(), makePlayer(), "passive-conditional-baseline"), [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 }], 50);
+const passiveConditionalResult = takeTurn(battle(passiveConditionalCatalog, passiveConditionalPlayer, "passive-conditional"), [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 }], 50);
+check(
+  100 - passiveConditionalResult.opponentUnits[0].hp > 100 - passiveConditionalBaseline.opponentUnits[0].hp,
+  "A continuously active Relic Conditional Effect must install its true child before the Skill hit.",
+);
 
 const sourceGateCatalog = makeCatalog();
 sourceGateCatalog.effectsBySkill.wave = [
