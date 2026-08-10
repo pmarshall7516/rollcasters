@@ -6,7 +6,8 @@ import { chromium } from "playwright";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = path.join(root, "output", "collection-layout");
 const css = await readFile(path.join(root, "src", "styles.css"), "utf8");
-const cardState = (content, showScrollbar = false, scrollable = false) => `<div class="collection-card-state ${showScrollbar ? "with-scrollbar" : ""}"><div class="collection-card-state-scroll">${content}</div>${showScrollbar ? `<span class="collection-card-scrollbar" role="scrollbar" aria-label="Scroll collectible challenges" aria-disabled="${!scrollable}"><span class="collection-card-scrollbar-thumb" style="height:${scrollable ? "28px" : "100%"};transform:translateY(0)"></span></span>` : ""}</div>`;
+const cardState = (content) => `<div class="collection-card-state"><div class="collection-card-state-scroll">${content}</div></div>`;
+const relicEffects = Array.from({ length: 8 }, (_, index) => `<span class="effect-list-row"><strong>Effect ${index + 1}:</strong> Increases DEF by 10%.</span>`).join("");
 const card = (id, name) => {
   const owned = id === "004" || id === "005" || id === "009";
   const unlockable = name === "Critter" ? Number(id) % 4 !== 0 : Number(id) % 2 === 0;
@@ -19,13 +20,18 @@ const card = (id, name) => {
       return `${boundary}<div class="challenge-row ${blocked ? "blocked" : ""}"><span class="challenge-row-description">Complete unlock challenge ${index + 1} with wrapping copy</span><strong>${index} / 10</strong>${blocked ? "" : `<button class="grid-challenge-track" aria-pressed="${index === 0}">${index === 0 ? "Untrack" : "Track"}</button>`}</div>`;
     }).join("")}</div>`
     : '<p class="collection-status challenge-empty">Not currently unlockable</p>';
+  const rollcasterDescription = name === "Rollcaster"
+    ? '<p class="collection-rollcaster-description">A versatile spellcaster who channels luck through every roll and adapts to any expedition.</p>'
+    : "";
   const progression = name === "Critter"
-    ? cardState(owned
+      ? cardState(owned
       ? '<div class="collection-progression critter-progression"><p>Level 2</p><div class="xp-progress"><div class="xp-bar"><span style="width:20%"></span></div><p>20 / 100 XP</p></div></div>'
-      : challengeState, !owned, !owned && challengeCount > 1)
+      : challengeState)
     : name === "Rollcaster"
-      ? cardState(`<div class="collection-progression">${owned ? '<p>Level 1</p>' : '<p class="collection-status">Locked</p>'}<div class="xp-progress"><div class="xp-bar"><span style="width:0%"></span></div><p>0 / 120 XP</p></div></div>`, !owned)
-      : cardState(owned ? '<p>Owned 1 / 5</p>' : challengeState, !owned);
+      ? cardState(owned
+        ? `<div class="collection-progression"><p>Level 1</p><div class="xp-progress"><div class="xp-bar"><span style="width:0%"></span></div><p>0 / 120 XP</p></div></div>${rollcasterDescription}`
+        : `${challengeState}${rollcasterDescription}`)
+      : cardState(`${owned ? '<p>Owned 1 / 5</p>' : challengeState}<span class="effect-list relic-card-effects">${relicEffects}</span>`);
   return `
   <article class="catalog-card ${name.toLowerCase()}-card ${owned ? "" : `locked ${name === "Critter" ? "challenge-locked" : ""}`}" data-state="${owned ? "owned" : unlockable ? "unlockable" : "not-unlockable"}">
     <button class="catalog-card-details" aria-label="View ${name} details">⌕</button>
@@ -36,7 +42,7 @@ const card = (id, name) => {
     ${name === "Critter" ? `<div class="stat-grid compact">
       <span class="stat-cell"><span class="stat-label">HP</span><strong>120</strong></span><span class="stat-cell"><span class="stat-label">ATK</span><strong>24</strong></span><span class="stat-cell"><span class="stat-label">DEF</span><strong>18</strong></span><span class="stat-cell"><span class="stat-label">SPD</span><strong>16</strong></span>
       <span class="stat-cell mana-dice-stat"><span class="stat-label">Mana</span><strong>10–12</strong></span><span class="stat-cell"><span class="stat-label">Block</span><strong>2</strong></span><span class="stat-cell"><span class="stat-label">Swap</span><strong>3</strong></span><span class="stat-cell"><span class="stat-label">Relics</span><strong>2</strong></span>
-    </div><p class="point-counter"><strong>${owned ? 1 : 0}</strong> skill points</p>` : name === "Rollcaster" ? `<p class="point-counter"><strong>0</strong> ability points</p>` : `<span class="effect-list relic-card-effects"><span class="effect-list-row"><strong>Harden:</strong> Increases DEF by 10%.</span><span class="effect-list-row"><strong>Steady:</strong> Prevents one point of loss.</span></span>`}
+    </div><p class="point-counter"><strong>${owned ? 1 : 0}</strong> skill points</p>` : name === "Rollcaster" ? `<p class="point-counter"><strong>0</strong> ability points</p>` : ""}
   </article>`;
 };
 
@@ -60,7 +66,10 @@ try {
           <label class="collection-search"><input placeholder="Search critters by name or ID"></label>
           <div class="collection-filter-slot"></div>
         </div>
-        <div class="collection-grid-content"><div class="collection-grid">${cards}</div></div>
+        <div class="collection-grid-content">
+          <div class="collection-grid">${cards}</div>
+          <div class="collection-card-measurement regression-overflow-probe" aria-hidden="true"><span style="display:block;height:6000px"></span></div>
+        </div>
       </section>
     </main>
   </body></html>`);
@@ -68,6 +77,15 @@ try {
 
   async function inspect(name, width, height) {
     await page.setViewportSize({ width, height });
+    const { tallestCard } = await page.evaluate(() => {
+      const grid = document.querySelector(".collection-grid");
+      grid.classList.add("collection-card-measurement");
+      const cards = [...grid.querySelectorAll(".catalog-card")];
+      const tallestCard = Math.ceil(Math.max(...cards.map((card) => card.getBoundingClientRect().height)));
+      grid.classList.remove("collection-card-measurement");
+      document.querySelector(".collection-grid-content").style.setProperty("--collection-card-height", `${tallestCard}px`);
+      return { tallestCard };
+    });
     await page.evaluate(() => { document.querySelector(".collection-filter-slot").innerHTML = ""; });
     const beforeFilter = await page.evaluate(() => {
       const rect = (selector) => {
@@ -88,6 +106,20 @@ try {
       const points = [...document.querySelectorAll(".point-counter")];
       const detailActions = [...document.querySelectorAll(".catalog-card-details")];
       const trackActions = [...document.querySelectorAll(".grid-challenge-track")];
+      const rollcasterDescriptions = [...document.querySelectorAll(".rollcaster-card .collection-rollcaster-description")].map((entry) => {
+        const rect = entry.getBoundingClientRect();
+        const previous = entry.previousElementSibling?.getBoundingClientRect();
+        const state = entry.closest(".collection-card-state").getBoundingClientRect();
+        return {
+          text: entry.textContent.trim(),
+          visible: rect.height > 0,
+          belowPrevious: Boolean(previous && rect.top >= previous.bottom - .5),
+          width: rect.width,
+          leftOffset: rect.left - state.left,
+          textAlign: getComputedStyle(entry).textAlign,
+          gapBelowProgression: entry.previousElementSibling?.classList.contains("collection-progression") ? rect.top - previous.bottom : null,
+        };
+      });
       const challengeAlignments = [...document.querySelectorAll(".challenge-row")].map((entry) => {
         const description = entry.querySelector(".challenge-row-description").getBoundingClientRect();
         const progress = entry.querySelector(":scope > strong").getBoundingClientRect();
@@ -113,6 +145,22 @@ try {
       const critterStatOffsets = [...document.querySelectorAll(".critter-card")].map((entry) => entry.querySelector(".stat-grid").getBoundingClientRect().top - entry.getBoundingClientRect().top);
       const critterStatWidths = [...document.querySelectorAll(".critter-card")].map((entry) => [...entry.querySelectorAll(".stat-grid > span")].map((cell) => cell.getBoundingClientRect().width));
       const relicEffectOffsets = [...document.querySelectorAll(".relic-card")].map((entry) => entry.querySelector(".effect-list-row").getBoundingClientRect().top - entry.getBoundingClientRect().top);
+      const relicScrollStates = [...document.querySelectorAll(".relic-card .collection-card-state")].map((state) => {
+        const pane = state.querySelector(".collection-card-state-scroll");
+        const effects = state.querySelector(".relic-card-effects");
+        const children = [...pane.children];
+        const initialScrollTop = pane.scrollTop;
+        pane.scrollTop = pane.scrollHeight;
+        const finalScrollTop = pane.scrollTop;
+        pane.scrollTop = initialScrollTop;
+        return {
+          effectsInPane: effects?.parentElement === pane,
+          effectsAfterTopContent: effects ? children.indexOf(effects) > 0 : false,
+          scrollbarCount: state.querySelectorAll(".collection-card-scrollbar").length,
+          scrollable: pane.scrollHeight > pane.clientHeight && finalScrollTop > 0,
+          scrollbarLabel: state.querySelector(".collection-card-scrollbar")?.getAttribute("aria-label"),
+        };
+      });
       const critterSpacing = [...document.querySelectorAll(".critter-card")].map((entry) => {
         const cardRect = entry.getBoundingClientRect();
         const stateRect = entry.querySelector(".collection-card-state").getBoundingClientRect();
@@ -155,7 +203,7 @@ try {
           overflowY: getComputedStyle(entry).overflowY,
         };
       });
-      const lockedScrollbarStates = [...document.querySelectorAll(".catalog-card.locked .collection-card-state")].map((state) => {
+      const lockedScrollbarStates = [...document.querySelectorAll(".catalog-card.locked:not(.relic-card) .collection-card-state")].map((state) => {
         const pane = state.querySelector(".collection-card-state-scroll");
         const scrollbar = state.querySelector(".collection-card-scrollbar");
         const thumb = state.querySelector(".collection-card-scrollbar-thumb");
@@ -173,9 +221,10 @@ try {
           ariaDisabled: scrollbar?.getAttribute("aria-disabled"),
         };
       });
-      const ownedScrollbarCount = document.querySelectorAll(".catalog-card:not(.locked) .collection-card-scrollbar").length;
+      const nonRelicOwnedScrollbarCount = document.querySelectorAll(".catalog-card:not(.locked):not(.relic-card) .collection-card-scrollbar").length;
       const grid = document.querySelector(".collection-grid");
       const content = document.querySelector(".collection-grid-content");
+      const lastVisibleCard = grid.querySelector(".catalog-card:last-child");
       const gridStyle = getComputedStyle(grid);
       const rect = (selector) => {
         const value = document.querySelector(selector).getBoundingClientRect();
@@ -183,6 +232,7 @@ try {
       };
       return {
         anchors: { heading: rect(".screen-heading"), tabs: rect(".tabs"), tools: rect(".collection-tools"), search: rect(".collection-search"), content: rect(".collection-grid-content") },
+        collectionCardHeight: getComputedStyle(document.querySelector(".collection-grid-content")).getPropertyValue("--collection-card-height").trim(),
         cards: cards.map((entry) => {
           const rect = entry.getBoundingClientRect();
           const sprite = entry.querySelector(".card-sprite-frame").getBoundingClientRect();
@@ -214,6 +264,7 @@ try {
         nestedGridScrollable:
           content.scrollHeight > content.clientHeight &&
           ["auto", "scroll"].includes(getComputedStyle(content).overflowY),
+        extraDocumentScroll: document.documentElement.scrollHeight - (lastVisibleCard.getBoundingClientRect().bottom + window.scrollY),
         mana: mana.map((entry) => ({
           text: entry.textContent.trim(),
           fits: entry.scrollWidth <= entry.clientWidth,
@@ -234,13 +285,15 @@ try {
         })),
         pointCount: points.length,
         pointsVisible: points.every((entry) => entry.getBoundingClientRect().bottom <= entry.closest(".catalog-card").getBoundingClientRect().bottom),
+        rollcasterDescriptions,
         critterStatOffsets,
         critterStatWidths,
         relicEffectOffsets,
         critterSpacing,
         challengePanes,
         lockedScrollbarStates,
-        ownedScrollbarCount,
+        nonRelicOwnedScrollbarCount,
+        relicScrollStates,
         cardsAreArticles: cards.every((entry) => entry.tagName === "ARTICLE"),
         nestedButtonCount: document.querySelectorAll("button button").length,
         detailActions: detailActions.map((entry) => ({
@@ -297,20 +350,6 @@ try {
     await page.locator(".collection-grid").evaluate((grid, html) => { grid.innerHTML = html; }, cards);
     const stressedChallengeState = page.locator('.critter-card:has(> .collectible-id:text-is("002")) .collection-card-state');
     const stressedChallengePane = stressedChallengeState.locator(".collection-card-state-scroll");
-    await stressedChallengeState.evaluate((state) => {
-      const pane = state.querySelector(".collection-card-state-scroll");
-      const thumb = state.querySelector(".collection-card-scrollbar-thumb");
-      const syncThumb = () => {
-        const trackHeight = Math.max(0, pane.clientHeight - 4);
-        const maxScroll = Math.max(0, pane.scrollHeight - pane.clientHeight);
-        const thumbHeight = Math.min(trackHeight, Math.max(22, trackHeight * pane.clientHeight / pane.scrollHeight));
-        const thumbTravel = Math.max(0, trackHeight - thumbHeight);
-        thumb.style.height = `${thumbHeight}px`;
-        thumb.style.transform = `translateY(${maxScroll > 0 ? thumbTravel * pane.scrollTop / maxScroll : 0}px)`;
-      };
-      pane.addEventListener("scroll", syncThumb);
-      syncThumb();
-    });
     await stressedChallengePane.hover();
     await page.mouse.wheel(0, 180);
     await page.waitForTimeout(120);
@@ -349,9 +388,7 @@ try {
       && Math.abs(entry.spriteHeight - firstCard.spriteHeight) < .1
       && Math.abs(entry.spriteWidth - entry.spriteHeight) < .1
     );
-    const expectedCardHeight = viewport.anchors.content[2] - 4 <= 319
-      ? (viewport.anchors.content[2] - 4) * 500 / 320
-      : 500;
+    const expectedCardHeight = firstCard.height;
     const responsiveCards = viewport.cards.every((entry) =>
       Math.abs(entry.height - expectedCardHeight) < .1 &&
       Math.abs(entry.nameSize - (entry.contentWidth <= 319 ? entry.contentWidth * 18 / 320 : clamp(18, entry.contentWidth * .05, 22))) < .1 &&
@@ -362,15 +399,18 @@ try {
     const manaFits = viewport.mana.every((entry) => entry.text === "Mana10–12" && entry.fits && entry.fontSize >= (viewport.name === "mobile" ? 10 : 12) && entry.gap >= 4 && entry.justifyContent === "space-between" && entry.labelOffset >= 3 && entry.labelOffset <= maximumManaEdgeOffset && entry.valueOffset >= 0 && entry.valueOffset <= maximumManaEdgeOffset && entry.whiteSpace === "nowrap" && entry.valueLines === 1);
     const effectsVisible = viewport.effects.length === 3 && viewport.effects.every((entry) => entry.visible && entry.namedRows && !entry.text.startsWith("Effect:"));
     const pointCountersVisible = viewport.pointCount === 6 && viewport.pointsVisible;
+    const rollcasterDescriptionsMatch = viewport.rollcasterDescriptions.length === 3
+      && viewport.rollcasterDescriptions.every((entry) => entry.visible && entry.belowPrevious && entry.width > 0 && entry.text.length > 0 && Math.abs(entry.leftOffset) < .5 && entry.textAlign === "left" && (entry.gapBelowProgression === null || entry.gapBelowProgression >= 14));
     const critterStatsAligned = viewport.critterStatOffsets.every((offset) => Math.abs(offset - viewport.critterStatOffsets[0]) < 0.1);
     const critterStatsEqualWidth = viewport.critterStatWidths.every((widths) => widths.every((width) => Math.abs(width - widths[0]) < .1));
-    const relicEffectsAligned = viewport.relicEffectOffsets.every((offset) => Math.abs(offset - viewport.relicEffectOffsets[0]) < 0.1);
+    const relicScrollMatches = viewport.relicScrollStates.length === 3
+      && viewport.relicScrollStates.every((entry) => entry.effectsInPane && entry.effectsAfterTopContent && entry.scrollbarCount === 0 && !entry.scrollable);
     const minimumGap = viewport.name === "mobile" ? 10 : 13;
     const critterSpacingMatches = viewport.critterSpacing.every((spacing) => spacing.stateToStats >= minimumGap && spacing.statsToPoints >= minimumGap && spacing.pointsToBottom >= 0);
     const stressedChallengePane = viewport.challengePanes.find((pane) => pane.challengeCount === 8);
     const nonScrollableChallengePanes = viewport.challengePanes.filter((pane) => pane !== stressedChallengePane);
-    const challengePaneMatches = Boolean(stressedChallengePane?.scrollable && stressedChallengePane.nativeScrollbarHidden && stressedChallengePane.customScrollbarCount === 1 && stressedChallengePane.scrollbarWidth === 10 && stressedChallengePane.scrollbarHeight > 0 && stressedChallengePane.thumbWidth === 4 && stressedChallengePane.thumbHeight >= 22 && stressedChallengePane.thumbHeight < stressedChallengePane.scrollbarHeight && stressedChallengePane.thumbRadius === "999px" && stressedChallengePane.thumbRightGap === 0 && stressedChallengePane.thumbWithinPane && stressedChallengePane.progressRightGap >= 10 && stressedChallengePane.overflowX === "hidden" && stressedChallengePane.overflowY === "auto" && viewport.challengeWheelScrollTop > 0 && nonScrollableChallengePanes.every((pane) => !pane.scrollable && pane.customScrollbarCount === 1 && Math.abs(pane.thumbHeight - pane.scrollbarHeight) < .5));
-    const lockedScrollbarMatches = viewport.lockedScrollbarStates.length > 0 && viewport.ownedScrollbarCount === 0 && viewport.lockedScrollbarStates.every((entry) => entry.scrollbarCount === 1 && entry.scrollbarWidth === 10 && entry.thumbWidth === 4 && (entry.scrollable ? !entry.fullThumb && entry.ariaDisabled === "false" : entry.fullThumb && entry.ariaDisabled === "true"));
+    const challengePaneMatches = Boolean(stressedChallengePane && !stressedChallengePane.scrollable && stressedChallengePane.customScrollbarCount === 0 && stressedChallengePane.scrollHeight <= stressedChallengePane.clientHeight && stressedChallengePane.overflowX === "visible" && stressedChallengePane.overflowY === "visible" && viewport.challengeWheelScrollTop === 0 && nonScrollableChallengePanes.every((pane) => !pane.scrollable && pane.customScrollbarCount === 0));
+    const lockedScrollbarMatches = viewport.lockedScrollbarStates.length > 0 && viewport.nonRelicOwnedScrollbarCount === 0 && viewport.lockedScrollbarStates.every((entry) => entry.scrollbarCount === 0 && !entry.scrollable);
     const cardActionsMatch = viewport.cardsAreArticles && viewport.nestedButtonCount === 0 && viewport.detailActions.length === viewport.cards.length && viewport.detailActions.every((entry) => entry.label?.startsWith("View ") && entry.width === 28 && entry.height === 28 && entry.fits) && viewport.trackActions.length >= 3 && viewport.trackActions.some((entry) => entry.text === "Track" && entry.pressed === "false" && entry.backgroundColor === "rgb(203, 183, 255)") && viewport.trackActions.some((entry) => entry.text === "Untrack" && entry.pressed === "true" && entry.backgroundColor === "rgb(218, 203, 255)") && viewport.trackActions.every((entry) => entry.width === 60 && entry.height === 20 && entry.labelFits && entry.whiteSpace === "nowrap" && entry.textColor === (entry.pressed === "true" ? "rgb(32, 21, 55)" : "rgb(37, 18, 63)") && Math.abs(entry.center - entry.descriptionCenter) < .5 && entry.right <= entry.progressLeft && entry.fits);
     const challengeAlignmentMatches = viewport.challengeAlignments.length >= 8 && viewport.challengeAlignments.every((entry) => entry.descriptionProgressCenterOffset < .5 && (entry.descriptionActionCenterOffset === null || entry.descriptionActionCenterOffset < .5) && entry.actionLeftOfProgress);
     const challengeBoundaryMatches = viewport.challengeBoundaries.length === 1 && viewport.challengeBoundaries.every((entry) => entry.text === "Complete all above challenges first" && entry.previousIsChallenge && entry.nextIsBlockedChallenge && entry.followsPrevious && entry.precedesNext);
@@ -390,10 +430,11 @@ try {
     const minimumCardWidth = { reference: 450, wide: 430, desktop: 350, "ipad-landscape": 450, "ipad-portrait": 370, mobile: 310 }[viewport.name];
     const cardsAreWide = firstCard.width >= minimumCardWidth;
     const compactGap = Math.abs(viewport.gridColumnGap - 12) < .1;
+    const scrollRangeMatches = viewport.extraDocumentScroll <= 80;
     const layoutMatches = viewport.documentScrollable && viewport.noHorizontalOverflow && viewport.pageScrollY > 0 && viewport.gridColumns === expectedColumns && fillsViewport && !viewport.nestedGridScrollable && anchorsStable && viewport.stableScrollbarGutter;
-    return sameCards && responsiveCards && uniformSpriteBoxes && tabCardsMatch && gridEdgesMatch && columnEdgesMatch && tracksFillWidth && cardsAreWide && compactGap && manaFits && effectsVisible && pointCountersVisible && critterStatsAligned && critterStatsEqualWidth && relicEffectsAligned && critterSpacingMatches && challengePaneMatches && lockedScrollbarMatches && cardActionsMatch && challengeAlignmentMatches && challengeBoundaryMatches && statusesMatch && layoutMatches
+    return sameCards && responsiveCards && uniformSpriteBoxes && tabCardsMatch && gridEdgesMatch && columnEdgesMatch && tracksFillWidth && cardsAreWide && compactGap && manaFits && effectsVisible && pointCountersVisible && rollcasterDescriptionsMatch && critterStatsAligned && critterStatsEqualWidth && relicScrollMatches && critterSpacingMatches && challengePaneMatches && lockedScrollbarMatches && cardActionsMatch && challengeAlignmentMatches && challengeBoundaryMatches && statusesMatch && scrollRangeMatches && layoutMatches
       ? []
-      : [{ viewport: viewport.name, sameCards, responsiveCards, uniformSpriteBoxes, cards: viewport.cards, tabCardsMatch, gridEdgesMatch, columnEdgesMatch, tracksFillWidth, availableTrackWidth, cardsAreWide, minimumCardWidth, compactGap, gridColumnGap: viewport.gridColumnGap, manaFits, mana: viewport.mana, effectsVisible, pointCountersVisible, critterStatsAligned, critterStatsEqualWidth, relicEffectsAligned, relicEffectOffsets: viewport.relicEffectOffsets, critterSpacingMatches, critterSpacing: viewport.critterSpacing, challengePaneMatches, challengePanes: viewport.challengePanes, lockedScrollbarMatches, lockedScrollbarStates: viewport.lockedScrollbarStates, ownedScrollbarCount: viewport.ownedScrollbarCount, cardActionsMatch, cardsAreArticles: viewport.cardsAreArticles, nestedButtonCount: viewport.nestedButtonCount, detailActions: viewport.detailActions, trackActions: viewport.trackActions, challengeAlignmentMatches, challengeAlignments: viewport.challengeAlignments, challengeBoundaryMatches, challengeBoundaries: viewport.challengeBoundaries, statusesMatch, anchorsStable, fillsViewport, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, expectedColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
+      : [{ viewport: viewport.name, sameCards, responsiveCards, uniformSpriteBoxes, cards: viewport.cards, tabCardsMatch, gridEdgesMatch, columnEdgesMatch, tracksFillWidth, availableTrackWidth, cardsAreWide, minimumCardWidth, compactGap, gridColumnGap: viewport.gridColumnGap, collectionCardHeight: viewport.collectionCardHeight, manaFits, mana: viewport.mana, effectsVisible, pointCountersVisible, rollcasterDescriptionsMatch, rollcasterDescriptions: viewport.rollcasterDescriptions, critterStatsAligned, critterStatsEqualWidth, relicScrollMatches, relicScrollStates: viewport.relicScrollStates, relicEffectOffsets: viewport.relicEffectOffsets, critterSpacingMatches, critterSpacing: viewport.critterSpacing, challengePaneMatches, challengePanes: viewport.challengePanes, lockedScrollbarMatches, lockedScrollbarStates: viewport.lockedScrollbarStates, nonRelicOwnedScrollbarCount: viewport.nonRelicOwnedScrollbarCount, cardActionsMatch, cardsAreArticles: viewport.cardsAreArticles, nestedButtonCount: viewport.nestedButtonCount, detailActions: viewport.detailActions, trackActions: viewport.trackActions, challengeAlignmentMatches, challengeAlignments: viewport.challengeAlignments, challengeBoundaryMatches, challengeBoundaries: viewport.challengeBoundaries, statusesMatch, scrollRangeMatches, extraDocumentScroll: viewport.extraDocumentScroll, anchorsStable, fillsViewport, stableScrollbarGutter: viewport.stableScrollbarGutter, documentScrollable: viewport.documentScrollable, noHorizontalOverflow: viewport.noHorizontalOverflow, pageScrollY: viewport.pageScrollY, gridColumns: viewport.gridColumns, expectedColumns, nestedGridScrollable: viewport.nestedGridScrollable }];
   });
 
   if (failures.length) throw new Error(`Collection layout failures:\n${JSON.stringify(failures, null, 2)}`);

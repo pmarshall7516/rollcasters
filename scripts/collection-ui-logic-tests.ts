@@ -1,5 +1,6 @@
 import { calculateLoadoutStats } from "../src/lib/loadout.js";
-import { challengeDescription, collectibleIsUnlocked, progressFor } from "../src/lib/collectibles.js";
+import { challengeDescription, collectibleIsUnlocked, completedTrackedChallengeIds, progressFor, trackedChallengesForDisplay, trackedSlotFor } from "../src/lib/collectibles.js";
+import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion } from "../src/lib/notifications.js";
 import { relicSlotUnlocks, xpProgress } from "../src/lib/progression.js";
 import type { AppData, Catalog, CollectibleUnlockChallenge, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
@@ -50,7 +51,7 @@ function effect(
 }
 
 const catalog = {
-  currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [],
+  currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], lootboxes: [], lootboxPoolEntries: [],
   elements: [
     { id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 },
     { id: "bloom", name: "Bloom", description: null, asset_path: null, sort_order: 2 },
@@ -113,7 +114,7 @@ const player = {
     { user_critter_id: "owned-ally", slot_index: 1, relic_id: "ally-aura" },
   ],
   unlockedSkillIdsByCritter: {}, unlockedAbilityIdsByRollcaster: {}, dungeonProgress: [],
-  collectibleSnapshot: { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] },
+  collectibleSnapshot: { currencies: [], shards: [], lootboxes: [], progress: [], tracked: [], unlock_events: [], unlocked_collectibles: [] },
 } as PlayerState;
 
 const calculated = calculateLoadoutStats({ catalog, player } as AppData, player.critters[0]);
@@ -130,6 +131,133 @@ check(calculated.skillCosts["starter-skill"]?.final === 2, "A Mana Talisman-styl
 check(calculated.skillCosts["starter-skill"]?.sources[0]?.amount === -1 && calculated.skillCosts["starter-skill"]?.sources[0]?.sourceName === "Guard Charm", "Skill cost breakdowns must retain the discount source.");
 check(calculated.skillCosts["bloom-attack"]?.final === 1, "Skill action-cost filters must match the Skill type and Element in loadout previews without filtering the receiving Critter by Skill Element.");
 check(calculated.breakdowns.def?.sources.map((source) => source.amount).join(",") === "3,-2", "The DEF tooltip must retain positive and negative source deltas in resolution order.");
+
+const trackedChallenge = (id: string): CollectibleUnlockChallenge => ({
+  id,
+  collectible_type: "critter",
+  collectible_id: "hero",
+  challenge_type: "deal_damage",
+  parameters: { target_mode: "species", any_target: true, target_ids: [], required_amount: 5 },
+  target_category: "critter",
+  target_id: "hero",
+  target_mode: "species",
+  any_target: true,
+  target_ids: [],
+  required_amount: "5",
+  required_level: null,
+  sort_order: 0,
+});
+const sparseTrackingData = {
+  catalog: { ...catalog, collectibleUnlockChallenges: [trackedChallenge("tracked-top"), trackedChallenge("tracked-bottom")] },
+  player: {
+    ...player,
+    collectibleSnapshot: {
+      ...player.collectibleSnapshot,
+      progress: ["tracked-top", "tracked-bottom"].map((challenge_id) => ({
+        challenge_id,
+        current: "1",
+        goal: "5",
+        completed: false,
+        eligible: true,
+        trackable: true,
+      })),
+      tracked: [
+        { challenge_id: "tracked-top", slot_order: 1 },
+        { challenge_id: "tracked-bottom", slot_order: 3 },
+      ],
+    },
+  },
+} as AppData;
+check(trackedChallengesForDisplay(sparseTrackingData).map((row) => `${row.challenge_id}:${row.slot_order}`).join(",") === "tracked-top:1,tracked-bottom:2", "Sparse tracked slots must compact after a manual untrack.");
+check(trackedSlotFor(sparseTrackingData, "tracked-bottom") === 2, "Tracked challenge controls must report the compacted slot number.");
+const goalReachedButUnmarkedData = {
+  ...sparseTrackingData,
+  player: {
+    ...sparseTrackingData.player!,
+    collectibleSnapshot: {
+      ...sparseTrackingData.player!.collectibleSnapshot,
+      progress: sparseTrackingData.player!.collectibleSnapshot.progress.map((progress) => progress.challenge_id === "tracked-top"
+        ? { ...progress, current: "5", goal_reached: true, completed: false }
+        : progress),
+    },
+  },
+} as AppData;
+check(trackedChallengesForDisplay(goalReachedButUnmarkedData).map((row) => row.challenge_id).join(",") === "tracked-bottom", "A goal-reached tracked challenge must release its visible tracking slot even if the server completion flag is stale.");
+const completedTrackingData = {
+  ...sparseTrackingData,
+  player: {
+    ...sparseTrackingData.player!,
+    collectibleSnapshot: {
+      ...sparseTrackingData.player!.collectibleSnapshot,
+      progress: sparseTrackingData.player!.collectibleSnapshot.progress.map((progress) => progress.challenge_id === "tracked-top" ? { ...progress, completed: true } : progress),
+      tracked: [],
+    },
+  },
+} as AppData;
+check(completedTrackedChallengeIds(sparseTrackingData, completedTrackingData).join(",") === "tracked-top", "A completed tracked challenge must be identified for its completion banner.");
+const notificationStorage = new Map<string, string>();
+const notificationStorageAdapter = {
+  getItem: (key: string) => notificationStorage.get(key) ?? null,
+  setItem: (key: string, value: string) => { notificationStorage.set(key, value); },
+};
+const firstSeenCompletions = loadSeenChallengeCompletions(notificationStorageAdapter, "user");
+rememberSeenChallengeCompletion(notificationStorageAdapter, "user", firstSeenCompletions, "tracked-top");
+check(loadSeenChallengeCompletions(notificationStorageAdapter, "user").has("tracked-top"), "A completion banner identity must survive a browser refresh.");
+
+const legacyGateChallenge: CollectibleUnlockChallenge = {
+  ...trackedChallenge("boost-box-dungeon-gate"),
+  id: "boost-box-dungeon-gate",
+  challenge_type: "dungeon_clear",
+  parameters: { dungeon_selection: "specific_dungeon", dungeon_ids: ["001"], required_clears: 1 },
+  required_amount: "1",
+  gate_order: 1,
+};
+const legacyPostGateDamageChallenge: CollectibleUnlockChallenge = {
+  ...trackedChallenge("boost-box-post-gate-damage"),
+  id: "boost-box-post-gate-damage",
+  parameters: { target_mode: "species", any_target: true, target_ids: [], required_amount: 5 },
+  sort_order: 1,
+  gate_order: null,
+};
+const legacyGatedTrackingData = {
+  catalog: {
+    ...catalog,
+    collectibleUnlockRequirements: [{ collectible_type: "critter", collectible_id: "hero", required_challenges: 2 }],
+    collectibleUnlockChallenges: [legacyGateChallenge, legacyPostGateDamageChallenge],
+  },
+  player: {
+    ...player,
+    collectibleSnapshot: {
+      ...player.collectibleSnapshot,
+      // This is the pre-gate snapshot shape: progress has no eligibility or
+      // trackability fields, even though the catalog has a pending Gate 1.
+      progress: [
+        { challenge_id: legacyGateChallenge.id, current: "0", goal: "1", completed: false },
+        { challenge_id: legacyPostGateDamageChallenge.id, current: "0", goal: "5", completed: false },
+      ],
+      tracked: [{ challenge_id: legacyPostGateDamageChallenge.id, slot_order: 1 }],
+    },
+  },
+} as AppData;
+const blockedLegacyDamage = progressFor(legacyGatedTrackingData, legacyPostGateDamageChallenge.id);
+check(blockedLegacyDamage.eligible === false && blockedLegacyDamage.trackable === false,
+  "A post-gate damage challenge must remain blocked when a legacy snapshot omits gate state.");
+check(trackedChallengesForDisplay(legacyGatedTrackingData).length === 0,
+  "A post-gate damage challenge must not remain in tracking display before its dungeon gate is complete.");
+const completedLegacyGateData = {
+  ...legacyGatedTrackingData,
+  player: {
+    ...legacyGatedTrackingData.player!,
+    collectibleSnapshot: {
+      ...legacyGatedTrackingData.player!.collectibleSnapshot,
+      progress: legacyGatedTrackingData.player!.collectibleSnapshot.progress.map((progress) =>
+        progress.challenge_id === legacyGateChallenge.id ? { ...progress, current: "1" } : progress),
+    },
+  },
+} as AppData;
+const eligibleLegacyDamage = progressFor(completedLegacyGateData, legacyPostGateDamageChallenge.id);
+check(eligibleLegacyDamage.eligible === true && eligibleLegacyDamage.trackable === true,
+  "A post-gate damage challenge must become trackable after its dungeon gate reaches its goal.");
 
 const ownershipChallenge: CollectibleUnlockChallenge = {
   id: "ownership-seven",
@@ -207,6 +335,40 @@ const gatedRelicData = {
   },
 } as AppData;
 check(!collectibleIsUnlocked(gatedRelicData, "relic", gatedRelic.id), "Owning a gated Relic must not unlock it before its required challenges are complete.");
+const dependentOwnershipChallenge = {
+  ...ownershipChallenge,
+  id: "depends-on-gated-relic",
+  collectible_type: "critter",
+  collectible_id: "hero",
+  parameters: {
+    ...ownershipChallenge.parameters,
+    collectible_category: "relic",
+    collectible_ids: [gatedRelic.id],
+    required_amount: 1,
+  },
+  target_category: "relic",
+  target_id: gatedRelic.id,
+  required_amount: "1",
+} satisfies CollectibleUnlockChallenge;
+const dependentOwnershipData = {
+  catalog: {
+    ...gatedRelicData.catalog,
+    collectibleUnlockChallenges: [gatedRelicChallenge, dependentOwnershipChallenge],
+  },
+  player: gatedRelicData.player,
+} as AppData;
+check(progressFor(dependentOwnershipData, dependentOwnershipChallenge.id).current === "0", "A dependent ownership challenge must ignore a Relic inventory row until that Relic is unlocked.");
+const historicallyUnlockedRelicData = {
+  ...gatedRelicData,
+  player: {
+    ...gatedRelicData.player!,
+    collectibleSnapshot: {
+      ...gatedRelicData.player!.collectibleSnapshot,
+      unlocked_collectibles: [{ collectible_type: "relic" as const, collectible_id: gatedRelic.id }],
+    },
+  },
+} as AppData;
+check(collectibleIsUnlocked(historicallyUnlockedRelicData, "relic", gatedRelic.id), "A server-recorded unlock must remain usable even when the live goal changes.");
 gatedRelicData.player!.collectibleSnapshot.progress[0].current = "3";
 gatedRelicData.player!.collectibleSnapshot.progress[0].goal_reached = true;
 gatedRelicData.player!.collectibleSnapshot.progress[0].completed = true;

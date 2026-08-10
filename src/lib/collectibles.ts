@@ -4,9 +4,10 @@ import type {
   CollectibleUnlockChallenge,
   CurrencyDef,
   ShopEntry,
+  UserTrackedCollectibleChallenge,
   UserCollectibleChallengeProgress,
 } from "./types.js";
-import { maximumDistinctElementMatches } from "./element-matching.js";
+import { collectionDiversityGoal, collectionDiversityProgress } from "./collection-diversity.js";
 
 const collectibleIdCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -83,6 +84,14 @@ export function collectibleIsOwned(data: AppData, type: CollectibleType, id: str
 export function collectibleIsUnlocked(data: AppData, type: CollectibleType, id: string): boolean {
   if (!collectibleIsOwned(data, type, id)) return false;
 
+  // The server records successful challenge grants permanently. This prevents
+  // a later catalog goal increase from making an already-granted collectible
+  // appear locked in the client while retaining the legacy pre-gate fallback
+  // below for inventory rows that were never challenge-granted.
+  if (data.player?.collectibleSnapshot.unlocked_collectibles.some(
+    (row) => row.collectible_type === type && row.collectible_id === id,
+  )) return true;
+
   const requirement = data.catalog.collectibleUnlockRequirements.find(
     (row) => row.collectible_type === type && row.collectible_id === id,
   );
@@ -104,10 +113,28 @@ export function challengesFor(data: AppData, type: CollectibleType, id: string):
     );
 }
 
+function inferredGateEligibility(data: AppData, challenge: CollectibleUnlockChallenge): boolean {
+  const allChallenges = challengesFor(data, challenge.collectible_type, challenge.collectible_id);
+  const priorGateOrders = [...new Set(allChallenges
+    .filter((candidate) => candidate.gate_order != null && (
+      challenge.gate_order == null || candidate.gate_order! < challenge.gate_order
+    ))
+    .map((candidate) => candidate.gate_order!))];
+
+  return priorGateOrders.every((gateOrder) => allChallenges
+    .filter((candidate) => candidate.gate_order === gateOrder)
+    .every((candidate) => {
+      const stored = data.player?.collectibleSnapshot.progress.find((row) => row.challenge_id === candidate.id);
+      // Missing authoritative progress is unsafe to treat as a completed gate.
+      return stored !== undefined && safeBigInt(stored.current) >= challengeGoal(candidate);
+    }));
+}
+
 export function progressFor(data: AppData, challengeId: string): UserCollectibleChallengeProgress {
   const challenge = data.catalog.collectibleUnlockChallenges.find((row) => row.id === challengeId);
   const progress = data.player?.collectibleSnapshot.progress.find((row) => row.challenge_id === challengeId);
   const authoredGoal = challenge ? challengeGoal(challenge) : 0n;
+  const gateEligible = challenge ? inferredGateEligibility(data, challenge) : true;
   if (!progress) {
     const current = challenge ? derivedChallengeCurrent(data, challenge) : 0n;
     return {
@@ -115,7 +142,7 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
       current: String(authoredGoal > 0n && current > authoredGoal ? authoredGoal : current),
       goal: String(authoredGoal),
       goal_reached: authoredGoal > 0n && current >= authoredGoal,
-      eligible: true,
+      eligible: gateEligible,
       completed: false,
       blocked_by_gate_order: null,
       // A missing authoritative state usually means the published definition
@@ -125,18 +152,55 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
     };
   }
 
-  const eligible = progress.eligible ?? true;
-  const completed = eligible && progress.completed;
-  const normalizedGoal = safeBigInt(progress.goal) > 0n ? safeBigInt(progress.goal) : authoredGoal;
+  const eligible = gateEligible && progress.eligible !== false;
+  const isCollectionDiversity = challenge?.challenge_type === "collection_diversity";
+  const current = isCollectionDiversity ? derivedChallengeCurrent(data, challenge) : safeBigInt(progress.current);
+  // The published challenge definition is the source of truth for derived
+  // goals. A snapshot can outlive a catalog edit and still carry the old
+  // compatibility-column goal.
+  const normalizedGoal = authoredGoal > 0n ? authoredGoal : safeBigInt(progress.goal);
+  const goalReached = normalizedGoal > 0n && current >= normalizedGoal;
+  // A snapshot can briefly carry the raw goal and the completion flag from
+  // different revisions. Treat a reached goal as complete once the challenge
+  // is eligible so stale rows cannot consume a tracking slot.
+  const completed = eligible && (isCollectionDiversity
+    ? goalReached
+    : (progress.completed || progress.goal_reached === true || goalReached));
   return {
     ...progress,
+    current: String(current),
     goal: String(normalizedGoal),
-    goal_reached: progress.goal_reached ?? (normalizedGoal > 0n && safeBigInt(progress.current) >= normalizedGoal),
+    goal_reached: isCollectionDiversity ? goalReached : progress.goal_reached ?? goalReached,
     eligible,
     completed,
     blocked_by_gate_order: progress.blocked_by_gate_order ?? null,
-    trackable: progress.trackable ?? (eligible && !completed),
+    trackable: eligible && !completed && progress.trackable !== false,
   };
+}
+
+/**
+ * Tracking slots are a presentation order, not a stable identity. The server
+ * can leave a slot number behind after an untrack, so the home display and
+ * collection controls should always derive a compact active list.
+ */
+export function trackedChallengesForDisplay(data: AppData): UserTrackedCollectibleChallenge[] {
+  const seen = new Set<string>();
+  return data.player?.collectibleSnapshot.tracked
+    .filter((trackedRow) => {
+      if (seen.has(trackedRow.challenge_id)) return false;
+      const progress = progressFor(data, trackedRow.challenge_id);
+      const active = progress.eligible !== false && !progress.completed && progress.trackable !== false;
+      if (active) seen.add(trackedRow.challenge_id);
+      return active;
+    })
+    .sort((left, right) => left.slot_order - right.slot_order || left.challenge_id.localeCompare(right.challenge_id))
+    .map((trackedRow, index) => ({ ...trackedRow, slot_order: index + 1 })) ?? [];
+}
+
+export function completedTrackedChallengeIds(previous: AppData | null, next: AppData): string[] {
+  return [...new Set((previous?.player?.collectibleSnapshot.tracked ?? [])
+    .filter((trackedRow) => progressFor(next, trackedRow.challenge_id).completed)
+    .map((trackedRow) => trackedRow.challenge_id))];
 }
 
 export function challengeGateBadge(challenge: CollectibleUnlockChallenge): string | null {
@@ -213,9 +277,7 @@ export function challengeGoal(challenge: CollectibleUnlockChallenge): bigint {
   const parameters = challengeParameters(challenge);
   switch (challenge.challenge_type) {
     case "level_up_critter": return safeUnknownBigInt(parameters.required_level ?? challenge.required_level);
-    case "collection_diversity": return String(parameters.diversity_mode) === "specific_types"
-      ? BigInt(Array.isArray(parameters.required_element_ids) ? parameters.required_element_ids.length : 0)
-      : safeUnknownBigInt(parameters.required_distinct_types ?? parameters.required_per_type);
+    case "collection_diversity": return collectionDiversityGoal(parameters);
     case "squad_composition": return safeUnknownBigInt(parameters.required_completions);
     case "dungeon_clear": return safeUnknownBigInt(parameters.required_clears);
     case "dice_roll": return safeUnknownBigInt(parameters.required_occurrences);
@@ -232,9 +294,9 @@ function derivedChallengeCurrent(data: AppData, challenge: CollectibleUnlockChal
     const type = String(parameters.collectible_category ?? challenge.target_category ?? "critter");
     const ids = new Set(Array.isArray(parameters.collectible_ids) ? parameters.collectible_ids.filter((id): id is string => typeof id === "string") : []);
     const allowed = (id: string) => ids.size === 0 || ids.has(id);
-    if (type === "critter") return BigInt(player.critters.filter((row) => allowed(row.critter_id)).length);
-    if (type === "rollcaster") return BigInt(player.rollcasters.filter((row) => allowed(row.rollcaster_id)).length);
-    const relics = player.relicInventory.filter((row) => row.discovered_at !== null && row.quantity > 0 && allowed(row.relic_id));
+    if (type === "critter") return BigInt(player.critters.filter((row) => collectibleIsUnlocked(data, "critter", row.critter_id) && allowed(row.critter_id)).length);
+    if (type === "rollcaster") return BigInt(player.rollcasters.filter((row) => collectibleIsUnlocked(data, "rollcaster", row.rollcaster_id) && allowed(row.rollcaster_id)).length);
+    const relics = player.relicInventory.filter((row) => collectibleIsUnlocked(data, "relic", row.relic_id) && row.discovered_at !== null && row.quantity > 0 && allowed(row.relic_id));
     return parameters.require_unique_collectibles === false
       ? BigInt(relics.reduce((sum, row) => sum + row.quantity, 0))
       : BigInt(relics.length);
@@ -244,33 +306,11 @@ function derivedChallengeCurrent(data: AppData, challenge: CollectibleUnlockChal
     return BigInt(player.critters.find((row) => row.critter_id === id)?.level ?? 0);
   }
   if (challenge.challenge_type === "collection_diversity") {
-    const buckets = new Map<string, Set<string>>();
-    for (const owned of player.critters) {
+    const candidates = player.critters.flatMap((owned) => {
       const critter = data.catalog.critters.find((row) => row.id === owned.critter_id);
-      if (!critter) continue;
-      for (const elementId of [critter.element_1_id, critter.element_2_id]) {
-        if (!elementId) continue;
-        const bucket = buckets.get(elementId) ?? new Set<string>();
-        bucket.add(owned.critter_id);
-        buckets.set(elementId, bucket);
-      }
-    }
-    const requiredPerType = Number(parameters.required_per_type ?? 1);
-    if (parameters.diversity_mode === "amount_of_type") {
-      const elementId = Array.isArray(parameters.element_ids) ? parameters.element_ids[0] : undefined;
-      return BigInt(elementId && typeof elementId === "string" ? buckets.get(elementId)?.size ?? 0 : 0);
-    }
-    const selected = parameters.diversity_mode === "specific_types" && Array.isArray(parameters.required_element_ids)
-      ? parameters.required_element_ids.filter((id): id is string => typeof id === "string")
-      : [...buckets.keys()];
-    if (parameters.require_unique_critters === true && parameters.diversity_mode === "specific_types" && requiredPerType === 1) {
-      const candidates = player.critters.map((owned) => {
-        const critter = data.catalog.critters.find((row) => row.id === owned.critter_id);
-        return { id: owned.critter_id, elementIds: critter ? [critter.element_1_id, critter.element_2_id].filter((id): id is string => Boolean(id)) : [] };
-      });
-      return BigInt(maximumDistinctElementMatches(candidates, selected));
-    }
-    return BigInt(selected.filter((id) => (buckets.get(id)?.size ?? 0) >= requiredPerType).length);
+      return critter ? [{ id: critter.id, elementIds: [critter.element_1_id, critter.element_2_id].filter((id): id is string => Boolean(id)) }] : [];
+    });
+    return collectionDiversityProgress(candidates, parameters);
   }
   if (challenge.challenge_type === "shop_shards") return shardProgress(data, challenge.collectible_type, challenge.collectible_id);
   if (challenge.challenge_type === "shop_relic") return safeBigInt(player.relicInventory.find((row) => row.relic_id === challenge.collectible_id)?.quantity);
@@ -334,7 +374,7 @@ export function isTrackableChallenge(challenge: CollectibleUnlockChallenge): boo
 }
 
 export function trackedSlotFor(data: AppData, challengeId: string): number | null {
-  return data.player?.collectibleSnapshot.tracked.find((row) => row.challenge_id === challengeId)?.slot_order ?? null;
+  return trackedChallengesForDisplay(data).find((row) => row.challenge_id === challengeId)?.slot_order ?? null;
 }
 
 export function currencyFor(data: AppData, currencyId: string): CurrencyDef | undefined {
@@ -383,8 +423,16 @@ export function shopAvailability(data: AppData, entry: ShopEntry): ShopAvailabil
   const unavailable = (code: string, reason: string, current = 0n, goal = 0n): ShopAvailability => ({
     enabled: false, code, reason, current, goal,
   });
-  if (!entry.is_active || entry.is_archived || !currency || !collectibleTargetAvailable(data, entry.target_category, entry.target_id)) {
+  const targetAvailable = entry.shop_type === "lootbox"
+    ? data.catalog.lootboxes.some((lootbox) => lootbox.id === entry.target_id && lootbox.is_active && !lootbox.is_archived)
+    : collectibleTargetAvailable(data, entry.target_category, entry.target_id);
+  if (!entry.is_active || entry.is_archived || !currency || !targetAvailable) {
     return unavailable("SHOP_ENTRY_UNAVAILABLE", "Offer unavailable");
+  }
+
+  if (entry.shop_type === "lootbox") {
+    if (balance < price) return unavailable("INSUFFICIENT_FUNDS", `Need ${formatAmount(price-balance)} more ${currency.name}`);
+    return { enabled: true, code: null, reason: null, current: 0n, goal: 0n };
   }
 
   if (entry.shop_type === "shard") {

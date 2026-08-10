@@ -151,7 +151,15 @@ try {
     .filter({ has: page.locator(".shop-target-identity") })
     .first();
   await availableCritterShard.waitFor();
-  check(await availableCritterShard.getByRole("button", { name: "Purchase" }).isEnabled(), "An unowned Critter Shard offer must be purchasable.");
+  check(await availableCritterShard.locator(".shop-entry-category").count() === 0, "Shard Shop cards must not show a collectible category pill.");
+  const shardPurchase = availableCritterShard.getByRole("button", { name: "Purchase" });
+  check(await shardPurchase.isEnabled(), "An unowned Critter Shard offer must be purchasable.");
+  const shardActionLayout = await shardPurchase.evaluate((button) => {
+    const card = button.closest(".shop-entry-card")?.getBoundingClientRect();
+    const bounds = button.getBoundingClientRect();
+    return { width: bounds.width, bottomGap: (card?.bottom ?? 0) - bounds.bottom };
+  });
+  check(shardActionLayout.width === 214 && shardActionLayout.bottomGap <= 18, `Shard purchase buttons must share the fixed bottom action slot: ${JSON.stringify(shardActionLayout)}`);
 
   const identity = await availableCritterShard.locator(".shop-target-identity").evaluate((node) => {
     const nameNode = node.querySelector(".critter-name");
@@ -191,8 +199,16 @@ try {
   await page.getByRole("tab", { name: "Relic Shop" }).click();
   const availableRelic = page.locator('.shop-entry-card[data-shop-type="relic"][data-availability-code="AVAILABLE"]').first();
   await availableRelic.waitFor();
+  check(await availableRelic.locator(".shop-entry-category").count() === 0, "Relic Shop cards must not show the Relic category pill.");
+  const relicPurchase = availableRelic.getByRole("button", { name: "Purchase" });
+  const relicActionLayout = await relicPurchase.evaluate((button) => {
+    const card = button.closest(".shop-entry-card")?.getBoundingClientRect();
+    const bounds = button.getBoundingClientRect();
+    return { width: bounds.width, bottomGap: (card?.bottom ?? 0) - bounds.bottom };
+  });
+  check(relicActionLayout.width === shardActionLayout.width && relicActionLayout.bottomGap <= 18, `Relic purchase buttons must match Shard buttons in the bottom action slot: ${JSON.stringify({ shard: shardActionLayout, relic: relicActionLayout })}`);
   const relicTargetName = (await availableRelic.locator(".shop-target").textContent())?.replace(/\s+\([^)]+\)\s*$/, "").trim();
-  await availableRelic.getByRole("button", { name: "Purchase" }).click();
+  await relicPurchase.click();
   const relicBanner = page.locator(".reward-notification").filter({ hasText: `×1 ${relicTargetName} added` });
   await relicBanner.waitFor();
   checkBanner(await bannerPresentation(relicBanner), "Relic purchase reward");

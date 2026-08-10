@@ -19,6 +19,7 @@ import type {
   ElementDef,
   ElementEffectiveness,
   PlayerState,
+  LootboxOpeningReceipt,
   PromoCodeRedemption,
   PromoCodeReward,
   ShopPurchaseReceipt,
@@ -130,7 +131,7 @@ function normalizeCritter(row: Record<string, unknown>): Critter {
 }
 
 function emptyCollectibleSnapshot(): CollectiblePlayerSnapshot {
-  return { currencies: [], shards: [], progress: [], tracked: [], unlock_events: [] };
+  return { currencies: [], shards: [], lootboxes: [], progress: [], tracked: [], unlock_events: [], unlocked_collectibles: [] };
 }
 
 type RawDungeonOpponentSkill = { opponent_id: string; skill_id: string; slot_index: number };
@@ -147,7 +148,7 @@ type RawDungeonCurrencyDrop = {
 type RawDungeonItemDrop = {
   id: string;
   opponent_id: string;
-  drop_type: "shard" | "relic";
+  drop_type: "shard" | "relic" | "lootbox";
   target_category: "critter" | "rollcaster" | "relic";
   target_id: string;
   min_amount: number;
@@ -208,7 +209,7 @@ function normalizeCompletionDrop(row: RawDungeonCompletionDrop): DungeonCompleti
 }
 
 type CollectibleShopCatalog = Pick<Catalog,
-  "currencies" | "collectibleUnlockRequirements" | "collectibleUnlockChallenges" | "shopEntries" | "unlockChallengeTemplates"
+  "currencies" | "collectibleUnlockRequirements" | "collectibleUnlockChallenges" | "shopEntries" | "lootboxes" | "lootboxPoolEntries" | "unlockChallengeTemplates"
 >;
 
 async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
@@ -219,6 +220,8 @@ async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
     requirements?: Catalog["collectibleUnlockRequirements"];
     challenges?: Catalog["collectibleUnlockChallenges"];
     shop_entries?: Catalog["shopEntries"];
+    lootboxes?: Catalog["lootboxes"];
+    lootbox_pool_entries?: Catalog["lootboxPoolEntries"];
     challenge_templates?: Catalog["unlockChallengeTemplates"];
   } | null;
   return {
@@ -226,14 +229,35 @@ async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
     collectibleUnlockRequirements: payload?.requirements ?? [],
     collectibleUnlockChallenges: payload?.challenges ?? [],
     shopEntries: payload?.shop_entries ?? [],
+    lootboxes: (payload?.lootboxes ?? []).map((lootbox) => ({ ...lootbox, sell_value: String(lootbox.sell_value) })),
+    lootboxPoolEntries: (payload?.lootbox_pool_entries ?? []).map((entry) => ({
+      ...entry,
+      probability: Number(entry.probability),
+      dupe_currency_amount: entry.dupe_currency_amount == null ? null : String(entry.dupe_currency_amount),
+    })),
     unlockChallengeTemplates: payload?.challenge_templates ?? [],
   };
 }
 
 export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
-  const { data, error } = await requireClient().rpc("get_collectible_player_snapshot");
-  if (error) throw error;
-  return { ...emptyCollectibleSnapshot(), ...(data as Partial<CollectiblePlayerSnapshot> | null) };
+  const client = requireClient();
+  const [snapshotResult, lootboxResult] = await Promise.all([
+    client.rpc("get_collectible_player_snapshot"),
+    client.from("user_lootboxes").select("lootbox_id,quantity").gt("quantity", 0),
+  ]);
+  if (snapshotResult.error) throw snapshotResult.error;
+  if (lootboxResult.error) throw lootboxResult.error;
+  return {
+    ...emptyCollectibleSnapshot(),
+    ...(snapshotResult.data as Partial<CollectiblePlayerSnapshot> | null),
+    // Keep this projection independent of the snapshot RPC so a deployed
+    // function that predates Lootboxes cannot hide a successfully purchased
+    // Bag item from the player.
+    lootboxes: (lootboxResult.data ?? []).map((row) => ({
+      lootbox_id: String(row.lootbox_id),
+      quantity: String(row.quantity),
+    })),
+  };
 }
 
 async function loadCombatEffects(): Promise<CombatEffectRow[]> {
@@ -612,10 +636,25 @@ function playerStateFromBootstrap(payload: PlayerBootstrapPayload): PlayerState 
 }
 
 async function loadPlayerBootstrapV1(): Promise<PlayerState> {
-  const { data, error } = await requireClient().rpc("player_bootstrap_v1");
+  const client = requireClient();
+  const [{ data, error }, lootboxResult] = await Promise.all([
+    client.rpc("player_bootstrap_v1"),
+    client.from("user_lootboxes").select("lootbox_id,quantity").gt("quantity", 0),
+  ]);
   if (error) throw error;
+  if (lootboxResult.error) throw lootboxResult.error;
   if (!data || typeof data !== "object") throw new Error("Player bootstrap returned no state.");
-  return playerStateFromBootstrap(data as PlayerBootstrapPayload);
+  const payload = data as PlayerBootstrapPayload;
+  return playerStateFromBootstrap({
+    ...payload,
+    collectible_snapshot: {
+      ...payload.collectible_snapshot,
+      lootboxes: (lootboxResult.data ?? []).map((row) => ({
+        lootbox_id: String(row.lootbox_id),
+        quantity: String(row.quantity),
+      })),
+    },
+  });
 }
 
 async function loadLegacyPlayerState(): Promise<PlayerState> {
@@ -908,6 +947,15 @@ export async function purchaseShopEntry(entryId: string, requestId: string): Pro
   });
   if (error) throw error;
   return data as ShopPurchaseReceipt;
+}
+
+export async function openLootbox(lootboxId: string, requestId: string): Promise<LootboxOpeningReceipt> {
+  const { data, error } = await requireClient().rpc("open_lootbox", {
+    p_lootbox_id: lootboxId,
+    p_request_id: requestId,
+  });
+  if (error) throw error;
+  return data as LootboxOpeningReceipt;
 }
 
 function normalizePromoCodeReward(value: unknown): PromoCodeReward {

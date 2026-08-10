@@ -301,9 +301,16 @@ try {
       check(await relicOffer.getByRole("button", { name: "Purchase" }).isEnabled(), "An owned Relic below max_owned must remain purchasable.");
     }
   }
-  check(await relicOffer.getAttribute("data-availability-code") === "RELIC_MAX_OWNED_REACHED", "A max-owned Relic offer must expose its sold-out state.");
-  check((await relicOffer.getAttribute("class"))?.includes("sold-out"), "A max-owned Relic offer must grey out the entire card.");
-  check(await relicOffer.getByRole("button", { name: "Purchase" }).isDisabled(), "A max-owned Relic purchase button must be disabled.");
+  check(await relicOffer.getAttribute("data-availability-code") === "RELIC_MAX_OWNED_REACHED", "A max-owned Relic offer must expose its max-owned state.");
+  check((await relicOffer.getAttribute("class"))?.includes("max-owned") && !(await relicOffer.getAttribute("class"))?.includes("sold-out"), "A max-owned Relic offer must keep its full card presentation.");
+  check(await relicOffer.getByRole("button", { name: "Purchase" }).count() === 0, "A max-owned Relic offer must replace Purchase with status text.");
+  const relicMaxPresentation = await relicOffer.evaluate((card) => ({
+    statusText: card.querySelector(".shop-complete-status")?.textContent?.trim(),
+    statusColor: card.querySelector(".shop-complete-status") ? getComputedStyle(card.querySelector(".shop-complete-status")).color : null,
+    cardOpacity: getComputedStyle(card).opacity,
+    spriteFilter: card.querySelector(".sprite-frame .sprite") ? getComputedStyle(card.querySelector(".sprite-frame .sprite")).filter : null,
+  }));
+  check(relicMaxPresentation.statusText === "Max Owned!" && relicMaxPresentation.statusColor === "rgb(97, 221, 160)" && relicMaxPresentation.cardOpacity === "1" && relicMaxPresentation.spriteFilter === "none", `A max-owned Relic offer must use the full-card green status treatment: ${JSON.stringify(relicMaxPresentation)}`);
   await relicOffer.hover();
   await page.screenshot({ path: path.join(outputDir, "shop-relics-max-owned-hover.png"), fullPage: true });
   await page.getByRole("button", { name: "Shard Shop" }).click();
@@ -364,19 +371,21 @@ try {
     return card?.getAttribute("data-availability-code") === "COLLECTIBLE_ALREADY_UNLOCKED";
   }, critterTarget.id);
   check(!(await shardOffer.getAttribute("class"))?.includes("sold-out"), "An already-unlocked Shard offer must keep its full card presentation.");
-  check(await shardOffer.getByRole("button", { name: "Already Owned" }).isDisabled(), "An already-unlocked Shard offer must show a disabled Already Owned button.");
-  check(await shardOffer.getByRole("button", { name: "Purchase" }).count() === 0, "An already-unlocked Shard offer must not show a Purchase button.");
+  check((await shardOffer.getAttribute("class"))?.includes("complete"), "A completed Shard Shop offer must expose the completed card state.");
+  check(await shardOffer.getAttribute("data-shard-status") === "complete", "A completed Shard Shop offer must expose complete shard status.");
+  check(await shardOffer.getByRole("button", { name: "Already Owned" }).count() === 0 && await shardOffer.getByRole("button", { name: "Purchase" }).count() === 0, "An already-unlocked Shard offer must replace the purchase button with status text.");
+  check(await shardOffer.getByText("Already Unlocked!", { exact: true }).count() === 1, "An already-unlocked Shard offer must show the exact green status text.");
   const shardVisuals = await shardOffer.evaluate((card) => {
     const square = card.querySelector(".shard-sprite-frame .sprite");
     const shard = card.querySelector(".shard-sprite-frame");
     const outline = card.querySelector(".shard-sprite-outline");
     const polygon = card.querySelector(".shard-outline-border");
     const outlineGlow = card.querySelector(".shard-outline-glow-wide");
-    const unavailable = card.querySelector(".shop-unavailable");
-    if (!square || !shard || !outline || !polygon || !outlineGlow || !unavailable) return null;
+    const completeStatus = card.querySelector(".shop-complete-status");
+    if (!square || !shard || !outline || !polygon || !outlineGlow || !completeStatus) return null;
     const squareStyle = getComputedStyle(square);
     const shardStyle = getComputedStyle(shard);
-    const unavailableStyle = getComputedStyle(unavailable);
+    const completeStatusStyle = getComputedStyle(completeStatus);
     const shardBounds = shard.getBoundingClientRect();
     return {
       squareBackground: squareStyle.backgroundImage === "none" ? squareStyle.backgroundColor : squareStyle.backgroundImage,
@@ -386,18 +395,23 @@ try {
       shardBackground: shardStyle.backgroundImage === "none" ? shardStyle.backgroundColor : shardStyle.backgroundImage,
       shardAspectRatio: shardBounds.width / shardBounds.height,
       polygonPoints: polygon.getAttribute("points"),
+      outlineColor: polygon ? getComputedStyle(polygon).stroke : null,
+      outlineWidth: polygon ? getComputedStyle(polygon).strokeWidth : null,
       outlineFilter: getComputedStyle(outline).filter,
       outlineGlowOpacity: getComputedStyle(outlineGlow).opacity,
       wrapperFilter: getComputedStyle(card.querySelector(".shard-sprite-glow")).filter,
-      unavailableColor: unavailableStyle.color,
+      progressClass: card.querySelector(".shard-progress")?.className ?? null,
+      progressBorderColor: card.querySelector(".shard-progress .xp-bar") ? getComputedStyle(card.querySelector(".shard-progress .xp-bar")).borderTopColor : null,
+      completeStatusColor: completeStatusStyle.color,
     };
   });
   check(shardVisuals?.squareBackground === "rgba(0, 0, 0, 0)", "The nested square Shard Sprite background must be transparent.");
   check(shardVisuals?.squareBorderWidth === "0px" && shardVisuals.squareBoxShadow === "none", "The nested square Shard Sprite border and shadow must be invisible.");
   check(shardVisuals?.shardBackground === "rgba(0, 0, 0, 0)", "The Shard-shaped SpriteFrame background must be transparent.");
   check((shardVisuals?.shardAspectRatio ?? 0) > 1.6 && shardVisuals?.polygonPoints === "1,50 50,1 99,50 50,99", "Shard offers must use the flattened diamond frame.");
-  check(shardVisuals?.outlineFilter === "none" && shardVisuals.wrapperFilter === "none" && shardVisuals.outlineGlowOpacity === "0", "The diamond and collectible art must not glow before hover.");
-  check(shardVisuals?.unavailableColor === "rgb(255, 110, 134)", "Already unlocked must retain the red danger color on a greyed offer.");
+  check(shardVisuals?.outlineColor === "rgb(97, 221, 160)" && shardVisuals.outlineWidth === "2.4px" && shardVisuals.progressClass?.includes("complete") && shardVisuals.progressBorderColor === "rgb(97, 221, 160)", `A completed Shard Shop offer must use the Bag completion colors: ${JSON.stringify(shardVisuals)}`);
+  check(shardVisuals?.outlineFilter !== "none" && shardVisuals.wrapperFilter === "none" && shardVisuals.outlineGlowOpacity === "1", "A completed Shard Shop offer must keep its green diamond glow visible without hover.");
+  check(shardVisuals?.completeStatusColor === "rgb(97, 221, 160)", "Already unlocked must use the green completion status color.");
   await shardOffer.hover();
   await page.waitForTimeout(250);
   const shardHover = await shardOffer.evaluate((card) => ({
@@ -408,7 +422,7 @@ try {
     wrapperFilter: getComputedStyle(card.querySelector(".shard-sprite-glow")).filter,
   }));
   check(shardHover.cardShadow !== "none" && shardHover.outlineGlowOpacity === "1", "Hovering a Shard offer must glow both the card border and diamond outline.");
-  check(shardHover.outlineFilter === "none" && shardHover.spriteFilter === shardVisuals?.spriteFilter && shardHover.wrapperFilter === "none", "Shard hover must not apply a filter glow to the collectible sprite or its wrapper.");
+  check(shardHover.outlineFilter === shardVisuals?.outlineFilter && shardHover.spriteFilter === shardVisuals?.spriteFilter && shardHover.wrapperFilter === "none", "Shard hover must not apply a filter glow to the collectible sprite or its wrapper.");
   await page.screenshot({ path: path.join(outputDir, "shop-shards-owned-hover.png"), fullPage: true });
 
   await page.getByRole("button", { name: "Bag" }).click();

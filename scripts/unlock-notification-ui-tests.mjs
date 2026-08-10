@@ -22,6 +22,12 @@ check(
     && !appSource.includes("onClose={() => setUnlockQueue"),
   "The production unlock notification must not use the old modal or a manual close action.",
 );
+check(
+  appSource.includes('kind: "challenge-completed"')
+    && appSource.includes("challenge-completed-notification")
+    && appSource.includes("Challenge completed"),
+  "The production banner queue must expose a completion notification for tracked challenges.",
+);
 
 const bannerMarkup = `
   <aside class="unlock-notification" role="status" aria-live="polite" aria-atomic="true">
@@ -41,6 +47,14 @@ const bannerMarkup = `
         Collectible unlocked
       </span>
       <h2><span class="critter-name"><span class="asset-icon"><svg class="asset-icon__image" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#dd6b48"/></svg></span><strong>Ramber</strong></span> <span>unlocked!</span></h2>
+    </div>
+  </aside>
+  <aside class="unlock-notification challenge-completed-notification" style="top:94px" role="status" aria-live="polite" aria-atomic="true">
+    <span class="sprite-frame sprite-frame-xs"><span class="asset-icon" role="img" aria-label="Ramber"><svg class="asset-icon__image sprite-box__image" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="#6f4432" stroke="#ffd06c" stroke-width="3"/></svg></span></span>
+    <div class="unlock-notification-copy">
+      <span class="unlock-notification-label">✓ Challenge completed</span>
+      <h2>Damage Critters (Any Species)</h2>
+      <p class="unlock-notification-detail">Ramber challenge completed</p>
     </div>
   </aside>
 `;
@@ -103,7 +117,7 @@ try {
     const before = await page.locator(".ui-layout-probe").boundingBox();
     await page.evaluate(() => window.insertUnlockBanner());
     await page.waitForTimeout(350);
-    const banner = page.locator(".unlock-notification");
+    const banner = page.locator(".unlock-notification").first();
     const after = await page.locator(".ui-layout-probe").boundingBox();
     const presentation = await banner.evaluate((node) => {
       const bounds = node.getBoundingClientRect();

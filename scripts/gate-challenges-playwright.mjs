@@ -221,7 +221,15 @@ fs.mkdirSync(outputDir, { recursive: true });
 try {
   await seedContent();
   if (!suppliedBaseUrl) {
-    devServer = spawn("npm", ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5194"], { cwd: root, stdio: "ignore" });
+    devServer = spawn("npm", ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5194"], {
+      cwd: root,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        VITE_GAME_CATALOG_MODE: "live",
+        VITE_ALLOW_LIVE_CATALOG_FALLBACK: "true",
+      },
+    });
     await waitForServer(baseUrl);
   }
 
