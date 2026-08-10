@@ -80,6 +80,7 @@ const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("block_action", { tracked_action: "attacks_fully_blocked", required_amount: 2 }), "Attacks Fully Blocked: 2."],
   [challenge("dice_roll", { tracked_result: "maximum_die_result", comparison: "greater_than_or_equal", target_value: 6, required_occurrences: 2, die_types: ["d6"] }), "Maximum Die Result Greater Than Or Equal 6, 2 times."],
   [challenge("heal_hp", { required_amount: 200, recipient_side: "any", target_mode: "any", target_ids: [], tracking_scope: "lifetime" }), "Heal 200 HP on Critters."],
+  [challenge("defeat_rollcaster_type", { rollcaster_types: ["adept"], required_amount: 10 }), "Defeat 10 Adept-rank Rollcasters."],
   [challenge("shop_shards", { required_amount: 20 }), "Unlock Cragram shards"],
   [challenge("shop_relic", { required_amount: 1 }), "Own Cragram"],
 ];
@@ -136,6 +137,40 @@ check(challengeEventIncrement(filteredResourceSpend, {
   purchasedCollectibleCategory: "lootbox",
   payload: { spending_context: "shop", resource_type: "custom_currency", custom_currency_id: "tickets" },
 }) === 0, "Resource Spending must reject a shop event outside its authored Shop filter.");
+
+const adeptDefeats = challenge("defeat_rollcaster_type", {
+  rollcaster_types: ["adept"],
+  required_amount: 10,
+});
+check(challengeGoal(adeptDefeats) === 10n, "Defeat Rollcaster Type goal must use required_amount.");
+check(challengeEventIncrement(adeptDefeats, {
+  eventId: "battle:adept",
+  type: "battle_completed",
+  amount: 1,
+  payload: { won: true, enemy_rollcaster_type: "adept" },
+}) === 1, "Defeat Rollcaster Type must count a matching defeated Rollcaster once.");
+check(challengeEventIncrement(adeptDefeats, {
+  eventId: "battle:acolyte",
+  type: "battle_completed",
+  amount: 1,
+  payload: { won: true, enemy_rollcaster_type: "acolyte" },
+}) === 0, "Defeat Rollcaster Type must ignore a non-matching rank.");
+check(challengeEventIncrement(adeptDefeats, {
+  eventId: "battle:loss",
+  type: "battle_completed",
+  amount: 1,
+  payload: { won: false, enemy_rollcaster_type: "adept" },
+}) === 0, "Defeat Rollcaster Type must ignore lost encounters.");
+const acolyteOrAdeptDefeats = challenge("defeat_rollcaster_type", {
+  rollcaster_types: ["acolyte", "adept"],
+  required_amount: 2,
+});
+check(challengeEventIncrement(acolyteOrAdeptDefeats, {
+  eventId: "battle:acolyte",
+  type: "battle_completed",
+  amount: 1,
+  payload: { won: true, enemy_rollcaster_type: "acolyte" },
+}) === 1, "Defeat Rollcaster Type must accept any selected rank.");
 
 const frostTeraDiversity = challenge("collection_diversity", {
   diversity_mode: "specific_types",

@@ -5,7 +5,9 @@ import type {
   Critter,
   CritterProgression,
   Dungeon,
+  DungeonEnemyRollcaster,
   DungeonOpponent,
+  EclipseOrderType,
   ElementDef,
   EffectOwnerType,
   PlayerState,
@@ -107,6 +109,7 @@ export type RuntimeEffectInstance = {
   sourceEffectId: string;
   sourceOwnerType: EffectOwnerType;
   sourceOwnerId: string;
+  sourceSide?: CombatUnit["side"];
   sourceCritterKey?: string;
   targetCritterKey?: string;
   runtimeKind: string;
@@ -193,6 +196,7 @@ export type CombatPresentationState = {
 type SetupEffectSource = {
   ownerType: "relic" | "ability";
   ownerId: string;
+  side: CombatUnit["side"];
   sourceKey?: string;
   effects: ResolvedEffectRef[];
   sourceOrder: number;
@@ -248,6 +252,8 @@ export type CombatState = {
   runEffects: RunEffectRegistry;
   statusRegistry: Record<string, Status>;
   rngState: number;
+  enemyPolicyKey?: DungeonEnemyRollcaster["policy_key"];
+  enemyRollcasterType?: EclipseOrderType;
   snapshot: RunEffectSnapshot;
   turnEvents: CombatProgressEvent[];
   presentationEvents: CombatPresentationEvent[];
@@ -393,6 +399,7 @@ export function createInitialCombatState(
   runId: string,
   selectedOpponents?: DungeonOpponent[],
   seedKey = runId,
+  enemyRollcaster?: Pick<DungeonEnemyRollcaster, "ability_ids" | "eclipse_order_type"> & Partial<Pick<DungeonEnemyRollcaster, "policy_key">>,
 ): CombatState {
   const squad = squadCritters(player);
   const playerBattlefieldSlots = battlefieldSlotsForCount(dungeon.player_active_count);
@@ -475,12 +482,12 @@ export function createInitialCombatState(
     for (const slot of player.relicSlots
       .filter((candidate) => candidate.user_critter_id === unit.userCritter!.id && candidate.relic_id)
       .sort((a, b) => a.slot_index - b.slot_index)) {
-      setupSources.push({ ownerType: "relic", ownerId: slot.relic_id!, sourceKey: unit.key, effects: runEffects.relic[slot.relic_id!] ?? [], sourceOrder: unitIndex * 100 + slot.slot_index });
+      setupSources.push({ ownerType: "relic", ownerId: slot.relic_id!, side: "player", sourceKey: unit.key, effects: runEffects.relic[slot.relic_id!] ?? [], sourceOrder: unitIndex * 100 + slot.slot_index });
     }
   }
   opponentRows.forEach((opponent, index) => {
     opponent.relic_ids.forEach((relicId, slotIndex) => {
-      setupSources.push({ ownerType: "relic", ownerId: relicId, sourceKey: `o${index + 1}`, effects: runEffects.relic[relicId] ?? [], sourceOrder: 10_000 + index * 100 + slotIndex });
+      setupSources.push({ ownerType: "relic", ownerId: relicId, side: "opponent", sourceKey: `o${index + 1}`, effects: runEffects.relic[relicId] ?? [], sourceOrder: 10_000 + index * 100 + slotIndex });
     });
   });
   const activeRollcaster = player.rollcasters.find((owned) => owned.id === player.profile.active_rollcaster_id);
@@ -488,8 +495,11 @@ export function createInitialCombatState(
     for (const slot of player.abilitySlots
       .filter((candidate) => candidate.user_rollcaster_id === activeRollcaster.id && candidate.ability_id)
       .sort((a, b) => a.slot_index - b.slot_index)) {
-      setupSources.push({ ownerType: "ability", ownerId: slot.ability_id!, effects: runEffects.ability[slot.ability_id!] ?? [], sourceOrder: slot.slot_index });
+      setupSources.push({ ownerType: "ability", ownerId: slot.ability_id!, side: "player", effects: runEffects.ability[slot.ability_id!] ?? [], sourceOrder: slot.slot_index });
     }
+  }
+  for (const [slotIndex, abilityId] of (enemyRollcaster?.ability_ids ?? []).entries()) {
+    setupSources.push({ ownerType: "ability", ownerId: abilityId, side: "opponent", effects: runEffects.ability[abilityId] ?? [], sourceOrder: 20_000 + slotIndex });
   }
   setupSources.sort((a, b) => (a.ownerType === b.ownerType ? a.sourceOrder - b.sourceOrder : a.ownerType === "relic" ? -1 : 1));
 
@@ -545,6 +555,8 @@ export function createInitialCombatState(
     runEffects,
     statusRegistry,
     rngState: seed,
+    enemyPolicyKey: enemyRollcaster?.policy_key,
+    enemyRollcasterType: enemyRollcaster?.eclipse_order_type,
     snapshot: {
       seed,
       effects: snapshotEffects,
@@ -665,6 +677,7 @@ function addRuntimeEffect(
     sourceEffectId: effect.id,
     sourceOwnerType: context.sourceOwnerType,
     sourceOwnerId: context.sourceOwnerId,
+    sourceSide: context.sourceSide,
     sourceCritterKey: context.sourceCritterKey,
     targetCritterKey: context.skillTargetKeys?.[0],
     runtimeKind: effect.runtimeKind,
@@ -708,6 +721,7 @@ function refreshConditionalSetupEffects(state: CombatState, actionContext: Actio
       const context: RuntimeContext = {
         sourceOwnerType: source.ownerType,
         sourceOwnerId: source.ownerId,
+        sourceSide: source.side,
         sourceCritterKey: source.sourceKey,
         ...actionContext,
       };
@@ -752,6 +766,7 @@ function installRootEffects(state: CombatState, options: SetupRuntimeRefreshOpti
       const context: RuntimeContext = {
         sourceOwnerType: source.ownerType,
         sourceOwnerId: source.ownerId,
+        sourceSide: source.side,
         sourceCritterKey: source.sourceKey,
       };
       const sourceCritter = source.sourceKey ? findUnit(next, source.sourceKey)?.critter : undefined;
@@ -819,6 +834,7 @@ export function recomputeCombatStats(state: CombatState): CombatState {
       const targets = effectTargets(state, String(effect.parameters.target), {
         sourceOwnerType: source.ownerType,
         sourceOwnerId: source.ownerId,
+        sourceSide: source.side,
         sourceCritterKey: source.sourceKey,
         allowInactiveSource: source.ownerType === "relic",
         elementIds: targetElementIds(effect),
@@ -910,6 +926,7 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
       const targets = effectTargets(state, String(effect.parameters.target ?? ""), {
         sourceOwnerType: source.ownerType,
         sourceOwnerId: source.ownerId,
+        sourceSide: source.side,
         sourceCritterKey: source.sourceKey,
         allowInactiveSource: source.ownerType === "relic",
         elementIds: targetElementIds(effect),
@@ -971,6 +988,7 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
     const applies = instance.targetCritterKey === unitKey || (!instance.targetCritterKey && effectTargets(state, String(effect.parameters.target ?? ""), {
       sourceOwnerType: instance.sourceOwnerType,
       sourceOwnerId: instance.sourceOwnerId,
+      sourceSide: instance.sourceSide,
       sourceCritterKey: instance.sourceCritterKey,
       skillTargetKeys: instance.targetCritterKey ? [instance.targetCritterKey] : undefined,
       elementIds: effectElementIdsForTargeting(effect),
@@ -1058,12 +1076,12 @@ export function startTurn(state: CombatState): CombatState {
   const playerUnits = next.playerUnits.map((unit) =>
     unit.active && unit.hp > 0
       ? (() => { const roll = rollManaDieSeeded(unit.stats.diceMin, unit.stats.diceMax, rngState); rngState = roll.state; return { ...unit, blocking: false, manaRoll: roll.value }; })()
-      : unit,
+      : { ...unit, blocking: false, blockStreak: 0 },
   );
   const opponentUnits = next.opponentUnits.map((unit) =>
     unit.active && unit.hp > 0
       ? (() => { const roll = rollManaDieSeeded(unit.stats.diceMin, unit.stats.diceMax, rngState); rngState = roll.state; return { ...unit, blocking: false, manaRoll: roll.value }; })()
-      : unit,
+      : { ...unit, blocking: false, blockStreak: 0 },
   );
   const playerRoll = playerUnits.reduce((sum, unit) => sum + (unit.active && unit.hp > 0 ? unit.manaRoll : 0), 0);
   const opponentRoll = opponentUnits.reduce(
@@ -1139,11 +1157,13 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
     });
   }
 
-  const enemyActions = chooseEnemyActions(next);
+  const enemyDecision = next.enemyPolicyKey === "random_action_v1" ? chooseEnemyActions(next) : chooseLegacyEnemyActions(next);
+  const enemyActions = enemyDecision.actions;
   const enemyCost = enemyActions.reduce((sum, action) => sum + action.cost, 0);
   next = {
     ...next,
     opponentMana: Math.max(0, next.opponentMana - enemyCost),
+    rngState: enemyDecision.rngState,
   };
 
   const allActions = [...normalizedActions, ...enemyActions].map((action) => prepareActionTarget(next, action));
@@ -1165,6 +1185,7 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
       amount: playerAlive ? 1 : 0,
       payload: {
         won: playerAlive,
+        enemy_rollcaster_type: next.enemyRollcasterType ?? null,
         squad: next.playerUnits.map((unit) => ({ critter_id: unit.critter.id, element_ids: critterElementIds(unit.critter), survived: unit.hp > 0 })),
         survivors_complete: next.playerUnits.filter((unit) => unit.active).every((unit) => unit.hp > 0),
       },
@@ -1243,6 +1264,7 @@ function runtimeActionCostAppliesToActor(state: CombatState, instance: RuntimeEf
     return effectTargets(state, target, {
       sourceOwnerType: instance.sourceOwnerType,
       sourceOwnerId: instance.sourceOwnerId,
+      sourceSide: instance.sourceSide,
       sourceCritterKey: instance.sourceCritterKey,
       statusHolderKey: instance.sourceOwnerType === "status" ? instance.sourceCritterKey : undefined,
       elementIds: effect ? targetElementIds(effect) : undefined,
@@ -1285,28 +1307,66 @@ export function calculateActionCost(state: CombatState, action: CombatAction): n
   return calculateActionCostBreakdown(state, action).final;
 }
 
-function chooseEnemyActions(state: CombatState): CombatAction[] {
-  let mana = state.opponentMana;
+export function chooseRandomEnemyActions(state: CombatState): CombatAction[] {
+  return chooseEnemyActions(state).actions;
+}
 
-  return state.opponentUnits
+function chooseLegacyEnemyActions(state: CombatState): { actions: CombatAction[]; rngState: number } {
+  let mana = state.opponentMana;
+  const actions = orderedActiveCombatUnits(state.opponentUnits)
+    .filter((unit) => unit.active && unit.hp > 0)
+    .map((unit) => {
+      const skill = unit.skills.find((candidate) => {
+        const action = { actorKey: unit.key, type: "skill" as const, skillId: candidate.id, cost: candidate.mana_cost };
+        return skillAvailability(state, unit.key, candidate.id).valid && skillTargets(state, unit.key, candidate).length > 0 && calculateActionCost(state, action) <= mana;
+      });
+      if (!skill) {
+        const block = { actorKey: unit.key, type: "block" as const, cost: unit.stats.blockCost };
+        const blockCost = calculateActionCost(state, block);
+        return blockCost <= mana ? { ...block, cost: blockCost } : { actorKey: unit.key, type: "skip" as const, cost: 0 };
+      }
+      const targets = skillTargets(state, unit.key, skill);
+      const base = { actorKey: unit.key, type: "skill" as const, skillId: skill.id, cost: skill.mana_cost };
+      const cost = calculateActionCost(state, base);
+      mana -= cost;
+      return isSingleTarget(skill) ? { ...base, targetKey: targets[0]?.key, cost } : { ...base, cost };
+    });
+  return { actions, rngState: state.rngState };
+}
+
+function chooseEnemyActions(state: CombatState): { actions: CombatAction[]; rngState: number } {
+  let mana = state.opponentMana;
+  let rngState = state.rngState;
+
+  const actions = orderedActiveCombatUnits(state.opponentUnits)
     .filter((unit) => unit.active && unit.hp > 0)
     .map((unit) => {
       if (isActorRecharging(state, unit.key)) return { actorKey: unit.key, type: "skip" as const, cost: 0 };
-      const usableSkills = unit.skills.filter((candidate) => skillAvailability(state, unit.key, candidate.id).valid);
-      const skill = usableSkills.find((candidate) => candidate.mana_cost <= mana);
-      if (skill && skill.mana_cost <= mana) {
-        mana -= skill.mana_cost;
-        const target = skillTargets(state, unit.key, skill)[0];
-        return {
-          actorKey: unit.key,
-          type: "skill" as const,
-          skillId: skill.id,
-          targetKey: isSingleTarget(skill) ? target?.key : undefined,
-          cost: skill.mana_cost,
-        };
+      const candidates: CombatAction[] = [];
+      const block = { actorKey: unit.key, type: "block" as const, cost: unit.stats.blockCost };
+      const blockCost = calculateActionCost(state, block);
+      if (blockCost <= mana) candidates.push({ ...block, cost: blockCost });
+      for (const skill of unit.skills.filter((candidate) => skillAvailability(state, unit.key, candidate.id).valid)) {
+        const targets = skillTargets(state, unit.key, skill);
+        if (!targets.length) continue;
+        const base = { actorKey: unit.key, type: "skill" as const, skillId: skill.id, cost: skill.mana_cost };
+        const cost = calculateActionCost(state, base);
+        if (cost > mana) continue;
+        if (isSingleTarget(skill)) {
+          const targetRoll = nextRandom(rngState);
+          rngState = targetRoll.state;
+          const target = targets[Math.floor(targetRoll.value * targets.length)];
+          candidates.push({ ...base, targetKey: target?.key, cost });
+        } else candidates.push({ ...base, cost });
       }
-      return { actorKey: unit.key, type: "skip" as const, cost: 0 };
+      if (!candidates.length) return { actorKey: unit.key, type: "skip" as const, cost: 0 };
+      const actionRoll = nextRandom(rngState);
+      rngState = actionRoll.state;
+      const selected = candidates[Math.floor(actionRoll.value * candidates.length)] ?? candidates[0];
+      mana -= selected.cost;
+      return selected;
     });
+  return { actions, rngState };
 }
 
 function resolveActionStage(state: CombatState, actions: CombatAction[], stage: CombatAction["type"]): CombatState {
@@ -1483,11 +1543,16 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
   }
   if (!actor.active) return state;
 
+  // A streak measures consecutive Block actions by this Critter. Any other
+  // action gives the next Block its full 1/1 chance again.
+  if (action.type !== "block") state = clearBlockStreak(state, actor.key);
+
   if (action.type !== "skip") {
     const skip = resolveSkipCheck(state, actor.key, action.type);
     state = skip.state;
     if (skip.skipped) {
-    const message = `${combatantPossessive(actor)} ${action.type} was skipped by ${skip.effectName}; the reserved mana was spent.`;
+      if (action.type === "block") state = clearBlockStreak(state, actor.key);
+      const message = `${combatantPossessive(actor)} ${action.type} was skipped by ${skip.effectName}; the reserved mana was spent.`;
       return appendPresentationEvent(
         { ...state, log: [message, ...state.log] },
         { kind: "status", message, actorKey: actor.key, targetKeys: [actor.key], hpChanges: [] },
@@ -1540,10 +1605,13 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         });
   }
 
-  if (action.type === "swap" && action.swapToId) {
-    const swapped = swapPlayerUnit(state, action.actorKey, action.swapToId);
-    const incoming = swapped.playerUnits.find((unit) => unit.userCritter?.id === action.swapToId);
-    return incoming ? appendProgressEvent(swapped, {
+  if (action.type === "swap" && (action.swapInKey || action.swapToId)) {
+    const incomingKey = action.swapInKey
+      ?? state.playerUnits.find((unit) => unit.userCritter?.id === action.swapToId)?.key;
+    if (!incomingKey) return state;
+    const swapped = swapCombatUnitByKey(state, action.actorKey, incomingKey);
+    const incoming = [...swapped.playerUnits, ...swapped.opponentUnits].find((unit) => unit.key === incomingKey);
+    return incoming && actor.side === "player" ? appendProgressEvent(swapped, {
       event_type: "swap_completed",
       source_critter_id: actor.critter.id,
       target_critter_id: incoming.critter.id,
@@ -1864,6 +1932,7 @@ function recordSkillUseAndRestrictions(
 type RuntimeContext = {
   sourceOwnerType: EffectOwnerType;
   sourceOwnerId: string;
+  sourceSide?: CombatUnit["side"];
   sourceCritterKey?: string;
   skillTargetKeys?: string[];
   statusHolderKey?: string;
@@ -1889,8 +1958,9 @@ type RuntimeContext = {
 function effectTargets(state: CombatState, target: string, context: RuntimeContext): CombatUnit[] {
   const holder = context.statusHolderKey ? findUnit(state, context.statusHolderKey) : undefined;
   const source = holder ?? (context.sourceCritterKey ? findUnit(state, context.sourceCritterKey) : undefined);
-  const friendlies = source?.side === "opponent" ? state.opponentUnits : state.playerUnits;
-  const enemies = source?.side === "opponent" ? state.playerUnits : state.opponentUnits;
+  const sourceSide = source?.side ?? context.sourceSide ?? (context.sourceOwnerType === "ability" ? "player" : "opponent");
+  const friendlies = sourceSide === "opponent" ? state.opponentUnits : state.playerUnits;
+  const enemies = sourceSide === "opponent" ? state.playerUnits : state.opponentUnits;
   const active = (unit: CombatUnit) => unit.active && unit.hp > 0;
   const ordered = (units: CombatUnit[]) => [...units].sort((a, b) =>
     (a.side === b.side ? 0 : a.side === "player" ? -1 : 1)
@@ -2015,7 +2085,7 @@ function healingSourceSide(state: CombatState, context: RuntimeContext): CombatU
   const source = context.sourceCritterKey ? findUnit(state, context.sourceCritterKey) : undefined;
   // Rollcaster Abilities in the player runtime always belong to the user's
   // active Rollcaster and intentionally have no source Critter key.
-  return source?.side ?? (context.sourceOwnerType === "ability" ? "player" : "opponent");
+  return source?.side ?? context.sourceSide ?? (context.sourceOwnerType === "ability" ? "player" : "opponent");
 }
 
 function amplifiedHealingAmount(
@@ -2673,6 +2743,7 @@ function resolveReactiveEffects(
       const watched = effectTargets(next, String(p.target ?? ""), {
         sourceOwnerType: instance.sourceOwnerType,
         sourceOwnerId: instance.sourceOwnerId,
+        sourceSide: instance.sourceSide,
         sourceCritterKey: instance.sourceCritterKey,
         skillTargetKeys: [defender.key],
         attackerKey: attacker.key,
@@ -2716,6 +2787,7 @@ function resolveReactiveEffects(
       next = resolveEffect(next, parent, {
         sourceOwnerType: instance.sourceOwnerType,
         sourceOwnerId: instance.sourceOwnerId,
+        sourceSide: instance.sourceSide,
         sourceCritterKey: instance.sourceCritterKey,
         skillTargetKeys: p.target === "attacker_and_targets" ? [defender.key] : [attacker.key],
         attackerKey: attacker.key,
@@ -2733,6 +2805,7 @@ function resolveReactiveEffects(
     next = resolveChildEffects(next, parent, {
       sourceOwnerType: instance.sourceOwnerType,
       sourceOwnerId: instance.sourceOwnerId,
+      sourceSide: instance.sourceSide,
       sourceCritterKey: instance.sourceCritterKey,
       skillTargetKeys: targetKeys,
       attackerKey: attacker.key,
@@ -2860,6 +2933,7 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
     const context: RuntimeContext = {
       sourceOwnerType: instance.sourceOwnerType,
       sourceOwnerId: instance.sourceOwnerId,
+      sourceSide: instance.sourceSide,
       sourceCritterKey: instance.sourceCritterKey,
       skillTargetKeys: instance.targetCritterKey ? [instance.targetCritterKey] : undefined,
       parentInstanceId: instance.instanceId,
@@ -2961,11 +3035,6 @@ function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey
     },
     hpChanges: [],
   });
-}
-
-function swapPlayerUnit(state: CombatState, actorKey: string, swapToId: string): CombatState {
-  const incoming = state.playerUnits.find((unit) => unit.userCritter?.id === swapToId && !unit.active && unit.hp > 0);
-  return incoming ? swapCombatUnitByKey(state, actorKey, incoming.key) : state;
 }
 
 function resolvePostTurn(state: CombatState): CombatState {
@@ -3089,6 +3158,17 @@ function updateUnit(state: CombatState, key: string, updater: (unit: CombatUnit)
     playerUnits: state.playerUnits.map(update),
     opponentUnits: state.opponentUnits.map(update),
     log: [log, ...state.log],
+  };
+}
+
+function clearBlockStreak(state: CombatState, key: string): CombatState {
+  const clear = (unit: CombatUnit) => unit.key === key
+    ? { ...unit, blocking: false, blockStreak: 0 }
+    : unit;
+  return {
+    ...state,
+    playerUnits: state.playerUnits.map(clear),
+    opponentUnits: state.opponentUnits.map(clear),
   };
 }
 

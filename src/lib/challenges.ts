@@ -119,8 +119,15 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   const p = parametersOf(challenge);
   const expectedType = type === "squad_composition"
     ? String(p.completion_event ?? "battle_win") === "dungeon_clear" ? "dungeon_completed" : "battle_completed"
+    : type === "defeat_rollcaster_type" ? "battle_completed"
     : eventTypeFor(type);
   if (!expectedType || event.type !== expectedType) return 0;
+
+  if (type === "defeat_rollcaster_type") {
+    const payload = event.payload ?? {};
+    if (payload.won !== true) return 0;
+    return stringArray(p.rollcaster_types).includes(String(payload.enemy_rollcaster_type ?? "")) ? 1 : 0;
+  }
 
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(type)) {
     if (!matchesLegacyTarget(challenge, event)) return 0;

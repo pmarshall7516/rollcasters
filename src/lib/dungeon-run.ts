@@ -7,7 +7,7 @@ import {
   type CombatPresentationState,
   type CombatState,
 } from "./game.js";
-import { battlefieldSlotsForCount, opponentsForBattle, parseBattleFormat } from "./dungeons.js";
+import { battlefieldSlotsForCount, enemyEncounterForBattle, opponentsForBattle, parseBattleFormat } from "./dungeons.js";
 import type {
   Catalog,
   CombatAction,
@@ -20,12 +20,14 @@ import type {
 
 export type DungeonCombatPhase =
   | "lead_selection"
+  | "entry_dialogue"
   | "await_roll"
   | "roll_result"
   | "select_player_actions"
   | "event_playback"
   | "forced_replacements"
   | "battle_result"
+  | "outcome_dialogue"
   | "encounter_rewards"
   | "dungeon_complete"
   | "dungeon_failed";
@@ -76,7 +78,8 @@ export type DungeonRunState = {
   lastBattleRewards: DungeonRewardSummary | null;
   dungeonRewards: DungeonRewardSummary | null;
   nextDungeonId: string | null;
-  nextPhaseAfterRewards: "lead_selection" | "await_roll" | null;
+  nextPhaseAfterRewards: "lead_selection" | "entry_dialogue" | null;
+  dialogueMoment: "entry" | "victory" | "defeat" | null;
 };
 
 function encounterDungeon(dungeon: Dungeon, run: DungeonRunSnapshot): Dungeon {
@@ -106,6 +109,7 @@ function createEncounterBattle(
     `${run.id}:${run.battleIndex}`,
     opponentsForBattle(run),
     `${run.randomSeed}:${run.battleIndex}`,
+    enemyEncounterForBattle(run)?.enemyRollcaster,
   );
   const opponentSlots = battlefieldSlotsForCount(parseBattleFormat(run.battleFormat).opponentActiveCount);
   return {
@@ -173,9 +177,10 @@ export function createDungeonRunState(
     dungeonRewards: null,
     nextDungeonId: null,
     nextPhaseAfterRewards: null,
+    dialogueMoment: automatic && requiredLeadCount > 0 ? "entry" : null,
   };
   return automatic && requiredLeadCount > 0
-    ? activateSelectedLeads(initial, selectedLeadIds)
+    ? { ...activateSelectedLeads(initial, selectedLeadIds), phase: "entry_dialogue" }
     : initial;
 }
 
@@ -239,7 +244,22 @@ export function toggleDungeonLead(state: DungeonRunState, userCritterId: string)
 
 export function confirmDungeonLeads(state: DungeonRunState): DungeonRunState {
   if (state.selectedLeadIds.length !== state.requiredLeadCount || state.requiredLeadCount < 1) return state;
-  return activateSelectedLeads(state, state.selectedLeadIds);
+  return { ...activateSelectedLeads(state, state.selectedLeadIds), phase: "entry_dialogue", dialogueMoment: "entry" };
+}
+
+export function currentDungeonDialogue(state: DungeonRunState) {
+  const encounter = enemyEncounterForBattle(state.run);
+  if (!encounter || !state.dialogueMoment) return null;
+  const line = state.dialogueMoment === "entry"
+    ? encounter.entryLine
+    : state.dialogueMoment === "victory" ? encounter.victoryLine : encounter.defeatLine;
+  return line ? { speaker: encounter.enemyRollcaster.name, line: line.line_text, moment: state.dialogueMoment } : null;
+}
+
+export function continueDungeonDialogue(state: DungeonRunState): DungeonRunState {
+  if (state.phase === "entry_dialogue") return { ...state, phase: "await_roll", dialogueMoment: null };
+  if (state.phase === "outcome_dialogue") return { ...state, phase: "battle_result", dialogueMoment: null };
+  return state;
 }
 
 export function rollDungeonDice(state: DungeonRunState): DungeonRunState {
@@ -318,8 +338,9 @@ function applyEventState(battle: CombatState, event: DungeonCombatEvent | undefi
 function applyEventSwap(battle: CombatState, event: DungeonCombatEvent | undefined): CombatState {
   const swap = event?.swap;
   if (!swap) return battle;
-  const outgoing = battle.playerUnits.find((unit) => unit.key === swap.outgoingKey);
-  const incoming = battle.playerUnits.find((unit) => unit.key === swap.incomingKey);
+  const allUnits = [...battle.playerUnits, ...battle.opponentUnits];
+  const outgoing = allUnits.find((unit) => unit.key === swap.outgoingKey);
+  const incoming = allUnits.find((unit) => unit.key === swap.incomingKey);
   if (!outgoing || !incoming || incoming.hp <= 0) return battle;
   if (
     !outgoing.active
@@ -327,13 +348,15 @@ function applyEventSwap(battle: CombatState, event: DungeonCombatEvent | undefin
     && incoming.active
     && incoming.battlefieldSlot === swap.battlefieldSlot
   ) return battle;
+  const update = (unit: CombatState["playerUnits"][number]) => {
+    if (unit.key === swap.outgoingKey) return { ...unit, active: false, battlefieldSlot: null };
+    if (unit.key === swap.incomingKey) return { ...unit, active: true, battlefieldSlot: swap.battlefieldSlot };
+    return unit;
+  };
   return recomputeCombatStats({
     ...battle,
-    playerUnits: battle.playerUnits.map((unit) => {
-      if (unit.key === swap.outgoingKey) return { ...unit, active: false, battlefieldSlot: null };
-      if (unit.key === swap.incomingKey) return { ...unit, active: true, battlefieldSlot: swap.battlefieldSlot };
-      return unit;
-    }),
+    playerUnits: battle.playerUnits.map(update),
+    opponentUnits: battle.opponentUnits.map(update),
   });
 }
 
@@ -374,8 +397,9 @@ export function currentDungeonEvent(state: DungeonRunState): DungeonCombatEvent 
   if (!event || event.kind !== "swap" || event.swap || !event.actorKey || !event.targetKeys[0]) {
     return event ?? null;
   }
-  const outgoing = state.battle.playerUnits.find((unit) => unit.key === event.actorKey);
-  const incoming = state.battle.playerUnits.find((unit) => unit.key === event.targetKeys[0]);
+  const allUnits = [...state.battle.playerUnits, ...state.battle.opponentUnits];
+  const outgoing = allUnits.find((unit) => unit.key === event.actorKey);
+  const incoming = allUnits.find((unit) => unit.key === event.targetKeys[0]);
   const battlefieldSlot = outgoing?.battlefieldSlot ?? incoming?.battlefieldSlot;
   if (!outgoing || !incoming || battlefieldSlot === null || battlefieldSlot === undefined) return event;
   return {
@@ -427,8 +451,29 @@ function finishResolvedTurn(state: DungeonRunState): DungeonRunState {
   const activeHealthy = state.battle.playerUnits.filter((unit) => unit.active && unit.hp > 0);
   const allHealthy = state.battle.playerUnits.filter((unit) => unit.hp > 0);
   const opponentsAlive = state.battle.opponentUnits.some((unit) => unit.hp > 0);
-  if (!opponentsAlive) return { ...state, phase: "battle_result" };
-  if (allHealthy.length === 0) return { ...state, phase: "battle_result" };
+  if (!opponentsAlive) return { ...state, phase: "outcome_dialogue", dialogueMoment: "defeat" };
+  if (allHealthy.length === 0) return { ...state, phase: "outcome_dialogue", dialogueMoment: "victory" };
+  const opponentCapacity = parseBattleFormat(state.run.battleFormat).opponentActiveCount;
+  const healthyActiveOpponents = state.battle.opponentUnits.filter((unit) => unit.active && unit.hp > 0);
+  const healthyOpponentCount = state.battle.opponentUnits.filter((unit) => unit.hp > 0).length;
+  const requiredOpponents = Math.min(opponentCapacity, healthyOpponentCount);
+  if (healthyActiveOpponents.length < requiredOpponents) {
+    const configuredSlots = battlefieldSlotsForCount(opponentCapacity);
+    const occupied = new Set(healthyActiveOpponents.map((unit) => unit.battlefieldSlot).filter((slot): slot is number => slot !== null));
+    const available = configuredSlots.filter((slot) => !occupied.has(slot));
+    const reserves = state.battle.opponentUnits.filter((unit) => !unit.active && unit.hp > 0);
+    let reserveIndex = 0;
+    const opponentUnits = state.battle.opponentUnits.map((unit) => {
+      if (unit.active && unit.hp <= 0) return { ...unit, active: false, battlefieldSlot: null };
+      if (unit.key === reserves[reserveIndex]?.key && available.length > 0) {
+        const battlefieldSlot = available.shift() ?? null;
+        reserveIndex += 1;
+        return { ...unit, active: true, battlefieldSlot };
+      }
+      return unit;
+    });
+    state = { ...state, battle: recomputeCombatStats(refreshSetupRuntimeEffects({ ...state.battle, opponentUnits })) };
+  }
   const required = Math.min(parseBattleFormat(state.run.battleFormat).playerActiveCount, allHealthy.length);
   if (activeHealthy.length < required) {
     const fixedLeadIds = activeHealthy
@@ -531,12 +576,15 @@ export function applyDungeonBattleResult(
     participatedUserCritterIds: [],
     lastBattleRewards: result.battleRewards,
     nextPhaseAfterRewards: null,
+    dialogueMoment: null,
   };
-  const prepared = automatic ? activateSelectedLeads(next, selectedLeadIds) : next;
+  const prepared = automatic
+    ? { ...activateSelectedLeads(next, selectedLeadIds), phase: "entry_dialogue" as const, dialogueMoment: "entry" as const }
+    : next;
   return {
     ...prepared,
     phase: "encounter_rewards",
-    nextPhaseAfterRewards: prepared.phase === "await_roll" ? "await_roll" : "lead_selection",
+    nextPhaseAfterRewards: prepared.phase === "entry_dialogue" ? "entry_dialogue" : "lead_selection",
   };
 }
 

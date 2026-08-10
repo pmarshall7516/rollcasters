@@ -30,6 +30,7 @@ export const TRACKED_CHALLENGE_TYPES = new Set([
   "block_action",
   "dice_roll",
   "heal_hp",
+  "defeat_rollcaster_type",
 ]);
 
 export function safeBigInt(value: string | number | bigint | null | undefined): bigint {
@@ -260,6 +261,11 @@ function humanize(value: string): string {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter: string) => letter.toUpperCase());
 }
 
+function rollcasterTypeNames(parameters: Record<string, unknown>): string {
+  const ids = stringParameters(parameters, "rollcaster_types");
+  return ids.length ? ids.map(humanize).join(" or ") : "selected";
+}
+
 function challengeParameters(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
   if (challenge.parameters && typeof challenge.parameters === "object") return challenge.parameters;
   return {
@@ -354,6 +360,10 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
           : [];
       const qualifier = names.length ? ` ${names.join(", ")}` : "";
       return `Heal ${parameters.required_amount} HP on ${recipient ? `${recipient} ` : ""}${targetMode === "species" ? "Critters" : targetMode === "element" ? "Elements" : "Critters"}${qualifier}.`;
+    }
+    case "defeat_rollcaster_type": {
+      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
+      return `Defeat ${goal} ${rollcasterTypeNames(parameters)}-rank Rollcaster${goal === 1 ? "" : "s"}.`;
     }
     case "level_up_critter": {
       const id = String(challenge.target_id ?? parameters.critter_id ?? "");

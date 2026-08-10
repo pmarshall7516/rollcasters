@@ -20,6 +20,25 @@ export type CalculatedLoadoutStats = {
   skillCosts: Record<string, ActionCostBreakdown>;
 };
 
+export function nextOpenSquadSlot(
+  squadSlots: readonly { slot_index: number; user_critter_id: string | null }[],
+  requestedSlotIndex: number,
+  totalSlots = 5,
+): number {
+  const requested = Math.min(totalSlots, Math.max(1, Math.floor(requestedSlotIndex)));
+  const occupied = new Set(
+    squadSlots
+      .filter((slot) => slot.user_critter_id)
+      .map((slot) => slot.slot_index),
+  );
+
+  if (occupied.has(requested)) return requested;
+  for (let slotIndex = 1; slotIndex <= requested; slotIndex += 1) {
+    if (!occupied.has(slotIndex)) return slotIndex;
+  }
+  return requested;
+}
+
 type PassiveSource = {
   ownerType: "relic" | "ability";
   sourceCritterId?: string;

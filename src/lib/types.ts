@@ -16,6 +16,7 @@ export type CollectibleChallengeType =
   | "block_action"
   | "dice_roll"
   | "heal_hp"
+  | "defeat_rollcaster_type"
   | "shop_shards"
   | "shop_relic";
 
@@ -490,11 +491,56 @@ export type DungeonCompletionDrop = DungeonDrop & {
   phase: "first_time" | "regular";
 };
 
+export type EclipseOrderType = "acolyte" | "adept" | "leader";
+export type EnemyRollcasterPolicyKey = "random_action_v1" | (string & {});
+export type EnemyRollcasterDialogueMoment = "entry" | "victory" | "defeat";
+
+export type EnemyRollcasterDialogueLine = {
+  id: string;
+  enemy_rollcaster_id: string;
+  moment: EnemyRollcasterDialogueMoment;
+  line_text: string;
+  sequence_index: number;
+};
+
+export type DungeonEnemyRollcaster = {
+  id: string;
+  dungeon_id: string;
+  sequence_index: number;
+  name: string;
+  eclipse_order_type: EclipseOrderType;
+  asset_path: string;
+  selection_weight: number;
+  policy_key: EnemyRollcasterPolicyKey;
+  policy_revision: number;
+  policy_artifact_id: string | null;
+  ability_ids: string[];
+  dialogue_lines: EnemyRollcasterDialogueLine[];
+  currencyDrops: DungeonDrop[];
+  itemDrops: DungeonDrop[];
+};
+
+export type DungeonRegularEncounter = {
+  id: string;
+  dungeon_id: string;
+  sequence_index: number;
+  enemy_squad_size: number;
+};
+
+export type DungeonBossEncounter = {
+  id: string;
+  dungeon_id: string;
+  sequence_index: number;
+  enemy_rollcaster_id: string;
+};
+
 export type DungeonOpponent = {
   id: string;
   dungeon_id: string;
   pool_type: "regular_pool" | "boss_order";
   sequence_index: number | null;
+  boss_encounter_id?: string | null;
+  squad_slot?: number | null;
   probability: number | null;
   critter_id: string;
   critter_level: number;
@@ -539,6 +585,14 @@ export type DungeonRunSnapshot = {
     instanceId: string;
     battleIndex: number;
     battlefieldSlot: number;
+  }>;
+  selectedEnemyEncounters?: Array<{
+    battleIndex: number;
+    enemyRollcaster: DungeonEnemyRollcaster;
+    entryLine: EnemyRollcasterDialogueLine | null;
+    victoryLine: EnemyRollcasterDialogueLine | null;
+    defeatLine: EnemyRollcasterDialogueLine | null;
+    squadMemberInstanceIds: string[];
   }>;
   randomSeed: string;
   randomCursor: number;
@@ -698,6 +752,9 @@ export type Catalog = {
   relics: Relic[];
   dungeons: Dungeon[];
   dungeonOpponents: DungeonOpponent[];
+  dungeonEnemyRollcasters?: DungeonEnemyRollcaster[];
+  dungeonRegularEncounters?: DungeonRegularEncounter[];
+  dungeonBossEncounters?: DungeonBossEncounter[];
   dungeonCompletionDrops: DungeonCompletionDrop[];
   starterRollcasterOptions: StarterRollcasterOption[];
   starterOptions: StarterOption[];
@@ -750,6 +807,8 @@ export type CombatAction = {
   skillId?: string;
   targetKey?: string;
   swapToId?: string;
+  /** Stable combat-unit key used by either side. `swapToId` remains as a v1 player-run compatibility field. */
+  swapInKey?: string;
   swapTargetKey?: string;
   targetSlotSide?: "player" | "opponent";
   targetSlotIndex?: number;

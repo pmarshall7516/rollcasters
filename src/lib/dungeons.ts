@@ -123,6 +123,10 @@ export function opponentsForBattle(run: DungeonRunSnapshot, battleIndex = run.ba
     .sort((left, right) => left.battlefieldSlot - right.battlefieldSlot);
 }
 
+export function enemyEncounterForBattle(run: DungeonRunSnapshot, battleIndex = run.battleIndex) {
+  return (run.selectedEnemyEncounters ?? []).find((encounter) => encounter.battleIndex === battleIndex) ?? null;
+}
+
 export function formatProbability(probability: number): string {
   const percent = probability * 100;
   const digits = Number.isInteger(percent) ? 0 : 2;

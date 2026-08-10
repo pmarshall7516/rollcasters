@@ -1,4 +1,4 @@
-import { calculateLoadoutStats } from "../src/lib/loadout.js";
+import { calculateLoadoutStats, nextOpenSquadSlot } from "../src/lib/loadout.js";
 import { challengeDescription, collectibleIsUnlocked, completedTrackedChallengeIds, progressFor, trackedChallengesForDisplay, trackedSlotFor } from "../src/lib/collectibles.js";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion } from "../src/lib/notifications.js";
 import { relicSlotUnlocks, xpProgress } from "../src/lib/progression.js";
@@ -131,6 +131,27 @@ check(calculated.skillCosts["starter-skill"]?.final === 2, "A Mana Talisman-styl
 check(calculated.skillCosts["starter-skill"]?.sources[0]?.amount === -1 && calculated.skillCosts["starter-skill"]?.sources[0]?.sourceName === "Guard Charm", "Skill cost breakdowns must retain the discount source.");
 check(calculated.skillCosts["bloom-attack"]?.final === 1, "Skill action-cost filters must match the Skill type and Element in loadout previews without filtering the receiving Critter by Skill Element.");
 check(calculated.breakdowns.def?.sources.map((source) => source.amount).join(",") === "3,-2", "The DEF tooltip must retain positive and negative source deltas in resolution order.");
+
+check(nextOpenSquadSlot([
+  { slot_index: 1, user_critter_id: "owned-hero" },
+  { slot_index: 2, user_critter_id: "owned-ally" },
+  { slot_index: 3, user_critter_id: null },
+], 5) === 3, "A new Critter requested for slot 5 must use the first open slot below it.");
+check(nextOpenSquadSlot([
+  { slot_index: 1, user_critter_id: "owned-hero" },
+  { slot_index: 2, user_critter_id: "owned-ally" },
+  { slot_index: 3, user_critter_id: null },
+], 4) === 3, "A new Critter requested for slot 4 must use the first open slot below it.");
+check(nextOpenSquadSlot([
+  { slot_index: 1, user_critter_id: "owned-hero" },
+  { slot_index: 2, user_critter_id: "owned-ally" },
+  { slot_index: 3, user_critter_id: null },
+], 3) === 3, "A new Critter requested for its open slot must remain in that slot.");
+check(nextOpenSquadSlot([
+  { slot_index: 1, user_critter_id: "owned-hero" },
+  { slot_index: 2, user_critter_id: "owned-ally" },
+  { slot_index: 3, user_critter_id: "owned-third" },
+], 3) === 3, "An occupied requested slot must remain stable for replacements and removals.");
 
 const trackedChallenge = (id: string): CollectibleUnlockChallenge => ({
   id,

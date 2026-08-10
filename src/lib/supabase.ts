@@ -10,11 +10,14 @@ import type {
   CombatProgressEvent,
   Critter,
   DungeonCompletionDrop,
+  DungeonBossEncounter,
   DungeonBattleResult,
+  DungeonEnemyRollcaster,
   ActiveDungeonRun,
   DungeonDrop,
   DungeonOpponent,
   DungeonOpponentStatOverride,
+  DungeonRegularEncounter,
   DungeonRunSnapshot,
   ElementDef,
   ElementEffectiveness,
@@ -76,6 +79,13 @@ const LIVE_CATALOG_COLUMNS: Record<string, string> = {
   relics: "id,name,description,max_owned,asset_path,sort_order,is_active,is_archived",
   dungeons: "id,name,description,dungeon_type,difficulty,battle_format,battle_count,player_active_count,opponent_active_count,encounter_count,next_dungeon_id,regular_logo_path,boss_logo_path,sort_order,is_active,is_archived,version",
   dungeon_opponents: "id,dungeon_id,pool_type,sequence_index,probability,critter_id,critter_level,skill_ids,relic_ids,rollcaster_xp_reward,critter_xp_reward,currency_reward,drops",
+  dungeon_enemy_rollcasters: "id,dungeon_id,sequence_index,name,eclipse_order_type,asset_path,selection_weight,policy_key,policy_revision,policy_artifact_id",
+  dungeon_enemy_rollcaster_abilities: "enemy_rollcaster_id,rollcaster_ability_id,slot_index",
+  dungeon_enemy_rollcaster_dialogue: "id,enemy_rollcaster_id,moment,line_text,sequence_index",
+  dungeon_enemy_rollcaster_currency_drops: "id,enemy_rollcaster_id,currency_id,min_amount,max_amount,probability,sort_order",
+  dungeon_enemy_rollcaster_item_drops: "id,enemy_rollcaster_id,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
+  dungeon_regular_encounters: "id,dungeon_id,sequence_index,enemy_squad_size",
+  dungeon_boss_encounters: "id,dungeon_id,sequence_index,enemy_rollcaster_id",
   dungeon_opponent_skills: "opponent_id,skill_id,slot_index",
   dungeon_opponent_relics: "opponent_id,relic_id,slot_index",
   dungeon_opponent_stat_overrides: "opponent_id,stat_key,value",
@@ -391,6 +401,13 @@ async function fetchLiveCatalog(): Promise<Catalog> {
     relics,
     dungeons,
     rawDungeonOpponents,
+    rawEnemyRollcasters,
+    enemyRollcasterAbilities,
+    enemyRollcasterDialogue,
+    enemyRollcasterCurrencyDrops,
+    enemyRollcasterItemDrops,
+    dungeonRegularEncounters,
+    dungeonBossEncounters,
     dungeonOpponentSkills,
     dungeonOpponentRelics,
     dungeonOpponentStatOverrides,
@@ -417,6 +434,13 @@ async function fetchLiveCatalog(): Promise<Catalog> {
     selectAll("relics"),
     selectAll("dungeons"),
     selectAll<DungeonOpponent>("dungeon_opponents", "sequence_index"),
+    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcasters", "sequence_index"),
+    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcaster_abilities", "slot_index"),
+    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcaster_dialogue", "sequence_index"),
+    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcaster_currency_drops", "sort_order"),
+    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcaster_item_drops", "sort_order"),
+    selectAllOptional<DungeonRegularEncounter>("dungeon_regular_encounters", "sequence_index"),
+    selectAllOptional<DungeonBossEncounter>("dungeon_boss_encounters", "sequence_index"),
     selectAll<RawDungeonOpponentSkill>("dungeon_opponent_skills", "slot_index"),
     selectAll<RawDungeonOpponentRelic>("dungeon_opponent_relics", "slot_index"),
     selectAllOptional<DungeonOpponentStatOverride>("dungeon_opponent_stat_overrides", "stat_key"),
@@ -437,6 +461,30 @@ async function fetchLiveCatalog(): Promise<Catalog> {
   const overridesByOpponent = groupBy(dungeonOpponentStatOverrides, (row) => row.opponent_id);
   const currencyDropsByOpponent = groupBy(dungeonOpponentCurrencyDrops, (row) => row.opponent_id);
   const itemDropsByOpponent = groupBy(dungeonOpponentItemDrops, (row) => row.opponent_id);
+  const abilitiesByEnemyRollcaster = groupBy(enemyRollcasterAbilities, (row) => String(row.enemy_rollcaster_id));
+  const dialogueByEnemyRollcaster = groupBy(enemyRollcasterDialogue, (row) => String(row.enemy_rollcaster_id));
+  const currencyByEnemyRollcaster = groupBy(enemyRollcasterCurrencyDrops, (row) => String(row.enemy_rollcaster_id));
+  const itemsByEnemyRollcaster = groupBy(enemyRollcasterItemDrops, (row) => String(row.enemy_rollcaster_id));
+  const dungeonEnemyRollcasters: DungeonEnemyRollcaster[] = rawEnemyRollcasters.map((row) => ({
+    id: String(row.id),
+    dungeon_id: String(row.dungeon_id),
+    sequence_index: Number(row.sequence_index),
+    name: String(row.name),
+    eclipse_order_type: String(row.eclipse_order_type) as DungeonEnemyRollcaster["eclipse_order_type"],
+    asset_path: String(row.asset_path),
+    selection_weight: Number(row.selection_weight),
+    policy_key: String(row.policy_key) as DungeonEnemyRollcaster["policy_key"],
+    policy_revision: Number(row.policy_revision ?? 1),
+    policy_artifact_id: row.policy_artifact_id ? String(row.policy_artifact_id) : null,
+    ability_ids: (abilitiesByEnemyRollcaster.get(String(row.id)) ?? []).sort((a, b) => Number(a.slot_index) - Number(b.slot_index)).map((item) => String(item.rollcaster_ability_id)),
+    dialogue_lines: (dialogueByEnemyRollcaster.get(String(row.id)) ?? []).sort((a, b) => Number(a.sequence_index) - Number(b.sequence_index)).map((item) => ({
+      id: String(item.id), enemy_rollcaster_id: String(item.enemy_rollcaster_id),
+      moment: String(item.moment) as DungeonEnemyRollcaster["dialogue_lines"][number]["moment"],
+      line_text: String(item.line_text), sequence_index: Number(item.sequence_index),
+    })),
+    currencyDrops: (currencyByEnemyRollcaster.get(String(row.id)) ?? []).map((item) => normalizeDungeonDrop(item as unknown as RawDungeonCurrencyDrop)),
+    itemDrops: (itemsByEnemyRollcaster.get(String(row.id)) ?? []).map((item) => normalizeDungeonDrop(item as unknown as RawDungeonItemDrop)),
+  }));
   const dungeonOpponents = rawDungeonOpponents.map((opponent) => {
     const skills = (skillsByOpponent.get(opponent.id) ?? [])
       .sort((left, right) => left.slot_index - right.slot_index)
@@ -524,6 +572,9 @@ async function fetchLiveCatalog(): Promise<Catalog> {
     relics,
     dungeons: normalizedDungeons,
     dungeonOpponents,
+    dungeonEnemyRollcasters,
+    dungeonRegularEncounters,
+    dungeonBossEncounters,
     dungeonCompletionDrops: rawDungeonCompletionDrops.map(normalizeCompletionDrop),
     starterRollcasterOptions,
     starterOptions,
@@ -828,6 +879,7 @@ function normalizeDungeonRunSnapshot(payload: DungeonRunSnapshot): DungeonRunSna
     version: Number(payload.version),
     selectedOpponents: (payload.selectedOpponents ?? [])
       .map((opponent) => normalizeRuntimeOpponent(opponent as unknown as Record<string, unknown>)),
+    selectedEnemyEncounters: payload.selectedEnemyEncounters ?? [],
     rewards: {
       entries: payload.rewards?.entries ?? [],
       defeatedOpponentInstanceIds: payload.rewards?.defeatedOpponentInstanceIds ?? [],
@@ -843,10 +895,23 @@ export async function startDungeonRun(
   requestId = createRequestId(),
 ): Promise<DungeonRunSnapshot> {
   const client = requireClient();
-  const { data, error } = await client.rpc("start_dungeon_run_v2", {
+  let { data, error } = await client.rpc("start_dungeon_run_v3", {
     p_dungeon_id: dungeonId,
     p_request_id: requestId,
   });
+  const v3Unavailable = error && (
+    error.code === "42883"
+    || error.message.includes("DUNGEON_ROLLCASTERS_MISSING")
+    || error.message.includes("DUNGEON_ENCOUNTERS_MISSING")
+  );
+  if (v3Unavailable) {
+    const legacy = await client.rpc("start_dungeon_run_v2", {
+      p_dungeon_id: dungeonId,
+      p_request_id: requestId,
+    });
+    data = legacy.data;
+    error = legacy.error;
+  }
   if (error) throw error;
   const run = normalizeDungeonRunSnapshot(data as DungeonRunSnapshot);
   if (!run.id || run.selectedOpponents.length === 0) {
@@ -865,7 +930,7 @@ export async function recordDungeonBattleResult(
   },
   requestId = createRequestId(),
 ): Promise<DungeonBattleResult> {
-  const { data, error } = await requireClient().rpc("record_dungeon_battle_result", {
+  const { data, error } = await requireClient().rpc("record_dungeon_battle_result_v2", {
     p_run_id: run.id,
     p_expected_battle_index: run.battleIndex,
     p_outcome: submission.outcome,

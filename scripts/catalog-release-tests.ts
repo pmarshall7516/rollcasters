@@ -66,7 +66,7 @@ const emptyCatalog: Catalog = {
   currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], lootboxes: [], lootboxPoolEntries: [],
   elements: [], elementEffectiveness: [], skills: [], critters: [], critterProgression: [], critterSkillUnlocks: [],
   rollcasters: [], rollcasterProgression: [], rollcasterAbilities: [], rollcasterAbilityUnlocks: [], relics: [],
-  dungeons: [], dungeonOpponents: [], dungeonCompletionDrops: [], starterRollcasterOptions: [], starterOptions: [],
+  dungeons: [], dungeonOpponents: [], dungeonEnemyRollcasters: [], dungeonRegularEncounters: [], dungeonBossEncounters: [], dungeonCompletionDrops: [], starterRollcasterOptions: [], starterOptions: [],
   gameAssets: [], statuses: [], effectsBySkill: {}, effectsByAbility: {}, effectsByRelic: {}, effectsByStatus: {},
   dungeonOpponentStatOverrides: [],
 };

@@ -146,6 +146,14 @@ async function chooseSwapAction(page, { assertLoading = false } = {}) {
     check(await narration.isDisabled(), "Combat narration must be disabled while the turn is loading.");
     check(await narration.getAttribute("data-combat-control") === null, "Loading narration must be removed from combat keyboard controls.");
     check(!(await narration.getAttribute("class"))?.includes("combat-keyboard-invalid"), "Loading narration must not show the invalid-selection border.");
+    const loadingAnimations = await page.evaluate(() => [...document.querySelectorAll(".combat-screen *")]
+      .flatMap((element) => [...element.getAnimations()]
+        .filter((animation) => animation.playState === "running")
+        .map((animation) => ({
+          element: `${element.tagName.toLowerCase()}.${element.className.toString().replaceAll(" ", ".")}`,
+          animationName: animation.animationName,
+        }))));
+    check(loadingAnimations.length === 0, `Combat presentation animations must not start until the turn finishes loading: ${JSON.stringify(loadingAnimations)}`);
   }
   return {
     outgoingId: outgoing.id,
@@ -742,8 +750,10 @@ try {
     fullPage: false,
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.locator(".combat-ability-slot").first().hover();
-  const tooltipBounds = await page.locator(".viewport-game-tooltip.viewport-tooltip-visible").first().evaluate((tooltip) => {
+  async function hoverTooltipAndReadBounds(trigger) {
+    await trigger.hover();
+    await page.waitForTimeout(240);
+    return page.locator(".viewport-game-tooltip.viewport-tooltip-visible").first().evaluate((tooltip) => {
     const rect = tooltip.getBoundingClientRect();
     return {
       left: rect.left,
@@ -753,14 +763,27 @@ try {
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
     };
-  });
-  check(
-    tooltipBounds.left >= 0
-      && tooltipBounds.top >= 0
-      && tooltipBounds.right <= tooltipBounds.viewportWidth
-      && tooltipBounds.bottom <= tooltipBounds.viewportHeight,
-    `Combat tooltips must shift fully inside the viewport: ${JSON.stringify(tooltipBounds)}`,
-  );
+    });
+  }
+  const tooltipTriggers = [
+    ["user ability", page.locator(".rollcaster-mana-panel .combat-ability-slot:not(.empty)").first()],
+    ["enemy ability", page.locator(".enemy-mana-panel .combat-ability-slot:not(.empty)").first()],
+    ["enemy Critter squad icon", page.locator(".enemy-mana-panel .combat-squad-slot").first()],
+  ];
+  for (const [label, trigger] of tooltipTriggers) {
+    const tooltipBounds = await hoverTooltipAndReadBounds(trigger);
+    check(
+      tooltipBounds.left >= 0
+        && tooltipBounds.top >= 0
+        && tooltipBounds.right <= tooltipBounds.viewportWidth
+        && tooltipBounds.bottom <= tooltipBounds.viewportHeight,
+      `${label} tooltip must stay fully inside the viewport: ${JSON.stringify(tooltipBounds)}`,
+    );
+    await page.locator(".combat-screen").screenshot({
+      path: path.join(outputDir, `combat-tooltip-${label.replaceAll(" ", "-")}.png`),
+      animations: "disabled",
+    });
+  }
   await page.mouse.move(700, 90);
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileCombat = await page.evaluate(() => ({

@@ -83,6 +83,7 @@ try {
                   <span class="combat-sprite-frame rollcaster-combat-frame"><span class="fixture-sprite">RC</span></span>
                   <h3>Roland</h3>
                   <strong class="combat-mana-total">Mana 7</strong>
+                  <div class="combat-squad-grid"><span class="combat-squad-slot reserve" data-combat-squad-unit-key="outgoing"><span class="fixture-sprite">OUT</span></span></div>
                 </aside>
                 <div class="battle-column player-column">
                   <article class="battle-unit combat-empty-slot" aria-label="Inactive player slot"></article>
@@ -125,7 +126,7 @@ try {
   const motion = await page.evaluate(() => {
     const unit = document.querySelector("[data-combat-unit-key='outgoing']");
     const source = unit.querySelector(".critter-combat-frame").getBoundingClientRect();
-    const destination = document.querySelector(".rollcaster-combat-frame").getBoundingClientRect();
+    const destination = document.querySelector("[data-combat-squad-unit-key='outgoing']").getBoundingClientRect();
     const x = destination.left + destination.width / 2 - (source.left + source.width / 2);
     const y = destination.top + destination.height / 2 - (source.top + source.height / 2);
     unit.style.setProperty("--combat-swap-x", `${x}px`);
@@ -170,7 +171,7 @@ try {
   });
   check(
     outgoing.visualState === "outgoing"
-      && outgoing.animationName === "combat-swap-to-rollcaster"
+      && outgoing.animationName === "combat-swap-to-squad"
       && outgoing.transform !== "none"
       && outgoing.narrationDisabled,
     `Outgoing playback must animate toward the Rollcaster while narration is locked: ${JSON.stringify(outgoing)}`,

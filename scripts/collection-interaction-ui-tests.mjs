@@ -129,6 +129,9 @@ try {
   if (result.descriptionSection.title !== "Description" || !result.descriptionSection.text || !result.descriptionSection.visible || !result.descriptionSection.beforeBottomSpacer) throw new Error(`Collectible description section failed: ${JSON.stringify(result.descriptionSection)}`);
   if ((appSource.match(/<CollectibleDescriptionSection description=/g) ?? []).length !== 3) throw new Error("Critter, Relic, and Rollcaster detail popups must each render the shared description section.");
   if (!appSource.includes("initial?.focus({ preventScroll: true });") || !appSource.includes("if (modal) modal.scrollTop = 0;")) throw new Error("Modal opening must focus without scrolling and reset the pane to the top.");
+  const relicEquipSource = appSource.match(/} else if \(target\.type === "relic"\) \{[\s\S]*?} else if \(target\.type === "ability"\)/)?.[0] ?? "";
+  if (!relicEquipSource.includes("return <GameTooltip key={relic.id} label={details}")) throw new Error("Equip Relic candidates must use the shared hover/focus tooltip.");
+  if (relicEquipSource.includes("relic-candidate-effects") || !relicEquipSource.includes("attachmentRows(effects, sourceCritter)")) throw new Error("Equip Relic cards must keep effects out of the card and render them in the colored tooltip.");
 
   const screenshot = path.join(outputDir, "skills-abilities-stats-modal.png");
   await page.screenshot({ path: screenshot, fullPage: true });

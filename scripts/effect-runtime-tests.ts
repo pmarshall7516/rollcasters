@@ -3,6 +3,7 @@ import {
   calculateActionCost,
   calculateSkillDamage,
   classifyEffectiveness,
+  chooseRandomEnemyActions,
   combatEffectSummaries,
   createInitialCombatState,
   critterElementIds,
@@ -23,7 +24,9 @@ import {
 import {
   advanceDungeonEvent,
   confirmDungeonLeads,
+  continueDungeonDialogue,
   createDungeonRunState,
+  currentDungeonDialogue,
   currentDungeonEvent,
   revealDungeonSwapEvent,
   type DungeonRunState,
@@ -165,6 +168,20 @@ function battle(catalog: Catalog, player = makePlayer(), runId = "test-run") {
 function takeTurn(state: ReturnType<typeof battle>, actions: CombatAction[], mana = 50) {
   return resolveTurn({ ...state, phase: "selecting", playerMana: mana }, actions);
 }
+
+const randomPolicyBase = battle(makeCatalog(), makePlayer(), "random-policy");
+const randomPolicyState = {
+  ...randomPolicyBase,
+  enemyPolicyKey: "random_action_v1",
+  opponentMana: 99,
+  opponentUnits: randomPolicyBase.opponentUnits.map((unit) => ({ ...unit, skills: [makeCatalog().skills[0]] })),
+};
+const randomPolicyTypes = new Set<CombatAction["type"]>();
+for (let rngState = 1; rngState <= 64; rngState += 1) {
+  for (const action of chooseRandomEnemyActions({ ...randomPolicyState, rngState })) randomPolicyTypes.add(action.type);
+}
+check(randomPolicyTypes.has("block") && randomPolicyTypes.has("skill"), "Random Action must sample both Block and affordable equipped Skills.");
+check(!randomPolicyTypes.has("swap"), "Random Action must never choose a voluntary Swap; swapping remains a learned policy action.");
 
 const eventCatalog = makeCatalog();
 check(critterElementIds(eventCatalog.critters[0]).join(",") === "basic", "A one-type Critter must expose only Element 1.");
@@ -406,14 +423,18 @@ const manaForceAction = (state: ReturnType<typeof battle>) => [{ actorKey: state
 let manaForceActivated = false;
 let manaForceSkipped = false;
 for (let seedIndex = 0; seedIndex < 100 && (!manaForceActivated || !manaForceSkipped); seedIndex += 1) {
-  const result = takeTurn({ ...battle(manaForceCatalog, manaForcePlayer, `mana-force-${seedIndex}`), opponentMana: 3 }, manaForceAction(battle(manaForceCatalog, manaForcePlayer, `mana-force-action-${seedIndex}`)), 5);
+  const seeded = battle(manaForceCatalog, manaForcePlayer, `mana-force-${seedIndex}`);
+  const noEnemyAction = { ...seeded, opponentMana: 3, opponentUnits: seeded.opponentUnits.map((unit) => ({ ...unit, stats: { ...unit.stats, blockCost: 99 }, persistentStats: { ...unit.persistentStats, blockCost: 99 } })) };
+  const result = takeTurn(noEnemyAction, manaForceAction(noEnemyAction), 5);
   manaForceActivated ||= result.playerMana === 6 && result.opponentMana === 2;
   manaForceSkipped ||= result.playerMana === 5 && result.opponentMana === 3;
 }
 check(manaForceActivated && manaForceSkipped, "Mana Force's 50% activation chance must produce both transfer and no-transfer outcomes.");
 const guaranteedManaForceCatalog = structuredClone(manaForceCatalog);
 guaranteedManaForceCatalog.effectsBySkill[manaForce.id][0].parameters = { ...manaForceParameters, activation_chance: 0 };
-const guaranteedManaForce = takeTurn({ ...battle(guaranteedManaForceCatalog, manaForcePlayer, "mana-force-zero"), opponentMana: 3 }, manaForceAction(battle(guaranteedManaForceCatalog, manaForcePlayer, "mana-force-zero-action")), 5);
+const guaranteedSeed = battle(guaranteedManaForceCatalog, manaForcePlayer, "mana-force-zero");
+const guaranteedNoEnemyAction = { ...guaranteedSeed, opponentMana: 3, opponentUnits: guaranteedSeed.opponentUnits.map((unit) => ({ ...unit, stats: { ...unit.stats, blockCost: 99 }, persistentStats: { ...unit.persistentStats, blockCost: 99 } })) };
+const guaranteedManaForce = takeTurn(guaranteedNoEnemyAction, manaForceAction(guaranteedNoEnemyAction), 5);
 check(guaranteedManaForce.playerMana === 5 && guaranteedManaForce.opponentMana === 3, "Mana Force activation chance zero must not transfer Mana.");
 
 const voltSwitchCatalog = makeCatalog();
@@ -433,6 +454,15 @@ check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p1")?.active ===
 check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p3")?.active === true, "Swap After Attack must activate the selected healthy friendly Critter.");
 check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p3")?.battlefieldSlot === 0, "Swap After Attack must preserve the outgoing Critter's battlefield slot.");
 check(voltSwitchResult.presentationEvents.findIndex((event) => event.kind === "damage") < voltSwitchResult.presentationEvents.findIndex((event) => event.kind === "swap"), "Swap After Attack must present the attack before the forced swap.");
+const voltSwitchWithoutTarget = takeTurn(voltSwitchBattle, [{ actorKey: "p1", type: "skill", skillId: voltSwitch.id, targetKey: "o1", cost: 0 }], 0);
+check(voltSwitchWithoutTarget.playerUnits.find((unit) => unit.key === "p1")?.active === true, "Swap After Attack must not swap when no healthy reserve is selected.");
+check(!voltSwitchWithoutTarget.presentationEvents.some((event) => event.kind === "swap"), "Swap After Attack must not emit a swap presentation without a valid reserve target.");
+const voltSwitchNoHealthyReserve = {
+  ...voltSwitchBattle,
+  playerUnits: voltSwitchBattle.playerUnits.map((unit) => unit.key === "p3" ? { ...unit, hp: 0 } : unit),
+};
+const noHealthyReserveResult = takeTurn(voltSwitchNoHealthyReserve, [{ actorKey: "p1", type: "skill", skillId: voltSwitch.id, targetKey: "o1", cost: 0 }], 0);
+check(noHealthyReserveResult.playerUnits.find((unit) => unit.key === "p1")?.active === true, "Swap After Attack must leave the attacker active when every reserve is knocked out.");
 
 const mechanicalPressCatalog = makeCatalog();
 const mechanicalPress = { ...mechanicalPressCatalog.skills[0], id: "mechanical-press", name: "Mechanical Press" };
@@ -758,6 +788,36 @@ check(
 const resetBlock = takeTurn(blockFailure!, [{ actorKey: "p1", type: "block", cost: 3 }], 10);
 check(resetBlock.playerUnits[0].blocking && resetBlock.playerUnits[0].blockStreak === 1, "A failed Block must reset the next Block odds to 1/1 and allow it to succeed.");
 check(resetBlock.presentationEvents.some((event) => event.kind === "block" && event.message === "Your Player One blocks."), "A reset successful Block must use the concise success narration.");
+
+const nonConsecutiveBlock = takeTurn(
+  takeTurn(
+    takeTurn(battle(makeCatalog(), makePlayer(), "non-consecutive-block"), [{ actorKey: "p1", type: "block", cost: 3 }], 10),
+    [{ actorKey: "p1", type: "skip", cost: 0 }],
+    10,
+  ),
+  [{ actorKey: "p1", type: "block", cost: 3 }],
+  10,
+);
+check(nonConsecutiveBlock.playerUnits[0].blocking && nonConsecutiveBlock.playerUnits[0].blockStreak === 1, "A non-Block action must reset the next Block to full odds.");
+
+let enemyBlockFailure: ReturnType<typeof battle> | null = null;
+for (let seedIndex = 0; seedIndex < 1000 && !enemyBlockFailure; seedIndex += 1) {
+  const base = battle(makeCatalog(), makePlayer(), `enemy-block-odds-${seedIndex}`);
+  const enemyOnly = {
+    ...base,
+    opponentMana: 10,
+    opponentUnits: base.opponentUnits.map((unit, index) => index === 0 ? { ...unit, skills: [] } : { ...unit, active: false, battlefieldSlot: null, skills: [] }),
+  };
+  const first = takeTurn(enemyOnly, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+  const second = takeTurn(first, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+  const enemy = second.opponentUnits[0];
+  if (!enemy.blocking && enemy.blockStreak === 0) enemyBlockFailure = second;
+}
+check(enemyBlockFailure, "The legacy main-game enemy policy must submit Blocks and expose consecutive-block failure odds.");
+check(
+  enemyBlockFailure!.presentationEvents.filter((event) => event.kind === "block" && event.actorKey === "o1").map((event) => event.message).join("|") === "The enemy Opponent One blocks.|Opponent One's block failed.",
+  "Enemy Block declarations and failures must use the same presentation sequence as user Blocks.",
+);
 
 const knockoutCatalog = makeCatalog();
 knockoutCatalog.dungeonOpponents[0].skill_ids = ["strike"];
@@ -1167,6 +1227,33 @@ check(passive.opponentUnits[0].stats.atk === 22 && passive.opponentUnits[1].stat
 check(passive.opponentUnits[0].stats.spd === 10 && passive.opponentUnits[1].stats.spd === 8, "Relic all_enemies must resolve relative to its carrier.");
 check(passive.opponentUnits[0].stats.diceMin === 1 && passive.opponentUnits[1].stats.diceMin === 4 && passive.opponentUnits[1].stats.diceMax === 8, "Ability element enemy targeting must filter active opponents by element.");
 
+const enemyAbilityCatalog = makeCatalog();
+enemyAbilityCatalog.effectsByAbility = {
+  "friendly-stat": [effect("ability", "friendly-stat", "enemy-owned-friendly-stat", "stat_modifier", { stat: "def", value_mode: "percentage", amount: 0.1, target: "all_friendlies" })],
+  "enemy-stat": [effect("ability", "enemy-stat", "enemy-owned-enemy-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: -2, target: "all_enemies" })],
+};
+const enemyAbilityState = createInitialCombatState(
+  enemyAbilityCatalog,
+  makePlayer(),
+  enemyAbilityCatalog.dungeons[0],
+  "enemy-ability-relative-targets",
+  undefined,
+  "enemy-ability-relative-targets",
+  { ability_ids: ["friendly-stat", "enemy-stat"] },
+);
+check(
+  enemyAbilityState.opponentUnits[0].stats.def === 28 && enemyAbilityState.opponentUnits[1].stats.def === 22,
+  "An enemy Rollcaster Ability targeting all_friendlies must affect the enemy Critters, not the player's side.",
+);
+check(
+  enemyAbilityState.playerUnits[0].stats.atk === 23 && enemyAbilityState.playerUnits[1].stats.atk === 18,
+  "An enemy Rollcaster Ability targeting all_enemies must affect the player's Critters; ownership must never restrict an Ability to its own side.",
+);
+check(
+  enemyAbilityState.playerUnits[0].stats.def === 25 && enemyAbilityState.opponentUnits[0].stats.atk === 24,
+  "Enemy Rollcaster targeting must follow only the authored target selector and must not leak across sides.",
+);
+
 const mechCoreCatalog = makeCatalog();
 mechCoreCatalog.elements.push(
   { id: "mechanical", name: "Mechanical", description: null, asset_path: null, sort_order: 3 },
@@ -1244,6 +1331,18 @@ const mechRun = {
     battleIndex: 0,
     battlefieldSlot: index + 1,
   })),
+  selectedEnemyEncounters: [{
+    battleIndex: 0,
+    enemyRollcaster: {
+      id: "eclipse-test", dungeon_id: "d", sequence_index: 0, name: "Acolyte Test", eclipse_order_type: "acolyte",
+      asset_path: "eclipse-order/001-acolyte-1.png", selection_weight: 1, policy_key: "random_action_v1", policy_revision: 1,
+      policy_artifact_id: null, ability_ids: [], dialogue_lines: [], currencyDrops: [], itemDrops: [],
+    },
+    entryLine: { id: "entry", enemy_rollcaster_id: "eclipse-test", moment: "entry", line_text: "Face the Order.", sequence_index: 0 },
+    victoryLine: { id: "victory", enemy_rollcaster_id: "eclipse-test", moment: "victory", line_text: "Your squad falls.", sequence_index: 0 },
+    defeatLine: { id: "defeat", enemy_rollcaster_id: "eclipse-test", moment: "defeat", line_text: "This is not over.", sequence_index: 0 },
+    squadMemberInstanceIds: ["mech-opponent-0", "mech-opponent-1"],
+  }],
   randomSeed: "mech-run-seed",
   randomCursor: 0,
   status: "started",
@@ -1254,6 +1353,28 @@ const mechDungeonState = createDungeonRunState(mechCoreCatalog, mechCorePlayer, 
 check(mechDungeonState.battle.playerUnits.every((unit) => unit.shield === 0), "Dungeon lead selection must not apply a Shield before the encounter starts.");
 const confirmedMechDungeon = confirmDungeonLeads({ ...mechDungeonState, selectedLeadIds: ["up1", "up2"] });
 check(confirmedMechDungeon.battle.playerUnits[0].shield === 10 && confirmedMechDungeon.battle.playerUnits[1].shield === 0, "Dungeon encounter start must apply Mech Core only to the selected Mechanical lead.");
+check(confirmedMechDungeon.phase === "entry_dialogue" && currentDungeonDialogue(confirmedMechDungeon)?.line === "Face the Order.", "Entry dialogue must gate the first Mana roll after lead selection.");
+check(continueDungeonDialogue(confirmedMechDungeon).phase === "await_roll", "Clicking through a fully displayed Entry line must start the encounter.");
+const enemyDefeatedDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "defeat" as const };
+check(currentDungeonDialogue(enemyDefeatedDialogue)?.line === "This is not over." && continueDungeonDialogue(enemyDefeatedDialogue).phase === "battle_result", "A user victory must show the enemy Defeat line before encounter results.");
+const enemyVictoryDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "victory" as const };
+check(currentDungeonDialogue(enemyVictoryDialogue)?.line === "Your squad falls.", "A user defeat must show the enemy Victor line.");
+const opponentReserve = { ...confirmedMechDungeon.battle.opponentUnits[1], key: "opponent-reserve", active: false, battlefieldSlot: null };
+const opponentAfterKnockout = confirmedMechDungeon.battle.opponentUnits
+  .map((unit, index) => index === 0 ? { ...unit, hp: 0 } : unit)
+  .concat(opponentReserve);
+const forcedEnemyReplacement = advanceDungeonEvent({
+  ...confirmedMechDungeon,
+  phase: "event_playback",
+  pendingBattle: { ...confirmedMechDungeon.battle, opponentUnits: opponentAfterKnockout },
+  events: [],
+  eventCursor: -1,
+});
+check(
+  forcedEnemyReplacement.battle.opponentUnits.find((unit) => unit.key === "opponent-reserve")?.active
+    && forcedEnemyReplacement.battle.opponentUnits.find((unit) => unit.key === "opponent-reserve")?.battlefieldSlot === 0,
+  "A healthy enemy reserve must automatically replace a knocked-out active Critter in the vacated battlefield slot.",
+);
 const cappedDiceCatalog = makeCatalog();
 cappedDiceCatalog.effectsByAbility["capped-dice"] = [
   effect("ability", "capped-dice", "capped-dice", "mana_dice_modifier", { minimum_delta: 10, maximum_delta: 0, target: "all_friendlies" }),

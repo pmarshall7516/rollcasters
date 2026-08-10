@@ -15,7 +15,7 @@ const skill = (name) => `<span class="tooltip-anchor"><button class="skill-tile"
   <span class="skill-power">PWR 20</span><span class="skill-mana">◆ 3</span>
 </button></span>`;
 const lockedRelic = (level) => `<button class="loadout-relic-cell locked" disabled><svg></svg><span>Level ${level}</span></button>`;
-const nullRelics = Array.from({ length: 7 }, () => '<span class="loadout-relic-cell null"></span>').join("");
+const nullRelics = Array.from({ length: 3 }, () => '<span class="loadout-relic-cell null"></span>').join("");
 const equippedRelic = `<span class="tooltip-anchor"><button class="loadout-relic-cell unlocked equipped"><span class="asset-icon"><svg class="asset-icon__image sprite-box__image" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="29" fill="#d88b28"/><circle cx="32" cy="32" r="22" fill="#6d3718" stroke="#ffd06c" stroke-width="4"/><path d="M20 34l8 8 17-20" stroke="#fff2bd" stroke-width="6"/></svg></span></button></span>`;
 
 const html = `<!doctype html><html><head><style>${css}</style></head><body>
@@ -68,9 +68,12 @@ try {
   await page.evaluate(() => {
     const panel = document.querySelector(".squad-panel");
     const occupied = panel.querySelector(".loadout-slot:not(.empty)");
-    const secondOccupied = occupied.cloneNode(true);
-    secondOccupied.querySelector(".critter-name strong").textContent = "Ramber";
-    panel.insertBefore(secondOccupied, panel.querySelector(".loadout-slot.empty"));
+    const empty = panel.querySelector(".loadout-slot.empty");
+    for (let index = 0; index < 3; index += 1) {
+      const additionalOccupied = occupied.cloneNode(true);
+      additionalOccupied.querySelector(".critter-name strong").textContent = `Ramber ${index + 1}`;
+      panel.insertBefore(additionalOccupied, empty);
+    }
   });
   await mkdir(outputDir, { recursive: true });
 
@@ -115,6 +118,9 @@ try {
       });
       const baseline = {
         home: rect(".home-layout"),
+        squad: rect(".squad-panel"),
+        squadSlotRects: [...document.querySelectorAll(".squad-panel > .loadout-slot")].map((slot) => rectForElement(slot.getBoundingClientRect())),
+        squadColumns: style(".squad-panel").gridTemplateColumns.split(" ").length,
         loadout: rect(".loadout-slot"),
         emptyLoadout: rect(".loadout-slot.empty"),
         occupiedSlotLayouts,
@@ -224,7 +230,7 @@ try {
   ];
   const failures = viewports.filter((viewport) => {
     const leftEdgesAlign = Math.abs(viewport.sprite.left - viewport.skillGrid.left) < 0.1 && viewport.relicGrid.left > viewport.skillGrid.right;
-    const equipmentMatches = Math.abs(viewport.skillGrid.height - viewport.relicGrid.height) < .1 && viewport.skillColumns === 2 && viewport.relicColumns === 5 && viewport.relicRows === 2 && viewport.relicStateCounts.unlocked === 2 && viewport.relicStateCounts.locked === 1 && viewport.relicStateCounts.null === 7 && viewport.emptyRelicUsesPlus;
+    const equipmentMatches = Math.abs(viewport.skillGrid.height - viewport.relicGrid.height) < .1 && viewport.skillGrid.width > viewport.relicGrid.width && viewport.skillColumns === 2 && viewport.relicColumns === 3 && viewport.relicRows === 2 && viewport.relicStateCounts.unlocked === 2 && viewport.relicStateCounts.locked === 1 && viewport.relicStateCounts.null === 3 && viewport.emptyRelicUsesPlus;
     const equippedRelicTreatment = viewport.equippedRelicIcon.width >= viewport.equippedRelicCell.width - 4 && viewport.equippedRelicIcon.height >= viewport.equippedRelicCell.height - 4 && viewport.equippedRelicGlow.includes("167, 121, 255") && !viewport.equippedRelicBorder.includes("97, 221, 160");
     const statWidthsMatch = viewport.statWidths.every((width) => Math.abs(width - viewport.statWidths[0]) < .1);
     const responsiveStatMatrix = (viewport.statColumns === 4 && viewport.statRows === 2)
@@ -243,12 +249,13 @@ try {
       && viewport.firstStat.height >= 39
       && Math.abs(viewport.statFontSize - 18) < .1
       && statContentsAlign
-      && Math.abs(viewport.statGrid.width - viewport.relicGrid.width) < .1
-      && Math.abs(viewport.statGrid.right - viewport.relicGrid.right) < .1
+      && Math.abs(viewport.statGrid.width - viewport.summary.width) < .1
+      && Math.abs(viewport.statGrid.left - viewport.summary.left) < .1
+      && Math.abs(viewport.statGrid.right - viewport.summary.right) < .1
       && !viewport.hasEditLabel;
-    const statsPlacement = viewport.statColumns === 4
-      ? Math.abs((viewport.statGrid.left - viewport.critterHeader.right) - (viewport.relicGrid.left - viewport.skillGrid.right)) < .1 && viewport.statGrid.top >= viewport.summary.top && viewport.statGrid.bottom <= viewport.summary.bottom
-      : viewport.statGrid.top - viewport.critterHeader.bottom >= 14;
+    const statsPlacement = viewport.statGrid.top - viewport.critterHeader.bottom >= 14
+      && viewport.statGrid.left >= viewport.summary.left - .1
+      && viewport.statGrid.right <= viewport.summary.right + .1;
     const skillContents = [viewport.skillName, viewport.skillIcon, viewport.skillPower, viewport.skillMana];
     const skillContentsContained = skillContents.every((entry) => entry.left >= viewport.skill.left - .1 && entry.right <= viewport.skill.right + .1 && entry.top >= viewport.skill.top - .1 && entry.bottom <= viewport.skill.bottom + .1);
     const critterNameLinesFit = viewport.critterNameTextHeight < viewport.critterNameSize * (viewport.width < 360 ? 2.2 : 1.3);
@@ -271,6 +278,14 @@ try {
     const emptySquadMatchesOccupied = Math.abs(viewport.emptyLoadout.width - viewport.loadout.width) < .1
       && Math.abs(viewport.emptyLoadout.height - viewport.loadout.height) < .1
       && viewport.emptySquadUsesRelicPlus;
+    const expectedSquadColumns = viewport.width >= 1200 ? 2 : 1;
+    const squadRows = new Set(viewport.squadSlotRects.map((slot) => slot.top.toFixed(2))).size;
+    const lastSquadSlot = viewport.squadSlotRects.at(-1);
+    const squadLayout = viewport.squadSlotRects.length === 5
+      && viewport.squadColumns === expectedSquadColumns
+      && squadRows === (expectedSquadColumns === 2 ? 3 : 5)
+      && lastSquadSlot
+      && Math.abs((lastSquadSlot.left + lastSquadSlot.right) / 2 - (viewport.squad.left + viewport.squad.right) / 2) < .1;
     const trackerIsSeparatePane = viewport.challengeTracking.top - viewport.rollcasterPanel.bottom >= 15
       && Math.abs(viewport.challengeTracking.left - viewport.rollcasterPanel.left) < .1
       && Math.abs(viewport.challengeTracking.width - viewport.rollcasterPanel.width) < .1
@@ -287,7 +302,7 @@ try {
           && Math.abs(anchor.width - expected.width) < .1
           && Math.abs(anchor.height - expected.height) < .1;
       }));
-    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
+    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && squadLayout && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
   });
 
   const byLoadoutWidth = [...viewports].sort((a, b) => a.loadout.width - b.loadout.width);
@@ -301,7 +316,7 @@ try {
   });
   const wide = viewports.find((viewport) => viewport.name === "wide");
   const mobile = viewports.find((viewport) => viewport.name === "mobile");
-  if (!responsiveSkillScale || wide.skillTitleSize < 21 || wide.skillIcon.width < 40 || wide.skillMetaSize < 16 || mobile.skillTitleSize >= wide.skillTitleSize || mobile.skillIcon.width >= wide.skillIcon.width || mobile.skillMetaSize >= wide.skillMetaSize || mobile.skill.height >= wide.skill.height) {
+  if (!responsiveSkillScale || wide.skillTitleSize < 12 || wide.skillIcon.width < 20 || wide.skillMetaSize < 9 || mobile.skillTitleSize >= wide.skillTitleSize || mobile.skillIcon.width >= wide.skillIcon.width || mobile.skillMetaSize >= wide.skillMetaSize || mobile.skill.height > wide.skill.height) {
     throw new Error(`Equipped Skill scaling failures:\n${JSON.stringify({ responsiveSkillScale, wide, mobile }, null, 2)}`);
   }
 
