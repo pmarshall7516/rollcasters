@@ -87,7 +87,7 @@ export function validateCatalog(catalog) {
   for (const [label, rows] of [
     ["Element", catalog.elements], ["Skill", catalog.skills], ["Critter", catalog.critters],
     ["Rollcaster", catalog.rollcasters], ["Ability", catalog.rollcasterAbilities],
-    ["Relic", catalog.relics], ["Dungeon", catalog.dungeons],
+    ["Relic", catalog.relics], ["Lootbox", catalog.lootboxes], ["Dungeon", catalog.dungeons],
   ]) requireUnique(rows, label);
 
   const elementIds = ids(catalog.elements);
@@ -96,17 +96,35 @@ export function validateCatalog(catalog) {
   const rollcasterIds = ids(catalog.rollcasters);
   const abilityIds = ids(catalog.rollcasterAbilities);
   const relicIds = ids(catalog.relics);
+  const lootboxIds = ids(catalog.lootboxes);
+  const currencyIds = ids(catalog.currencies);
   const dungeonIds = ids(catalog.dungeons);
   const challengeTemplateIds = ids(catalog.unlockChallengeTemplates ?? []);
   if (challengeTemplateIds.size !== 15) throw new Error(`Expected exactly 15 active Challenge Templates; found ${challengeTemplateIds.size}.`);
   requireUnique(catalog.unlockChallengeTemplates ?? [], "Challenge Template");
   requireUnique(catalog.collectibleUnlockChallenges, "Collectible Challenge");
+  requireUnique(catalog.lootboxPoolEntries, "Lootbox Pool Entry");
+  for (const entry of catalog.lootboxPoolEntries) {
+    if (!lootboxIds.has(String(entry.lootbox_id))) throw new Error(`Lootbox Pool Entry ${entry.id} references missing Lootbox ${entry.lootbox_id}.`);
+    const shardTargets = { critter: critterIds, rollcaster: rollcasterIds, relic: relicIds };
+    const targets = { currency: currencyIds, shard: shardTargets[entry.target_category], relic: relicIds, lootbox: lootboxIds };
+    if (!targets[entry.reward_type]?.has(String(entry.target_id))) throw new Error(`Lootbox Pool Entry ${entry.id} references missing ${entry.reward_type} ${entry.target_id}.`);
+  }
+  for (const boxId of lootboxIds) {
+    const total = catalog.lootboxPoolEntries.filter((entry) => String(entry.lootbox_id) === boxId).reduce((sum, entry) => sum + Number(entry.probability), 0);
+    if (Math.abs(total - 1) > 0.000001) throw new Error(`Lootbox ${boxId} probabilities must total 1; found ${total}.`);
+  }
+  for (const entry of catalog.shopEntries) {
+    const targets = { critter: critterIds, rollcaster: rollcasterIds, relic: relicIds, lootbox: lootboxIds };
+    if (!targets[entry.target_category]?.has(String(entry.target_id))) throw new Error(`Shop Entry ${entry.id} references missing ${entry.target_category} ${entry.target_id}.`);
+    if (!currencyIds.has(String(entry.currency_id))) throw new Error(`Shop Entry ${entry.id} references missing Currency ${entry.currency_id}.`);
+  }
   for (const challenge of catalog.collectibleUnlockChallenges) {
     if (!challengeTemplateIds.has(challenge.challenge_type)) throw new Error(`Challenge ${challenge.id} references missing template ${challenge.challenge_type}.`);
     if (!challenge.parameters || typeof challenge.parameters !== "object" || Array.isArray(challenge.parameters)) throw new Error(`Challenge ${challenge.id} has invalid parameters.`);
     const parameters = challenge.parameters;
     const goal = challenge.challenge_type === "level_up_critter" ? parameters.required_level
-      : challenge.challenge_type === "collection_diversity" && parameters.diversity_mode === "specific_types" ? parameters.required_element_ids?.length
+      : challenge.challenge_type === "collection_diversity" && parameters.diversity_mode === "specific_types" ? (parameters.required_element_ids?.length ?? 0) * (parameters.required_per_type ?? 1)
         : challenge.challenge_type === "collection_diversity" ? parameters.required_distinct_types ?? parameters.required_per_type
           : challenge.challenge_type === "squad_composition" ? parameters.required_completions
             : challenge.challenge_type === "dungeon_clear" ? parameters.required_clears
@@ -199,6 +217,8 @@ export function createPacks(catalog, catalogVersion) {
       collectibleUnlockRequirements: catalog.collectibleUnlockRequirements,
       collectibleUnlockChallenges: catalog.collectibleUnlockChallenges,
       shopEntries: catalog.shopEntries,
+      lootboxes: catalog.lootboxes,
+      lootboxPoolEntries: catalog.lootboxPoolEntries,
       critters: catalog.critters,
       critterProgression: catalog.critterProgression,
       critterSkillUnlocks: catalog.critterSkillUnlocks,

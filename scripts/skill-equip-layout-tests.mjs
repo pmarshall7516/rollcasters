@@ -84,6 +84,7 @@ try {
             padding: tileStyle.padding,
             borderRadius: tileStyle.borderRadius,
             background: tileStyle.backgroundImage,
+            backgroundColor: tileStyle.backgroundColor,
             columns: tileStyle.gridTemplateColumns,
             rows: tileStyle.gridTemplateRows,
           },
@@ -107,6 +108,7 @@ try {
     });
 
     if (JSON.stringify(result.slot) !== JSON.stringify(result.popup)) throw new Error(`${name} Skill surface mismatch:\n${JSON.stringify(result, null, 2)}`);
+    if (result.slot.tile.background !== "none" || result.popup.tile.background !== "none") throw new Error(`${name} Skill tiles must use a solid background:\n${JSON.stringify(result, null, 2)}`);
     if (!result.slot.directTileWrappers || result.slot.gridColumns.split(" ").length !== 2 || !result.slot.contentsContained) throw new Error(`${name} Skill grid organization failed:\n${JSON.stringify(result, null, 2)}`);
     if (result.slot.title.column !== "1" || result.slot.title.row !== "1 / 3" || result.slot.power.column !== "2" || result.slot.power.row !== "1" || !result.slot.power.topRight || result.slot.mana.column !== "2" || result.slot.mana.row !== "2") throw new Error(`${name} Skill tile organization failed:\n${JSON.stringify(result, null, 2)}`);
     if (!result.selectedCheckLeftMiddle || !result.noHorizontalOverflow) throw new Error(`${name} Skill state or overflow failed:\n${JSON.stringify(result, null, 2)}`);

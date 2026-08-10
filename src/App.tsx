@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowUp,
   Check,
@@ -36,6 +37,7 @@ import {
   getSession,
   hasSupabaseConfig,
   loadAppData,
+  openLootbox,
   purchaseShopEntry,
   recordDungeonBattleResult,
   redeemPromoCode,
@@ -67,9 +69,11 @@ import {
   critterStats,
   isActorRecharging,
   isSingleTarget,
+  healthyFriendlySwapTargets,
   matchesSelectedElements,
   orderedActiveCombatUnits,
   skillAvailability,
+  skillHasPostAttackSwap,
   skillTargets,
   squadCritters,
   type ActionCostBreakdown,
@@ -103,8 +107,10 @@ import {
 import { calculateLoadoutStats, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
 import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
 import { createRequestId } from "./lib/uuid";
+import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
 import {
   challengeDescription,
+  completedTrackedChallengeIds,
   challengesFor,
   collectibleAssetPath,
   collectibleIsUnlocked,
@@ -117,10 +123,12 @@ import {
   orderedCurrencies,
   progressFor,
   requirementFor,
+  safeBigInt,
   shardProgress,
   shopAvailability,
   shopErrorMessage,
   sortByCollectibleId,
+  trackedChallengesForDisplay,
   trackedSlotFor,
 } from "./lib/collectibles";
 import {
@@ -132,12 +140,16 @@ import type {
   AppData,
   CombatAction,
   CollectibleUnlockEvent,
+  CurrencyDef,
   CollectibleType,
   CollectibleUnlockChallenge,
   Critter,
   Dungeon,
   DungeonDrop,
   DungeonRewardSummary,
+  Lootbox,
+  LootboxOpeningReceipt,
+  LootboxPoolEntry,
   PlayerState,
   PromoCodeRedemption,
   PromoCodeReward,
@@ -153,7 +165,7 @@ import type {
 import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
-type BagTab = "currency" | "shards";
+type BagTab = "currency" | "shards" | "lootboxes";
 type ShopTab = "shard" | "relic" | "lootbox" | "promo";
 type CollectionDetail = { type: "critter" | "rollcaster" | "relic"; id: string };
 type PromoRenderState = {
@@ -172,6 +184,11 @@ type BannerNotification =
       id: string;
       kind: "collectible-unlock";
       event: CollectibleUnlockEvent;
+    }
+  | {
+      id: string;
+      kind: "challenge-completed";
+      challengeId: string;
     }
   | {
       id: string;
@@ -242,6 +259,8 @@ export function App() {
     claimedGlobalUsesRemaining: null,
   });
   const seenUnlockEvents = useRef(new Set<string>());
+  const seenChallengeCompletions = useRef(new Set<string>());
+  const seenChallengeCompletionUserId = useRef<string | null>(null);
   const combatRef = useRef<DungeonRunState | null>(null);
   const combatSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const lastPersistedCombat = useRef("");
@@ -266,6 +285,40 @@ export function App() {
         ...withoutOlderShopRewards.slice(insertionIndex),
       ];
     });
+  }
+
+  function localNotificationStorage(): NotificationStorage | null {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  }
+
+  function commitLoadedData(loaded: AppData) {
+    const previous = data;
+    const userId = loaded.player?.profile.user_id;
+    const storage = localNotificationStorage();
+    const previousForNotifications = previous?.player?.profile.user_id === userId ? previous : null;
+    if (userId && seenChallengeCompletionUserId.current !== userId) {
+      seenChallengeCompletionUserId.current = userId;
+      seenChallengeCompletions.current = storage
+        ? loadSeenChallengeCompletions(storage, userId)
+        : new Set();
+    }
+    completedTrackedChallengeIds(previousForNotifications, loaded).forEach((challengeId) => {
+      if (seenChallengeCompletions.current.has(challengeId)) return;
+      const challenge = loaded.catalog.collectibleUnlockChallenges.find((row) => row.id === challengeId);
+      if (!challenge) return;
+      if (userId && storage) rememberSeenChallengeCompletion(storage, userId, seenChallengeCompletions.current, challengeId);
+      else seenChallengeCompletions.current.add(challengeId);
+      enqueueNotification({
+        id: `challenge-completed:${challengeId}`,
+        kind: "challenge-completed",
+        challengeId,
+      });
+    });
+    setData(loaded);
   }
 
   function navigate(nextView: View, nextShopTab = shopTab, replace = false) {
@@ -453,14 +506,15 @@ export function App() {
     return () => window.removeEventListener("keydown", handleAppKeyboard);
   }, [view]);
 
-  async function refresh(nextView?: View) {
+  async function refresh(nextView?: View, options: { showLoading?: boolean } = {}) {
     if (!hasSupabaseConfig) return;
-    setLoading(true);
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) setLoading(true);
     setError(null);
     try {
       await ensureUserGameState();
       const loaded = await loadAppData();
-      setData(loaded);
+      commitLoadedData(loaded);
       const requiredView = requiredStarterView(loaded.player);
       if (requiredView) {
         setView(requiredView);
@@ -492,7 +546,7 @@ export function App() {
       console.error("Unable to load game data.", err);
       setError(errorMessage(err, "Unable to load game data."));
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -644,6 +698,7 @@ export function App() {
         catalogRelease: data?.catalogRelease ?? null,
         playerStateRevision: data?.player?.playerStateRevision ?? null,
         serverCatalogVersion: data?.player?.serverCatalogVersion ?? null,
+        lootboxOpeningPhase: document.documentElement.dataset.lootboxOpeningPhase ?? null,
         starterRollcasterSelected: data?.player?.profile.starter_rollcaster_selected_at != null,
         starterSelected: data?.player?.profile.starter_selected_at != null,
         onboarding: view === "starter-rollcaster"
@@ -672,10 +727,14 @@ export function App() {
               tab: bagTab,
               currencies: data ? orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite").length : 0,
               shards: data?.player?.collectibleSnapshot.shards.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
+              lootboxes: data?.player?.collectibleSnapshot.lootboxes.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
             }
           : null,
         unlockNotification: notificationQueue[0]?.kind === "collectible-unlock"
           ? notificationQueue[0].event
+          : null,
+        challengeNotification: notificationQueue[0]?.kind === "challenge-completed"
+          ? { challengeId: notificationQueue[0].challengeId }
           : null,
         rewardNotification: notificationQueue[0]?.kind === "shop-reward"
           ? {
@@ -706,7 +765,10 @@ export function App() {
               opponentMana: combat.battle.opponentMana,
               requiredLeadCount: combat.requiredLeadCount,
               selectedLeadIds: combat.selectedLeadIds,
-              narration: currentDungeonEvent(combat)?.message ?? null,
+              narration: document.querySelector(".combat-narration")?.textContent?.trim()
+                ?? currentDungeonEvent(combat)?.message
+                ?? null,
+              narrationLoading: (document.querySelector(".combat-narration")?.textContent?.trim() ?? "").startsWith("Loading"),
               player: combat.battle.playerUnits.map((unit) => ({
                 key: unit.key,
                 id: unit.userCritter?.id,
@@ -794,7 +856,7 @@ export function App() {
       <TopBar
         data={data}
         player={data.player}
-        refreshing={loading}
+        refreshing={view !== "combat" && loading}
         onHome={() => navigate(requiredStarterView(data.player) ?? "home")}
         onSignOut={async () => {
           await signOut();
@@ -861,6 +923,7 @@ export function App() {
           data={data}
           tab={bagTab}
           setTab={setBagTab}
+          onRefresh={() => refresh("bag")}
           onBack={() => navigate("home")}
         />
       )}
@@ -892,7 +955,9 @@ export function App() {
             if (turn.turnEvents.length === 0) return;
             try {
               await submitCollectibleCombatEvents(resolved.run.id, resolved.battle.turn, turn.turnEvents);
-              await refresh("combat");
+              // Combat presentation is already available locally. Keep the full
+              // player/catalog refresh off the narration critical path.
+              void refresh("combat", { showLoading: false });
             } catch (progressError) {
               console.error("Unable to submit collectible combat progress.", progressError);
               setError(errorMessage(progressError, "Unable to update challenge progress."));
@@ -931,7 +996,7 @@ export function App() {
                 }]);
               }
               const loaded = await loadAppData();
-              setData(loaded);
+              commitLoadedData(loaded);
               setCombat(applyDungeonBattleResult(resolved, result, loaded.catalog, loaded.player!));
             } catch (resultError) {
               setError(errorMessage(resultError, "Unable to record the encounter result."));
@@ -1215,7 +1280,7 @@ function TopBar({
                 onBlur={hideCurrencyTooltip}
               >
                 <AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={17} />} />
-                <span>{amount}</span>
+                <span className="currency-pill-amount">{amount}</span>
               </div>
             );
           })}
@@ -1297,7 +1362,7 @@ function StarterRollcasterScreen({ data, onSelect }: { data: AppData; onSelect: 
                 <span className="eyebrow">Starter Ability</span>
                 <strong>{ability?.name ?? "No starter Ability authored"}</strong>
                 <span>{ability?.description ?? "This Rollcaster needs a level-1 starter Ability."}</span>
-                {effects.length > 0 && <EffectList effects={effects} className="starter-ability-effects" data={data} />}
+                {effects.length > 0 && <EffectList effects={effects} className="starter-ability-effects" />}
               </span>
               <span className="primary-button full-width">Choose {rollcaster.name}</span>
             </button>
@@ -1488,10 +1553,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
 function ChallengeTracking({ data, onRefresh }: { data: AppData; onRefresh: () => Promise<void> }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [trackingError, setTrackingError] = useState<string | null>(null);
-  const tracked = data.player!.collectibleSnapshot.tracked.filter((trackedRow) => {
-    const progress = progressFor(data, trackedRow.challenge_id);
-    return progress.eligible !== false && !progress.completed && progress.trackable !== false;
-  });
+  const tracked = trackedChallengesForDisplay(data);
 
   async function untrack(challengeId: string) {
     setBusyId(challengeId);
@@ -1510,26 +1572,99 @@ function ChallengeTracking({ data, onRefresh }: { data: AppData; onRefresh: () =
     <section className="challenge-tracking" aria-label="Challenge tracking">
       <div className="challenge-tracking-heading"><Target size={17} /><strong>Challenge Tracking</strong></div>
       {trackingError && <p className="tracking-error" role="alert">{trackingError}</p>}
-      <div className="challenge-tracking-slots">
-        {[1, 2, 3].map((slot) => {
-          const trackedRow = tracked.find((row) => row.slot_order === slot);
-          const challenge = data.catalog.collectibleUnlockChallenges.find((row) => row.id === trackedRow?.challenge_id);
-          if (!challenge) return <div className="tracked-challenge-card empty" key={slot}><Target size={20} /><span>Tracking slot {slot}</span></div>;
-          const progress = progressFor(data, challenge.id);
-          return (
-            <article className="tracked-challenge-card" key={slot}>
-              <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="xs" />
-              <div className="tracked-challenge-copy">
-                <strong>{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong>
-                <span>{challengeDescription(data, challenge)}</span>
-                <span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span>
-              </div>
-              <button className="link-button tracked-untrack" disabled={busyId === challenge.id} onClick={() => untrack(challenge.id)}>Untrack</button>
-            </article>
-          );
-        })}
-      </div>
+      <TrackedChallengeSlots data={data} tracked={tracked} busyId={busyId} onUntrack={untrack} />
     </section>
+  );
+}
+
+function TrackedChallengeSlots({
+  data,
+  tracked,
+  busyId,
+  onUntrack,
+  onSelect,
+}: {
+  data: AppData;
+  tracked: ReturnType<typeof trackedChallengesForDisplay>;
+  busyId?: string | null;
+  onUntrack?: (challengeId: string) => void;
+  onSelect?: (challengeId: string) => void;
+}) {
+  return (
+    <div className="challenge-tracking-slots">
+      {[1, 2, 3].map((slot) => {
+        const trackedRow = tracked[slot - 1];
+        const challenge = data.catalog.collectibleUnlockChallenges.find((row) => row.id === trackedRow?.challenge_id);
+        if (!challenge) return <div className="tracked-challenge-card empty" key={slot}><Target size={20} /><span>Tracking slot {slot}</span></div>;
+        const progress = progressFor(data, challenge.id);
+        const selectable = Boolean(onSelect);
+        const select = () => onSelect?.(challenge.id);
+        return (
+          <article
+            className={`tracked-challenge-card ${selectable ? "selectable replacement-slot" : ""}`.trim()}
+            key={slot}
+            role={selectable ? "button" : undefined}
+            tabIndex={selectable ? 0 : undefined}
+            aria-label={selectable ? `Replace ${collectibleName(data, challenge.collectible_type, challenge.collectible_id)} challenge` : undefined}
+            onClick={selectable ? select : undefined}
+            onKeyDown={selectable ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                select();
+              }
+            } : undefined}
+          >
+            <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="sm" />
+            <div className="tracked-challenge-copy">
+              <strong>{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong>
+              <span>{challengeDescription(data, challenge)}</span>
+              <span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span>
+            </div>
+            {onUntrack && <button type="button" className="link-button tracked-untrack" disabled={busyId === challenge.id} onClick={(event) => { event.stopPropagation(); onUntrack(challenge.id); }}>Untrack</button>}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChallengeReplacementModal({
+  data,
+  challenge,
+  tracked,
+  busyId,
+  onReplace,
+  onClose,
+}: {
+  data: AppData;
+  challenge: CollectibleUnlockChallenge;
+  tracked: ReturnType<typeof trackedChallengesForDisplay>;
+  busyId?: string | null;
+  onReplace: (challengeId: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const progress = progressFor(data, challenge.id);
+  const replacementStarted = useRef(false);
+
+  function selectReplacement(replacedChallengeId: string) {
+    if (replacementStarted.current) return;
+    replacementStarted.current = true;
+    onClose();
+    void onReplace(replacedChallengeId).catch(() => undefined);
+  }
+
+  return createPortal(
+    (
+    <Modal eyebrow="Challenge tracking" title="Replace a tracked challenge" description={null} onClose={onClose} className="challenge-replacement-modal">
+      <div className="tracked-challenge-card challenge-replacement-target">
+        <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="sm" />
+        <div className="tracked-challenge-copy"><strong>{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong><span>{challengeDescription(data, challenge)}</span><span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span></div>
+      </div>
+      <p className="challenge-note">Select a tracked slot to replace it with this challenge.</p>
+      <TrackedChallengeSlots data={data} tracked={tracked} busyId={busyId} onSelect={selectReplacement} />
+    </Modal>
+    ),
+    document.body,
   );
 }
 
@@ -1688,11 +1823,11 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
   const manaPath = findAssetPath(data, "mana", "mana");
   const displayedManaCost = skill ? manaCost ?? skill.mana_cost : null;
   const attachments = skill ? data.catalog.effectsBySkill[skill.id] ?? [] : [];
-  const effectText = skill ? attachmentText(attachments, data, sourceCritter) : "";
+  const effectText = skill ? attachmentText(attachments) : "";
   const targetText = skill ? targetingDescription(skill) : "";
   const costSummary = skill && manaCostBreakdown ? costBreakdownText("Mana cost", manaCostBreakdown) : "";
   const label = skill ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}, ${displayedManaCost} Mana. ${skill.description} ${effectText} ${targetText} ${costSummary}` : "Choose a skill.";
-  const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{manaCostBreakdown && manaCostBreakdown.sources.length > 0 && <CostBreakdownLine label="Mana cost" breakdown={manaCostBreakdown} />}{attachmentRows(attachments, data, sourceCritter)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
+  const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{manaCostBreakdown && manaCostBreakdown.sources.length > 0 && <CostBreakdownLine label="Mana cost" breakdown={manaCostBreakdown} />}{attachmentRows(attachments, sourceCritter)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
   return <GameTooltip label={label.trim()} content={tooltip}><button type="button" className={`skill-tile ${skill ? "" : "empty"} ${selected ? "selected" : ""} ${equipped ? "equipped" : ""} ${!onClick ? "read-only" : ""}`} onClick={onClick} disabled={disabled} aria-disabled={!onClick || undefined} data-combat-control={combatControl ? "true" : undefined} data-combat-focus-role={combatControl ? "skill" : undefined} data-combat-skill-id={combatControl ? combatSkillId : undefined}>
     <span className="skill-title">{skill && <AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={16} />} />}<strong>{skill?.name ?? "-----"}</strong></span>
     {skill?.skill_type === "attack" && <span className="skill-power">PWR {skill.power}</span>}
@@ -1703,8 +1838,8 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
 
 function LoadoutRelicSlot({ data, relic, sourceCritter, slotIndex, onClick }: { data: AppData; relic?: Relic | null; sourceCritter?: Critter; slotIndex: number; onClick: () => void }) {
   const attachments = relic ? data.catalog.effectsByRelic[relic.id] ?? [] : [];
-  const details = relic ? `${relic.name}. ${relic.description} ${attachmentText(attachments, data, sourceCritter)}` : `Choose a relic for slot ${slotIndex}.`;
-  const tooltip = relic ? <><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments, data, sourceCritter)}</> : <span className="tooltip-description">Choose a relic for slot {slotIndex}.</span>;
+  const details = relic ? `${relic.name}. ${relic.description} ${attachmentText(attachments)}` : `Choose a relic for slot ${slotIndex}.`;
+  const tooltip = relic ? <><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments, sourceCritter)}</> : <span className="tooltip-description">Choose a relic for slot {slotIndex}.</span>;
   return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className={`loadout-relic-cell unlocked ${relic ? "equipped" : "empty"}`} onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
     {relic
       ? <AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield aria-hidden="true" />} />
@@ -1716,7 +1851,7 @@ function AbilitySlot({ data, ability, slotIndex, onClick }: { data: AppData; abi
   const attachments = ability ? data.catalog.effectsByAbility[ability.id] ?? [] : [];
   const effect = ability ? attachmentText(attachments) : "";
   const details = ability ? `${ability.name}. ${ability.description} ${effect}` : "Choose an ability.";
-  const tooltip = ability ? <><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(attachments, data)}</> : <span className="tooltip-description">Choose an ability.</span>;
+  const tooltip = ability ? <><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(attachments)}</> : <span className="tooltip-description">Choose an ability.</span>;
   return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className="ability-slot" onClick={onClick} aria-label={`Equip ability · Slot ${slotIndex}`}>
     <span><small>Slot {slotIndex}</small><strong>{ability?.name ?? "-----"}</strong></span>
   </button></GameTooltip>;
@@ -1741,40 +1876,25 @@ function effectRequirementState(effect: ResolvedEffectRef, sourceCritter?: Critt
   return effectMatchesSourceCritter(effect, sourceCritter) ? "active" : "inactive";
 }
 
-function effectRequirementLabel(effect: ResolvedEffectRef, data?: AppData): string {
-  return sourceElementIds(effect).map((id) => byId(data?.catalog.elements ?? [], id)?.name ?? id.replace(/^./, (letter) => letter.toUpperCase())).join(" / ");
+function attachmentText(effects: ResolvedEffectRef[]): string {
+  return effects.filter((effect) => effect.execution !== "child").map((effect) => `${effect.name}: ${effect.description}`).join(" ");
 }
 
-function attachmentText(effects: ResolvedEffectRef[], data?: AppData, sourceCritter?: Critter): string {
-  return effects.filter((effect) => effect.execution !== "child").map((effect) => {
-    const requirement = effectRequirementLabel(effect, data);
-    const state = effectRequirementState(effect, sourceCritter);
-    return `${effect.name}: ${effect.description}${requirement ? ` Requires ${requirement}${state === "inactive" ? " (inactive)" : ""}.` : ""}`;
-  }).join(" ");
-}
-
-function EffectRequirementBadge({ effect, data, sourceCritter }: { effect: ResolvedEffectRef; data?: AppData; sourceCritter?: Critter }) {
-  const label = effectRequirementLabel(effect, data);
-  if (!label) return null;
-  const state = effectRequirementState(effect, sourceCritter);
-  return <span className={`effect-element-requirement ${state}`} title={`${label} source Critter required${state === "inactive" ? " — inactive" : state === "active" ? " — active" : ""}`}><small>Requires</small>{label}</span>;
-}
-
-function attachmentRows(effects: ResolvedEffectRef[], data?: AppData, sourceCritter?: Critter): React.ReactNode {
+function attachmentRows(effects: ResolvedEffectRef[], sourceCritter?: Critter): React.ReactNode {
   return effects.filter((effect) => effect.execution !== "child").map((effect) => {
     const state = effectRequirementState(effect, sourceCritter);
-    return <span className={`tooltip-description effect-conditional-row ${state === "inactive" ? "effect-condition-inactive" : ""} effect-classification-${effect.classification ?? "mixed"}`} key={effect.id}><EffectRequirementBadge effect={effect} data={data} sourceCritter={sourceCritter} /><span><strong>{effect.name}:</strong> {effect.description}</span></span>;
+    return <span className={`tooltip-description effect-conditional-row ${state === "inactive" ? "effect-condition-inactive" : ""} effect-classification-${effect.classification ?? "mixed"}`} key={effect.id}><span><strong>{effect.name}:</strong> {effect.description}</span></span>;
   });
 }
 
-function EffectList({ effects, className = "", data, sourceCritter }: { effects: ResolvedEffectRef[]; className?: string; data?: AppData; sourceCritter?: Critter }) {
+function EffectList({ effects, className = "", sourceCritter }: { effects: ResolvedEffectRef[]; className?: string; sourceCritter?: Critter }) {
   const visibleEffects = effects.filter((effect) => effect.execution !== "child");
   return (
     <span className={`effect-list ${className}`.trim()}>
       {visibleEffects.length
         ? visibleEffects.map((effect) => {
           const state = effectRequirementState(effect, sourceCritter);
-          return <span className={`effect-list-row effect-conditional-row ${state === "inactive" ? "effect-condition-inactive" : ""} effect-classification-${effect.classification ?? "mixed"}`} key={effect.id}><EffectRequirementBadge effect={effect} data={data} sourceCritter={sourceCritter} /><span><strong>{effect.name}:</strong> {effect.description}</span></span>;
+          return <span className={`effect-list-row effect-conditional-row ${state === "inactive" ? "effect-condition-inactive" : ""} effect-classification-${effect.classification ?? "mixed"}`} key={effect.id}><span><strong>{effect.name}:</strong> {effect.description}</span></span>;
         })
         : <span className="effect-list-row">No additional effect.</span>}
     </span>
@@ -1788,10 +1908,34 @@ function unlockedAbilitySlotCount(data: AppData, owned?: UserRollcaster): number
     .sort((a, b) => b.level - a.level)[0]?.total_unlocked_ability_slots ?? 1;
 }
 
+function useUnlockButtonFlash() {
+  const [flashingId, setFlashingId] = useState<string | null>(null);
+  const flashTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+  }, []);
+
+  function flash(id: string) {
+    setFlashingId(null);
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => {
+      setFlashingId(id);
+      flashTimer.current = window.setTimeout(() => {
+        setFlashingId(null);
+        flashTimer.current = null;
+      }, 700);
+    }, 0);
+  }
+
+  return { flashingId, flash };
+}
+
 function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSkill }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void> }) {
   const player = data.player!;
   const title = target.type === "rollcaster" ? "Choose active Rollcaster" : `Equip ${target.type} · Slot ${target.slotIndex}`;
   const [query, setQuery] = useState("");
+  const { flashingId, flash } = useUnlockButtonFlash();
   useEffect(() => setQuery(""), [target.type, target.slotIndex]);
   const normalizedQuery = query.trim().toLowerCase();
   const currentSkillOwner = target.type === "skill"
@@ -1822,46 +1966,37 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     const current = rows.find((row) => row.slot_index === target.slotIndex)?.skill_id;
     const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex && row.skill_id).map((row) => row.skill_id));
     const equippedCount = rows.filter((row) => row.skill_id).length;
-    const unlocksBySkillId = new Map(
-      data.catalog.critterSkillUnlocks
-        .filter((unlock) => unlock.critter_id === skillOwner.critter_id)
-        .map((unlock) => [unlock.skill_id, unlock]),
-    );
-    const unlockedEligible = ids
-      .map((id) => byId(data.catalog.skills, id))
-      .filter((skill): skill is Skill => Boolean(skill))
-      .filter((skill) => {
+    const eligible = data.catalog.critterSkillUnlocks
+      .filter((unlock) => unlock.critter_id === skillOwner.critter_id)
+      .map((unlock) => ({ skill: byId(data.catalog.skills, unlock.skill_id), unlock }))
+      .filter((candidate): candidate is { skill: Skill; unlock: typeof data.catalog.critterSkillUnlocks[number] } => Boolean(candidate.skill))
+      .filter(({ skill }) => {
         const element = byId(data.catalog.elements, skill.element_id);
         return !normalizedQuery || `${skill.name} ${skill.element_id} ${element?.name ?? ""}`.toLowerCase().includes(normalizedQuery);
-      });
-    const eligible = [
-      ...unlockedEligible.map((skill) => ({ skill, unlock: unlocksBySkillId.get(skill.id) })),
-      ...data.catalog.critterSkillUnlocks
-        .filter((unlock) => unlock.critter_id === skillOwner.critter_id && unlock.unlock_level <= skillOwner.level && !unlockedIds.has(unlock.skill_id))
-        .map((unlock) => ({ skill: byId(data.catalog.skills, unlock.skill_id), unlock }))
-        .filter((candidate): candidate is { skill: Skill; unlock: typeof data.catalog.critterSkillUnlocks[number] } => Boolean(candidate.skill))
-        .filter(({ skill }) => {
-          const element = byId(data.catalog.elements, skill.element_id);
-          return !normalizedQuery || (skill.name + " " + skill.element_id + " " + (element?.name ?? "")).toLowerCase().includes(normalizedQuery);
-        }),
-    ].sort((left, right) =>
+      })
+      .sort((left, right) =>
       (left.unlock?.unlock_level ?? 0) - (right.unlock?.unlock_level ?? 0) ||
       (left.unlock?.sort_order ?? left.skill.sort_order) - (right.unlock?.sort_order ?? right.skill.sort_order) ||
       left.skill.id.localeCompare(right.skill.id),
-    );
-    content = eligible.length ? <SkillTileGrid ariaLabel="Available skills">{eligible.map(({ skill, unlock }) => {
+      );
+    const unlockedEligible = eligible.filter(({ skill }) => unlockedIds.has(skill.id));
+    const lockedEligible = eligible.filter(({ skill }) => !unlockedIds.has(skill.id));
+    const renderSkill = ({ skill, unlock }: { skill: Skill; unlock: typeof data.catalog.critterSkillUnlocks[number] }) => {
       const selected = current === skill.id;
       const equipped = selected || equippedElsewhere.has(skill.id);
       const cannotRemoveLast = selected && equippedCount <= 1;
       const locked = !unlockedIds.has(skill.id);
+      const levelEligible = skillOwner.level >= unlock.unlock_level;
       const unlockCost = unlock?.unlock_cost ?? 0;
-      const canUnlock = !locked || skillOwner.skill_points >= unlockCost;
+      const canUnlock = !locked || (levelEligible && skillOwner.skill_points >= unlockCost);
       const disabledReason = cannotRemoveLast
         ? "At least one skill must remain equipped."
         : equippedElsewhere.has(skill.id)
           ? "Equipped in another slot."
-          : locked && !canUnlock
-            ? "Need " + (unlockCost - skillOwner.skill_points) + " more skill point" + (unlockCost - skillOwner.skill_points === 1 ? "" : "s") + "."
+          : locked && !levelEligible
+            ? `Unlocks at level ${unlock.unlock_level}.`
+            : locked && !canUnlock
+              ? "Need " + (unlockCost - skillOwner.skill_points) + " more skill point" + (unlockCost - skillOwner.skill_points === 1 ? "" : "s") + "."
             : undefined;
       const tile = <SkillTile
         data={data}
@@ -1873,23 +2008,40 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
         disabledReason={disabledReason}
         onClick={locked ? undefined : () => onEquip(() => setCritterSkillSlot(skillOwner.id, target.slotIndex, selected ? null : skill.id))}
       />;
-      if (locked && unlock) {
-        return <div className="equip-skill-option locked" key={skill.id}>
+      if (locked) {
+        return <div className={`equip-skill-option locked ${levelEligible ? "unlockable" : "level-locked"}`.trim()} key={skill.id}>
           {tile}
           <div className="equip-skill-unlock-row">
             <span className="equip-skill-unlock-requirement">Unlock at level {unlock.unlock_level} · {unlock.unlock_cost} point{unlock.unlock_cost === 1 ? "" : "s"}</span>
-            <button
-              type="button"
-              className="primary-button skill-unlock-button"
-              disabled={saving || !canUnlock}
-              title={!canUnlock ? disabledReason : undefined}
-              onClick={() => onUnlockSkill(skillOwner, skill.id)}
-            >Unlock · {unlock.unlock_cost}</button>
+            {levelEligible && <button
+                type="button"
+                className={`primary-button skill-unlock-button ${flashingId === skill.id ? "insufficient-points" : ""}`.trim()}
+                disabled={saving}
+                title={!canUnlock ? disabledReason : undefined}
+                onClick={() => {
+                  if (!canUnlock) {
+                    flash(skill.id);
+                    return;
+                  }
+                  void onUnlockSkill(skillOwner, skill.id);
+                }}
+              >Unlock · {unlock.unlock_cost}</button>}
           </div>
         </div>;
       }
       return tile;
-    })}</SkillTileGrid> : <p className="empty-state">No skills available</p>;
+    };
+    content = eligible.length ? <div className="equip-skill-sections">
+      {unlockedEligible.length > 0 && <section className="equip-skill-section" aria-label="Unlocked skills">
+        <p className="equip-skill-section-label">Unlocked skills</p>
+        <SkillTileGrid ariaLabel="Unlocked skills">{unlockedEligible.map(renderSkill)}</SkillTileGrid>
+      </section>}
+      {lockedEligible.length > 0 && <section className="equip-skill-section" aria-label="Locked skills">
+        <p className="equip-skill-section-label">Locked skills</p>
+        {unlockedEligible.length > 0 && <div className="equip-skill-divider" role="separator" aria-label="Locked skills divider" />}
+        <SkillTileGrid ariaLabel="Locked skills">{lockedEligible.map(renderSkill)}</SkillTileGrid>
+      </section>}
+    </div> : <p className="empty-state">No skills available</p>;
   } else if (target.type === "relic") {
     const current = player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id;
     const eligible = sortByCollectibleId(data.catalog.relics)
@@ -1901,7 +2053,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       const selected = current === relic.id;
       const available = owned - used;
       return <button className={`candidate-card ${selected ? "selected" : ""}`} key={relic.id} disabled={saving || selected || available <= 0} onClick={() => onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id))}>
-        <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [], data, byId(data.catalog.critters, target.owned.critter_id))}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {available}</span>
+        <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [], byId(data.catalog.critters, target.owned.critter_id))}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {available}</span>
       </button>;
     })}</div> : <p className="empty-state">No relics available</p>;
   } else if (target.type === "ability") {
@@ -1913,7 +2065,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     content = eligible.length ? <div className="ability-candidates">{eligible.map((ability) => {
       const selected = current === ability.id;
       const equipped = selected || equippedElsewhere.has(ability.id);
-      return <button className={`ability-candidate ${selected ? "selected" : ""} ${equipped ? "equipped" : ""}`} key={ability.id} disabled={saving || equippedElsewhere.has(ability.id)} onClick={() => onEquip(() => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, selected ? null : ability.id))}><span><strong>{ability.name}</strong><small>{ability.description}</small>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [], data)}</span>{equipped && <Check size={18} />}</button>;
+      return <button className={`ability-candidate ${selected ? "selected" : ""} ${equipped ? "equipped" : ""}`} key={ability.id} disabled={saving || equippedElsewhere.has(ability.id)} onClick={() => onEquip(() => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, selected ? null : ability.id))}><span><strong>{ability.name}</strong><small>{ability.description}</small>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [])}</span>{equipped && <Check size={18} />}</button>;
     })}</div> : <p className="empty-state">No abilities available</p>;
   } else {
     content = <div className="candidate-grid">{sortByCollectibleId(player.rollcasters, (owned) => owned.rollcaster_id).map((owned) => {
@@ -1931,7 +2083,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     {error && <p className="notice error" role="alert">{error}</p>}
     {target.type === "skill" && currentSkillOwner && <div className="equip-dialog-point-summary"><PointCounter kind="skill" points={currentSkillOwner.skill_points} inline /></div>}
     {(target.type === "skill" || target.type === "relic") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : "Search relics by name"} /></label>}
-    {content}
+    {target.type === "skill" ? <div className="equip-skill-list">{content}</div> : content}
     <div className="dialog-actions">{canUnequip && clear && <button className="danger-button" disabled={saving} onClick={() => onEquip(clear)}>Unequip</button>}<button className="secondary-button" onClick={onClose}>Cancel</button></div>
   </Modal>;
 }
@@ -1965,6 +2117,27 @@ function CollectionScreen({
   );
   const relics = sortByCollectibleId(data.catalog.relics).filter(matchesSearch);
   const displayedCount = tab === "rollcasters" ? rollcasters.length : tab === "critters" ? critters.length : relics.length;
+  const cardMeasurementRef = useRef<HTMLDivElement>(null);
+  const [collectionCardHeight, setCollectionCardHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const measurementGrid = cardMeasurementRef.current;
+    if (!measurementGrid) return;
+    const updateCardHeight = () => {
+      const cardHeights = [...measurementGrid.querySelectorAll<HTMLElement>(".catalog-card")].map((card) => card.getBoundingClientRect().height);
+      const tallestCard = Math.ceil(Math.max(0, ...cardHeights));
+      setCollectionCardHeight((current) => current === tallestCard ? current : tallestCard);
+    };
+    updateCardHeight();
+    const resizeObserver = new ResizeObserver(updateCardHeight);
+    resizeObserver.observe(measurementGrid);
+    measurementGrid.querySelectorAll<HTMLElement>(".catalog-card").forEach((card) => resizeObserver.observe(card));
+    return () => resizeObserver.disconnect();
+  }, [data]);
+
+  const collectionGridStyle = collectionCardHeight
+    ? { "--collection-card-height": `${collectionCardHeight}px` } as CSSProperties
+    : undefined;
 
   return (
     <section className="screen-stack collection-screen">
@@ -1999,11 +2172,17 @@ function CollectionScreen({
             : <div className="collection-filter-placeholder" aria-hidden="true" />}
         </div>
       </div>
-      <div className="collection-grid-content">
+      <div className="collection-grid-content" style={collectionGridStyle}>
         {tab === "rollcasters" && <RollcasterGrid data={data} rollcasters={rollcasters} setDetail={setDetail} onRefresh={onRefresh} />}
         {tab === "critters" && <CritterGrid data={data} critters={critters} setDetail={setDetail} onRefresh={onRefresh} />}
         {tab === "relics" && <RelicGrid data={data} relics={relics} setDetail={setDetail} onRefresh={onRefresh} />}
         {displayedCount === 0 && <p className="collection-empty">No {tab} match the current filters.</p>}
+
+        <div ref={cardMeasurementRef} className="collection-grid collection-card-measurement" aria-hidden="true">
+          <RollcasterGrid measurement data={data} rollcasters={data.catalog.rollcasters} setDetail={setDetail} onRefresh={onRefresh} />
+          <CritterGrid measurement data={data} critters={data.catalog.critters} setDetail={setDetail} onRefresh={onRefresh} />
+          <RelicGrid measurement data={data} relics={data.catalog.relics} setDetail={setDetail} onRefresh={onRefresh} />
+        </div>
       </div>
       {detail && <DetailModal data={data} detail={detail} onRefresh={onRefresh} onClose={() => setDetail(null)} />}
     </section>
@@ -2015,12 +2194,15 @@ function BagScreen({
   tab,
   setTab,
   onBack,
+  onRefresh,
 }: {
   data: AppData;
   tab: BagTab;
   setTab: (tab: BagTab) => void;
   onBack: () => void;
+  onRefresh: () => Promise<void>;
 }) {
+  const [selectedLootbox, setSelectedLootbox] = useState<string | null>(null);
   const currencies = orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite");
   const shardRows = [
     ...data.catalog.critters.map((entry) => ({ type: "critter" as const, entry })),
@@ -2034,42 +2216,46 @@ function BagScreen({
     { type: "rollcaster", label: "Rollcaster Shards" },
     { type: "relic", label: "Relic Shards" },
   ];
+  const ownedLootboxes = data.player!.collectibleSnapshot.lootboxes.filter((owned) => BigInt(owned.quantity || "0") > 0n);
 
   return (
     <section className="screen-stack collection-screen bag-screen">
       <div className="screen-heading row">
         <div>
           <h1>Bag</h1>
-          <p>Review your currencies and collectible shards.</p>
+          <p>Review your currencies, collectible shards, and owned Lootboxes.</p>
         </div>
         <button className="secondary-button" onClick={onBack}>Back</button>
       </div>
       <div className="tabs bag-tabs" role="tablist" aria-label="Bag categories">
         <button role="tab" aria-selected={tab === "currency"} className={tab === "currency" ? "active" : ""} onClick={() => setTab("currency")}>Currency</button>
         <button role="tab" aria-selected={tab === "shards"} className={tab === "shards" ? "active" : ""} onClick={() => setTab("shards")}>Shards</button>
+        <button role="tab" aria-selected={tab === "lootboxes"} className={tab === "lootboxes" ? "active" : ""} onClick={() => setTab("lootboxes")}>Lootboxes</button>
       </div>
       {tab === "currency" ? (
-        <div className="collection-grid bag-currency-grid">
-          {currencies.map((currency) => (
-            <article className="catalog-card bag-currency-card" key={currency.id} data-currency-id={currency.id}>
-              <span className="collectible-id">{currency.id}</span>
-              <div className="bag-currency-icon" aria-hidden="true">
-                <AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt="" loading="eager" fallback={currency.id === "prismite" ? <Gem size={72} /> : <Coins size={72} />} />
-              </div>
-              <div className="card-name-row"><strong>{currency.name}</strong></div>
-              <p className="bag-currency-amount">{formatAmount(currencyBalance(data, currency.id))}</p>
-            </article>
-          ))}
+        <div className="bag-grid-section bag-grid-headingless">
+          <div className="bag-grid-heading-slot" aria-hidden="true" />
+          <div className="collection-grid bag-grid bag-currency-grid">
+            {currencies.map((currency) => (
+              <article className="catalog-card bag-currency-card" key={currency.id} data-currency-id={currency.id}>
+                <div className="bag-currency-icon" aria-hidden="true">
+                  <AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt="" loading="eager" fallback={currency.id === "prismite" ? <Gem size={72} /> : <Coins size={72} />} />
+                </div>
+                <div className="card-name-row"><strong>{currency.name}</strong></div>
+                <p className="bag-currency-amount">{formatAmount(currencyBalance(data, currency.id))}</p>
+              </article>
+            ))}
+          </div>
         </div>
-      ) : (
+      ) : tab === "shards" ? (
         <div className="shop-groups bag-shard-groups">
           {groups.map((group) => {
             const grouped = shardRows.filter((row) => row.type === group.type);
             if (!grouped.length) return null;
             return (
-              <section className="shop-group" key={group.type}>
-                <h2>{group.label}</h2>
-                <div className="shop-grid bag-shard-grid">
+              <section className="shop-group bag-grid-section" key={group.type}>
+                <h2 className="bag-grid-heading-slot">{group.label}</h2>
+                <div className="shop-grid bag-grid bag-shard-grid">
                   {grouped.map(({ type, entry }) => <BagShardCard key={`${type}:${entry.id}`} data={data} type={type} id={entry.id} />)}
                 </div>
               </section>
@@ -2077,7 +2263,37 @@ function BagScreen({
           })}
           {shardRows.length === 0 && <div className="shop-empty"><Gem size={34} /><h2>No shards yet</h2><p>Collectible shards you earn will appear here.</p></div>}
         </div>
-      )}
+      ) : <div className="bag-grid-section bag-grid-headingless">
+        <div className="bag-grid-heading-slot" aria-hidden="true" />
+        <div className="shop-grid bag-grid lootbox-bag-grid">
+          {ownedLootboxes.map((owned) => {
+            const lootbox = data.catalog.lootboxes.find((row) => row.id === owned.lootbox_id);
+            if (!lootbox) return null;
+            const openDetails = () => setSelectedLootbox(lootbox.id);
+            return <article
+              className="lootbox-bag-card"
+              key={lootbox.id}
+              tabIndex={0}
+              role="button"
+              aria-label={`${lootbox.name}, ${formatAmount(owned.quantity)} in Bag`}
+              onClick={openDetails}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openDetails();
+                }
+              }}
+            >
+              <LootboxSprite lootbox={lootbox} variant="closed" />
+              <strong>{lootbox.name}</strong><b>×{formatAmount(owned.quantity)}</b>
+              <button type="button" className="primary-button lootbox-bag-open" onClick={(event) => { event.stopPropagation(); openDetails(); }}>Open</button>
+            </article>;
+          })}
+          {ownedLootboxes.length === 0 && <div className="shop-empty"><Gift /><h2>No Lootboxes yet</h2><p>Purchased and earned Lootboxes will appear here.</p></div>}
+        </div>
+      </div>}
+      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
     </section>
   );
 }
@@ -2107,7 +2323,6 @@ function BagShardCard({ data, type, id }: { data: AppData; type: CollectibleType
   const complete = progress.goal > 0n && progress.current >= progress.goal;
   return (
     <article className={`shop-entry-card bag-shard-card ${complete ? "complete" : ""}`.trim()} data-collectible-type={type} data-collectible-id={id} data-shard-status={complete ? "complete" : "in-progress"}>
-      <span className="shop-entry-category">{type}</span>
       <CollectibleSprite data={data} type={type} id={id} size="md" shard />
       <div className="shop-entry-copy">
         <h3>{targetName}</h3>
@@ -2138,11 +2353,15 @@ function ShopScreen({
   const [query, setQuery] = useState("");
   const [busyEntry, setBusyEntry] = useState<string | null>(null);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  const [purchasedLootboxEntries, setPurchasedLootboxEntries] = useState<Set<string>>(() => new Set());
+  const [selectedLootboxEntry, setSelectedLootboxEntry] = useState<ShopEntry | null>(null);
+  const [purchaseLootboxOnOpen, setPurchaseLootboxOnOpen] = useState(false);
   const requestIds = useRef(new Map<string, string>());
   const normalized = query.trim().toLocaleLowerCase();
-  const authoredEntries = data.catalog.shopEntries.filter((entry) => (
+  const authoredEntries = data.catalog.shopEntries.filter((entry): entry is Extract<ShopEntry,{ shop_type: "shard" | "relic" }> => (
     tab === "shard" || tab === "relic"
   ) && entry.shop_type === tab);
+  const lootboxEntries = data.catalog.shopEntries.filter((entry) => entry.shop_type === "lootbox" && data.catalog.lootboxes.some((lootbox) => lootbox.id === entry.target_id));
   const validEntries = authoredEntries.filter((entry) => currencyFor(data, entry.currency_id) && collectibleTargetAvailable(data, entry.target_category, entry.target_id));
   const entries = validEntries.filter((entry) => !normalized
     || entry.name.toLocaleLowerCase().includes(normalized)
@@ -2155,12 +2374,13 @@ function ShopScreen({
     });
   }, [authoredEntries.map((entry) => entry.id).join("|"), validEntries.map((entry) => entry.id).join("|")]);
 
-  async function purchase(entry: ShopEntry) {
+  async function purchase(entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>) {
     setBusyEntry(entry.id); setPurchaseError(null);
     const requestId = requestIds.current.get(entry.id) ?? createRequestId();
     requestIds.current.set(entry.id, requestId);
     try {
       const receipt = await purchaseShopEntry(entry.id, requestId);
+      if (receipt.shop_type === "lootbox" || receipt.target_category === "lootbox") throw new Error("Unexpected Lootbox purchase receipt.");
       requestIds.current.delete(entry.id);
       onNotify({
         id: `shop:${receipt.request_id}`,
@@ -2191,11 +2411,11 @@ function ShopScreen({
       <div className="tabs shop-tabs" role="tablist" aria-label="Shop categories">
         <button role="tab" aria-selected={tab === "shard"} className={tab === "shard" ? "active" : ""} onClick={() => setTab("shard")}>Shard Shop</button>
         <button role="tab" aria-selected={tab === "relic"} className={tab === "relic" ? "active" : ""} onClick={() => setTab("relic")}>Relic Shop</button>
-        <button role="tab" aria-selected={tab === "lootbox"} className={tab === "lootbox" ? "active" : ""} disabled title="Coming later">Lootbox Shop <small>Coming later</small></button>
+        <button role="tab" aria-selected={tab === "lootbox"} className={tab === "lootbox" ? "active" : ""} onClick={() => setTab("lootbox")}>Lootbox Shop</button>
         <button role="tab" aria-selected={tab === "promo"} className={tab === "promo" ? "active" : ""} onClick={() => setTab("promo")}><Ticket size={17} aria-hidden="true" /> Promo Codes</button>
       </div>
-      {(tab === "shard" || tab === "relic") && <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or collectible ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, collectible name, or ID" /></label>}
-      {(tab === "shard" || tab === "relic") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
+      {(tab === "shard" || tab === "relic" || tab === "lootbox") && <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, name, or ID" /></label>}
+      {(tab === "shard" || tab === "relic" || tab === "lootbox") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
       {tab === "promo" ? (
         <PromoCodesPanel
           data={data}
@@ -2203,18 +2423,482 @@ function ShopScreen({
           onStateChange={onPromoStateChange}
           onNotify={onNotify}
         />
-      ) : tab === "lootbox" ? <div className="shop-empty"><ShoppingBag size={38} /><h2>Lootbox Shop</h2><p>Coming later. Lootboxes, rolls, pity rules, and awards are intentionally reserved for a separate system.</p></div> : tab === "shard" ? (
+      ) : tab === "lootbox" ? <div className="shop-grid-section shop-grid-headingless">
+        <div className="shop-grid-heading-slot" aria-hidden="true" />
+        <div className="shop-grid lootbox-shop-grid">{lootboxEntries.filter((entry) => !normalized || `${entry.name} ${entry.target_id}`.toLocaleLowerCase().includes(normalized)).map((entry) => {
+        const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.target_id)!;
+        const currency = currencyFor(data, entry.currency_id);
+        if (!currency) return null;
+        // Bag ownership is durable inventory state, not an in-progress shop
+        // decision. Every visit to the shop should start with Purchase; only
+        // the purchase made from this card may temporarily expose the choice
+        // to open it or send it to the Bag.
+        const purchased = purchasedLootboxEntries.has(entry.id);
+        const busy = busyEntry === entry.id;
+        const openDetails = (purchaseImmediately = false) => {
+          setPurchaseLootboxOnOpen(purchaseImmediately);
+          setSelectedLootboxEntry(entry);
+        };
+        return <article
+          className={`lootbox-shop-card ${purchased ? "purchased" : ""}`.trim()}
+          key={entry.id}
+          tabIndex={0}
+          role="button"
+          aria-label={`${lootbox.name}, ${formatAmount(entry.price)} ${currency.name}`}
+          onClick={() => openDetails()}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openDetails();
+            }
+          }}
+        >
+          <button
+            type="button"
+            className="lootbox-shop-info"
+            aria-label={`View ${lootbox.name} details`}
+            onClick={(event) => {
+              event.stopPropagation();
+              openDetails();
+            }}
+          ><Info size={16} aria-hidden="true" /></button>
+          <span
+            className="lootbox-card-sprite"
+            aria-hidden="true"
+          ><LootboxSprite lootbox={lootbox} variant="closed" /></span>
+          <strong className="lootbox-shop-name">{lootbox.name}</strong>
+          <b className="shop-price lootbox-shop-price"><span className="lootbox-price-icon" aria-hidden="true"><Coins /><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={null} /></span>{formatAmount(entry.price)}</b>
+          <div className="lootbox-shop-actions">
+            {purchased ? <>
+              <button type="button" className="primary-button" disabled={busy} onClick={(event) => { event.stopPropagation(); openDetails(); }}>Open Now</button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPurchasedLootboxEntries((current) => {
+                    const next = new Set(current);
+                    next.delete(entry.id);
+                    return next;
+                  });
+                  // Purchase already placed the box in the Bag. Keep the
+                  // acquired row durable, then show the user the saved Bag
+                  // item without leaving the shop so they can keep buying.
+                  void onRefresh()
+                    .catch((refreshFailure) => console.error("Lootbox Bag refresh failed.", refreshFailure))
+                }}
+              >Send to Bag</button>
+            </> : <button className="primary-button shop-purchase" disabled={busy} onClick={(event) => { event.stopPropagation(); openDetails(true); }}>Purchase</button>}
+          </div>
+        </article>;
+        })}{lootboxEntries.length===0 && <ShopEmptyState hasAuthoredEntries={false} />}</div>
+      </div> : tab === "shard" ? (
         <div className="shop-groups">
           {groups.map((group) => {
             const grouped = entries.filter((entry) => entry.target_category === group.type);
             if (!grouped.length) return null;
-            return <section className="shop-group" key={group.type}><h2>{group.label}</h2><div className="shop-grid">{grouped.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}</div></section>;
+            return <section className="shop-group shop-grid-section" key={group.type}><h2 className="shop-grid-heading-slot">{group.label}</h2><div className="shop-grid">{grouped.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}</div></section>;
           })}
           {entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}
         </div>
-      ) : <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>}
+      ) : <div className="shop-grid-section shop-grid-headingless">
+        <div className="shop-grid-heading-slot" aria-hidden="true" />
+        <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>
+      </div>}
+      {selectedLootboxEntry && <LootboxModal
+        data={data}
+        lootboxId={selectedLootboxEntry.target_id}
+        mode="purchase"
+        autoPurchase={purchaseLootboxOnOpen}
+        initialPurchased={purchasedLootboxEntries.has(selectedLootboxEntry.id)}
+        shopEntry={selectedLootboxEntry}
+        onRefresh={onRefresh}
+        onPurchased={() => setPurchasedLootboxEntries((current) => new Set(current).add(selectedLootboxEntry.id))}
+        onOpened={() => setPurchasedLootboxEntries((current) => {
+          const next = new Set(current);
+          next.delete(selectedLootboxEntry.id);
+          return next;
+        })}
+        onClose={() => {
+          setPurchaseLootboxOnOpen(false);
+          setSelectedLootboxEntry(null);
+        }}
+      />}
     </section>
   );
+}
+
+type LootboxModalPhase = "idle" | "shaking" | "opened" | "reel" | "result";
+
+function LootboxSprite({ lootbox, variant, className = "" }: { lootbox: Lootbox; variant: "closed" | "open"; className?: string }) {
+  const path = variant === "closed" ? lootbox.closed_asset_path : lootbox.open_asset_path;
+  return <span className={`lootbox-sprite ${variant} ${className}`.trim()}><span className="lootbox-sprite-fallback" aria-hidden="true">{variant === "closed" ? <Gift /> : <Sparkles />}</span><AssetIcon path={path} alt={`${lootbox.name} ${variant}`} loading="eager" fallback={null} /></span>;
+}
+
+function LootboxPoolArt({ data, entry }: { data: AppData; entry: LootboxPoolEntry }) {
+  if (entry.reward_type === "currency") {
+    const currency = currencyFor(data, entry.target_id);
+    return <span className="lootbox-pool-art"><SpriteFrame size="sm"><AssetIcon path={currency ? catalogAssetPath(data,"currency",currency.id,currency.asset_path) : null} alt="" fallback={<Coins />} /></SpriteFrame></span>;
+  }
+  if (entry.reward_type === "lootbox") {
+    const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.target_id);
+    return <span className="lootbox-pool-art">{lootbox ? <LootboxSprite lootbox={lootbox} variant="closed" /> : <SpriteFrame size="sm"><Gift /></SpriteFrame>}</span>;
+  }
+  if (entry.reward_type === "shard" && entry.target_category && entry.target_category !== "lootbox") {
+    return <span className="lootbox-pool-art lootbox-pool-shard-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="sm" shard /></span>;
+  }
+  const relic = byId(data.catalog.relics, entry.target_id);
+  return <span className="lootbox-pool-art"><SpriteFrame size="sm"><Sprite name={relic?.name ?? entry.target_id} element="metal" assetPath={relic ? (findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)) : null} size="small" /></SpriteFrame></span>;
+}
+
+function lootboxPoolEntryName(data: AppData, entry: LootboxPoolEntry): string {
+  if (entry.reward_type === "currency") return currencyFor(data, entry.target_id)?.name ?? entry.target_id;
+  if (entry.reward_type === "lootbox") return data.catalog.lootboxes.find((row) => row.id === entry.target_id)?.name ?? entry.target_id;
+  if (entry.reward_type === "shard" && entry.target_category && entry.target_category !== "lootbox") return `${collectibleName(data,entry.target_category,entry.target_id)} Shards`;
+  return collectibleName(data,"relic",entry.target_id);
+}
+
+function lootboxRewardName(data: AppData, receipt: LootboxOpeningReceipt, winningEntry?: LootboxPoolEntry): string {
+  if (winningEntry) return lootboxPoolEntryName(data, winningEntry);
+  if (receipt.reward.type === "shard" && receipt.reward.targetCategory && receipt.reward.targetCategory !== "lootbox") {
+    return `${receipt.reward.name} Shards`;
+  }
+  return receipt.reward.name;
+}
+
+type LootboxRewardProgressState = {
+  kind: "shard" | "relic";
+  current: bigint;
+  max: bigint;
+  final: bigint;
+};
+
+function lootboxRewardProgress(data: AppData, reward: LootboxOpeningReceipt["reward"]): LootboxRewardProgressState | null {
+  const granted = safeBigInt(reward.granted);
+  if (reward.type === "shard" && reward.targetCategory && reward.targetCategory !== "lootbox") {
+    const challenge = challengesFor(data, reward.targetCategory, reward.targetId).find((row) => row.challenge_type === "shop_shards");
+    const max = safeBigInt(challenge?.required_amount);
+    if (max <= 0n) return null;
+    const current = shardProgress(data, reward.targetCategory, reward.targetId) > max
+      ? max
+      : shardProgress(data, reward.targetCategory, reward.targetId);
+    return { kind: "shard", current, max, final: current + granted > max ? max : current + granted };
+  }
+  if (reward.type === "relic") {
+    const max = safeBigInt(data.catalog.relics.find((relic) => relic.id === reward.targetId)?.max_owned);
+    if (max <= 0n) return null;
+    const owned = safeBigInt(data.player?.relicInventory.find((row) => row.relic_id === reward.targetId)?.quantity);
+    const current = owned > max ? max : owned;
+    return { kind: "relic", current, max, final: current + granted > max ? max : current + granted };
+  }
+  return null;
+}
+
+function LootboxRewardProgress({ data, progress, duplicateAmount, duplicateCurrency, convertedCurrencyAmount }: {
+  data: AppData;
+  progress: LootboxRewardProgressState;
+  duplicateAmount: bigint;
+  duplicateCurrency: CurrencyDef | null | undefined;
+  convertedCurrencyAmount: string;
+}) {
+  const [visualCurrent, setVisualCurrent] = useState(progress.current);
+  const percentageFor = (value: bigint) => progress.max > 0n
+    ? Math.min(100, Number((value * 10000n) / progress.max) / 100)
+    : 100;
+  const [visualPercent, setVisualPercent] = useState(() => percentageFor(progress.current));
+  const [shaking, setShaking] = useState(false);
+  const animationKey = `${progress.current}:${progress.final}:${progress.max}:${duplicateAmount}`;
+  useEffect(() => {
+    let frame = 0;
+    let shakeTimer = 0;
+    let cancelled = false;
+    const start = progress.current;
+    const span = progress.final - start;
+    const duration = span > 0n ? 1200 : 180;
+    const startPercent = percentageFor(start);
+    const finalPercent = percentageFor(progress.final);
+    const startedAt = performance.now();
+    setVisualCurrent(start);
+    setVisualPercent(startPercent);
+    setShaking(false);
+
+    const animate = (now: number) => {
+      if (cancelled) return;
+      const pct = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - pct, 3);
+      const scaled = BigInt(Math.round(eased * 1000));
+      setVisualCurrent(start + (span * scaled) / 1000n);
+      setVisualPercent(startPercent + (finalPercent - startPercent) * eased);
+      if (pct < 1) {
+        frame = window.requestAnimationFrame(animate);
+        return;
+      }
+      setVisualCurrent(progress.final);
+      setVisualPercent(finalPercent);
+      if (duplicateAmount > 0n) {
+        setShaking(true);
+        shakeTimer = window.setTimeout(() => setShaking(false), 900);
+      }
+    };
+
+    frame = window.requestAnimationFrame(animate);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(shakeTimer);
+    };
+  }, [animationKey, duplicateAmount, progress.current, progress.final]);
+
+  const label = progress.kind === "shard" ? "Shards" : "Relics";
+  const capped = duplicateAmount > 0n || progress.final >= progress.max;
+  return <div className={`lootbox-reward-progress ${capped ? "at-cap" : ""} ${shaking ? "duplicate-shaking" : ""}`.trim()} data-lootbox-reward-progress={progress.kind} data-lootbox-reward-capped={capped ? "true" : "false"}>
+    <div className="lootbox-reward-progress-heading"><span>{progress.kind === "shard" ? "Shard progress" : "Relic ownership"}</span><strong>{formatAmount(visualCurrent)} / {formatAmount(progress.max)} {label}</strong></div>
+    <div className="xp-bar" role="progressbar" aria-label={`${label} reward progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={visualPercent} aria-valuetext={`${formatAmount(visualCurrent)} / ${formatAmount(progress.max)} ${label}`}><span style={{ width: `${visualPercent}%` }} /></div>
+    {duplicateAmount > 0n && <div className="lootbox-duplicate-conversion lootbox-progress-duplicate">
+      <span className="lootbox-duplicate-currency" aria-hidden="true">
+        <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
+      </span>
+      <strong>+{formatAmount(convertedCurrencyAmount)} {duplicateCurrency?.name ?? "currency"}</strong>
+      <small>{formatAmount(duplicateAmount)} duplicate {label.toLowerCase()} converted</small>
+    </div>}
+  </div>;
+}
+
+function LootboxModal({ data, lootboxId, mode, autoPurchase = false, initialPurchased = false, shopEntry, onRefresh, onPurchased, onOpened, onClose }: {
+  data: AppData;
+  lootboxId: string;
+  mode: "purchase" | "owned";
+  autoPurchase?: boolean;
+  initialPurchased?: boolean;
+  shopEntry?: ShopEntry;
+  onRefresh: () => Promise<void>;
+  onPurchased?: () => void;
+  onOpened?: () => void;
+  onClose: () => void;
+}) {
+  const lootbox = data.catalog.lootboxes.find((row) => row.id === lootboxId);
+  const pool = data.catalog.lootboxPoolEntries.filter((entry) => entry.lootbox_id === lootboxId).sort((left,right) => left.sort_order-right.sort_order);
+  const [purchased, setPurchased] = useState(mode === "owned" || initialPurchased);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<LootboxModalPhase>("idle");
+  const [receipt, setReceipt] = useState<LootboxOpeningReceipt | null>(null);
+  const [rewardProgress, setRewardProgress] = useState<LootboxRewardProgressState | null>(null);
+  const [reelTarget, setReelTarget] = useState<number | null>(null);
+  const purchaseRequest = useRef(createRequestId());
+  const autoPurchaseStarted = useRef(false);
+  const openingRequest = useRef(createRequestId());
+  const openButtonRef = useRef<HTMLButtonElement>(null);
+  const reelViewportRef = useRef<HTMLDivElement>(null);
+  const reelTrackRef = useRef<HTMLDivElement>(null);
+  const reelAnimationRef = useRef<Animation | null>(null);
+  const timers = useRef<number[]>([]);
+  const canOpen = purchased && phase === "idle" && !busy;
+
+  useEffect(() => () => {
+    timers.current.forEach((timer) => window.clearTimeout(timer));
+    reelAnimationRef.current?.cancel();
+  }, []);
+  useEffect(() => {
+    document.documentElement.dataset.lootboxOpeningPhase = phase;
+    return () => { delete document.documentElement.dataset.lootboxOpeningPhase; };
+  }, [phase]);
+
+  async function purchaseBox() {
+    if (!shopEntry || busy) return;
+    setBusy(true); setError(null);
+    try {
+      await purchaseShopEntry(shopEntry.id,purchaseRequest.current);
+      setPurchased(true);
+      onPurchased?.();
+      // The purchase and Bag write happen in one server transaction. Refresh
+      // is only a view update and must not turn a successful purchase into a
+      // retryable error.
+      await onRefresh().catch((refreshFailure) => console.error("Lootbox purchase succeeded but refresh failed.", refreshFailure));
+    } catch (purchaseFailure) {
+      setError(shopErrorMessage(purchaseFailure));
+    } finally { setBusy(false); }
+  }
+
+  useEffect(() => {
+    if (!autoPurchase || autoPurchaseStarted.current || purchased || !shopEntry) return;
+    autoPurchaseStarted.current = true;
+    void purchaseBox();
+  }, [autoPurchase, purchased, shopEntry]);
+
+  async function openBox() {
+    if (!canOpen || !lootbox) return;
+    setBusy(true); setError(null);
+    try {
+      const opening = await openLootbox(lootbox.id,openingRequest.current);
+      setRewardProgress(lootboxRewardProgress(data, opening.reward));
+      setReceipt(opening);
+      // The opening RPC consumes the Bag item and grants the reward in one
+      // idempotent transaction. Update the shop affordance before the visual
+      // sequence starts so an animation can never represent an uncommitted
+      // reward or leave a stale Open Now button behind.
+      onOpened?.();
+      // The RPC has already consumed the box and granted the reward atomically.
+      // Refresh the view in the background so network latency never delays the
+      // opening animation or creates a window where a second open is possible.
+      void onRefresh().catch((refreshFailure) => console.error("Lootbox opening succeeded but refresh failed.", refreshFailure));
+      timers.current.forEach((timer) => window.clearTimeout(timer));
+      timers.current = [];
+      setPhase("shaking");
+      timers.current.push(window.setTimeout(() => setPhase("opened"),650));
+      timers.current.push(window.setTimeout(() => setPhase("reel"),950));
+    } catch (openingFailure) {
+      setError(errorMessage(openingFailure,"Unable to open this Lootbox."));
+    } finally { setBusy(false); }
+  }
+
+  async function sendToBag() {
+    if (busy) return;
+    setBusy(true);
+    onOpened?.();
+    try {
+      // Purchases are already written to the Bag by the purchase RPC. Awaiting
+      // the refresh here ensures the Bag screen sees that row before the modal
+      // closes, even when the user clicks this immediately after purchase.
+      await onRefresh();
+    } catch (refreshFailure) {
+      // The server-side purchase is still durable if a view refresh fails.
+      // Close the modal so the user can retry the Bag view without retrying a
+      // currency debit.
+      console.error("Lootbox Send to Bag refresh failed.", refreshFailure);
+    } finally {
+      setBusy(false);
+      onClose();
+    }
+  }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.code !== "Space" || event.repeat || target?.matches("input,textarea,select,button,[contenteditable=true]")) return;
+      if (canOpen) { event.preventDefault(); void openBox(); }
+    };
+    window.addEventListener("keydown",onKey);
+    return () => window.removeEventListener("keydown",onKey);
+  }, [canOpen,lootbox?.id]);
+
+  useEffect(() => {
+    if (purchased && phase === "idle" && !busy) {
+      requestAnimationFrame(() => openButtonRef.current?.focus());
+    }
+  }, [purchased, phase, busy]);
+
+  const currency = shopEntry ? currencyFor(data,shopEntry.currency_id) : null;
+  const winningEntry = receipt ? pool.find((entry) => entry.id === receipt.reward.poolEntryId) : undefined;
+  const reelWinnerIndex = 34;
+  const poolKey = pool.map((entry) => entry.id).join("|");
+  const reel = useMemo(() => Array.from({ length: 40 },(_,index) => {
+    const seedText = `${receipt?.openingId ?? lootboxId}:${index}`;
+    let seed = 2166136261;
+    for (let charIndex = 0; charIndex < seedText.length; charIndex += 1) {
+      seed ^= seedText.charCodeAt(charIndex);
+      seed = Math.imul(seed, 16777619);
+    }
+    const random = () => {
+      seed += 0x6D2B79F5;
+      let value = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      value ^= value + Math.imul(value ^ value >>> 7, 61 | value);
+      return ((value ^ value >>> 14) >>> 0) / 4294967296;
+    };
+    const entry = index===reelWinnerIndex && winningEntry ? winningEntry : pool[Math.floor(random()*Math.max(1,pool.length))] ?? winningEntry;
+    const amount = index===reelWinnerIndex && receipt ? Number(receipt.reward.amount) : entry ? entry.min_amount+Math.floor(random()*(entry.max_amount-entry.min_amount+1)) : 1;
+    return { entry,amount,index };
+  }).filter((item): item is { entry: LootboxPoolEntry; amount: number; index: number } => Boolean(item.entry)),[receipt?.openingId,lootboxId,winningEntry?.id,poolKey]);
+  useLayoutEffect(() => {
+    if (phase === "idle" || phase === "shaking" || phase === "opened") {
+      setReelTarget(null);
+      return;
+    }
+    if (phase !== "reel") return;
+    const viewport = reelViewportRef.current;
+    const track = reelTrackRef.current;
+    const winner = track?.querySelector<HTMLElement>(".lootbox-reel-cell.winner");
+    if (!viewport || !track || !winner) return;
+    const viewportBounds = viewport.getBoundingClientRect();
+    const winnerBounds = winner.getBoundingClientRect();
+    const target = viewportBounds.left + viewportBounds.width / 2 - (winnerBounds.left + winnerBounds.width / 2);
+    setReelTarget(Math.round(target));
+  }, [phase,reel.length,receipt?.openingId]);
+  useEffect(() => {
+    reelAnimationRef.current?.cancel();
+    reelAnimationRef.current = null;
+    if (phase !== "reel" || reelTarget === null) return;
+    const track = reelTrackRef.current;
+    if (!track) return;
+    track.style.transform = "translate3d(0,0,0)";
+    const animation = track.animate(
+      [
+        { transform: "translate3d(0,0,0)" },
+        { transform: `translate3d(${reelTarget}px,0,0)` },
+      ],
+      { duration: 6800, easing: "cubic-bezier(.16,.76,.2,1)", fill: "forwards" },
+    );
+    animation.onfinish = () => {
+      track.style.transform = `translate3d(${reelTarget}px,0,0)`;
+      if (phase === "reel") setPhase("result");
+    };
+    reelAnimationRef.current = animation;
+    return () => {
+      animation.cancel();
+      if (reelAnimationRef.current === animation) reelAnimationRef.current = null;
+    };
+  }, [phase,reelTarget]);
+  if (!lootbox) return null;
+  const showingAnimation = phase !== "idle";
+  const duplicateUnits = BigInt(receipt?.reward.discarded ?? "0");
+  const duplicateCurrency = receipt ? currencyFor(data, receipt.reward.dupeCurrencyId ?? "") : null;
+  const rewardName = receipt ? lootboxRewardName(data, receipt, winningEntry) : null;
+  return <div className="modal-backdrop lootbox-modal-backdrop" onMouseDown={showingAnimation ? undefined : onClose}>
+    <section className={`lootbox-modal phase-${phase}`} role="dialog" aria-modal="true" aria-label={lootbox.name} onMouseDown={(event) => event.stopPropagation()}>
+      {!showingAnimation && <button className="modal-close" aria-label="Close" onClick={onClose}><X /></button>}
+      <header>
+        {mode === "purchase" && <div className="lootbox-modal-currencies" aria-label="Currency balances">
+          {orderedCurrencies(data).map((balanceCurrency) => {
+            const amount = formatAmount(currencyBalance(data, balanceCurrency.id));
+            return <div className="coin-pill currency-pill" key={balanceCurrency.id} data-currency-id={balanceCurrency.id} aria-label={`${balanceCurrency.name}: ${amount}`}>
+              <AssetIcon path={catalogAssetPath(data, "currency", balanceCurrency.id, balanceCurrency.asset_path)} alt={balanceCurrency.name} fallback={<Coins size={17} />} />
+              <span>{amount}</span>
+            </div>;
+          })}
+        </div>}
+        <p className="eyebrow">{mode==="purchase"&&!purchased?"Lootbox Shop":purchased?"Lootbox acquired":"Bag"}</p><h2>{lootbox.name}</h2><p>{lootbox.description}</p>
+      </header>
+      {showingAnimation ? <div className="lootbox-opening-stage">
+        <div className="lootbox-opening-box-slot">
+          <button className={`lootbox-click-target ${phase==="shaking"?"shaking":""}`} disabled><LootboxSprite lootbox={lootbox} variant={phase==="shaking"?"closed":"open"} /></button>
+        </div>
+        <div className="lootbox-opening-reel-slot">
+          {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
+        </div>
+        <div className="lootbox-opening-result-slot">
+          {phase === "result" && receipt && <div className={`lootbox-result ${duplicateUnits > 0n ? "has-duplicate" : ""}`.trim()} data-reward-type={receipt.reward.type}>
+            <span>YOU WON</span>
+            <h3>x{formatAmount(receipt.reward.amount)} {rewardName}</h3>
+            {rewardProgress ? <LootboxRewardProgress data={data} progress={rewardProgress} duplicateAmount={duplicateUnits} duplicateCurrency={duplicateCurrency} convertedCurrencyAmount={receipt.reward.convertedCurrencyAmount} /> : duplicateUnits > 0n && <div className="lootbox-duplicate-conversion">
+              <span className="lootbox-duplicate-currency" aria-hidden="true">
+                <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
+              </span>
+              <strong>+{formatAmount(receipt.reward.convertedCurrencyAmount)}</strong>
+              <small>{formatAmount(receipt.reward.discarded)} duplicate {receipt.reward.discarded === "1" ? "unit" : "units"} converted to {duplicateCurrency?.name ?? receipt.reward.dupeCurrencyId ?? "currency"}</small>
+            </div>}
+            <button className="primary-button" onClick={onClose}>Continue</button>
+          </div>}
+        </div>
+      </div> : <>
+        <button className="lootbox-click-target" disabled={!canOpen} aria-label={canOpen?`Open ${lootbox.name}`:lootbox.name} onClick={() => void openBox()}><LootboxSprite lootbox={lootbox} variant="closed" /></button>
+        {error&&<p className="notice error" role="alert">{error}</p>}
+        <footer>{!purchased&&shopEntry&&currency?<button className="primary-button lootbox-purchase-button" disabled={busy} onClick={() => void purchaseBox()}>{busy?"Purchasing…":<><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /> Purchase · {formatAmount(shopEntry.price)}</>}</button>:<><button ref={openButtonRef} className="primary-button" disabled={busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy} onClick={() => void sendToBag()}>Send to Bag</button>}</>}</footer>
+        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
+      </>}
+    </section>
+  </div>;
 }
 
 function PromoCodesPanel({
@@ -2515,11 +3199,13 @@ function ShopEmptyState({ hasAuthoredEntries }: { hasAuthoredEntries: boolean })
   return <div className="shop-empty"><ShoppingBag size={34} /><h2>{hasAuthoredEntries ? "No shop entries match" : "No offers available yet"}</h2><p>{hasAuthoredEntries ? "Try a different name or collectible ID." : "Active offers authored in Content Studio will appear here."}</p></div>;
 }
 
-function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry: ShopEntry; busy: boolean; onPurchase: () => void }) {
+function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>; busy: boolean; onPurchase: () => void }) {
   const availability = shopAvailability(data, entry);
-  const alreadyOwned = entry.shop_type === "shard"
+  const complete = entry.shop_type === "shard" && availability.goal > 0n && availability.current >= availability.goal;
+  const alreadyUnlocked = entry.shop_type === "shard"
     && (availability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || availability.code === "SHOP_SHARDS_CHALLENGE_COMPLETE");
-  const soldOut = entry.shop_type === "relic" && availability.code === "RELIC_MAX_OWNED_REACHED";
+  const maxOwned = entry.shop_type === "relic" && availability.code === "RELIC_MAX_OWNED_REACHED";
+  const completedStatus = alreadyUnlocked ? "Already Unlocked!" : maxOwned ? "Max Owned!" : null;
   const currency = currencyFor(data, entry.currency_id)!;
   const targetName = collectibleName(data, entry.target_category, entry.target_id);
   const targetCritter = entry.target_category === "critter"
@@ -2533,8 +3219,7 @@ function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry
     ? `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(availability.goal)}`
     : `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(relicChallenge?.required_amount ?? 0)} to unlock`;
   return (
-    <article className={`shop-entry-card ${soldOut ? "sold-out" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"}>
-      <span className="shop-entry-category">{entry.target_category}</span>
+    <article className={`shop-entry-card ${complete ? "complete" : ""} ${maxOwned ? "max-owned" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"} data-shard-status={entry.shop_type === "shard" ? (complete ? "complete" : "in-progress") : undefined}>
       <CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="md" shard={entry.shop_type === "shard"} />
       <div className="shop-entry-copy">
         <h3>{entry.name}</h3>
@@ -2554,10 +3239,12 @@ function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry
         <strong>{formatAmount(entry.quantity)} × {entry.shop_type === "shard" ? "Shards" : targetName}</strong>
         <span className="shop-price"><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} />{formatAmount(entry.price)}</span>
       </div>
-      {entry.shop_type === "shard" && <ShardProgressBar current={availability.current} goal={availability.goal} />}
+      {entry.shop_type === "shard" && <ShardProgressBar current={availability.current} goal={availability.goal} showCompletion={complete} />}
       {entry.shop_type !== "shard" && <p className="shop-owned">{ownershipLabel}</p>}
-      <button className="primary-button shop-purchase" disabled={busy || !availability.enabled} onClick={onPurchase}>{busy ? "Purchasing…" : alreadyOwned ? "Already Owned" : "Purchase"}</button>
-      {!availability.enabled && <p className="shop-unavailable">{availability.reason}</p>}
+      <div className="shop-entry-actions">
+        {!availability.enabled && !completedStatus && <p className="shop-unavailable">{availability.reason}</p>}
+        {completedStatus ? <p className="shop-complete-status">{completedStatus}</p> : <button className="primary-button shop-purchase" disabled={busy || !availability.enabled} onClick={onPurchase}>{busy ? "Purchasing…" : "Purchase"}</button>}
+      </div>
     </article>
   );
 }
@@ -2616,198 +3303,115 @@ function ElementIcon({ data, elementId }: { data: AppData; elementId: string }) 
 function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }: { data: AppData; type: CollectibleType; id: string; onRefresh: () => Promise<void>; compact?: boolean }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [trackingError, setTrackingError] = useState<string | null>(null);
+  const [replacementChallenge, setReplacementChallenge] = useState<CollectibleUnlockChallenge | null>(null);
   const challenges = challengesFor(data, type, id);
   if (!challenges.length) return <p className="collection-status challenge-empty">Not currently unlockable</p>;
-  const tracked = data.player!.collectibleSnapshot.tracked.filter((trackedRow) => {
-    const progress = progressFor(data, trackedRow.challenge_id);
-    return progress.eligible !== false && !progress.completed && progress.trackable !== false;
-  });
-  const sameCollectibleTracked = tracked.some((row) => {
-    const challenge = data.catalog.collectibleUnlockChallenges.find((candidate) => candidate.id === row.challenge_id);
-    return challenge?.collectible_type === type && challenge.collectible_id === id;
-  });
-  const trackingFull = tracked.length >= 3 && !sameCollectibleTracked;
+  const tracked = trackedChallengesForDisplay(data);
   const firstBlockedChallengeId = challenges.find((challenge) => progressFor(data, challenge.id).eligible === false)?.id ?? null;
 
   async function changeTracking(challenge: CollectibleUnlockChallenge, currentlyTracked: boolean) {
-    setBusyId(challenge.id);
     setTrackingError(null);
+    if (!currentlyTracked && tracked.length >= 3) {
+      setReplacementChallenge(challenge);
+      return;
+    }
+    setBusyId(challenge.id);
     try {
+      if (!currentlyTracked) {
+        const progress = progressFor(data, challenge.id);
+        if (progress.eligible === false || progress.trackable === false) {
+          setTrackingError("Complete the required Gate Challenges before tracking this challenge.");
+          return;
+        }
+      }
       if (currentlyTracked) await untrackCollectibleChallenge(challenge.id);
       else await trackCollectibleChallenge(challenge.id);
       await onRefresh();
     } catch (error) {
       const raw = errorMessage(error, "Unable to update challenge tracking.");
-      setTrackingError(
-        raw.includes("CHALLENGE_GATED")
-          ? "Complete the required Gate Challenges before tracking this challenge."
-          : raw.includes("TRACKING_LIMIT_REACHED")
-            ? "3 challenge limit reached"
+      if (raw.includes("TRACKING_LIMIT_REACHED")) {
+        // Repair rows that the current snapshot still knows about but the
+        // active projection has already hidden (normally completed rows),
+        // then retry once before asking the user to choose a replacement.
+        const activeIds = new Set(tracked.map((row) => row.challenge_id));
+        const staleIds = data.player?.collectibleSnapshot.tracked
+          .map((row) => row.challenge_id)
+          .filter((challengeId) => !activeIds.has(challengeId)) ?? [];
+        for (const staleId of staleIds) await untrackCollectibleChallenge(staleId);
+        if (staleIds.length > 0) {
+          await trackCollectibleChallenge(challenge.id);
+          await onRefresh();
+        } else {
+          await onRefresh();
+          setReplacementChallenge(challenge);
+        }
+      } else {
+        setTrackingError(
+          raw.includes("CHALLENGE_GATED")
+            ? "Complete the required Gate Challenges before tracking this challenge."
             : raw,
-      );
+        );
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function replaceTrackedChallenge(replacedChallengeId: string) {
+    if (!replacementChallenge) return;
+    setBusyId(replacementChallenge.id);
+    setTrackingError(null);
+    try {
+      await untrackCollectibleChallenge(replacedChallengeId);
+      await trackCollectibleChallenge(replacementChallenge.id);
+      await onRefresh();
+    } catch (error) {
+      setTrackingError(errorMessage(error, "Unable to replace tracked challenge."));
+      throw error;
     } finally {
       setBusyId(null);
     }
   }
 
   return (
-    <div className={`challenge-rows ${compact ? "compact" : ""}`.trim()} aria-label={`${collectibleName(data, type, id)} unlock challenges`}>
-      {trackingError && <p className="grid-challenge-error" role="alert">{trackingError}</p>}
-      {challenges.map((challenge) => {
-        const progress = progressFor(data, challenge.id);
-        const blocked = progress.eligible === false;
-        const slot = progress.completed ? null : trackedSlotFor(data, challenge.id);
-        const trackedFamily = isTrackableChallenge(challenge);
-        const trackable = trackedFamily && !progress.completed && progress.trackable !== false;
-        return (
-          <Fragment key={challenge.id}>
-            {challenge.id === firstBlockedChallengeId && <div className="challenge-gate-boundary">
-              <span className="gate-blocked"><Lock size={11} />Complete all above challenges first</span>
-            </div>}
-            <div className={`challenge-row ${progress.completed ? "complete" : ""} ${blocked ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()}>
-              <span className="challenge-row-description">{challengeDescription(data, challenge)}</span>
-              <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
-              {trackedFamily && !progress.completed && (trackable || slot !== null) && <button
-                type="button"
-                className="grid-challenge-track"
-                aria-label={`${slot ? "Untrack" : "Track"} ${challengeDescription(data, challenge)}`}
-                aria-pressed={slot !== null}
-                disabled={busyId === challenge.id || (!slot && trackingFull)}
-                title={!slot && trackingFull ? "3 challenge limit reached" : slot ? `Tracked in Slot ${slot}` : undefined}
-                onClick={() => changeTracking(challenge, slot !== null)}
-              >{busyId === challenge.id ? "…" : slot ? "Untrack" : "Track"}</button>}
-            </div>
-          </Fragment>
-        );
-      })}
-    </div>
+    <>
+      <div className={`challenge-rows ${compact ? "compact" : ""}`.trim()} aria-label={`${collectibleName(data, type, id)} unlock challenges`}>
+        {trackingError && <p className="grid-challenge-error" role="alert">{trackingError}</p>}
+        {challenges.map((challenge) => {
+          const progress = progressFor(data, challenge.id);
+          const blocked = progress.eligible === false;
+          const slot = progress.completed ? null : trackedSlotFor(data, challenge.id);
+          const trackedFamily = isTrackableChallenge(challenge);
+          const trackable = trackedFamily && !progress.completed && progress.trackable !== false;
+          return (
+            <Fragment key={challenge.id}>
+              {challenge.id === firstBlockedChallengeId && <div className="challenge-gate-boundary">
+                <span className="gate-blocked"><Lock size={11} />Complete all above challenges first</span>
+              </div>}
+              <div className={`challenge-row ${progress.completed ? "complete" : ""} ${blocked ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()}>
+                <span className="challenge-row-description">{challengeDescription(data, challenge)}</span>
+                <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
+                {trackedFamily && !progress.completed && (trackable || slot !== null) && <button
+                  type="button"
+                  className="grid-challenge-track"
+                  aria-label={`${slot ? "Untrack" : "Track"} ${challengeDescription(data, challenge)}`}
+                  aria-pressed={slot !== null}
+                  disabled={busyId === challenge.id}
+                  title={slot ? `Tracked in Slot ${slot}` : undefined}
+                  onClick={() => changeTracking(challenge, slot !== null)}
+                >{busyId === challenge.id ? "…" : slot ? "Untrack" : "Track"}</button>}
+              </div>
+            </Fragment>
+          );
+        })}
+      </div>
+      {replacementChallenge && <ChallengeReplacementModal data={data} challenge={replacementChallenge} tracked={tracked} busyId={busyId} onReplace={replaceTrackedChallenge} onClose={() => setReplacementChallenge(null)} />}
+    </>
   );
 }
 
-type CollectionScrollMetrics = {
-  overflow: boolean;
-  scrollTop: number;
-  maxScroll: number;
-  thumbHeight: number;
-  thumbTop: number;
-};
-
-function CollectionCardState({ children, showScrollbar = false }: { children: React.ReactNode; showScrollbar?: boolean }) {
-  const scrollId = useId();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
-  const [metrics, setMetrics] = useState<CollectionScrollMetrics>({ overflow: false, scrollTop: 0, maxScroll: 0, thumbHeight: 0, thumbTop: 0 });
-
-  function syncScrollMetrics() {
-    const pane = scrollRef.current;
-    if (!pane) return;
-    const maxScroll = Math.max(0, pane.scrollHeight - pane.clientHeight);
-    const overflow = maxScroll > 1;
-    const trackHeight = Math.max(0, pane.clientHeight - 4);
-    const thumbHeight = showScrollbar
-      ? overflow ? Math.min(trackHeight, Math.max(22, trackHeight * pane.clientHeight / pane.scrollHeight)) : trackHeight
-      : 0;
-    const thumbTravel = Math.max(0, trackHeight - thumbHeight);
-    const thumbTop = maxScroll > 0 ? thumbTravel * pane.scrollTop / maxScroll : 0;
-    const next = { overflow, scrollTop: pane.scrollTop, maxScroll, thumbHeight, thumbTop };
-    setMetrics((current) => Object.keys(next).every((key) => current[key as keyof CollectionScrollMetrics] === next[key as keyof CollectionScrollMetrics]) ? current : next);
-  }
-
-  useLayoutEffect(() => {
-    const pane = scrollRef.current;
-    if (!pane) return;
-    syncScrollMetrics();
-    const resizeObserver = new ResizeObserver(syncScrollMetrics);
-    resizeObserver.observe(pane);
-    if (pane.firstElementChild) resizeObserver.observe(pane.firstElementChild);
-    return () => resizeObserver.disconnect();
-  }, [children, showScrollbar]);
-
-  function handleScrollbarPointerDown(event: React.PointerEvent<HTMLSpanElement>) {
-    if (event.target !== event.currentTarget) return;
-    const pane = scrollRef.current;
-    if (!pane || metrics.maxScroll <= 0) return;
-    const track = event.currentTarget.getBoundingClientRect();
-    const thumbTravel = Math.max(0, track.height - metrics.thumbHeight);
-    const nextThumbTop = Math.min(thumbTravel, Math.max(0, event.clientY - track.top - metrics.thumbHeight / 2));
-    pane.scrollTop = thumbTravel > 0 ? metrics.maxScroll * nextThumbTop / thumbTravel : 0;
-  }
-
-  function handleThumbPointerDown(event: React.PointerEvent<HTMLSpanElement>) {
-    const pane = scrollRef.current;
-    if (!pane) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { pointerId: event.pointerId, startY: event.clientY, startScrollTop: pane.scrollTop };
-  }
-
-  function handleThumbPointerMove(event: React.PointerEvent<HTMLSpanElement>) {
-    const pane = scrollRef.current;
-    const drag = dragRef.current;
-    if (!pane || !drag || drag.pointerId !== event.pointerId) return;
-    const trackHeight = Math.max(0, pane.clientHeight - 4);
-    const thumbTravel = Math.max(1, trackHeight - metrics.thumbHeight);
-    pane.scrollTop = drag.startScrollTop + (event.clientY - drag.startY) * metrics.maxScroll / thumbTravel;
-  }
-
-  function stopThumbDrag(event: React.PointerEvent<HTMLSpanElement>) {
-    if (dragRef.current?.pointerId !== event.pointerId) return;
-    dragRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  }
-
-  function handleScrollbarKeyDown(event: React.KeyboardEvent<HTMLSpanElement>) {
-    const pane = scrollRef.current;
-    if (!pane) return;
-    if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      pane.scrollTop = event.key === "Home" ? 0 : metrics.maxScroll;
-      return;
-    }
-    const increments: Partial<Record<string, number>> = {
-      ArrowUp: -32,
-      ArrowDown: 32,
-      PageUp: -pane.clientHeight * .85,
-      PageDown: pane.clientHeight * .85,
-    };
-    const increment = increments[event.key];
-    if (increment == null) return;
-    event.preventDefault();
-    pane.scrollTop += increment;
-  }
-
-  return (
-    <div className={`collection-card-state ${showScrollbar ? "with-scrollbar" : ""} ${metrics.overflow ? "scrollable" : ""}`.trim()}>
-      <div
-        id={scrollId}
-        ref={scrollRef}
-        className="collection-card-state-scroll"
-        tabIndex={metrics.overflow ? 0 : undefined}
-        onScroll={syncScrollMetrics}
-      >{children}</div>
-      {showScrollbar && <span
-        className="collection-card-scrollbar"
-        role="scrollbar"
-        tabIndex={metrics.overflow ? 0 : -1}
-        aria-label="Scroll collectible challenges"
-        aria-controls={scrollId}
-        aria-orientation="vertical"
-        aria-valuemin={0}
-        aria-valuemax={Math.round(metrics.maxScroll)}
-        aria-valuenow={Math.round(metrics.scrollTop)}
-        aria-disabled={!metrics.overflow}
-        onKeyDown={handleScrollbarKeyDown}
-        onPointerDown={handleScrollbarPointerDown}
-      ><span
-        className="collection-card-scrollbar-thumb"
-        style={{ height: metrics.thumbHeight, transform: `translateY(${metrics.thumbTop}px)` }}
-        onPointerDown={handleThumbPointerDown}
-        onPointerMove={handleThumbPointerMove}
-        onPointerUp={stopThumbDrag}
-        onPointerCancel={stopThumbDrag}
-      /></span>}
-    </div>
-  );
+function CollectionCardState({ children }: { children: React.ReactNode }) {
+  return <div className="collection-card-state"><div className="collection-card-state-scroll">{children}</div></div>;
 }
 
 function RollcasterGrid({
@@ -2815,14 +3419,16 @@ function RollcasterGrid({
   rollcasters,
   setDetail,
   onRefresh,
+  measurement = false,
 }: {
   data: AppData;
   rollcasters: AppData["catalog"]["rollcasters"];
   setDetail: (detail: { type: "rollcaster"; id: string }) => void;
   onRefresh: () => Promise<void>;
+  measurement?: boolean;
 }) {
   return (
-    <div className="collection-grid">
+    <div className={`collection-grid ${measurement ? "collection-grid-measurement" : ""}`.trim()}>
       {rollcasters.map((rollcaster) => {
         const owned = data.player!.rollcasters.find((row) => row.rollcaster_id === rollcaster.id);
         const unlocked = collectibleIsUnlocked(data, "rollcaster", rollcaster.id);
@@ -2840,8 +3446,9 @@ function RollcasterGrid({
             <span className="collectible-id">{rollcaster.id}</span>
             <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={findAssetPath(data, "rollcaster", rollcaster.id, "card") ?? catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} size="hero" fit="portrait" /></CardSprite>
             <CardName data={data} name={rollcaster.name} />
-            <CollectionCardState showScrollbar={!unlocked}>
+            <CollectionCardState>
               {unlocked ? <div className="collection-progression"><p>Level {owned?.level ?? 1}</p><ProgressBar progress={progress} /></div> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} onRefresh={onRefresh} />}
+              {rollcaster.description?.trim() && <p className="collection-rollcaster-description">{rollcaster.description.trim()}</p>}
             </CollectionCardState>
             <PointCounter kind="ability" points={owned?.ability_points ?? 0} />
           </article>
@@ -2856,14 +3463,16 @@ function CritterGrid({
   critters,
   setDetail,
   onRefresh,
+  measurement = false,
 }: {
   data: AppData;
   critters: Critter[];
   setDetail: (detail: { type: "critter"; id: string }) => void;
   onRefresh: () => Promise<void>;
+  measurement?: boolean;
 }) {
   return (
-    <div className="collection-grid">
+    <div className={`collection-grid ${measurement ? "collection-grid-measurement" : ""}`.trim()}>
       {critters.map((critter) => {
         const owned = data.player!.critters.find((row) => row.critter_id === critter.id);
         const unlocked = collectibleIsUnlocked(data, "critter", critter.id);
@@ -2886,7 +3495,7 @@ function CritterGrid({
               size="large"
             /></CardSprite>
             <CardName data={data} name={critter.name} critter={critter} />
-            <CollectionCardState showScrollbar={!unlocked}>
+            <CollectionCardState>
               {unlocked && owned ? <div className="collection-progression critter-progression"><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} onRefresh={onRefresh} />}
             </CollectionCardState>
             <StatGrid stats={stats} compact />
@@ -2898,9 +3507,9 @@ function CritterGrid({
   );
 }
 
-function RelicGrid({ data, relics, setDetail, onRefresh }: { data: AppData; relics: Relic[]; setDetail: (detail: { type: "relic"; id: string }) => void; onRefresh: () => Promise<void> }) {
+function RelicGrid({ data, relics, setDetail, onRefresh, measurement = false }: { data: AppData; relics: Relic[]; setDetail: (detail: { type: "relic"; id: string }) => void; onRefresh: () => Promise<void>; measurement?: boolean }) {
   return (
-    <div className="collection-grid">
+    <div className={`collection-grid ${measurement ? "collection-grid-measurement" : ""}`.trim()}>
       {relics.map((relic) => {
         const inventory = data.player!.relicInventory.find((row) => row.relic_id === relic.id);
         return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} unlocked={collectibleIsUnlocked(data, "relic", relic.id)} onClick={() => setDetail({ type: "relic", id: relic.id })} onRefresh={onRefresh} />;
@@ -2920,10 +3529,10 @@ function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh }: { da
       <span className="collectible-id">{relic.id}</span>
       <CardSprite><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} size="large" /></CardSprite>
       <CardName data={data} name={relic.name} />
-      <CollectionCardState showScrollbar={!unlocked}>
+      <CollectionCardState>
         {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} onRefresh={onRefresh} />}
+        <EffectList effects={effects} className="relic-card-effects" />
       </CollectionCardState>
-      <EffectList effects={effects} className="relic-card-effects" data={data} />
     </article>
   );
 }
@@ -2972,36 +3581,69 @@ function CritterElementLogos({ data, critter }: { data: AppData; critter: Critte
 function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { data: AppData; type: CollectibleType; id: string; unlocked: boolean; onRefresh: () => Promise<void> }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
+  const [replacementChallenge, setReplacementChallenge] = useState<CollectibleUnlockChallenge | null>(null);
   const challenges = challengesFor(data, type, id);
   if (!challenges.length) return <section className="collectible-challenge-panel"><h3>Collect</h3><p className="challenge-empty">Not currently unlockable through challenges.</p></section>;
   const required = requirementFor(data, type, id);
   const complete = challenges.filter((challenge) => progressFor(data, challenge.id).completed).length;
-  const tracked = data.player!.collectibleSnapshot.tracked.filter((trackedRow) => {
-    const progress = progressFor(data, trackedRow.challenge_id);
-    return progress.eligible !== false && !progress.completed && progress.trackable !== false;
-  });
-  const sameCollectibleTracked = tracked.some((row) => {
-    const challenge = data.catalog.collectibleUnlockChallenges.find((candidate) => candidate.id === row.challenge_id);
-    return challenge?.collectible_type === type && challenge.collectible_id === id;
-  });
-  const trackingFull = tracked.length >= 3 && !sameCollectibleTracked;
+  const tracked = trackedChallengesForDisplay(data);
   const firstBlockedChallengeId = challenges.find((challenge) => progressFor(data, challenge.id).eligible === false)?.id ?? null;
 
   async function changeTracking(challenge: CollectibleUnlockChallenge, currentlyTracked: boolean) {
-    setBusyId(challenge.id); setPanelError(null);
+    setPanelError(null);
+    if (!currentlyTracked && tracked.length >= 3) {
+      setReplacementChallenge(challenge);
+      return;
+    }
+    setBusyId(challenge.id);
     try {
+      if (!currentlyTracked) {
+        const progress = progressFor(data, challenge.id);
+        if (progress.eligible === false || progress.trackable === false) {
+          setPanelError("Complete the required Gate Challenges before tracking this challenge.");
+          return;
+        }
+      }
       if (currentlyTracked) await untrackCollectibleChallenge(challenge.id);
       else await trackCollectibleChallenge(challenge.id);
       await onRefresh();
     } catch (error) {
       const raw = errorMessage(error, "Unable to update challenge tracking.");
-      setPanelError(
-        raw.includes("CHALLENGE_GATED")
-          ? "Complete the required Gate Challenges before tracking this challenge."
-          : raw.includes("TRACKING_LIMIT_REACHED")
-            ? "3 challenge limit reached"
+      if (raw.includes("TRACKING_LIMIT_REACHED")) {
+        const activeIds = new Set(tracked.map((row) => row.challenge_id));
+        const staleIds = data.player?.collectibleSnapshot.tracked
+          .map((row) => row.challenge_id)
+          .filter((challengeId) => !activeIds.has(challengeId)) ?? [];
+        for (const staleId of staleIds) await untrackCollectibleChallenge(staleId);
+        if (staleIds.length > 0) {
+          await trackCollectibleChallenge(challenge.id);
+          await onRefresh();
+        } else {
+          await onRefresh();
+          setReplacementChallenge(challenge);
+        }
+      } else {
+        setPanelError(
+          raw.includes("CHALLENGE_GATED")
+            ? "Complete the required Gate Challenges before tracking this challenge."
             : raw,
-      );
+        );
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function replaceTrackedChallenge(replacedChallengeId: string) {
+    if (!replacementChallenge) return;
+    setBusyId(replacementChallenge.id); setPanelError(null);
+    try {
+      await untrackCollectibleChallenge(replacedChallengeId);
+      await trackCollectibleChallenge(replacementChallenge.id);
+      await onRefresh();
+      setReplacementChallenge(null);
+    } catch (error) {
+      setPanelError(errorMessage(error, "Unable to replace tracked challenge."));
     } finally {
       setBusyId(null);
     }
@@ -3034,8 +3676,8 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
                 <strong>{formatAmount(progress.current)} / {formatAmount(progress.goal)}</strong>
                 {!unlocked && trackedFamily && !progress.completed && (trackable || slot !== null) && <button
                   className={slot ? "secondary-button" : "primary-button"}
-                  disabled={busyId === challenge.id || (!slot && trackingFull)}
-                  title={!slot && trackingFull ? "3 challenge limit reached" : undefined}
+                  disabled={busyId === challenge.id}
+                  title={slot ? `Tracked in Slot ${slot}` : undefined}
                   onClick={() => changeTracking(challenge, slot !== null)}
                 >{slot ? `Untrack · Slot ${slot}` : "Track"}</button>}
               </article>
@@ -3043,7 +3685,7 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
           );
         })}
       </div>
-      {!unlocked && trackingFull && <p className="challenge-note">3 challenge limit reached. Untrack one from the main page to add another collectible.</p>}
+      {replacementChallenge && <ChallengeReplacementModal data={data} challenge={replacementChallenge} tracked={tracked} busyId={busyId} onReplace={replaceTrackedChallenge} onClose={() => setReplacementChallenge(null)} />}
     </section>
   );
 }
@@ -3061,9 +3703,11 @@ function DetailModal({
 }) {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { flashingId, flash } = useUnlockButtonFlash();
 
   async function purchaseSkill(owned: UserCritter, skillId: string, cost: number) {
     if (owned.skill_points < cost) {
+      flash(skillId);
       setDetailError(`Not enough skill points. This skill costs ${cost}.`);
       return;
     }
@@ -3128,11 +3772,12 @@ function DetailModal({
                 <div key={skill.id} className={`detail-tile ${unlocked ? "unlocked" : "locked"} ${canPurchase ? "unlockable" : "level-locked"}`}>
                   <SkillTile data={data} skill={skill} sourceCritter={critter} />
                   <span className="unlock-requirement">Unlock level {unlock.unlock_level} · {unlock.unlock_cost} points</span>
-                  {canPurchase && owned && <button className="primary-button skill-unlock-button" disabled={saving} onClick={() => purchaseSkill(owned, skill.id, unlock.unlock_cost)}>Unlock · {unlock.unlock_cost}</button>}
+                  {canPurchase && owned && <button className={`primary-button skill-unlock-button ${flashingId === skill.id ? "insufficient-points" : ""}`.trim()} disabled={saving} onClick={() => purchaseSkill(owned, skill.id, unlock.unlock_cost)}>Unlock · {unlock.unlock_cost}</button>}
                 </div>
               );
-            })}
+          })}
         </div>
+        <CollectibleDescriptionSection description={critter.description} />
       </Modal>
     );
   }
@@ -3143,10 +3788,10 @@ function DetailModal({
     return (
       <Modal title={relic.name} onClose={onClose}>
         <CollectibleDetailHero data={data} id={relic.id} name={relic.name} assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} assetElement="metal" />
-        <p>{relic.description}</p>
         <p><strong>Owned:</strong> {quantity} / {relic.max_owned}</p>
         <CollectibleChallengePanel data={data} type="relic" id={relic.id} unlocked={collectibleIsUnlocked(data, "relic", relic.id)} onRefresh={onRefresh} />
-        <EffectList effects={data.catalog.effectsByRelic[relic.id] ?? []} className="effect-summary" data={data} />
+        <EffectList effects={data.catalog.effectsByRelic[relic.id] ?? []} className="effect-summary" />
+        <CollectibleDescriptionSection description={relic.description} />
       </Modal>
     );
   }
@@ -3177,7 +3822,7 @@ function DetailModal({
                 <article className={`detail-ability-card ${unlocked ? "unlocked" : "locked"}`}>
                   <span className="detail-ability-heading"><strong>{ability.name}</strong></span>
                   <span>{ability.description}</span>
-                  <EffectList effects={data.catalog.effectsByAbility[ability.id] ?? []} data={data} />
+                  <EffectList effects={data.catalog.effectsByAbility[ability.id] ?? []} />
                 </article>
                 <span className="unlock-requirement">Unlock level {unlock.unlock_level} · {unlock.unlock_cost} ability point{unlock.unlock_cost === 1 ? "" : "s"}</span>
                 {canPurchase && owned && <button className="primary-button ability-unlock-button" disabled={saving} onClick={() => purchaseAbility(owned, ability.id, unlock.unlock_cost)}>Unlock · {unlock.unlock_cost}</button>}
@@ -3185,7 +3830,17 @@ function DetailModal({
             );
           })}
       </div>
+      <CollectibleDescriptionSection description={rollcaster.description} />
     </Modal>
+  );
+}
+
+function CollectibleDescriptionSection({ description }: { description: string | null | undefined }) {
+  return (
+    <section className="collectible-description-section">
+      <h3>Description</h3>
+      <p>{description?.trim() || "No description available."}</p>
+    </section>
   );
 }
 
@@ -3415,16 +4070,20 @@ function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
   const currency = drop.kind === "currency" ? currencyFor(data, drop.targetId) : undefined;
   const targetName = drop.kind === "currency"
     ? currency?.name ?? drop.targetId
-    : collectibleName(data, drop.targetCategory ?? "relic", drop.targetId);
+    : drop.kind === "lootbox"
+      ? data.catalog.lootboxes.find((lootbox) => lootbox.id === drop.targetId)?.name ?? drop.targetId
+    : collectibleName(data, (drop.targetCategory ?? "relic") as CollectibleType, drop.targetId);
   return (
     <div className="dungeon-drop-row">
       {drop.kind === "currency"
         ? <AssetIcon path={catalogAssetPath(data, "currency", currency?.id, currency?.asset_path, "icon")} alt="" fallback={<Coins size={17} />} />
-        : <CollectibleSprite data={data} type={drop.targetCategory ?? "relic"} id={drop.targetId} size="xs" shard={drop.kind === "shard"} />}
+        : drop.kind === "lootbox"
+          ? <LootboxSprite lootbox={data.catalog.lootboxes.find((lootbox) => lootbox.id === drop.targetId)!} variant="closed" />
+        : <CollectibleSprite data={data} type={(drop.targetCategory ?? "relic") as CollectibleType} id={drop.targetId} size="xs" shard={drop.kind === "shard"} />}
       <span>
         <strong>{dropAmountLabel(drop.minAmount, drop.maxAmount)} {drop.kind === "shard" ? `${targetName} Shards` : targetName}</strong>
         <small>{Math.round(drop.probability * 10000) / 100}% chance</small>
-        {drop.kind !== "currency" && drop.dupeCurrencyId && <small>Duplicates convert to {drop.dupeCurrencyAmount ?? 0} {currencyFor(data, drop.dupeCurrencyId)?.name ?? drop.dupeCurrencyId} each.</small>}
+        {(drop.kind === "shard" || drop.kind === "relic") && drop.dupeCurrencyId && <small>Duplicates convert to {drop.dupeCurrencyAmount ?? 0} {currencyFor(data, drop.dupeCurrencyId)?.name ?? drop.dupeCurrencyId} each.</small>}
       </span>
     </div>
   );
@@ -3455,8 +4114,9 @@ function CombatScreen({
   const combatRootRef = useRef<HTMLElement>(null);
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
   const [menu, setMenu] = useState<"actions" | "skills" | "swap">("actions");
-  const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill } | null>(null);
+  const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill; phase: "primary" | "swap"; primaryTargetKey?: string } | null>(null);
   const [submittingProgress, setSubmittingProgress] = useState(false);
+  const [loadingDots, setLoadingDots] = useState(1);
   const [recordingResult, setRecordingResult] = useState(false);
   const [resultAttempt, setResultAttempt] = useState(0);
   const [diceSettled, setDiceSettled] = useState(true);
@@ -3487,7 +4147,11 @@ function CombatScreen({
     .sort((left, right) => left.slot_index - right.slot_index)
     .map((slot) => byId(data.catalog.rollcasterAbilities, slot.ability_id))
     .filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
-  const legalTargets = targeting ? skillTargets(battle, targeting.actorKey, targeting.skill) : [];
+  const legalTargets = targeting
+    ? targeting.phase === "swap"
+      ? healthyFriendlySwapTargets(battle, targeting.actorKey)
+      : skillTargets(battle, targeting.actorKey, targeting.skill)
+    : [];
   const legalTargetKeys = new Set(legalTargets.map((unit) => unit.key));
   const inactiveLegalTargets = legalTargets.filter((unit) => !unit.active);
   const queuedSwapIds = new Set(Object.values(actions).map((action) => action.swapToId).filter(Boolean));
@@ -3502,7 +4166,10 @@ function CombatScreen({
   const playerFieldSlots = battlefieldSlotsForCount(battle.dungeon.player_active_count);
   const opponentFieldSlots = battlefieldSlotsForCount(battle.dungeon.opponent_active_count);
   const viewportFitRef = useViewportFitScale();
-  const narrationText = combat.phase === "lead_selection"
+  const loadingNarration = submittingProgress;
+  const narrationText = loadingNarration
+    ? `Loading${".".repeat(loadingDots)}`
+    : combat.phase === "lead_selection"
     ? `Choose ${combat.requiredLeadCount} healthy lead Critter${combat.requiredLeadCount === 1 ? "" : "s"} before revealing the enemy lineup.`
     : combat.phase === "forced_replacements"
       ? `Choose ${combat.requiredLeadCount - combat.fixedLeadIds.length} replacement${combat.requiredLeadCount - combat.fixedLeadIds.length === 1 ? "" : "s"} for the knocked-out active slot${combat.requiredLeadCount - combat.fixedLeadIds.length === 1 ? "" : "s"}.`
@@ -3512,8 +4179,8 @@ function CombatScreen({
           ? (!diceSettled
             ? "Rolling…"
             : `You rolled ${combat.rollSummary?.player ?? 0} mana and the enemy rolled ${combat.rollSummary?.opponent ?? 0} mana.`)
-          : combat.phase === "select_player_actions"
-            ? (targeting ? `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose your ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")
+      : combat.phase === "select_player_actions"
+            ? (targeting ? targeting.phase === "swap" ? `Choose a healthy friendly Critter to swap in after ${targeting.skill.name}.` : `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose your ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")
             : combat.phase === "event_playback"
               ? (event?.message ?? "")
               : combat.phase === "battle_result"
@@ -3530,7 +4197,7 @@ function CombatScreen({
   const narrationAdvanceable = ((combat.phase === "event_playback" && !submittingProgress && eventSettled)
     || (combat.phase === "roll_result" && diceSettled))
     && (!narrationText || (narrationSettled && visibleNarration === narrationText));
-  const narrationComplete = !narrationText || (narrationSettled && visibleNarration === narrationText);
+  const narrationComplete = !narrationText || loadingNarration || (narrationSettled && visibleNarration === narrationText);
   const playerManaRefund = event?.kind === "mana_refund" && event.manaRefund?.side === "player" ? event.manaRefund : null;
   const opponentManaRefund = event?.kind === "mana_refund" && event.manaRefund?.side === "opponent" ? event.manaRefund : null;
 
@@ -3719,6 +4386,17 @@ function CombatScreen({
     const timer = window.setTimeout(() => setDiceSettled(true), 650);
     return () => window.clearTimeout(timer);
   }, [combat.phase, battle.turn, combat.rollSummary?.player, combat.rollSummary?.opponent]);
+
+  useEffect(() => {
+    if (!submittingProgress) {
+      setLoadingDots(1);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setLoadingDots((current) => current >= 3 ? 1 : current + 1);
+    }, 220);
+    return () => window.clearInterval(timer);
+  }, [submittingProgress]);
 
   useEffect(() => {
     setVisibleNarration("");
@@ -3930,14 +4608,43 @@ function CombatScreen({
     setMenu("actions");
   }
 
+  function selectSkillTarget(targetKey: string) {
+    if (!targeting) return;
+    if (targeting.phase === "primary") {
+      const needsSwapTarget = skillHasPostAttackSwap(battle, targeting.actorKey, targeting.skill.id)
+        && healthyFriendlySwapTargets(battle, targeting.actorKey).length > 0;
+      if (needsSwapTarget) {
+        setTargeting({ ...targeting, phase: "swap", primaryTargetKey: targetKey });
+        return;
+      }
+      const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey, cost: targeting.skill.mana_cost };
+      setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
+      return;
+    }
+    const action = {
+      actorKey: targeting.actorKey,
+      type: "skill" as const,
+      skillId: targeting.skill.id,
+      targetKey: targeting.primaryTargetKey,
+      swapTargetKey: targetKey,
+      cost: targeting.skill.mana_cost,
+    };
+    setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
+  }
+
   function chooseSkill(actorKey: string, skill: Skill) {
     lastSkillByActorKeyRef.current[actorKey] = skill.id;
     const targets = skillTargets(battle, actorKey, skill);
     if (isSingleTarget(skill) && targets.length > 1) {
-      setTargeting({ actorKey, skill });
+      setTargeting({ actorKey, skill, phase: "primary" });
       return;
     }
-    const action = { actorKey, type: "skill" as const, skillId: skill.id, targetKey: isSingleTarget(skill) ? targets[0]?.key : undefined, cost: skill.mana_cost };
+    const targetKey = isSingleTarget(skill) ? targets[0]?.key : undefined;
+    if (skillHasPostAttackSwap(battle, actorKey, skill.id) && healthyFriendlySwapTargets(battle, actorKey).length > 0) {
+      setTargeting({ actorKey, skill, phase: "swap", primaryTargetKey: targetKey });
+      return;
+    }
+    const action = { actorKey, type: "skill" as const, skillId: skill.id, targetKey, cost: skill.mana_cost };
     setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
   }
 
@@ -3974,9 +4681,18 @@ function CombatScreen({
   async function submitActions() {
     if (!actionsReady) return;
     const selectedActions = activePlayer.map((unit) => actions[unit.key]);
-    const resolved = submitDungeonActions(combat, selectedActions);
-    setCombat((current) => current ? submitDungeonActions(current, selectedActions) : current);
     setSubmittingProgress(true);
+    // Let the Loading narration paint before the synchronous resolver does its
+    // work. This keeps the UI responsive without moving deterministic combat
+    // rules into a worker prematurely.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    const resolved = submitDungeonActions(combat, selectedActions);
+    setCombat((current) => current
+      && current.run.id === combat.run.id
+      && current.battle.turn === combat.battle.turn
+      && current.phase === "select_player_actions"
+      ? resolved
+      : current);
     try { await onTurnResolved(resolved); } finally { setSubmittingProgress(false); }
   }
 
@@ -3999,6 +4715,7 @@ function CombatScreen({
     <section
       ref={combatRootRef}
       className="combat-screen"
+      data-combat-loading={submittingProgress ? "true" : "false"}
       aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft"
     >
       <div ref={viewportFitRef} className="combat-viewport-fit">
@@ -4037,7 +4754,7 @@ function CombatScreen({
                   <GameTooltip
                     key={ability.id}
                     label={`${ability.name}. ${ability.description} ${attachmentText(data.catalog.effectsByAbility[ability.id] ?? [])}`}
-                    content={<><strong>{ability.name}</strong><span>{ability.description}</span>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [], data)}</>}
+                    content={<><strong>{ability.name}</strong><span>{ability.description}</span>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [])}</>}
                   >
                     <span className="combat-ability-slot">{ability.name}</span>
                   </GameTooltip>
@@ -4070,10 +4787,7 @@ function CombatScreen({
                   ? () => reselectAction(unit.key)
                   : undefined}
                 targetable={legalTargetKeys.has(unit.key)}
-                onTarget={() => targeting && (() => {
-                  const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost };
-                  setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
-                })()}
+                onTarget={() => targeting && selectSkillTarget(unit.key)}
                 statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
                 manaAssetPath={manaAssetPath}
                 presentation={event}
@@ -4098,10 +4812,7 @@ function CombatScreen({
                     allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
                     opponent
                     targetable={legalTargetKeys.has(unit.key)}
-                    onTarget={() => targeting && (() => {
-                      const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey: unit.key, cost: targeting.skill.mana_cost };
-                      setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
-                    })()}
+                    onTarget={() => targeting && selectSkillTarget(unit.key)}
                     statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
                     manaAssetPath={manaAssetPath}
                     presentation={event}
@@ -4119,7 +4830,26 @@ function CombatScreen({
           </aside>
         </div>
 
-        {targeting && inactiveLegalTargets.length > 0 && (
+        {targeting && targeting.phase === "swap" && legalTargets.length > 0 && (
+          <div className="combat-knocked-out-targets" aria-label="Healthy friendly swap targets">
+            <span>Healthy friendly Critters</span>
+            {inactiveLegalTargets.map((candidate) => (
+              <button
+                key={candidate.key}
+                type="button"
+                data-combat-control="true"
+                data-combat-focus-role="target"
+                data-combat-unit-key={candidate.key}
+                onClick={() => selectSkillTarget(candidate.key)}
+              >
+                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
+                <span><strong>{candidate.name}</strong><small>{candidate.hp} / {candidate.maxHp} HP</small></span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {targeting && targeting.phase === "primary" && inactiveLegalTargets.length > 0 && (
           <div className="combat-knocked-out-targets" aria-label="Knocked-out revival targets">
             <span>Knocked-out targets</span>
             {inactiveLegalTargets.map((candidate) => (
@@ -4129,16 +4859,7 @@ function CombatScreen({
                 data-combat-control="true"
                 data-combat-focus-role="target"
                 data-combat-unit-key={candidate.key}
-                onClick={() => {
-                  const action = {
-                    actorKey: targeting.actorKey,
-                    type: "skill" as const,
-                    skillId: targeting.skill.id,
-                    targetKey: candidate.key,
-                    cost: targeting.skill.mana_cost,
-                  };
-                  setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
-                }}
+                onClick={() => selectSkillTarget(candidate.key)}
               >
                 <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
                 <span><strong>{candidate.name}</strong><small>0 / {candidate.maxHp} HP</small></span>
@@ -4164,17 +4885,19 @@ function CombatScreen({
         {!(combat.phase === "event_playback" && event?.kind === "mana_refund") && <button
           type="button"
           className={`combat-narration ${narrationAdvanceable ? "advanceable" : ""}`}
-          data-combat-control="true"
-          data-combat-focus-role="narration"
-          disabled={!narrationAdvanceable}
+          data-combat-control={submittingProgress ? undefined : "true"}
+          data-combat-focus-role={submittingProgress ? undefined : "narration"}
+          tabIndex={submittingProgress ? -1 : undefined}
+          aria-label={submittingProgress ? "Loading" : undefined}
+          disabled={submittingProgress || !narrationAdvanceable}
           aria-keyshortcuts="Space"
-          title={narrationAdvanceable ? "Click or press Space to continue" : undefined}
-          onClick={advanceNarration}
+          title={!submittingProgress && narrationAdvanceable ? "Click or press Space to continue" : undefined}
+          onClick={submittingProgress ? undefined : advanceNarration}
         >
-          <span className={`combat-narration-copy ${narrationComplete && narrationText !== "Rolling…" ? "" : "typing"}`}>
-            {narrationText === "Rolling…" ? narrationText : visibleNarration}
+          <span className={`combat-narration-copy ${narrationComplete && narrationText !== "Rolling…" && !loadingNarration ? "" : "typing"}`}>
+            {narrationText === "Rolling…" || loadingNarration ? narrationText : visibleNarration}
           </span>
-          {(combat.phase === "event_playback" || combat.phase === "roll_result") && <ChevronRight size={24} aria-label="Next" />}
+          {!submittingProgress && (combat.phase === "event_playback" || combat.phase === "roll_result") && <ChevronRight size={24} aria-label="Next" />}
         </button>}
 
         {combat.phase === "battle_result" && !recordingResult && (
@@ -4515,7 +5238,7 @@ function CombatRelicRow({ data, relicIds, sourceCritter }: { data: AppData; reli
     const relic = byId(data.catalog.relics, id);
     if (!relic) return null;
     const effects = data.catalog.effectsByRelic[id] ?? [];
-    return <GameTooltip key={id} label={`${relic.name}. ${relic.description} ${attachmentText(effects, data, sourceCritter)}`} content={<><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(effects, data, sourceCritter)}</>}>
+    return <GameTooltip key={id} label={`${relic.name}. ${relic.description} ${attachmentText(effects)}`} content={<><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
       <span className="combat-relic-icon"><AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield size={13} />} /></span>
     </GameTooltip>;
   })}</span>;
@@ -4670,7 +5393,9 @@ function RewardSummary({ data, rewards }: { data: AppData; rewards: DungeonRewar
             ? `${entry.amount} Rollcaster XP`
             : entry.kind === "currency"
               ? `${entry.amount} ${currencyFor(data, entry.targetId)?.name ?? entry.targetId}`
-              : `${entry.amount} ${entry.kind === "shard" ? `${collectibleName(data, entry.targetCategory ?? "relic", entry.targetId)} Shards` : collectibleName(data, "relic", entry.targetId)}`;
+              : entry.kind === "lootbox"
+                ? `${entry.amount} ${data.catalog.lootboxes.find((lootbox) => lootbox.id === entry.targetId)?.name ?? entry.targetId}`
+                : `${entry.amount} ${entry.kind === "shard" ? `${collectibleName(data, (entry.targetCategory ?? "relic") as CollectibleType, entry.targetId)} Shards` : collectibleName(data, "relic", entry.targetId)}`;
         return <span key={entry.id}><RewardEntryIcon data={data} entry={entry} /><strong>{label}</strong>{entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}</span>;
       })}
     </div>
@@ -5054,9 +5779,13 @@ function RewardEntryIcon({ data, entry }: { data: AppData; entry: DungeonRewardS
   }
   if (entry.kind === "critter_xp") return <Sparkles size={15} />;
   if (entry.kind === "rollcaster_xp") return <UserRound size={15} />;
+  if (entry.kind === "lootbox") {
+    const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.targetId);
+    return lootbox ? <LootboxSprite lootbox={lootbox} variant="closed" /> : <Gift size={15} />;
+  }
   return <CollectibleSprite
     data={data}
-    type={entry.targetCategory ?? "relic"}
+    type={(entry.targetCategory ?? "relic") as CollectibleType}
     id={entry.targetId}
     size="xs"
     shard={entry.kind === "shard"}
@@ -5099,7 +5828,7 @@ function StatusIconRow({ data, statuses }: { data: AppData; statuses: CombatStat
     const duration = instance.duration === null ? "Indefinite" : `${instance.duration} turn${instance.duration === 1 ? "" : "s"} remaining`;
     const iconPath = catalogAssetPath(data, "status", status.id, status.asset_path);
     const label = `${status.name}. ${duration}. ${attachmentText(effects)}`.trim();
-    return <GameTooltip key={instance.instanceId} label={label} content={<><span className="tooltip-heading"><AssetIcon path={iconPath} alt="" fallback={<Sparkles size={16} />} /><strong>{status.name}</strong></span>{attachmentRows(effects, data)}<span className="status-duration">{duration}</span></>}>
+    return <GameTooltip key={instance.instanceId} label={label} content={<><span className="tooltip-heading"><AssetIcon path={iconPath} alt="" fallback={<Sparkles size={16} />} /><strong>{status.name}</strong></span>{attachmentRows(effects)}<span className="status-duration">{duration}</span></>}>
       <span className="status-icon"><AssetIcon path={iconPath} alt={status.name} fallback={<Sparkles size={16} />} /><small>{instance.duration === null ? "∞" : instance.duration}</small></span>
     </GameTooltip>;
   })}</span>;
@@ -5118,6 +5847,22 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
         <div className="unlock-notification-copy">
           <span className="unlock-notification-label"><Sparkles size={14} aria-hidden="true" /> Collectible unlocked</span>
           <h2>{critter ? <><CritterName data={data} critter={critter} /> <span>unlocked!</span></> : `${name} unlocked!`}</h2>
+        </div>
+      </aside>
+    );
+  }
+
+  if (notification.kind === "challenge-completed") {
+    const challenge = data.catalog.collectibleUnlockChallenges.find((row) => row.id === notification.challengeId);
+    if (!challenge) return null;
+    const collectible = collectibleName(data, challenge.collectible_type, challenge.collectible_id);
+    return (
+      <aside className="unlock-notification challenge-completed-notification" role="status" aria-live="polite" aria-atomic="true">
+        <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="xs" />
+        <div className="unlock-notification-copy">
+          <span className="unlock-notification-label"><Check size={14} aria-hidden="true" /> Challenge completed</span>
+          <h2>{challengeDescription(data, challenge)}</h2>
+          <p className="unlock-notification-detail">{collectible} challenge completed</p>
         </div>
       </aside>
     );
@@ -5165,21 +5910,31 @@ function Modal({
 }: {
   eyebrow?: string;
   title: string;
-  description?: string;
+  description?: string | null;
   children: React.ReactNode;
   onClose: () => void;
   className?: string;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
   const titleId = `modal-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const descriptionId = description ? `${titleId}-description` : undefined;
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose;
+  });
+  useLayoutEffect(() => {
+    if (modalRef.current) modalRef.current.scrollTop = 0;
+  }, [title]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const modal = modalRef.current;
-    const initial = modal?.querySelector<HTMLElement>("button:not([aria-label='Close']), summary, [role='button'], [role='tab'], [role='option'], [tabindex='0']")
+    const initial = modal?.querySelector<HTMLElement>("button[aria-label='Close']")
+      ?? modal?.querySelector<HTMLElement>("button, summary, [role='button'], [role='tab'], [role='option'], [tabindex='0']")
       ?? modal?.querySelector<HTMLElement>("input, select, textarea, button, [href], [tabindex]:not([tabindex='-1'])");
-    initial?.focus();
+    initial?.focus({ preventScroll: true });
+    if (modal) modal.scrollTop = 0;
     function keydown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
       if (event.key !== "Tab" || !modal) return;
       const focusable = [...modal.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input, [tabindex]:not([tabindex='-1'])")];
       if (!focusable.length) return;
@@ -5190,12 +5945,19 @@ function Modal({
     }
     document.addEventListener("keydown", keydown);
     return () => { document.removeEventListener("keydown", keydown); previous?.focus(); };
-  }, [onClose]);
+  }, [title]);
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className={`modal ${className}`.trim()} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={`${titleId}-description`}>
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget) onClose();
+      }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className={`modal ${className}`.trim()} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <div className="modal-header">
-          <div><p className="eyebrow">{eyebrow}</p><h2 id={titleId}>{title}</h2><p id={`${titleId}-description`}>{description}</p></div>
+          <div><p className="eyebrow">{eyebrow}</p><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div>
           <button className="icon-button" onClick={onClose} aria-label="Close">
             <X size={18} />
           </button>
@@ -5250,7 +6012,7 @@ function Sprite({
           className={`sprite-box__image ${fit === "portrait" ? "portrait-sprite-image" : ""}`.trim()}
           data-sprite-image
           decoding="async"
-          loading={size === "hero" ? "eager" : "lazy"}
+          loading={size === "hero" || size === "small" ? "eager" : "lazy"}
           onError={() => setFailedAssetPath(assetPath ?? null)}
         />
       ) : locked ? "?" : initials}

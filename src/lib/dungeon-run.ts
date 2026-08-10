@@ -113,6 +113,8 @@ function createEncounterBattle(
     playerUnits: battle.playerUnits.map((unit) => ({
       ...unit,
       hp: Math.min(unit.maxHp, Math.max(0, persistentHp?.[unit.userCritter?.id ?? ""] ?? unit.maxHp)),
+      shield: 0,
+      maxShield: 0,
       active: false,
       battlefieldSlot: null,
     })),
@@ -211,7 +213,10 @@ function activateSelectedLeads(state: DungeonRunState, selectedLeadIds: string[]
   for (const unit of playerUnits) {
     if (unit.active && unit.userCritter) participants.add(unit.userCritter.id);
   }
-  const activatedBattle = refreshSetupRuntimeEffects({ ...state.battle, playerUnits });
+  const activatedBattle = refreshSetupRuntimeEffects(
+    { ...state.battle, playerUnits },
+    { applyRootShields: state.battle.turn === 1 },
+  );
   return {
     ...state,
     battle: recomputeCombatStats(activatedBattle),

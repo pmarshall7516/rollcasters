@@ -1,5 +1,6 @@
 import { critterElementIds } from "./game.js";
-import { safeBigInt } from "./collectibles.js";
+import { collectibleIsUnlocked, safeBigInt } from "./collectibles.js";
+import { collectionDiversityProgress } from "./collection-diversity.js";
 import { maximumDistinctElementMatches } from "./element-matching.js";
 import type {
   AppData,
@@ -37,6 +38,8 @@ export type ChallengeEvent = {
   skillId?: string;
   abilityId?: string;
   rollcasterId?: string;
+  shopId?: string;
+  purchasedCollectibleCategory?: string;
   amount?: number;
   payload?: Record<string, unknown>;
 };
@@ -140,12 +143,16 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   }
 
   if (type === "resource_spending") {
-    if (String(p.spending_context) !== String(event.payload?.spending_context ?? event.payload?.context)) return 0;
-    if (String(p.resource_type) !== String(event.payload?.resource_type)) return 0;
-    if (!includesOrAny(stringArray(p.dungeon_ids), event.dungeonId)) return 0;
-    if (!includesOrAny(stringArray(p.ability_ids), event.abilityId)) return 0;
-    if (!includesOrAny(stringArray(p.critter_ids), event.sourceCritterId)) return 0;
-    if (!includesOrAny(stringArray(p.rollcaster_ids), event.rollcasterId)) return 0;
+    const payload = event.payload ?? {};
+    if (String(p.spending_context) !== String(payload.spending_context ?? payload.context)) return 0;
+    if (String(p.resource_type) !== String(payload.resource_type)) return 0;
+    if (p.resource_type === "custom_currency" && String(p.custom_currency_id) !== String(payload.custom_currency_id ?? payload.currency_id)) return 0;
+    if (!includesOrAny(stringArray(p.dungeon_ids), event.dungeonId ?? String(payload.dungeon_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.ability_ids), event.abilityId ?? String(payload.ability_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.critter_ids), event.sourceCritterId ?? String(payload.critter_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.rollcaster_ids), event.rollcasterId ?? String(payload.rollcaster_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.shop_ids), event.shopId ?? String(payload.shop_id ?? payload.shop_entry_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.purchased_collectible_categories), event.purchasedCollectibleCategory ?? String(payload.purchased_collectible_category ?? ""))) return 0;
     return Math.max(0, Math.floor(event.amount ?? 0));
   }
 
@@ -253,23 +260,16 @@ export function derivedChallengeProgress(data: AppData, challenge: CollectibleUn
   if (challenge.challenge_type === "own_collectible") {
     const category = String(p.collectible_category ?? challenge.target_category ?? "critter");
     const ids = stringArray(p.collectible_ids);
-    if (category === "critter") return BigInt(player.critters.filter((owned) => ids.length === 0 || ids.includes(owned.critter_id)).length);
-    if (category === "rollcaster") return BigInt(player.rollcasters.filter((owned) => ids.length === 0 || ids.includes(owned.rollcaster_id)).length);
-    const rows = player.relicInventory.filter((owned) => (ids.length === 0 || ids.includes(owned.relic_id)) && owned.discovered_at !== null);
+    if (category === "critter") return BigInt(player.critters.filter((owned) => collectibleIsUnlocked(data, "critter", owned.critter_id) && (ids.length === 0 || ids.includes(owned.critter_id))).length);
+    if (category === "rollcaster") return BigInt(player.rollcasters.filter((owned) => collectibleIsUnlocked(data, "rollcaster", owned.rollcaster_id) && (ids.length === 0 || ids.includes(owned.rollcaster_id))).length);
+    const rows = player.relicInventory.filter((owned) => collectibleIsUnlocked(data, "relic", owned.relic_id) && (ids.length === 0 || ids.includes(owned.relic_id)) && owned.discovered_at !== null);
     return BigInt(p.require_unique_collectibles === false ? rows.reduce((sum, row) => sum + row.quantity, 0) : rows.filter((row) => row.quantity > 0).length);
   }
   if (challenge.challenge_type === "collection_diversity") {
-    const buckets = new Map<string, Set<string>>();
-    for (const { id, critter } of ownedCritters(data)) for (const element of critterElementIds(critter)) buckets.set(element, new Set([...(buckets.get(element) ?? []), id]));
-    const requiredPerType = Number(p.required_per_type ?? 1);
-    const mode = String(p.diversity_mode ?? "different_types");
-    if (mode === "amount_of_type") return BigInt((buckets.get(stringArray(p.element_ids)[0]) ?? new Set()).size);
-    const selected = mode === "specific_types" ? stringArray(p.required_element_ids) : [...buckets.keys()];
-    if (p.require_unique_critters === true && mode === "specific_types" && requiredPerType === 1) {
-      const candidates = ownedCritters(data).map(({ critter }) => ({ id: critter.id, elementIds: critterElementIds(critter) }));
-      return BigInt(maximumDistinctElementMatches(candidates, selected));
-    }
-    return BigInt(selected.filter((element) => (buckets.get(element)?.size ?? 0) >= requiredPerType).length);
+    return collectionDiversityProgress(
+      ownedCritters(data).map(({ critter }) => ({ id: critter.id, elementIds: critterElementIds(critter) })),
+      p,
+    );
   }
   if (challenge.challenge_type === "shop_shards") return safeBigInt(player.collectibleSnapshot.shards.find((row) => row.collectible_type === challenge.collectible_type && row.collectible_id === challenge.collectible_id)?.quantity);
   if (challenge.challenge_type === "shop_relic") return safeBigInt(player.relicInventory.find((row) => row.relic_id === challenge.collectible_id)?.quantity);

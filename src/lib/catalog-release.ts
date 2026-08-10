@@ -10,6 +10,8 @@ const CATALOG_KEYS = [
   "collectibleUnlockRequirements",
   "collectibleUnlockChallenges",
   "shopEntries",
+  "lootboxes",
+  "lootboxPoolEntries",
   "elements",
   "elementEffectiveness",
   "skills",
@@ -298,6 +300,10 @@ export function assembleCatalog(packs: readonly CatalogPack[]): Catalog {
       assembled[key] = value;
     }
   }
+  // Lootboxes were introduced without a catalog schema bump. Older immutable
+  // releases remain playable and expose empty Lootbox surfaces until republished.
+  assembled.lootboxes ??= [];
+  assembled.lootboxPoolEntries ??= [];
   for (const key of CATALOG_KEYS) {
     if (!(key in assembled)) throw new Error(`Catalog release is missing ${key}.`);
   }

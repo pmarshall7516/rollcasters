@@ -178,7 +178,7 @@ try {
   if (ownedCritter.error) throw ownedCritter.error;
   const critterPoints = await admin
     .from("user_critters")
-    .update({ skill_points: critterUnlock.unlock_cost + 1 })
+    .update({ skill_points: Math.max(0, critterUnlock.unlock_cost - 1) })
     .eq("id", ownedCritter.data.id);
   if (critterPoints.error) throw critterPoints.error;
 
@@ -196,6 +196,36 @@ try {
     .eq("id", ownedRollcaster.data.id);
   if (abilityPoints.error) throw abilityPoints.error;
 
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");
+
+  const occupiedSkill = page.locator(".loadout-slot:not(.empty) .skill-tile").first();
+  await occupiedSkill.click();
+  const equipDialog = page.locator(".modal.equip-dialog-skill");
+  const equipUnlockButton = equipDialog.getByRole("button", { name: `Unlock · ${critterUnlock.unlock_cost}` });
+  check(await equipUnlockButton.count() === 1, "The level-eligible Skill must appear in the main-page equip popup.");
+  const equipButtonState = await equipUnlockButton.evaluate((button) => ({
+    disabled: button.disabled,
+    opacity: getComputedStyle(button).opacity,
+  }));
+  check(!equipButtonState.disabled && equipButtonState.opacity === "1", `The underfunded equip unlock button must stay opaque and clickable: ${JSON.stringify(equipButtonState)}`);
+  await equipUnlockButton.click();
+  await page.waitForFunction(() => document.querySelector(".equip-dialog-skill .skill-unlock-button.insufficient-points") !== null);
+  await page.waitForTimeout(220);
+  const flashingButtonState = await equipUnlockButton.evaluate((button) => ({
+    borderColor: getComputedStyle(button).borderTopColor,
+    animationName: getComputedStyle(button).animationName,
+  }));
+  check(flashingButtonState.borderColor === "rgb(255, 110, 134)" && flashingButtonState.animationName === "skill-unlock-insufficient", `The underfunded equip unlock button must flash its border red: ${JSON.stringify(flashingButtonState)}`);
+  const equipWarningScreenshot = path.join(outputDir, "equip-skill-insufficient-points.png");
+  await equipUnlockButton.screenshot({ path: equipWarningScreenshot, animations: "allow" });
+  await equipDialog.getByRole("button", { name: "Close" }).click();
+
+  const fundedCritterPoints = await admin
+    .from("user_critters")
+    .update({ skill_points: critterUnlock.unlock_cost + 1 })
+    .eq("id", ownedCritter.data.id);
+  if (fundedCritterPoints.error) throw fundedCritterPoints.error;
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");
   await page.getByRole("button", { name: "Collection" }).click();
@@ -261,7 +291,7 @@ try {
 
   check(browserErrors.length === 0, `Browser errors detected: ${browserErrors.join(" | ")}`);
   process.stdout.write(`${JSON.stringify({
-    skill: { id: critterUnlock.skill_id, remainingPoints: 1, readyScreenshot: skillReadyScreenshot, screenshot: skillScreenshot },
+    skill: { id: critterUnlock.skill_id, remainingPoints: 1, readyScreenshot: skillReadyScreenshot, screenshot: skillScreenshot, equipWarningScreenshot },
     ability: { id: abilityUnlock.ability_id, remainingPoints: 1, readyScreenshot: abilityReadyScreenshot, screenshot: abilityScreenshot },
     temporaryAbilityMapping: insertedAbilityFixture,
     browserErrors,

@@ -100,9 +100,11 @@ function data(options: { balance?: string; shards?: string; ownsCritter?: boolea
       collectibleSnapshot: {
         currencies: [{ currency_id: "coins", balance: options.balance ?? "9007199254740993" }],
         shards: [{ collectible_type: "critter", collectible_id: "002", quantity: options.shards ?? "4" }],
+        lootboxes: [],
         progress: [],
         tracked: [],
         unlock_events: [],
+        unlocked_collectibles: [],
       },
     },
   };
@@ -241,6 +243,32 @@ const ownRelic: CollectibleUnlockChallenge = {
 };
 check(derivedChallengeProgress(ownershipData, ownRollcaster) === 1n, "Own Collectible must count owned Rollcasters for a Critter unlock.");
 check(derivedChallengeProgress(ownershipData, ownRelic) === 2n, "Own Collectible must count owned Relic quantity for a cross-category unlock.");
+const lockedRelicUnlockChallenge: CollectibleUnlockChallenge = {
+  ...ownRelic,
+  id: "locked-relic-challenge",
+  collectible_type: "relic",
+  collectible_id: "relic-001",
+  challenge_type: "deal_damage",
+  parameters: { target_mode: "species", any_target: true, target_ids: [], required_amount: 5 },
+  target_category: null,
+  target_id: null,
+  required_amount: "5",
+};
+const dependentOwnershipData = {
+  catalog: {
+    ...ownershipData.catalog,
+    collectibleUnlockRequirements: [{ collectible_type: "relic" as const, collectible_id: "relic-001", required_challenges: 1 }],
+    collectibleUnlockChallenges: [lockedRelicUnlockChallenge],
+  },
+  player: {
+    ...ownershipData.player!,
+    collectibleSnapshot: {
+      ...ownershipData.player!.collectibleSnapshot,
+      progress: [{ challenge_id: lockedRelicUnlockChallenge.id, current: "0", goal: "5", completed: false, eligible: true }],
+    },
+  },
+} as AppData;
+check(derivedChallengeProgress(dependentOwnershipData, ownRelic) === 0n, "Own Collectible must ignore an inventory Relic until that Relic's unlock challenge is complete.");
 check(challengeDescription(ownershipData, ownRollcaster) === "Own Pippa.", "Own Collectible descriptions must name a selected Rollcaster.");
 check(challengeDescription(ownershipData, ownRelic) === "Own 2 of: Moon Lens.", "Quantity-based Relic ownership must retain its authored goal in player-facing text.");
 check(shopErrorMessage(new Error("RPC failed: INSUFFICIENT_FUNDS")) === "You do not have enough currency for this purchase.", "RPC error codes must map to safe player-facing messages.");

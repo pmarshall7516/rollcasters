@@ -24,10 +24,10 @@ const combatHtml = `<!doctype html><html><head><style>${css}</style></head><body
     <button class="brand-home-button" aria-label="Rollcasters home"><span class="brand-lockup"><img class="brand-logo signed-in" src="${logoUrl}" alt="Rollcasters"></span></button>
     <div class="account-cluster">
       <div class="currency-cluster" aria-label="Currency balances">
-        <span class="coin-pill currency-pill" data-currency-id="coins" style="color:#FFD65A">◆ <span>999</span></span>
-        <span class="coin-pill currency-pill" data-currency-id="prismite" style="color:#7DE8FF">♦ <span>14</span></span>
-        <span class="coin-pill currency-pill" data-currency-id="moonstone" style="color:#C6A8FF">● <span>7</span></span>
-        <span class="coin-pill currency-pill" data-currency-id="embers" style="color:#FF9B62">✦ <span>2</span></span>
+        <span class="coin-pill currency-pill" data-currency-id="coins" style="color:#FFD65A">◆ <span class="currency-pill-amount">999,999</span></span>
+        <span class="coin-pill currency-pill" data-currency-id="prismite" style="color:#7DE8FF">♦ <span class="currency-pill-amount">999,999</span></span>
+        <span class="coin-pill currency-pill" data-currency-id="moonstone" style="color:#C6A8FF">● <span class="currency-pill-amount">999,999</span></span>
+        <span class="coin-pill currency-pill" data-currency-id="embers" style="color:#FF9B62">✦ <span class="currency-pill-amount">999,999</span></span>
       </div>
       <span class="user-pill">Player</span>
       <button class="icon-button">×</button>
@@ -49,8 +49,8 @@ const outcomeHeader = `<header class="top-bar">
   <button class="brand-home-button" aria-label="Rollcasters home"><span class="brand-lockup"><img class="brand-logo signed-in" src="${logoUrl}" alt="Rollcasters"></span></button>
   <div class="account-cluster">
     <div class="currency-cluster" aria-label="Currency balances">
-      <span class="coin-pill currency-pill" data-currency-id="coins" style="color:#FFD65A">◆ <span>999</span></span>
-      <span class="coin-pill currency-pill" data-currency-id="prismite" style="color:#7DE8FF">♦ <span>14</span></span>
+      <span class="coin-pill currency-pill" data-currency-id="coins" style="color:#FFD65A">◆ <span class="currency-pill-amount">999,999</span></span>
+      <span class="coin-pill currency-pill" data-currency-id="prismite" style="color:#7DE8FF">♦ <span class="currency-pill-amount">999,999</span></span>
     </div>
     <span class="user-pill">Player</span>
     <button class="icon-button">×</button>
@@ -144,6 +144,16 @@ try {
         textFallbackAbsent: document.querySelector(".brand-logo-fallback") === null,
         currencyIds: currencyPills.map((pill) => pill.dataset.currencyId),
         currencyColors: currencyPills.map((pill) => getComputedStyle(pill).color),
+        currencyPillWidths: currencyPills.map((pill) => pill.getBoundingClientRect().width),
+        currencyAmountsFit: currencyPills.every((pill) => {
+          const amount = pill.querySelector(".currency-pill-amount");
+          if (!amount) return false;
+          const pillRect = pill.getBoundingClientRect();
+          const amountRect = amount.getBoundingClientRect();
+          const pillStyle = getComputedStyle(pill);
+          const contentRight = pillRect.right - Number.parseFloat(pillStyle.paddingRight) - Number.parseFloat(pillStyle.borderRightWidth);
+          return amount.scrollWidth <= amount.clientWidth && Math.abs(amountRect.right - contentRight) < 1;
+        }),
         currencyClusterScrollSafe: document.querySelector(".currency-cluster").scrollWidth >= document.querySelector(".currency-cluster").clientWidth,
         matchingShellEdges: Math.abs(top.left - screen.left) < .1 && Math.abs(top.right - screen.right) < .1,
         noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
@@ -161,7 +171,8 @@ try {
     const fillsViewport = result.screen.left <= Math.max(52, result.width * .03);
     const currenciesCorrect = result.currencyIds.join(",") === "coins,prismite,moonstone,embers" &&
       result.currencyColors.join(",") === "rgb(255, 214, 90),rgb(125, 232, 255),rgb(198, 168, 255),rgb(255, 155, 98)";
-    return !(result.battlefieldColumns === expectedColumns && result.rollcasterVisible === expectedRollcaster && result.headerItemsSeparate && result.refreshSeparate && result.accountBelowBrand && result.refreshOnBrandRow && result.refreshAnimated && result.refreshLabelVisible === expectedRefreshLabel && result.refreshStatusText === "Refreshing game data" && result.imageLogoVisible && result.imageLogoUnfiltered && result.textFallbackAbsent && currenciesCorrect && result.currencyClusterScrollSafe && result.matchingShellEdges && fillsViewport && result.noHorizontalOverflow);
+    const currencyWidthsMatch = result.currencyPillWidths.every((width) => Math.abs(width - 136) < 0.1);
+    return !(result.battlefieldColumns === expectedColumns && result.rollcasterVisible === expectedRollcaster && result.headerItemsSeparate && result.refreshSeparate && result.accountBelowBrand && result.refreshOnBrandRow && result.refreshAnimated && result.refreshLabelVisible === expectedRefreshLabel && result.refreshStatusText === "Refreshing game data" && result.imageLogoVisible && result.imageLogoUnfiltered && result.textFallbackAbsent && currenciesCorrect && currencyWidthsMatch && result.currencyAmountsFit && result.currencyClusterScrollSafe && result.matchingShellEdges && fillsViewport && result.noHorizontalOverflow);
   });
 
   const modalResults = [];

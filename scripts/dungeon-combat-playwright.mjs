@@ -124,7 +124,7 @@ async function chooseActions(page) {
   await submit.click();
 }
 
-async function chooseSwapAction(page) {
+async function chooseSwapAction(page, { assertLoading = false } = {}) {
   const before = await gameState(page);
   const outgoing = before.combat.player.find((unit) => unit.active && unit.hp > 0);
   const incoming = before.combat.player.find((unit) => !unit.active && unit.hp > 0);
@@ -139,6 +139,14 @@ async function chooseSwapAction(page) {
   const submit = page.getByRole("button", { name: "Submit Actions" });
   check(await submit.isEnabled(), "A queued 1v1 Swap must make the action set ready for submission.");
   await submit.click();
+  if (assertLoading) {
+    await page.waitForFunction(() => /^Loading\.{1,3}$/.test(document.querySelector(".combat-narration")?.textContent?.trim() ?? ""));
+    const narration = page.locator(".combat-narration");
+    check(await page.locator(".refresh-indicator").count() === 0, "Combat turn loading must not show the app-wide Refreshing pill.");
+    check(await narration.isDisabled(), "Combat narration must be disabled while the turn is loading.");
+    check(await narration.getAttribute("data-combat-control") === null, "Loading narration must be removed from combat keyboard controls.");
+    check(!(await narration.getAttribute("class"))?.includes("combat-keyboard-invalid"), "Loading narration must not show the invalid-selection border.");
+  }
   return {
     outgoingId: outgoing.id,
     outgoingKey: outgoing.key,
@@ -288,6 +296,10 @@ try {
   page.on("pageerror", (error) => browserErrors.push(`page: ${String(error)}`));
   page.on("response", (response) => {
     if (response.status() >= 400) browserErrors.push(`response ${response.status()}: ${response.url()}`);
+  });
+  await page.route("**/rest/v1/rpc/submit_collectible_combat_events", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.continue();
   });
 
   await page.goto(baseUrl, { waitUntil: "networkidle" });
@@ -846,7 +858,7 @@ try {
       && await page.getByRole("button", { name: "Submit Actions" }).isDisabled(),
     "Reselecting an action must restore that Critter's action menu and disable submission until it is chosen again.",
   );
-  const swapSelection = await chooseSwapAction(page);
+  const swapSelection = await chooseSwapAction(page, { assertLoading: true });
   await waitForPhase(page, ["event_playback"]);
   const initialSwapState = await gameState(page);
   check(
