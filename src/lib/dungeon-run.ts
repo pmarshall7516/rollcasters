@@ -244,7 +244,14 @@ export function toggleDungeonLead(state: DungeonRunState, userCritterId: string)
 
 export function confirmDungeonLeads(state: DungeonRunState): DungeonRunState {
   if (state.selectedLeadIds.length !== state.requiredLeadCount || state.requiredLeadCount < 1) return state;
-  return { ...activateSelectedLeads(state, state.selectedLeadIds), phase: "entry_dialogue", dialogueMoment: "entry" };
+  const activated = activateSelectedLeads(state, state.selectedLeadIds);
+  if (state.phase === "lead_selection") {
+    return { ...activated, phase: "entry_dialogue", dialogueMoment: "entry" };
+  }
+  if (state.phase !== "forced_replacements") return state;
+
+  const playback = createReplacementPlayback(state, state.battle, activated.battle, "player");
+  return playback ?? { ...activated, phase: "await_roll", dialogueMoment: null };
 }
 
 export function currentDungeonDialogue(state: DungeonRunState) {
@@ -353,17 +360,113 @@ function applyEventSwap(battle: CombatState, event: DungeonCombatEvent | undefin
     if (unit.key === swap.incomingKey) return { ...unit, active: true, battlefieldSlot: swap.battlefieldSlot };
     return unit;
   };
-  return recomputeCombatStats({
+  return recomputeCombatStats(refreshSetupRuntimeEffects({
     ...battle,
     playerUnits: battle.playerUnits.map(update),
     opponentUnits: battle.opponentUnits.map(update),
-  });
+  }));
+}
+
+function presentationStateForBattle(battle: CombatState): CombatPresentationState {
+  return {
+    playerMana: battle.playerMana,
+    opponentMana: battle.opponentMana,
+    units: [...battle.playerUnits, ...battle.opponentUnits].map((unit) => ({
+      key: unit.key,
+      hp: unit.hp,
+      maxHp: unit.maxHp,
+      shield: unit.shield,
+      maxShield: unit.maxShield,
+      blocking: unit.blocking,
+      blockStreak: unit.blockStreak,
+      active: unit.active,
+      battlefieldSlot: unit.battlefieldSlot,
+      persistentStats: { ...unit.persistentStats },
+      stats: { ...unit.stats },
+    })),
+    statuses: structuredClone(battle.statuses),
+    modifiers: structuredClone(battle.modifiers),
+    runtimeEffects: structuredClone(battle.runtimeEffects),
+  };
+}
+
+function swapBattleFormation(
+  battle: CombatState,
+  outgoingKey: string,
+  incomingKey: string,
+  battlefieldSlot: number,
+): CombatState {
+  const update = (unit: CombatState["playerUnits"][number]) => {
+    if (unit.key === outgoingKey) return { ...unit, active: false, battlefieldSlot: null };
+    if (unit.key === incomingKey) return { ...unit, active: true, battlefieldSlot };
+    return unit;
+  };
+  return recomputeCombatStats(refreshSetupRuntimeEffects({
+    ...battle,
+    playerUnits: battle.playerUnits.map(update),
+    opponentUnits: battle.opponentUnits.map(update),
+  }));
+}
+
+function sendOutMessage(state: DungeonRunState, side: "player" | "opponent", incomingName: string): string {
+  if (side === "player") return `You sent in ${incomingName}.`;
+  return `${enemyEncounterForBattle(state.run)?.enemyRollcaster.name ?? "The enemy"} sent out ${incomingName}.`;
+}
+
+function createReplacementPlayback(
+  state: DungeonRunState,
+  before: CombatState,
+  after: CombatState,
+  side: "player" | "opponent",
+): DungeonRunState | null {
+  const beforeUnits = side === "player" ? before.playerUnits : before.opponentUnits;
+  const afterUnits = side === "player" ? after.playerUnits : after.opponentUnits;
+  const incomingKeys = afterUnits
+    .filter((unit) => unit.active && !beforeUnits.some((candidate) => candidate.key === unit.key && candidate.active))
+    .sort((left, right) => (left.battlefieldSlot ?? Number.MAX_SAFE_INTEGER) - (right.battlefieldSlot ?? Number.MAX_SAFE_INTEGER))
+    .map((unit) => unit.key);
+  if (!incomingKeys.length) return null;
+
+  let current = before;
+  const events: DungeonCombatEvent[] = [];
+  for (const incomingKey of incomingKeys) {
+    const incoming = afterUnits.find((unit) => unit.key === incomingKey);
+    if (!incoming || incoming.battlefieldSlot === null) continue;
+    const outgoing = (side === "player" ? current.playerUnits : current.opponentUnits)
+      .find((unit) => unit.active && unit.hp <= 0 && unit.battlefieldSlot === incoming.battlefieldSlot);
+    if (!outgoing) continue;
+    const next = swapBattleFormation(current, outgoing.key, incoming.key, incoming.battlefieldSlot);
+    events.push({
+      id: `${state.run.id}:${state.run.battleIndex}:${before.turn}:replacement:${events.length + 1}`,
+      turn: before.turn,
+      phase: "replacement",
+      message: sendOutMessage(state, side, incoming.name),
+      requiresAdvance: true,
+      kind: "swap",
+      actorKey: outgoing.key,
+      targetKeys: [incoming.key],
+      swap: { outgoingKey: outgoing.key, incomingKey: incoming.key, battlefieldSlot: incoming.battlefieldSlot },
+      hpChanges: [],
+      state: presentationStateForBattle(next),
+    });
+    current = next;
+  }
+  if (!events.length) return null;
+  return {
+    ...state,
+    battle: before,
+    pendingBattle: after,
+    phase: "event_playback",
+    events,
+    eventCursor: 0,
+    dialogueMoment: null,
+  };
 }
 
 export function submitDungeonActions(state: DungeonRunState, actions: CombatAction[]): DungeonRunState {
   if (state.phase !== "select_player_actions") return state;
   const resolved = resolveTurn(state.battle, actions);
-  const presentationEvents = resolved.presentationEvents.length
+  const rawPresentationEvents = resolved.presentationEvents.length
     ? resolved.presentationEvents
     : resolvedMessages(state.battle, resolved)
       .filter((message) => !message.startsWith("Submitted actions") && message !== "Post-turn effects resolved.")
@@ -373,6 +476,19 @@ export function submitDungeonActions(state: DungeonRunState, actions: CombatActi
         targetKeys: [],
         hpChanges: [],
       }));
+  const presentationEvents = rawPresentationEvents.map((event) => {
+    if (event.kind !== "swap") return event;
+    const incomingKey = event.swap?.incomingKey ?? event.targetKeys[0];
+    const incoming = incomingKey
+      ? [...resolved.playerUnits, ...resolved.opponentUnits].find((unit) => unit.key === incomingKey)
+      : undefined;
+    const actor = event.actorKey
+      ? [...resolved.playerUnits, ...resolved.opponentUnits].find((unit) => unit.key === event.actorKey)
+      : undefined;
+    return incoming && actor
+      ? { ...event, message: sendOutMessage(state, actor.side, incoming.name) }
+      : event;
+  });
   const events = presentationEvents.map((presentation, index): DungeonCombatEvent => ({
     ...presentation,
     id: `${state.run.id}:${state.run.battleIndex}:${state.battle.turn}:${index + 1}`,
@@ -472,7 +588,10 @@ function finishResolvedTurn(state: DungeonRunState): DungeonRunState {
       }
       return unit;
     });
-    state = { ...state, battle: recomputeCombatStats(refreshSetupRuntimeEffects({ ...state.battle, opponentUnits })) };
+    const replacedBattle = recomputeCombatStats(refreshSetupRuntimeEffects({ ...state.battle, opponentUnits }));
+    const playback = createReplacementPlayback(state, state.battle, replacedBattle, "opponent");
+    if (playback) return playback;
+    state = { ...state, battle: replacedBattle };
   }
   const required = Math.min(parseBattleFormat(state.run.battleFormat).playerActiveCount, allHealthy.length);
   if (activeHealthy.length < required) {
@@ -636,6 +755,7 @@ export function restoreDungeonRunState(
       ...persisted.battle,
       catalog,
       presentationEvents: persisted.battle.presentationEvents ?? [],
+      effectActivations: persisted.battle.effectActivations ?? [],
       runtimeEffects: persisted.battle.runtimeEffects ?? [],
       effectSequence: persisted.battle.effectSequence ?? 0,
       skillUsage: persisted.battle.skillUsage ?? { encounter: {}, dungeon: {} },
@@ -648,6 +768,7 @@ export function restoreDungeonRunState(
           ...persisted.pendingBattle,
           catalog,
           presentationEvents: persisted.pendingBattle.presentationEvents ?? [],
+          effectActivations: persisted.pendingBattle.effectActivations ?? [],
           runtimeEffects: persisted.pendingBattle.runtimeEffects ?? [],
           effectSequence: persisted.pendingBattle.effectSequence ?? 0,
           skillUsage: persisted.pendingBattle.skillUsage ?? { encounter: {}, dungeon: {} },

@@ -1,6 +1,13 @@
 # Rollcasters progress
 Original prompt: On the main page, show level-eligible Critter skills in skill-slot popups and allow unlocking them with skill points.
 
+## 2026-08-10 — Critter send-out presentation
+
+- Combat Swap narration now uses explicit send-out copy: `You sent in <Critter>` for the user and `<enemy name> sent out <Critter>` for enemy replacements/Swaps.
+- Knockout replacements at the next turn boundary are staged as the same animated Swap presentation used by ordinary Swaps. The outgoing slot remains visible, the incoming Critter reveals from the squad pane, and the next turn is unavailable until the reveal settles.
+- Confirmed player replacements and automatic enemy replacements both use the staged event path; entry dialogue is not replayed during a replacement.
+- Typecheck, production build, inline combat runtime tests, and the Playwright swap animation fixture passed. Inspected outgoing/incoming captures with the new narration and zero fixture browser errors.
+
 ## 2026-08-10 — Combat primary action grid anchoring
 
 - Fixed the primary Skill/Block/Swap/Skip menu placing into the reserved Back-control row when no Back control is visible, which caused the two action rows to overlap at narrow combat viewports.
@@ -294,3 +301,8 @@ The working progress log is maintained in the shared Obsidian vault:
 
 - Rendered viewport tooltips through `document.body` so the combat viewport's responsive transform cannot shift or clip them; the existing edge-aware left/top clamping now applies in true viewport coordinates for enemy ability slots and Critter squad icons.
 - Extended the Dungeon browser regression to hover user abilities, enemy abilities, and enemy Critter squad icons and assert every tooltip edge stays within the viewport.
+
+## 2026-08-10 — Combat skill target emphasis
+
+- Removed the `Legal target` pill from skill-targetable Critters.
+- Added one stronger yellow hover/focus treatment for legal targets, including keyboard selection, and suppressed the generic purple/blue focus outline so selection reads as an enhanced version of the existing yellow glow.

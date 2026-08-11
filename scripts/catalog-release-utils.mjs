@@ -229,8 +229,33 @@ export function createPacks(catalog, catalogVersion) {
     dungeons: envelope("dungeons", {
       dungeons: catalog.dungeons,
       dungeonOpponents: catalog.dungeonOpponents,
+      dungeonEnemyRollcasters: catalog.dungeonEnemyRollcasters ?? [],
+      dungeonRegularEncounters: catalog.dungeonRegularEncounters ?? [],
+      dungeonBossEncounters: catalog.dungeonBossEncounters ?? [],
       dungeonCompletionDrops: catalog.dungeonCompletionDrops,
       dungeonOpponentStatOverrides: catalog.dungeonOpponentStatOverrides,
     }),
   };
+}
+
+export function applyReleaseAssetPaths(catalog, replacements) {
+  const rewrite = (value) => value ? replacements.get(value.split("?", 1)[0]) ?? value : value;
+  for (const field of ["currencies", "elements", "critters", "rollcasters", "relics", "statuses"]) {
+    catalog[field] = catalog[field].map((row) => ({ ...row, asset_path: rewrite(row.asset_path) }));
+  }
+  catalog.lootboxes = catalog.lootboxes.map((row) => ({
+    ...row,
+    closed_asset_path: rewrite(row.closed_asset_path),
+    open_asset_path: rewrite(row.open_asset_path),
+  }));
+  catalog.dungeons = catalog.dungeons.map((row) => ({
+    ...row,
+    regular_logo_path: rewrite(row.regular_logo_path),
+    boss_logo_path: rewrite(row.boss_logo_path),
+  }));
+  catalog.dungeonEnemyRollcasters = (catalog.dungeonEnemyRollcasters ?? []).map((row) => ({
+    ...row,
+    asset_path: rewrite(row.asset_path),
+  }));
+  return catalog;
 }

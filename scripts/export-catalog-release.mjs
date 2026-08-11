@@ -11,6 +11,7 @@ import {
   sha256,
   sriSha256,
   stableJson,
+  applyReleaseAssetPaths,
   validateCatalog,
 } from "./catalog-release-utils.mjs";
 
@@ -86,6 +87,42 @@ async function readCatalog(client) {
     itemDrops: (itemDrops.get(String(row.id)) ?? []).map((item) => ({ id: item.id, kind: item.drop_type, targetCategory: item.target_category, targetId: item.target_id, minAmount: item.min_amount, maxAmount: item.max_amount, probability: Number(item.probability), dupeCurrencyId: item.dupe_currency_id, dupeCurrencyAmount: item.dupe_currency_amount })),
     overrides: Object.fromEntries((overrides.get(String(row.id)) ?? []).map((item) => [overrideKeys[item.stat_key], item.value])),
   }));
+  const rawEnemyRollcasters = await q(`select id,dungeon_id,sequence_index,name,eclipse_order_type,asset_path,selection_weight,policy_key,policy_revision,policy_artifact_id from public.dungeon_enemy_rollcasters order by dungeon_id,sequence_index,id`);
+  const enemyRollcasterAbilities = groupRows(await q(`select enemy_rollcaster_id,rollcaster_ability_id,slot_index from public.dungeon_enemy_rollcaster_abilities order by enemy_rollcaster_id,slot_index`), "enemy_rollcaster_id");
+  const enemyRollcasterDialogue = groupRows(await q(`select id,enemy_rollcaster_id,moment,line_text,sequence_index from public.dungeon_enemy_rollcaster_dialogue order by enemy_rollcaster_id,moment,sequence_index,id`), "enemy_rollcaster_id");
+  const enemyRollcasterCurrencyDrops = groupRows(await q(`select id,enemy_rollcaster_id,currency_id,min_amount,max_amount,probability,sort_order from public.dungeon_enemy_rollcaster_currency_drops order by enemy_rollcaster_id,sort_order,id`), "enemy_rollcaster_id");
+  const enemyRollcasterItemDrops = groupRows(await q(`select id,enemy_rollcaster_id,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order from public.dungeon_enemy_rollcaster_item_drops order by enemy_rollcaster_id,sort_order,id`), "enemy_rollcaster_id");
+  data.dungeonEnemyRollcasters = rawEnemyRollcasters.map((row) => ({
+    id: String(row.id),
+    dungeon_id: String(row.dungeon_id),
+    sequence_index: Number(row.sequence_index),
+    name: String(row.name),
+    eclipse_order_type: row.eclipse_order_type,
+    asset_path: String(row.asset_path),
+    selection_weight: Number(row.selection_weight),
+    policy_key: String(row.policy_key),
+    policy_revision: Number(row.policy_revision ?? 1),
+    policy_artifact_id: row.policy_artifact_id ? String(row.policy_artifact_id) : null,
+    ability_ids: (enemyRollcasterAbilities.get(String(row.id)) ?? []).map((item) => String(item.rollcaster_ability_id)),
+    dialogue_lines: (enemyRollcasterDialogue.get(String(row.id)) ?? []).map((item) => ({
+      id: String(item.id),
+      enemy_rollcaster_id: String(item.enemy_rollcaster_id),
+      moment: item.moment,
+      line_text: String(item.line_text),
+      sequence_index: Number(item.sequence_index),
+    })),
+    currencyDrops: (enemyRollcasterCurrencyDrops.get(String(row.id)) ?? []).map((item) => ({
+      id: String(item.id), kind: "currency", targetId: String(item.currency_id), minAmount: item.min_amount,
+      maxAmount: item.max_amount, probability: Number(item.probability),
+    })),
+    itemDrops: (enemyRollcasterItemDrops.get(String(row.id)) ?? []).map((item) => ({
+      id: String(item.id), kind: item.drop_type, targetCategory: item.target_category, targetId: String(item.target_id),
+      minAmount: item.min_amount, maxAmount: item.max_amount, probability: Number(item.probability),
+      dupeCurrencyId: item.dupe_currency_id, dupeCurrencyAmount: item.dupe_currency_amount,
+    })),
+  }));
+  data.dungeonRegularEncounters = await q(`select id,dungeon_id,sequence_index,enemy_squad_size from public.dungeon_regular_encounters order by dungeon_id,sequence_index,id`);
+  data.dungeonBossEncounters = await q(`select id,dungeon_id,sequence_index,enemy_rollcaster_id from public.dungeon_boss_encounters order by dungeon_id,sequence_index,id`);
   data.dungeonCompletionDrops = (await q(`select id,dungeon_id,completion_phase,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order from public.dungeon_completion_drops order by dungeon_id,completion_phase,sort_order,id`)).map((row) => ({ id: `${row.dungeon_id}:${row.id}`, phase: row.completion_phase, kind: row.drop_type, ...(row.target_category ? { targetCategory: row.target_category } : {}), targetId: row.target_id, minAmount: row.min_amount, maxAmount: row.max_amount, probability: Number(row.probability), ...(row.dupe_currency_id ? { dupeCurrencyId: row.dupe_currency_id, dupeCurrencyAmount: row.dupe_currency_amount } : {}) }));
   data.starterRollcasterOptions = await q(`select rollcaster_id,sort_order,is_active from public.starter_rollcaster_options where is_active order by sort_order,rollcaster_id`);
   data.starterOptions = await q(`select critter_id,sort_order,is_active from public.starter_options where is_active order by sort_order,critter_id`);
@@ -151,11 +188,7 @@ async function processAssets(catalog) {
 }
 
 function applyAssetPaths(catalog, manifest, replacements) {
-  const rewrite = (value) => value ? replacements.get(value.split("?", 1)[0]) ?? value : value;
-  for (const field of ["currencies", "elements", "critters", "rollcasters", "relics", "statuses"]) {
-    catalog[field] = catalog[field].map((row) => ({ ...row, asset_path: rewrite(row.asset_path) }));
-  }
-  catalog.dungeons = catalog.dungeons.map((row) => ({ ...row, regular_logo_path: rewrite(row.regular_logo_path), boss_logo_path: rewrite(row.boss_logo_path) }));
+  applyReleaseAssetPaths(catalog, replacements);
   const sourceByPath = new Map(catalog.gameAssets.map((asset) => [asset.path, asset]));
   catalog.gameAssets = manifest.assets.map((asset, index) => {
     const source = sourceByPath.get(asset.sourcePath);

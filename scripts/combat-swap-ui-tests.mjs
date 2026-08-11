@@ -115,7 +115,7 @@ try {
                 </div>
                 <aside class="combat-mana-panel enemy-mana-panel"><span class="enemy-mana-emblem">☠</span><h3>Enemy Mana</h3><strong class="combat-mana-total">Mana 4</strong></aside>
               </div>
-              <button class="combat-narration advanceable" disabled><span>Ramber swapped with Cragram.</span><span>›</span></button>
+              <button class="combat-narration advanceable" disabled><span>You sent in Cragram.</span><span>›</span></button>
             </div>
           </section>
         </main>
@@ -167,6 +167,7 @@ try {
       transform: stack ? getComputedStyle(stack).transform : "",
       narrationDisabled: document.querySelector(".combat-narration").disabled,
       visualState: window.swapVisualState,
+      narration: document.querySelector(".combat-narration span")?.textContent,
     };
   });
   check(
@@ -176,6 +177,7 @@ try {
       && outgoing.narrationDisabled,
     `Outgoing playback must animate toward the Rollcaster while narration is locked: ${JSON.stringify(outgoing)}`,
   );
+  check(outgoing.narration === "You sent in Cragram.", `Swap playback must use send-in narration: ${JSON.stringify(outgoing)}`);
   await page.screenshot({
     path: path.join(outputDir, "swap-outgoing.png"),
     animations: "allow",

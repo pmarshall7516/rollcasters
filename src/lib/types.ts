@@ -650,7 +650,7 @@ export type GameAsset = {
   id: string;
   bucket_id: string;
   path: string;
-  category: "critter" | "rollcaster" | "relic" | "lootbox" | "status" | "element" | "currency" | "mana" | "ui" | "other";
+  category: "critter" | "rollcaster" | "relic" | "lootbox" | "status" | "element" | "currency" | "mana" | "ui" | "eclipse-order" | "other";
   owner_table: string | null;
   owner_id: string | null;
   variant: string;

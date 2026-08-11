@@ -155,6 +155,8 @@ export type CombatPresentationEvent = {
   damageRollPercent?: number;
   /** The Pokémon-style spread-move power multiplier, when it weakens an attack. */
   damageSpreadPercent?: number;
+  effectiveness?: number;
+  effectivenessClass?: EffectivenessClass;
   manaRefund?: {
     side: "player" | "opponent";
     amount: number;
@@ -257,6 +259,8 @@ export type CombatState = {
   snapshot: RunEffectSnapshot;
   turnEvents: CombatProgressEvent[];
   presentationEvents: CombatPresentationEvent[];
+  /** Effect IDs whose chance gate activated during the current resolution window. */
+  effectActivations: string[];
   runtimeEffects: RuntimeEffectInstance[];
   effectSequence: number;
   skillUsage: {
@@ -581,6 +585,7 @@ export function createInitialCombatState(
     },
     turnEvents: [],
     presentationEvents: [],
+    effectActivations: [],
     runtimeEffects: [],
     effectSequence: 0,
     skillUsage: { encounter: {}, dungeon: {} },
@@ -910,7 +915,7 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
       name: effect.name,
       description: effect.description,
       amountLabel,
-      classification: effect.classification ?? (amountLabel?.startsWith("−") ? "negative" : amountLabel?.startsWith("+") ? "positive" : "mixed"),
+      classification: combatEffectClassification(effect, amountLabel),
       sourceOwnerType,
       sourceOwnerId,
       duration,
@@ -997,6 +1002,26 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
   }
 
   return rows;
+}
+
+function combatEffectClassification(
+  effect: ResolvedEffectRef,
+  amountLabel: string | null,
+): "positive" | "negative" | "mixed" {
+  if (amountLabel) {
+    const signs = new Set(amountLabel.match(/[+−]/g) ?? []);
+    const isCost = ["BLOCK COST", "SWAP COST", "SKILL COST", "MANA COST"].some((label) => amountLabel.includes(label));
+    if (signs.size === 1) {
+      const increasesBenefit = signs.has("+") !== isCost;
+      return increasesBenefit ? "positive" : "negative";
+    }
+    if (signs.size > 1) return "mixed";
+  }
+  if (effect.runtimeKind === "action_cost_modifier" && ["flat", "percentage"].includes(String(effect.parameters.modifier_type))) {
+    const modifierValue = Number(effect.parameters.modifier_value);
+    if (Number.isFinite(modifierValue) && modifierValue !== 0) return modifierValue < 0 ? "positive" : "negative";
+  }
+  return effect.classification ?? "mixed";
 }
 
 function combatEffectAmountLabel(effect: ResolvedEffectRef, unit: CombatUnit, before?: StatBlock, after?: StatBlock): string | null {
@@ -1134,6 +1159,7 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
     playerMana: state.playerMana - cost,
     log: [`Submitted actions for ${cost} mana.`, ...state.log],
     presentationEvents: [],
+    effectActivations: [],
   };
 
   for (const action of normalizedActions) {
@@ -1194,6 +1220,17 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
   }
 
   return { ...next, turn: next.turn + 1, phase: "ready" };
+}
+
+/** Apply a starting Status through the same runtime path used by combat. */
+export function simApplyStatus(state: CombatState, statusId: string, holderKey: string, duration: number | null = null): CombatState {
+  return applyStatus(state, statusId, holderKey, {
+    sourceOwnerType: "status",
+    sourceOwnerId: statusId,
+    sourceCritterKey: holderKey,
+    statusHolderKey: holderKey,
+    resolutionDepth: 1,
+  }, duration);
 }
 
 export function actionCostModifierApplies(parameters: Record<string, unknown>, action: ActionCostAction): boolean {
@@ -1343,9 +1380,6 @@ function chooseEnemyActions(state: CombatState): { actions: CombatAction[]; rngS
     .map((unit) => {
       if (isActorRecharging(state, unit.key)) return { actorKey: unit.key, type: "skip" as const, cost: 0 };
       const candidates: CombatAction[] = [];
-      const block = { actorKey: unit.key, type: "block" as const, cost: unit.stats.blockCost };
-      const blockCost = calculateActionCost(state, block);
-      if (blockCost <= mana) candidates.push({ ...block, cost: blockCost });
       for (const skill of unit.skills.filter((candidate) => skillAvailability(state, unit.key, candidate.id).valid)) {
         const targets = skillTargets(state, unit.key, skill);
         if (!targets.length) continue;
@@ -1359,6 +1393,8 @@ function chooseEnemyActions(state: CombatState): { actions: CombatAction[]; rngS
           candidates.push({ ...base, targetKey: target?.key, cost });
         } else candidates.push({ ...base, cost });
       }
+      // Random Action is intentionally an offensive baseline. It never
+      // blocks or swaps; when no affordable Skill exists it waits.
       if (!candidates.length) return { actorKey: unit.key, type: "skip" as const, cost: 0 };
       const actionRoll = nextRandom(rngState);
       rngState = actionRoll.state;
@@ -1713,6 +1749,8 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
           damageSpreadPercent: resolvedDamage.spreadMultiplier < 1
             ? Math.round(resolvedDamage.spreadMultiplier * 100)
             : undefined,
+          effectiveness: resolvedDamage.effectiveness,
+          effectivenessClass: resolvedDamage.classification,
           hpChanges: [{ unitKey: target.key, before: target.hp, after: afterHp }],
         });
         if (shieldBroken) {
@@ -2342,6 +2380,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     next = chance.state;
     if (!chance.activated) return next;
   }
+  next = { ...next, effectActivations: [...next.effectActivations, effect.id] };
   if (effect.execution === "root" && context.parentInstanceId) return next;
   if ((context.resolutionDepth ?? 0) > 16) return next;
   const targetContext = hasPerTargetChance
@@ -3012,7 +3051,9 @@ function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey
     return unit;
   });
 
-  const message = `${combatantName(sideUnits[activeIndex])} swapped with ${combatantName(sideUnits[benchIndex], false)}.`;
+  const message = actor.side === "player"
+    ? `You sent in ${sideUnits[benchIndex].name}.`
+    : `The enemy sent out ${sideUnits[benchIndex].name}.`;
   let next: CombatState = {
     ...state,
     playerUnits: actor.side === "player" ? units : state.playerUnits,

@@ -4181,6 +4181,9 @@ function CombatScreen({
   const battle = combat.battle;
   const enemyEncounter = combat.run.selectedEnemyEncounters?.find((encounter) => encounter.battleIndex === combat.run.battleIndex) ?? null;
   const enemyRollcaster = enemyEncounter?.enemyRollcaster ?? null;
+  const enemyRollcasterAssetPath = enemyRollcaster
+    ? data.catalog.dungeonEnemyRollcasters?.find((candidate) => candidate.id === enemyRollcaster.id)?.asset_path ?? enemyRollcaster.asset_path
+    : null;
   const enemyAbilities = (enemyRollcaster?.ability_ids ?? []).map((id) => byId(data.catalog.rollcasterAbilities, id)).filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
   const dialogue = currentDungeonDialogue(combat);
   const activePlayer = orderedActiveCombatUnits(battle.playerUnits);
@@ -4928,7 +4931,7 @@ function CombatScreen({
           <CombatRollcasterPanel
             data={data}
             name={enemyRollcaster?.name ?? "Enemy"}
-            assetPath={enemyRollcaster?.asset_path ?? null}
+            assetPath={enemyRollcasterAssetPath}
             mana={battle.opponentMana}
             manaAssetPath={manaAssetPath}
             manaRefund={opponentManaRefund?.amount}
@@ -5396,7 +5399,6 @@ function BattleUnit({
         )}
       </div>
       {selected && <span className="combat-selection-label"><Check size={14} /> Selected</span>}
-      {targetable && <span className="combat-selection-label target"><Target size={14} /> Legal target</span>}
     </article>
   );
 }

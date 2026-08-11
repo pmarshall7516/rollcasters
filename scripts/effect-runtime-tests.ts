@@ -180,8 +180,9 @@ const randomPolicyTypes = new Set<CombatAction["type"]>();
 for (let rngState = 1; rngState <= 64; rngState += 1) {
   for (const action of chooseRandomEnemyActions({ ...randomPolicyState, rngState })) randomPolicyTypes.add(action.type);
 }
-check(randomPolicyTypes.has("block") && randomPolicyTypes.has("skill"), "Random Action must sample both Block and affordable equipped Skills.");
-check(!randomPolicyTypes.has("swap"), "Random Action must never choose a voluntary Swap; swapping remains a learned policy action.");
+check(randomPolicyTypes.has("skill") && !randomPolicyTypes.has("block") && !randomPolicyTypes.has("swap"), "Random Action must use affordable Skills only and never Block or Swap.");
+const randomNoMana = chooseRandomEnemyActions({ ...randomPolicyState, opponentMana: 0, rngState: 1 });
+check(randomNoMana.every((action) => action.type === "skip"), "Random Action must wait when no Skill can be afforded.");
 
 const eventCatalog = makeCatalog();
 check(critterElementIds(eventCatalog.critters[0]).join(",") === "basic", "A one-type Critter must expose only Element 1.");
@@ -1239,7 +1240,7 @@ const enemyAbilityState = createInitialCombatState(
   "enemy-ability-relative-targets",
   undefined,
   "enemy-ability-relative-targets",
-  { ability_ids: ["friendly-stat", "enemy-stat"] },
+  { eclipse_order_type: "acolyte", ability_ids: ["friendly-stat", "enemy-stat"] },
 );
 check(
   enemyAbilityState.opponentUnits[0].stats.def === 28 && enemyAbilityState.opponentUnits[1].stats.def === 22,
@@ -1371,9 +1372,36 @@ const forcedEnemyReplacement = advanceDungeonEvent({
   eventCursor: -1,
 });
 check(
-  forcedEnemyReplacement.battle.opponentUnits.find((unit) => unit.key === "opponent-reserve")?.active
-    && forcedEnemyReplacement.battle.opponentUnits.find((unit) => unit.key === "opponent-reserve")?.battlefieldSlot === 0,
+  forcedEnemyReplacement.phase === "event_playback"
+    && forcedEnemyReplacement.dialogueMoment === null
+    && currentDungeonDialogue(forcedEnemyReplacement) === null
+    && forcedEnemyReplacement.events[0]?.message === "Acolyte Test sent out Opponent Two.",
+  "An automatic enemy replacement must use named send-out narration without replaying the enemy entry line.",
+);
+const revealedForcedEnemyReplacement = revealDungeonSwapEvent(forcedEnemyReplacement);
+check(
+  revealedForcedEnemyReplacement.battle.opponentUnits.find((unit) => unit.key === "opponent-reserve")?.active
+    && revealedForcedEnemyReplacement.battle.opponentUnits.find((unit) => unit.key === "opponent-reserve")?.battlefieldSlot === 0,
   "A healthy enemy reserve must automatically replace a knocked-out active Critter in the vacated battlefield slot.",
+);
+const confirmedPlayerReplacement = confirmDungeonLeads({
+  ...confirmedMechDungeon,
+  phase: "forced_replacements",
+  requiredLeadCount: 2,
+  selectedLeadIds: ["up1", "up3"],
+  fixedLeadIds: ["up1"],
+  dialogueMoment: null,
+  battle: {
+    ...confirmedMechDungeon.battle,
+    playerUnits: confirmedMechDungeon.battle.playerUnits.map((unit) => unit.key === "p2" ? { ...unit, hp: 0 } : unit),
+  },
+});
+check(
+  confirmedPlayerReplacement.phase === "event_playback"
+    && confirmedPlayerReplacement.dialogueMoment === null
+    && currentDungeonDialogue(confirmedPlayerReplacement) === null
+    && confirmedPlayerReplacement.events[0]?.message === "You sent in Player Three.",
+  "Confirming a knocked-out player's replacement must use send-in narration without replaying the enemy entry line.",
 );
 const cappedDiceCatalog = makeCatalog();
 cappedDiceCatalog.effectsByAbility["capped-dice"] = [
@@ -1398,8 +1426,9 @@ const passiveSwapEvent = passive.presentationEvents.find((event) => event.kind =
 check(
   passiveSwapEvent?.swap?.outgoingKey === "p1"
     && passiveSwapEvent.swap.incomingKey === "p3"
-    && passiveSwapEvent.swap.battlefieldSlot === passiveSwapSlot,
-  "Swap presentation must identify the outgoing Critter, incoming Critter, and preserved battlefield slot.",
+    && passiveSwapEvent.swap.battlefieldSlot === passiveSwapSlot
+    && passiveSwapEvent.message === "You sent in Player Three.",
+  "Swap presentation must identify the outgoing Critter, incoming Critter, preserved battlefield slot, and send-in narration.",
 );
 passive = takeTurn(passive, [{ actorKey: "p3", type: "swap", swapToId: "up1", cost: 4 }]);
 check(
@@ -1730,7 +1759,10 @@ check(
 
 const stackingCatalog = makeCatalog();
 stackingCatalog.effectsBySkill.ritual = [
-  effect("skill", "ritual", "stacking-glare", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.1, chance: 1, target: "all_enemies" }),
+  {
+    ...effect("skill", "ritual", "stacking-glare", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.1, chance: 1, target: "all_enemies" }),
+    classification: "positive",
+  },
   effect("skill", "ritual", "tiny-buff", "stat_modifier", { stat: "atk", value_mode: "percentage", amount: 0.01, chance: 1, target: "self" }, 1),
   effect("skill", "ritual", "tiny-debuff", "stat_modifier", { stat: "spd", value_mode: "percentage", amount: -0.01, chance: 1, target: "self" }, 2),
 ];
@@ -1755,8 +1787,43 @@ check(
   "Repeated modifiers from the same Skill and stat must appear as one accumulated tooltip total.",
 );
 check(
+  stackedGlareRows[0].classification === "negative",
+  "A negative resolved DEF delta must render as a negative combat effect even when its source classification is positive for the effect owner.",
+);
+check(
   stacked.presentationEvents.some((event) => event.message === "The enemy Opponent One lost −3 DEF from Ritual."),
   "Each repeated percentage application must narrate the exact base-referenced amount applied on that turn.",
+);
+
+const costPolarityCatalog = makeCatalog();
+costPolarityCatalog.effectsBySkill.ritual = [
+  {
+    ...effect("skill", "ritual", "block-discount", "stat_modifier", { stat: "block_cost", value_mode: "flat", amount: -1, target: "self" }),
+    runtimeVersion: 2,
+    classification: "negative",
+  },
+  {
+    ...effect("skill", "ritual", "swap-surcharge", "stat_modifier", { stat: "swap_cost", value_mode: "flat", amount: 1, target: "self" }, 1),
+    runtimeVersion: 2,
+    classification: "positive",
+  },
+  {
+    ...effect("skill", "ritual", "skill-discount", "action_cost_modifier", { applicable_action: "skills_all", modifier_type: "flat", modifier_value: -2, minimum_cost: null, maximum_cost: null, target: "self" }, 2),
+    classification: "negative",
+  },
+  {
+    ...effect("skill", "ritual", "skill-surcharge", "action_cost_modifier", { applicable_action: "skills_all", modifier_type: "flat", modifier_value: 1, minimum_cost: null, maximum_cost: null, target: "self" }, 3),
+    classification: "positive",
+  },
+];
+const costPolarityState = takeTurn(battle(costPolarityCatalog, makePlayer(), "cost-polarity"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+const costPolarityRows = combatEffectSummaries(costPolarityState, "p1");
+check(
+  costPolarityRows.some((row) => row.amountLabel === "−1 BLOCK COST" && row.classification === "positive")
+    && costPolarityRows.some((row) => row.amountLabel === "+1 SWAP COST" && row.classification === "negative")
+    && costPolarityRows.some((row) => row.name === "skill-discount" && row.classification === "positive")
+    && costPolarityRows.some((row) => row.name === "skill-surcharge" && row.classification === "negative"),
+  `Cost modifiers must invert numeric polarity for combat effect colors: ${JSON.stringify(costPolarityRows)}`,
 );
 
 const temporarySwapCatalog = makeCatalog();
