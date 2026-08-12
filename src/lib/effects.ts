@@ -257,7 +257,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
         const value = Number(conditionValue);
         if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`Effect ${effect.id} hp_percent condition_value must be between 0 and 1 (or legacy percentage points 0 and 100).`);
       }
-      if (condition === "action_order" && !["first", "last", "1", "0", "-1"].includes(conditionValue)) throw new Error(`Effect ${effect.id} action_order condition_value must be first or last.`);
+      if (condition === "action_order" && !["first_overall", "last_overall", "before_skill_target", "after_skill_target", "first", "last", "1", "0", "-1"].includes(conditionValue)) throw new Error(`Effect ${effect.id} action_order condition_value must be First Overall, Last Overall, Before Skill Target, or After Skill Target.`);
       requireChoice(parameters.check_timing, ["continuous", "turn_start", "turn_end", "when_applied", "before_action"], `Effect ${effect.id} check_timing`);
     }
     if (runtimeKey === "critter_revival@1") {

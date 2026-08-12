@@ -214,7 +214,7 @@ cycloneBaseCatalog.effectsBySkill.cyclone = [
     target: "self",
     condition: "action_order",
     comparison: "equal",
-    condition_value: "first",
+    condition_value: "first_overall",
     true_effect_ids: [cycloneDamageModifierId],
     false_effect_ids: [],
     check_timing: "continuous",
@@ -225,6 +225,9 @@ cycloneBaseCatalog.effectsBySkill.cyclone = [
     direction: "dealt",
     modifier_type: "percentage",
     modifier_value: 0.25,
+    minimum_final_damage: null,
+    maximum_final_damage: null,
+    usage_limit: null,
     applicable_source: "skill",
     applicable_target: "any",
     condition: "none",
@@ -290,6 +293,9 @@ icebreakerCatalog.effectsBySkill[icebreaker.id] = [
     direction: "dealt",
     modifier_type: "percentage",
     modifier_value: 0.25,
+    minimum_final_damage: null,
+    maximum_final_damage: null,
+    usage_limit: null,
     applicable_source: "skill",
     applicable_target: "any",
     condition: "none",
@@ -320,12 +326,45 @@ check(
   icebreakerUnshielded.opponentUnits[0].hp === icebreakerUnshieldedBaseline.opponentUnits[0].hp,
   "Icebreaker's shield conditional must not increase damage against an unshielded target.",
 );
+check(
+  icebreakerWithShield.effectActivations.includes("icebreaker-condition"),
+  "Icebreaker's conditional event must activate when the target has a shield.",
+);
+check(
+  !icebreakerUnshielded.effectActivations.includes("icebreaker-condition"),
+  "Icebreaker's conditional event must not activate when the target has no shield.",
+);
 check(icebreakerWithShield.runtimeEffects.every((instance) => instance.sourceEffectId !== icebreakerModifierId), "Icebreaker's current-action modifier must expire after the Skill resolves.");
 
 const lastActionCatalog = structuredClone(cycloneBaseCatalog);
-lastActionCatalog.effectsBySkill.cyclone[0].parameters = { ...lastActionCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "last" };
+lastActionCatalog.effectsBySkill.cyclone[0].parameters = { ...lastActionCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "last_overall" };
 const lastActionResult = takeTurn(battle(lastActionCatalog, cyclonePlayer, "cyclone-last"), cycloneActions, 0);
-check(100 - lastActionResult.opponentUnits[0].hp > cycloneWithoutEffectDamage, "Action-order conditionals must also resolve the last Skill action.");
+check(100 - lastActionResult.opponentUnits[0].hp > cycloneWithoutEffectDamage, "Action Order conditionals must also resolve the last overall Skill action.");
+
+const setSpeed = (state: ReturnType<typeof battle>, playerSpeed: number, opponentSpeed: number) => ({
+  ...state,
+  playerUnits: state.playerUnits.map((unit) => unit.key === "p1"
+    ? { ...unit, baseStats: { ...unit.baseStats, spd: playerSpeed }, persistentStats: { ...unit.persistentStats, spd: playerSpeed }, stats: { ...unit.stats, spd: playerSpeed } }
+    : unit),
+  opponentUnits: state.opponentUnits.map((unit) => unit.key === "o1"
+    ? { ...unit, baseStats: { ...unit.baseStats, spd: opponentSpeed }, persistentStats: { ...unit.persistentStats, spd: opponentSpeed }, stats: { ...unit.stats, spd: opponentSpeed } }
+    : unit),
+});
+const beforeTargetCatalog = structuredClone(cycloneBaseCatalog);
+beforeTargetCatalog.effectsBySkill.cyclone[0].parameters = { ...beforeTargetCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "before_skill_target" };
+const beforeTargetBattle = setSpeed(battle(beforeTargetCatalog, cyclonePlayer, "cyclone-before-target"), 100, 1);
+const beforeTargetBaseline = setSpeed(battle(cycloneBaselineCatalog, cyclonePlayer, "cyclone-before-target-baseline"), 100, 1);
+const beforeTargetResult = takeTurn(beforeTargetBattle, cycloneActions, 0);
+const beforeTargetBaselineResult = takeTurn(beforeTargetBaseline, cycloneActions, 0);
+check(100 - beforeTargetResult.opponentUnits[0].hp > 100 - beforeTargetBaselineResult.opponentUnits[0].hp, "Before Skill Target must match when Cyclone acts before its target.");
+
+const afterTargetCatalog = structuredClone(cycloneBaseCatalog);
+afterTargetCatalog.effectsBySkill.cyclone[0].parameters = { ...afterTargetCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "after_skill_target" };
+const afterTargetBattle = setSpeed(battle(afterTargetCatalog, cyclonePlayer, "cyclone-after-target"), 1, 100);
+const afterTargetBaseline = setSpeed(battle(cycloneBaselineCatalog, cyclonePlayer, "cyclone-after-target-baseline"), 1, 100);
+const afterTargetResult = takeTurn(afterTargetBattle, cycloneActions, 0);
+const afterTargetBaselineResult = takeTurn(afterTargetBaseline, cycloneActions, 0);
+check(100 - afterTargetResult.opponentUnits[0].hp > 100 - afterTargetBaselineResult.opponentUnits[0].hp, "After Skill Target must match when Cyclone acts after its target.");
 
 const lowHpCatalog = structuredClone(cycloneBaseCatalog);
 lowHpCatalog.effectsBySkill.cyclone[0].parameters = {

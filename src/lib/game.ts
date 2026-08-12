@@ -259,7 +259,7 @@ export type CombatState = {
   snapshot: RunEffectSnapshot;
   turnEvents: CombatProgressEvent[];
   presentationEvents: CombatPresentationEvent[];
-  /** Effect IDs whose chance gate activated during the current resolution window. */
+  /** Effect IDs that triggered during the current resolution window. Conditional parents are recorded only when their condition matches. */
   effectActivations: string[];
   runtimeEffects: RuntimeEffectInstance[];
   effectSequence: number;
@@ -1420,15 +1420,40 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
     )
     .map(({ action }) => action);
 
+  const positionByActorKey = new Map(ordered.map((action, position) => [action.actorKey, position]));
   return ordered.reduce((current, action, position) => {
     const actor = findUnit(current, action.actorKey);
+    const targetPositions = stage === "skill" ? actionSkillTargetKeys(state, action)
+      .map((targetKey) => positionByActorKey.get(targetKey))
+      .filter((targetPosition): targetPosition is number => targetPosition !== undefined) : [];
+    const targetPosition = targetPositions[0];
     const resolved = recomputeCombatStats(resolveAction(current, action, stage === "skill"
-      ? { actionOrder: { position, total: ordered.length, first: position === 0, last: position === ordered.length - 1 } }
+      ? {
+          actionOrder: {
+            position,
+            total: ordered.length,
+            first: position === 0,
+            last: position === ordered.length - 1,
+            beforeSkillTarget: targetPosition !== undefined && position < targetPosition,
+            afterSkillTarget: targetPosition !== undefined && position > targetPosition,
+          },
+        }
       : undefined));
     return actor && actor.active && actor.hp > 0
       ? decrementTargetTurnRuntimeEffects(resolved, action.actorKey)
       : resolved;
   }, { ...state, rngState });
+}
+
+function actionSkillTargetKeys(state: CombatState, action: CombatAction): string[] {
+  if (action.type !== "skill" || !action.skillId) return [];
+  const actor = findUnit(state, action.actorKey);
+  const skill = actor?.skills.find((candidate) => candidate.id === action.skillId);
+  if (!actor || !skill) return [];
+  const selectedSlot = action.targetSlotSide !== undefined && action.targetSlotIndex !== undefined
+    ? { side: action.targetSlotSide, index: action.targetSlotIndex }
+    : undefined;
+  return skillTargets(state, action.actorKey, skill, action.targetKey, selectedSlot).map((target) => target.key);
 }
 
 function decrementTargetTurnRuntimeEffects(state: CombatState, actorKey: string): CombatState {
@@ -1520,8 +1545,8 @@ function resolveIncomingDamage(
     if (!damageModifierMatches(state, instance, p, attacker, defender, context)) continue;
     const value = Number(p.modifier_value ?? 0);
     finalDamage = p.modifier_type === "percentage" ? finalDamage + roundHalfUp(finalDamage * value) : finalDamage + value;
-    if (p.minimum_final_damage !== undefined) finalDamage = Math.max(finalDamage, Number(p.minimum_final_damage));
-    if (p.maximum_final_damage !== undefined) finalDamage = Math.min(finalDamage, Number(p.maximum_final_damage));
+    if (p.minimum_final_damage !== undefined && p.minimum_final_damage !== null) finalDamage = Math.max(finalDamage, Number(p.minimum_final_damage));
+    if (p.maximum_final_damage !== undefined && p.maximum_final_damage !== null) finalDamage = Math.min(finalDamage, Number(p.maximum_final_damage));
     if (p.usage_limit !== undefined && p.usage_limit !== null) {
       state = {
         ...state,
@@ -1987,7 +2012,14 @@ type RuntimeContext = {
   parentInstanceId?: string;
   resolutionDepth?: number;
   allowInactiveSource?: boolean;
-  actionOrder?: { position: number; total: number; first: boolean; last: boolean };
+  actionOrder?: {
+    position: number;
+    total: number;
+    first: boolean;
+    last: boolean;
+    beforeSkillTarget: boolean;
+    afterSkillTarget: boolean;
+  };
   damageSource?: "attack" | "skill" | "status" | "retaliation" | "direct_damage";
   conditionalParentInstanceId?: string;
   swapTargetKey?: string;
@@ -2209,9 +2241,15 @@ function conditionalEffectMatches(
   const compareBoolean = (actual: boolean, expected: boolean) => comparison === "not_equal" ? actual !== expected : comparison === "equal" ? actual === expected : compareValues(actual ? 1 : 0, comparison, expected ? 1 : 0);
   if (condition === "action_order") {
     const expected = String(rawValue ?? "").toLowerCase();
-    const wantsFirst = expected === "first" || expected === "1";
-    const wantsLast = expected === "last" || expected === "0" || expected === "-1";
-    const actual = wantsFirst ? Boolean(context.actionOrder?.first) : wantsLast ? Boolean(context.actionOrder?.last) : false;
+    const actual = expected === "first_overall" || expected === "first" || expected === "1"
+      ? Boolean(context.actionOrder?.first)
+      : expected === "last_overall" || expected === "last" || expected === "0" || expected === "-1"
+        ? Boolean(context.actionOrder?.last)
+        : expected === "before_skill_target"
+          ? Boolean(context.actionOrder?.beforeSkillTarget)
+          : expected === "after_skill_target"
+            ? Boolean(context.actionOrder?.afterSkillTarget)
+            : false;
     return comparison === "not_equal" ? !actual : comparison === "equal" ? actual : compareValues(actual ? 1 : 0, comparison, 1);
   }
   if (["shield_present", "active_state", "has_status", "has_relic", "last_squad_member", "ally_defeated", "enemy_defeated", "element"].includes(condition)) {
@@ -2380,12 +2418,17 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     next = chance.state;
     if (!chance.activated) return next;
   }
-  next = { ...next, effectActivations: [...next.effectActivations, effect.id] };
   if (effect.execution === "root" && context.parentInstanceId) return next;
   if ((context.resolutionDepth ?? 0) > 16) return next;
   const targetContext = hasPerTargetChance
     ? { ...context, skillTargetKeys: targets.map((target) => target.key) }
     : context;
+  const conditionalTarget = targets[0];
+  const conditionalMatched = effect.runtimeKind !== "conditional_effect"
+    || (conditionalTarget ? conditionalEffectMatches(next, effect, conditionalTarget, context) : false);
+  if (conditionalMatched) {
+    next = { ...next, effectActivations: [...next.effectActivations, effect.id] };
+  }
   if (effect.runtimeKind === "critter_revival") {
     let current = next;
     for (const target of targets) {
@@ -2518,7 +2561,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     const conditionalContext = context.conditionalParentInstanceId
       ? { ...targetContext, conditionalParentInstanceId: context.conditionalParentInstanceId }
       : targetContext;
-    return resolveChildEffects(next, effect, conditionalContext, conditionalEffectMatches(next, effect, target, context) ? effect.parameters.true_effect_ids : effect.parameters.false_effect_ids);
+    return resolveChildEffects(next, effect, conditionalContext, conditionalMatched ? effect.parameters.true_effect_ids : effect.parameters.false_effect_ids);
   }
   if (effect.runtimeKind === "swap_after_attack") {
     const source = context.sourceCritterKey ? findUnit(next, context.sourceCritterKey) : undefined;
