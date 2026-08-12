@@ -22,6 +22,11 @@ const data = {
       { id: "004", name: "Polished Ivory" },
     ],
     skills: [{ id: "vile-injection", name: "Vile Injection" }],
+    statuses: [
+      { id: "frostbite", name: "Frostbite" },
+      { id: "toxic", name: "Toxic" },
+      { id: "paralysis", name: "Paralysis" },
+    ],
     dungeons: [
       { id: "001", name: "Journey Begins" },
       { id: "002", name: "Creek Clash" },
@@ -81,6 +86,7 @@ const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("dice_roll", { tracked_result: "maximum_die_result", comparison: "greater_than_or_equal", target_value: 6, required_occurrences: 2, die_types: ["d6"] }), "Maximum Die Result Greater Than Or Equal 6, 2 times."],
   [challenge("heal_hp", { required_amount: 200, recipient_side: "any", target_mode: "any", target_ids: [], tracking_scope: "lifetime" }), "Heal 200 HP on Critters."],
   [challenge("defeat_rollcaster_type", { rollcaster_types: ["adept"], required_amount: 10 }), "Defeat 10 Adept-rank Rollcasters."],
+  [challenge("afflict_status", { status_ids: ["frostbite"], target_side: "enemies", affliction_mode: "fresh_afflictions", required_amount: 10 }), "Afflict Frostbite on enemies 10 times from a fresh Status."],
   [challenge("shop_shards", { required_amount: 20 }), "Unlock Cragram shards"],
   [challenge("shop_relic", { required_amount: 1 }), "Own Cragram"],
 ];
@@ -171,6 +177,49 @@ check(challengeEventIncrement(acolyteOrAdeptDefeats, {
   amount: 1,
   payload: { won: true, enemy_rollcaster_type: "acolyte" },
 }) === 1, "Defeat Rollcaster Type must accept any selected rank.");
+
+const freshFrostbite = challenge("afflict_status", {
+  status_ids: ["frostbite"],
+  target_side: "enemies",
+  affliction_mode: "fresh_afflictions",
+  required_amount: 10,
+});
+check(challengeGoal(freshFrostbite) === 10n, "Afflict Status goal must use required_amount.");
+check(challengeEventIncrement(freshFrostbite, {
+  eventId: "status:fresh",
+  type: "status_afflicted",
+  amount: 1,
+  targetCritterId: "002",
+  payload: { status_ids: ["frostbite"], target_side: "opponent", fresh: true },
+}) === 1, "Fresh Afflictions must count a selected Status on an enemy.");
+check(challengeEventIncrement(freshFrostbite, {
+  eventId: "status:existing",
+  type: "status_afflicted",
+  amount: 1,
+  targetCritterId: "002",
+  payload: { status_ids: ["frostbite"], target_side: "opponent", fresh: false },
+}) === 0, "Fresh Afflictions must reject reapplications of an existing Status.");
+const afflictedTurns = challenge("afflict_status", {
+  status_ids: ["toxic", "paralysis"],
+  target_side: "any",
+  affliction_mode: "afflicted_turns",
+  required_amount: 4,
+});
+check(challengeDescription(data, afflictedTurns) === "Keep Toxic or Paralysis on any Critter for 4 afflicted turns.", "Afflicted Turns text must name selected Statuses and the target scope.");
+check(challengeEventIncrement(afflictedTurns, {
+  eventId: "status:turn",
+  type: "status_turn_completed",
+  amount: 1,
+  targetCritterId: "002",
+  payload: { status_ids: ["paralysis"], target_side: "player" },
+}) === 1, "Afflicted Turns must count a matching completed turn for Any targets.");
+check(challengeEventIncrement(freshFrostbite, {
+  eventId: "status:wrong-side",
+  type: "status_afflicted",
+  amount: 1,
+  targetCritterId: "002",
+  payload: { status_ids: ["frostbite"], target_side: "player", fresh: true },
+}) === 0, "Afflict Status must reject events on the wrong target side.");
 
 const frostTeraDiversity = challenge("collection_diversity", {
   diversity_mode: "specific_types",

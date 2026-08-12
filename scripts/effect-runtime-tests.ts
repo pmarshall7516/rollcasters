@@ -13,6 +13,8 @@ import {
   matchesSelectedElements,
   orderedActiveCombatUnits,
   resolveTurn,
+  simApplyStatus,
+  startTurn,
   refreshSetupRuntimeEffects,
   roundHalfUp,
   rollDamagePercent,
@@ -185,6 +187,13 @@ const randomNoMana = chooseRandomEnemyActions({ ...randomPolicyState, opponentMa
 check(randomNoMana.every((action) => action.type === "skip"), "Random Action must wait when no Skill can be afforded.");
 
 const eventCatalog = makeCatalog();
+eventCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "mark-status",
+  "apply_status",
+  { status_id: "finite", chance: 1, target: "targets", indefinite: true },
+)];
 check(critterElementIds(eventCatalog.critters[0]).join(",") === "basic", "A one-type Critter must expose only Element 1.");
 check(critterElementIds(eventCatalog.critters[1]).join(",") === "bloom,aqua", "A two-type Critter must preserve Element 1 then Element 2.");
 check(critterHasElement(eventCatalog.critters[1], "bloom") && critterHasElement(eventCatalog.critters[1], "aqua"), "Element membership must match either Critter slot.");
@@ -199,6 +208,14 @@ check(eventResult.turnEvents.some((event) => event.event_type === "resource_spen
 check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit one normalized hp_damage_dealt progress event.");
 check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
+const statusBattle = battle(eventCatalog, makePlayer(), "status-progress-events");
+const statusTarget = statusBattle.opponentUnits[0];
+const statusResult = takeTurn(statusBattle, [{ actorKey: statusBattle.playerUnits[0].key, type: "skill", skillId: "mark", targetKey: statusTarget.key, cost: 1 }]);
+check(statusResult.turnEvents.some((event) => event.event_type === "status_afflicted" && event.target_critter_id === statusTarget.critter.id && Array.isArray(event.payload?.status_ids) && event.payload.status_ids.includes("finite") && event.payload?.target_side === "opponent" && event.payload?.fresh === true), "A player Skill must emit a fresh Status affliction event with the authoritative target side.");
+check(statusResult.turnEvents.some((event) => event.event_type === "status_turn_completed" && event.target_critter_id === statusTarget.critter.id && Array.isArray(event.payload?.status_ids) && event.payload.status_ids.includes("finite") && event.payload?.target_side === "opponent"), "A Status present at the end of a turn must emit one afflicted-turn progress event.");
+const reappliedStatusResult = takeTurn(startTurn(statusResult), [{ actorKey: statusBattle.playerUnits[0].key, type: "skill", skillId: "mark", targetKey: statusTarget.key, cost: 1 }]);
+check(!reappliedStatusResult.turnEvents.some((event) => event.event_type === "status_afflicted"), "Reapplying an existing Status must not count as a fresh affliction.");
+check(reappliedStatusResult.turnEvents.some((event) => event.event_type === "status_turn_completed" && Array.isArray(event.payload?.status_ids) && event.payload.status_ids.includes("finite")), "Reapplying an existing Status must continue to count its completed afflicted turn.");
 
 const cycloneBaseCatalog = makeCatalog();
 const cyclone = { ...cycloneBaseCatalog.skills[0], id: "cyclone", name: "Cyclone", element_id: "basic", power: 100, mana_cost: 0, targeting: "single_enemy" as const };
@@ -2135,8 +2152,8 @@ const dotCatalog = makeCatalog();
 dotCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "apply-aura", "apply_status", { status_id: "aura", chance: 1, target: "self", indefinite: true })];
 dotCatalog.effectsByStatus.aura = [
   effect("status", "aura", "holder-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 1, chance: 1, target: "status_holder" }, 0),
-  effect("status", "aura", "allies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 2, chance: 1, target: "status_holder_allies" }, 1),
-  effect("status", "aura", "friendlies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 3, chance: 1, target: "status_holder_friendlies" }, 2),
+  effect("status", "aura", "allies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 2, chance: 1, target: "status_holder_allies_without_holder" }, 1),
+  effect("status", "aura", "friendlies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 3, chance: 1, target: "status_holder_allies_with_holder" }, 2),
   effect("status", "aura", "enemies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 4, chance: 1, target: "status_holder_enemies" }, 3),
   effect("status", "aura", "failed-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 50, chance: 0, target: "status_holder" }, 4),
 ];
@@ -2146,6 +2163,41 @@ check(dotted.opponentUnits[0].hp === 96 && dotted.opponentUnits[1].hp === 116, "
 const inactiveHolderHp = dotted.playerUnits.map((unit) => unit.hp);
 dotted = takeTurn(dotted, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }]);
 check(dotted.playerUnits.every((unit, index) => unit.hp === inactiveHolderHp[index]) && dotted.opponentUnits[0].hp === 96, "Status effects must stop triggering while their holder is inactive.");
+
+const statusStatCatalog = makeCatalog();
+statusStatCatalog.effectsByStatus.aura = [
+  { ...effect("status", "aura", "status-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 5, chance: 1, application_mode: "single_application", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" },
+  { ...effect("status", "aura", "status-cost", "stat_modifier", { stat: "skill_cost", skill_scope: "attack", skill_element_ids: ["basic"], value_mode: "flat", amount: -2, chance: 1, application_mode: "single_application", target: "status_holder" }, 1), runtimeVersion: 2, classification: "positive", execution: "root" },
+];
+let statusStatState = simApplyStatus(battle(statusStatCatalog, makePlayer(), "status-static"), "aura", "p1", 1);
+check(statusStatState.playerUnits[0].stats.atk === 30, "A Single Application Status Stat Modifier must apply its ATK change immediately.");
+check(calculateActionCost(statusStatState, { actorKey: "p1", type: "skill", skillId: "strike", cost: 5 }) === 3, "A Status Skill Cost modifier must discount matching attack Skills and their selected Elements.");
+statusStatState = takeTurn(statusStatState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+check(statusStatState.playerUnits[0].stats.atk === 25 && statusStatState.statuses.length === 0, "Status Stat Modifiers must be removed when their finite Status expires.");
+
+let swappedStatusState = simApplyStatus(battle(statusStatCatalog, makePlayer(), "status-swap"), "aura", "p1", null);
+swappedStatusState = takeTurn(swappedStatusState, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }], 10);
+swappedStatusState = takeTurn(swappedStatusState, [{ actorKey: "p3", type: "swap", swapToId: "up1", cost: 4 }], 10);
+check(swappedStatusState.playerUnits[0].stats.atk === 30, "A Status Stat Modifier must return when its holder swaps back into the active battlefield.");
+
+const incrementalStatusCatalog = makeCatalog();
+incrementalStatusCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "incremental-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "start_of_turn", spacing: 2, removal_behavior: "expire_on_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
+let incrementalStatusState = simApplyStatus(battle(incrementalStatusCatalog, makePlayer(), "status-incremental"), "aura", "p1", null);
+check(incrementalStatusState.playerUnits[0].stats.atk === 25, "An incremental Status Stat Modifier must not apply before its first scheduled timing.");
+incrementalStatusState = takeTurn(incrementalStatusState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+incrementalStatusState = startTurn(incrementalStatusState);
+check(incrementalStatusState.playerUnits[0].stats.atk === 27, "Spacing 2 must apply an incremental Status Stat Modifier every other turn.");
+
+const retainedIncrementalCatalog = makeCatalog();
+retainedIncrementalCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "retained-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "end_of_turn", spacing: 1, removal_behavior: "keep_after_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
+let retainedIncrementalState = simApplyStatus(battle(retainedIncrementalCatalog, makePlayer(), "status-retained"), "aura", "p1", 1);
+retainedIncrementalState = takeTurn(retainedIncrementalState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+check(retainedIncrementalState.statuses.length === 0 && retainedIncrementalState.playerUnits[0].stats.atk === 27, "Keep after Effect Removal must preserve accumulated incremental modifiers when the Status expires.");
+const expiredIncrementalCatalog = makeCatalog();
+expiredIncrementalCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "expired-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "end_of_turn", spacing: 1, removal_behavior: "expire_on_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
+let expiredIncrementalState = simApplyStatus(battle(expiredIncrementalCatalog, makePlayer(), "status-expired"), "aura", "p1", 1);
+expiredIncrementalState = takeTurn(expiredIncrementalState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+check(expiredIncrementalState.statuses.length === 0 && expiredIncrementalState.playerUnits[0].stats.atk === 25, "Expire on Effect Removal must remove accumulated incremental modifiers when the Status expires.");
 
 const skipCatalog = makeCatalog();
 skipCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "apply-stun", "apply_status", { status_id: "stun", chance: 1, target: "self", indefinite: true })];
@@ -2158,7 +2210,7 @@ check(blocked.playerMana === 7 && blocked.playerUnits[0].blocking, "A skill-only
 
 const allySkipCatalog = makeCatalog();
 allySkipCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "apply-ally-stun", "apply_status", { status_id: "stun", chance: 1, target: "self", indefinite: true })];
-allySkipCatalog.effectsByStatus.stun = [effect("status", "stun", "ally-skip", "skip_action_chance", { chance: 1, combat_action: "all", target: "status_holder_allies" })];
+allySkipCatalog.effectsByStatus.stun = [effect("status", "stun", "ally-skip", "skip_action_chance", { chance: 1, combat_action: "all", target: "status_holder_allies_without_holder" })];
 let allySkipped = takeTurn(battle(allySkipCatalog, makePlayer(), "ally-skip"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
 allySkipped = takeTurn(allySkipped, [{ actorKey: "p2", type: "block", cost: 2 }], 10);
 check(allySkipped.playerMana === 8 && !allySkipped.playerUnits[1].blocking, "Status skip targeting must resolve holder-relative recipients, cancel Swap/Block/Skill, and retain the submitted Mana cost.");
@@ -2182,6 +2234,74 @@ check(
   "Active-effect summaries must report the exact applied stat delta and its Skill source.",
 );
 check(JSON.stringify(frozen.snapshot) === JSON.stringify(battle(makeCatalogWithFrozenEffect(), makePlayer(), "frozen").snapshot), "Effect snapshots must be deterministic for an identical run and inline catalog.");
+
+const weightedCatalog = makeCatalog();
+const weightedChildOne = { ...effect("skill", "ritual", "weighted-one", "direct_health_modifier", {
+  target: "self", operation: "lose_hp", value_type: "flat", value: 1,
+  can_defeat_target: false, affected_by_shield: false, affected_by_healing_modifiers: false,
+  overhealing_behavior: "discard",
+}), execution: "child" as const, classification: "negative" as const };
+const weightedChildTwo = { ...effect("skill", "ritual", "weighted-two", "direct_health_modifier", {
+  target: "self", operation: "lose_hp", value_type: "flat", value: 2,
+  can_defeat_target: false, affected_by_shield: false, affected_by_healing_modifiers: false,
+  overhealing_behavior: "discard",
+}, 1), execution: "child" as const, classification: "negative" as const };
+const weightedParent = { ...effect("skill", "ritual", "weighted-parent", "weighted_child_selector", {
+  outcome_rows: [
+    { effect_id: weightedChildOne.id, probability: 0.5 },
+    { effect_id: weightedChildTwo.id, probability: 0.5 },
+  ],
+}), execution: "root" as const, classification: "mixed" as const };
+weightedCatalog.effectsBySkill.ritual = [weightedParent, weightedChildOne, weightedChildTwo];
+const weightedLosses = new Set<number>();
+for (let seed = 1; seed <= 256; seed += 1) {
+  const state = { ...battle(weightedCatalog, makePlayer(), `weighted-${seed}`), rngState: seed };
+  const result = takeTurn(state, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
+  weightedLosses.add(100 - result.playerUnits[0].hp);
+}
+check(weightedLosses.has(1) && weightedLosses.has(2), "Weighted Child Effect Selector must resolve both 50% child outcomes across deterministic rolls.");
+check(!weightedLosses.has(3), "Weighted Child Effect Selector must resolve at most one child outcome per Skill use.");
+
+const weightedNothingCatalog = structuredClone(weightedCatalog);
+weightedNothingCatalog.effectsBySkill.ritual[0].parameters.outcome_rows = [
+  { effect_id: weightedChildOne.id, probability: 0.4 },
+  { effect_id: weightedChildTwo.id, probability: 0.4 },
+  { effect_id: null, probability: 0.2 },
+];
+const weightedNothingLosses = new Set<number>();
+for (let seed = 1; seed <= 256; seed += 1) {
+  const state = { ...battle(weightedNothingCatalog, makePlayer(), `weighted-nothing-${seed}`), rngState: seed };
+  const result = takeTurn(state, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
+  weightedNothingLosses.add(100 - result.playerUnits[0].hp);
+}
+check(weightedNothingLosses.has(0) && weightedNothingLosses.has(1) && weightedNothingLosses.has(2), "An explicit Nothing outcome must leave the Skill unchanged while other weighted rows still resolve.");
+
+const weightedTargetCatalog = makeCatalog();
+const weightedTargetChildOne = { ...weightedChildOne, id: "weighted-target-one", ownerId: "mark", parameters: { ...weightedChildOne.parameters, target: "targets" } };
+const weightedTargetChildTwo = { ...weightedChildTwo, id: "weighted-target-two", ownerId: "mark", parameters: { ...weightedChildTwo.parameters, target: "targets" } };
+const weightedTargetParent = { ...effect("skill", "mark", "weighted-target-parent", "weighted_child_selector", {
+  target_element_ids: ["bloom", "aqua"],
+  outcome_rows: [
+    { effect_id: weightedTargetChildOne.id, probability: 0.5 },
+    { effect_id: weightedTargetChildTwo.id, probability: 0.5 },
+  ],
+}), execution: "root" as const, classification: "mixed" as const };
+weightedTargetCatalog.effectsBySkill.mark = [weightedTargetParent, weightedTargetChildOne, weightedTargetChildTwo];
+const nonMatchingTargetState = battle(weightedTargetCatalog, makePlayer(), "weighted-target-nonmatch");
+const nonMatchingTarget = nonMatchingTargetState.opponentUnits.find((unit) => unit.critter.id === "o1")!;
+const nonMatchingTargetResult = takeTurn(nonMatchingTargetState, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: nonMatchingTarget.key, cost: 2 }], 10);
+check(nonMatchingTargetResult.opponentUnits.find((unit) => unit.key === nonMatchingTarget.key)?.hp === nonMatchingTarget.hp, "A weighted selector must not roll or resolve children when no selected Skill target matches its required Elements.");
+const matchingTargetState = battle(weightedTargetCatalog, makePlayer(), "weighted-target-match");
+const matchingTarget = matchingTargetState.opponentUnits.find((unit) => unit.critter.id === "o2")!;
+const matchingTargetResult = takeTurn(matchingTargetState, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: matchingTarget.key, cost: 2 }], 10);
+const matchingTargetLoss = matchingTarget.hp - (matchingTargetResult.opponentUnits.find((unit) => unit.key === matchingTarget.key)?.hp ?? matchingTarget.hp);
+check(matchingTargetLoss === 1 || matchingTargetLoss === 2, "A weighted selector must roll its children when a selected Skill target matches any required Element, including a dual-element target.");
+
+const invalidWeighted = structuredClone(weightedParent);
+invalidWeighted.parameters.outcome_rows = [{ effect_id: weightedChildOne.id, probability: 0.6 }, { effect_id: weightedChildTwo.id, probability: 0.5 }];
+let invalidWeightedRejected = false;
+try { battle({ ...weightedCatalog, effectsBySkill: { ...weightedCatalog.effectsBySkill, ritual: [invalidWeighted, weightedChildOne, weightedChildTwo] } }, makePlayer(), "invalid-weighted"); } catch { invalidWeightedRejected = true; }
+check(invalidWeightedRejected, "Weighted Child Effect Selector probabilities above 100% must be rejected before combat.");
 
 function makeCatalogWithFrozenEffect(): Catalog {
   const catalog = makeCatalog();

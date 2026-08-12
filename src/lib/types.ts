@@ -16,6 +16,7 @@ export type CollectibleChallengeType =
   | "block_action"
   | "dice_roll"
   | "heal_hp"
+  | "afflict_status"
   | "defeat_rollcaster_type"
   | "shop_shards"
   | "shop_relic";
@@ -236,7 +237,9 @@ export type CombatProgressEvent = {
     | "block_completed"
     | "dice_resolved"
     | "resource_spent"
-    | "hp_healed";
+    | "hp_healed"
+    | "status_afflicted"
+    | "status_turn_completed";
   source_critter_id: string | null;
   target_critter_id: string | null;
   skill_id: string | null;
@@ -286,8 +289,8 @@ export type EffectTarget =
   | "equipped_allies"
   | "equipped_friendlies"
   | "status_holder"
-  | "status_holder_allies"
-  | "status_holder_friendlies"
+  | "status_holder_allies_without_holder"
+  | "status_holder_allies_with_holder"
   | "status_holder_enemies"
   | "selected_ally"
   | "selected_healthy_ally"
@@ -660,6 +663,10 @@ export type GameAsset = {
   width: number | null;
   height: number | null;
   checksum: string | null;
+  metadata?: {
+    sourceUpdatedAt?: string;
+    byteSize?: number;
+  } | null;
   is_active: boolean;
   sort_order: number;
   updated_at: string;

@@ -272,7 +272,7 @@ async function verifiedResponse(
 
 async function fetchPointer(url: string): Promise<{ pointer: CatalogReleasePointer; source: FetchSource }> {
   try {
-    const response = await fetch(url, { cache: "no-cache", credentials: "omit" });
+    const response = await fetch(url, { cache: "no-store", credentials: "omit" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return { pointer: parseCatalogReleasePointer(await response.json()), source: "network" };
   } catch (networkError) {

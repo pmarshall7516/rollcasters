@@ -157,8 +157,9 @@ async function processAssets(catalog) {
     if (!dedupe.has(asset.path)) dedupe.set(asset.path, asset);
   }
   for (const asset of dedupe.values()) {
-    const sourceUrl = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(asset.bucket_id)}/${asset.path.split("/").map(encodeURIComponent).join("/")}`;
-    const response = await fetch(sourceUrl);
+    const sourceUrl = new URL(`${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(asset.bucket_id)}/${asset.path.split("/").map(encodeURIComponent).join("/")}`);
+    sourceUrl.searchParams.set("cacheNonce", `${asset.id}-${Date.now()}`);
+    const response = await fetch(sourceUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`Unable to download ${asset.path}: HTTP ${response.status}.`);
     const source = Buffer.from(await response.arrayBuffer());
     const image = sharp(source, { animated: false });

@@ -21,6 +21,7 @@ import type {
   DungeonRunSnapshot,
   ElementDef,
   ElementEffectiveness,
+  GameAsset,
   PlayerState,
   LootboxOpeningReceipt,
   PromoCodeRedemption,
@@ -44,6 +45,7 @@ const playerBootstrapMode = (import.meta.env.VITE_GAME_PLAYER_BOOTSTRAP_MODE as 
 const allowLiveCatalogFallback = import.meta.env.VITE_ALLOW_LIVE_CATALOG_FALLBACK === "true";
 const allowLegacyPlayerBootstrap = import.meta.env.VITE_ALLOW_LEGACY_PLAYER_BOOTSTRAP === "true";
 let activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
+const liveAssetVersions = new Map<string, string>();
 
 export const GAME_ASSETS_BUCKET = "game-assets";
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
@@ -94,7 +96,7 @@ const LIVE_CATALOG_COLUMNS: Record<string, string> = {
   dungeon_completion_drops: "id,dungeon_id,completion_phase,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
   starter_rollcaster_options: "rollcaster_id,sort_order,is_active",
   starter_options: "critter_id,sort_order,is_active",
-  game_assets: "id,bucket_id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,is_active,sort_order,updated_at",
+  game_assets: "id,bucket_id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,metadata,is_active,sort_order,updated_at",
   statuses: "id,name,description,asset_path,sort_order,is_active,is_archived,version",
 };
 
@@ -348,12 +350,15 @@ export function getGameAssetUrl(assetPath: string | null | undefined): string | 
   if (!assetPath) return null;
   if (/^https?:\/\//i.test(assetPath)) return assetPath;
   const [objectPath, query = ""] = assetPath.split("?", 2);
+  const normalizedPath = objectPath.replace(/^\/+/, "");
   const publicUrl = activeGameAssetBaseUrl
-    ? `${activeGameAssetBaseUrl}/${objectPath.split("/").map(encodeURIComponent).join("/")}`
-    : requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(objectPath).data.publicUrl;
-  if (!query) return publicUrl;
+    ? `${activeGameAssetBaseUrl}/${normalizedPath.split("/").map(encodeURIComponent).join("/")}`
+    : requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(normalizedPath).data.publicUrl;
+  const version = gameCatalogMode === "live" ? liveAssetVersions.get(normalizedPath) : undefined;
+  if (!query && !version) return publicUrl;
   const url = new URL(publicUrl);
-  url.search = query;
+  if (query) url.search = query;
+  if (version && !url.searchParams.has("v")) url.searchParams.set("v", version);
   return url.toString();
 }
 
@@ -453,6 +458,14 @@ async function fetchLiveCatalog(): Promise<Catalog> {
     selectAll("statuses"),
     loadCombatEffects(),
   ]);
+
+  liveAssetVersions.clear();
+  for (const asset of gameAssets as GameAsset[]) {
+    const updatedAt = asset.metadata?.sourceUpdatedAt?.trim() || asset.updated_at?.trim() || "";
+    const byteSize = asset.metadata?.byteSize;
+    const size = typeof byteSize === "number" && Number.isFinite(byteSize) ? String(byteSize) : "";
+    if (updatedAt || size) liveAssetVersions.set(asset.path.replace(/^\/+/, ""), `${updatedAt}:${size}`);
+  }
 
   const groupedEffects = groupCombatEffectRows(combatEffects);
   const critters = rawCritters.map(normalizeCritter);
@@ -629,6 +642,7 @@ export function loadCatalog({ force = false }: { force?: boolean } = {}): Promis
 export function clearCatalogCache(): void {
   catalogPromise = null;
   currentCatalogRelease = undefined;
+  liveAssetVersions.clear();
   activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
 }
 

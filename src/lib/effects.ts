@@ -30,13 +30,14 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "critter_revival@1",
   "skill_usage_restriction@1",
   "swap_after_attack@1",
+  "weighted_child_selector@1",
 ]);
 
 const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
   skill: new Set(["self", "all_critters", "all_others", "selected_ally", "selected_healthy_ally", "selected_enemy", "all_allies", "all_friendlies", "all_enemies", "targets", "attacker_and_targets", "target_friendlies", "target_enemies", "attacker", "defender", "effect_owner"]),
   ability: new Set(["all_friendlies", "all_critters", "all_squad_friendlies", "all_enemies", "all_element_friendlies", "all_element_enemies", "active_ally", "active_enemy", "attacker", "attacker_and_targets", "defender", "effect_owner"]),
   relic: new Set(["equipped_critter", "equipped_allies", "equipped_friendlies", "all_squad_friendlies", "all_enemies", "active_ally", "active_enemy", "attacker", "attacker_and_targets", "defender", "effect_owner"]),
-  status: new Set(["status_holder", "status_holder_allies", "status_holder_friendlies", "status_holder_enemies"]),
+  status: new Set(["status_holder", "status_holder_allies_without_holder", "status_holder_allies_with_holder", "status_holder_enemies"]),
 };
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
@@ -73,6 +74,38 @@ function validateDuration(value: unknown, label: string): void {
 function validateChance(value: unknown, label: string): void {
   const chance = requireFinite(value, label);
   if (chance < 0 || chance > 1) throw new Error(`${label} must be between 0 and 1.`);
+}
+
+function validateWeightedChildOutcomes(value: unknown, label: string): void {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${label} must contain at least one outcome.`);
+  }
+  let total = 0;
+  let hasNothing = false;
+  const selected = new Set<string>();
+  value.forEach((candidate, index) => {
+    const row = requireRecord(candidate, `${label}[${index}]`);
+    if (!Object.prototype.hasOwnProperty.call(row, "effect_id")) {
+      throw new Error(`${label}[${index}] must provide effect_id; use null for Nothing.`);
+    }
+    const effectId = row.effect_id;
+    if (effectId === null) {
+      if (hasNothing) throw new Error(`${label} may contain only one Nothing outcome.`);
+      hasNothing = true;
+    } else if (typeof effectId !== "string" || effectId.trim().length === 0) {
+      throw new Error(`${label}[${index}] effect_id must be a Child-only Effect ID or null.`);
+    } else if (selected.has(effectId)) {
+      throw new Error(`${label} cannot reference Effect ${effectId} more than once.`);
+    } else {
+      selected.add(effectId);
+    }
+    const probability = requireFinite(row.probability, `${label}[${index}] probability`);
+    if (probability < 0.01 || probability > 1) {
+      throw new Error(`${label}[${index}] probability must be between 0.01 and 1.`);
+    }
+    total += probability;
+  });
+  if (total > 1.0000001) throw new Error(`${label} probabilities cannot total more than 1.`);
 }
 
 function validateElementIds(value: unknown, label: string): void {
@@ -148,7 +181,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   // resolution context rather than directly selecting a Critter. Their
   // schemas intentionally do not include `target`; do not force them through
   // the owner-scoped Critter target vocabulary.
-  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1", "skill_usage_restriction@1"]);
+  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1", "skill_usage_restriction@1", "weighted_child_selector@1"]);
   const target = parameters.target;
   if (!targetlessRuntimes.has(runtimeKey) || parameters.target !== undefined) {
     const validatedTarget = requireChoice(
@@ -161,13 +194,15 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     }
   }
   if (parameters.target_element_ids !== undefined) {
-    if (effect.ownerType === "status" || parameters.target === undefined) {
+    if (effect.ownerType === "status" || (parameters.target === undefined && runtimeKey !== "weighted_child_selector@1")) {
       throw new Error(`Effect ${effect.id} target_element_ids requires a Skill, Ability, or Relic target.`);
     }
     validateOptionalElementIds(parameters.target_element_ids, `Effect ${effect.id} target_element_ids`);
   }
   if (parameters.skill_element_ids !== undefined) {
-    if (runtimeKey !== "action_cost_modifier@1") throw new Error(`Effect ${effect.id} skill_element_ids requires Action Cost Modifier.`);
+    if (runtimeKey !== "action_cost_modifier@1" && !(runtimeKey === "stat_modifier@2" && effect.ownerType === "status" && parameters.stat === "skill_cost")) {
+      throw new Error(`Effect ${effect.id} skill_element_ids requires a Skill cost modifier.`);
+    }
     validateOptionalElementIds(parameters.skill_element_ids, `Effect ${effect.id} skill_element_ids`);
   }
   if (parameters.source_element_ids !== undefined) {
@@ -190,6 +225,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     "effect_immunity@1", "effect_amplification@1", "critter_revival@1",
     "skill_usage_restriction@1",
     "swap_after_attack@1",
+    "weighted_child_selector@1",
   ]);
   if (expandedKey.has(runtimeKey)) {
     if (runtimeKey === "stat_modifier@2" && effect.classification === undefined && effect.execution === undefined) {
@@ -208,6 +244,12 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       }
     }
     if (parameters.chance !== undefined) validateChance(parameters.chance, `Effect ${effect.id} chance`);
+    if (runtimeKey === "weighted_child_selector@1") {
+      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
+      if (effect.execution !== "root") throw new Error(`Effect ${effect.id} must use Root execution.`);
+      rejectUnknownKeys(parameters, ["outcome_rows", "source_element_ids", "target_element_ids"], `Effect ${effect.id}`);
+      validateWeightedChildOutcomes(parameters.outcome_rows, `Effect ${effect.id} outcome_rows`);
+    }
     if (runtimeKey === "resource_gain_loss@1") {
       validateChance(
         parameters.activation_chance === undefined ? 1 : parameters.activation_chance,
@@ -229,9 +271,32 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       if (parameters[key] !== undefined && parameters[key] !== null) validateDuration(parameters[key], `Effect ${effect.id} ${key}`);
     }
     if (runtimeKey === "stat_modifier@2") {
-      requireChoice(parameters.stat, ["hp", "atk", "def", "spd", "block_cost", "swap_cost", "relic_slots"], `Effect ${effect.id} stat`);
+      const allowedStats = effect.ownerType === "status"
+        ? ["atk", "def", "spd", "block_cost", "swap_cost", "mana_dice_min", "mana_dice_max", "skill_cost"]
+        : ["hp", "atk", "def", "spd", "block_cost", "swap_cost", "relic_slots"];
+      requireChoice(parameters.stat, allowedStats, `Effect ${effect.id} stat`);
       requireChoice(parameters.value_mode, ["flat", "percentage"], `Effect ${effect.id} value_mode`);
       if (parameters.stat === "relic_slots" && parameters.value_mode !== "flat") throw new Error(`Effect ${effect.id} relic_slots is flat only.`);
+      const amount = requireFinite(parameters.amount, `Effect ${effect.id} amount`);
+      if (effect.ownerType === "status") {
+        if (parameters.value_mode === "flat" && !Number.isInteger(amount)) throw new Error(`Effect ${effect.id} flat amount must be an integer.`);
+        validateChance(parameters.chance === undefined ? 1 : parameters.chance, `Effect ${effect.id} chance`);
+        requireChoice(parameters.application_mode, ["single_application", "incremental"], `Effect ${effect.id} application_mode`);
+        if (parameters.application_mode === "incremental") {
+          requireChoice(parameters.timing, ["start_of_turn", "end_of_turn"], `Effect ${effect.id} timing`);
+          const spacing = requireFinite(parameters.spacing === undefined ? 1 : parameters.spacing, `Effect ${effect.id} spacing`);
+          if (!Number.isInteger(spacing) || spacing < 1) throw new Error(`Effect ${effect.id} spacing must be a positive integer.`);
+          requireChoice(parameters.removal_behavior, ["expire_on_removal", "keep_after_removal"], `Effect ${effect.id} removal_behavior`);
+        } else if (parameters.removal_behavior !== undefined) {
+          throw new Error(`Effect ${effect.id} removal_behavior requires incremental application_mode.`);
+        }
+        if (parameters.stat === "skill_cost") {
+          requireChoice(parameters.skill_scope, ["all", "attack", "support"], `Effect ${effect.id} skill_scope`);
+          if (parameters.skill_element_ids !== undefined) validateOptionalElementIds(parameters.skill_element_ids, `Effect ${effect.id} skill_element_ids`);
+        } else if (parameters.skill_scope !== undefined || parameters.skill_element_ids !== undefined) {
+          throw new Error(`Effect ${effect.id} skill cost filters require stat skill_cost.`);
+        }
+      }
     }
     if (runtimeKey === "shield_modifier@1") {
       requireChoice(parameters.operation, ["grant", "add", "subtract", "set", "destroy"], `Effect ${effect.id} operation`);
