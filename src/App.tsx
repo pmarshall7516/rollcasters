@@ -85,9 +85,11 @@ import {
   applyDungeonBattleResult,
   confirmDungeonLeads,
   continueAfterEncounterRewards,
+  continueDungeonDialogue,
   continueAfterRoll,
   createDungeonRunState,
   currentDungeonEvent,
+  currentDungeonDialogue,
   dungeonBattleSubmission,
   revealDungeonSwapEvent,
   restoreDungeonRunState,
@@ -104,7 +106,7 @@ import {
   formatProbability,
   type EffectiveDungeon,
 } from "./lib/dungeons";
-import { calculateLoadoutStats, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
+import { calculateLoadoutStats, nextOpenSquadSlot, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
 import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
@@ -156,6 +158,7 @@ import type {
   Relic,
   ResolvedEffectRef,
   Rollcaster,
+  RollcasterAbility,
   Skill,
   ShopEntry,
   UserCritter,
@@ -789,27 +792,37 @@ export function App() {
                 })),
                 activeEffects: combatEffectSummaries(combat.battle, unit.key),
               })),
-              opponents: combat.phase === "lead_selection"
-                ? combat.battle.opponentUnits.map((_unit, slot) => ({ slot, hidden: true }))
-                : combat.battle.opponentUnits.map((unit) => ({
-                    key: unit.key,
-                    name: unit.name,
-                    elementIds: critterElementIds(unit.critter),
-                    hp: unit.hp,
-                    maxHp: unit.maxHp,
-                    active: unit.active,
-                    slot: unit.battlefieldSlot,
-                    roll: unit.manaRoll,
-                    blocking: unit.blocking,
-                    blockStreak: unit.blockStreak,
-                    stats: unit.stats,
-                    recharging: isActorRecharging(combat.battle, unit.key),
-                    skills: unit.skills.map((skill) => ({
-                      id: skill.id,
-                      ...skillAvailability(combat.battle, unit.key, skill.id),
-                    })),
-                    activeEffects: combatEffectSummaries(combat.battle, unit.key),
-                  })),
+              opponents: (() => {
+                const hiddenOpponentKeys = new Set(
+                  [...document.querySelectorAll<HTMLElement>(".combat-squad-slot.unknown[data-combat-squad-unit-key]")]
+                    .map((node) => node.dataset.combatSquadUnitKey)
+                    .filter((key): key is string => Boolean(key)),
+                );
+                return combat.battle.opponentUnits.map((unit, slot) => {
+                  const hidden = combat.phase === "lead_selection" || hiddenOpponentKeys.has(unit.key);
+                  return hidden
+                    ? { key: unit.key, slot, hidden: true }
+                    : {
+                        key: unit.key,
+                        name: unit.name,
+                        elementIds: critterElementIds(unit.critter),
+                        hp: unit.hp,
+                        maxHp: unit.maxHp,
+                        active: unit.active,
+                        slot: unit.battlefieldSlot,
+                        roll: unit.manaRoll,
+                        blocking: unit.blocking,
+                        blockStreak: unit.blockStreak,
+                        hidden: false,
+                        recharging: isActorRecharging(combat.battle, unit.key),
+                        skills: unit.skills.map((skill) => ({
+                          id: skill.id,
+                          ...skillAvailability(combat.battle, unit.key, skill.id),
+                        })),
+                        activeEffects: combatEffectSummaries(combat.battle, unit.key),
+                      };
+                });
+              })(),
               statuses: combat.battle.statuses.map((status) => ({ statusId: status.statusId, holder: status.holderKey, duration: status.duration })),
               presentation: currentDungeonEvent(combat)
                 ? {
@@ -822,7 +835,7 @@ export function App() {
                     swap: currentDungeonEvent(combat)!.swap
                       ? {
                           ...currentDungeonEvent(combat)!.swap!,
-                          revealed: combat.battle.playerUnits.some((unit) => (
+                          revealed: [...combat.battle.playerUnits, ...combat.battle.opponentUnits].some((unit) => (
                             unit.key === currentDungeonEvent(combat)!.swap!.incomingKey
                             && unit.active
                             && unit.battlefieldSlot === currentDungeonEvent(combat)!.swap!.battlefieldSlot
@@ -955,8 +968,8 @@ export function App() {
             if (turn.turnEvents.length === 0) return;
             try {
               await submitCollectibleCombatEvents(resolved.run.id, resolved.battle.turn, turn.turnEvents);
-              // Combat presentation is already available locally. Keep the full
-              // player/catalog refresh off the narration critical path.
+              // Keep the full player/catalog refresh off the turn presentation
+              // path; CombatScreen applies the resolved state after this load.
               void refresh("combat", { showLoading: false });
             } catch (progressError) {
               console.error("Unable to submit collectible combat progress.", progressError);
@@ -1412,7 +1425,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
   const player = data.player!;
   const activeRollcaster = player.rollcasters.find((row) => row.id === player.profile.active_rollcaster_id) ?? player.rollcasters[0];
   const rollcaster = byId(data.catalog.rollcasters, activeRollcaster?.rollcaster_id);
-  const squad = player.squadSlots.slice().sort((a, b) => a.slot_index - b.slot_index);
+  const squad = Array.from({ length: 5 }, (_, index) => player.squadSlots.find((slot) => slot.slot_index === index + 1) ?? ({ user_id: player.profile.user_id, slot_index: index + 1, user_critter_id: null }));
   const [equipTarget, setEquipTarget] = useState<EquipTarget | null>(null);
   const [equipError, setEquipError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1530,7 +1543,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
         </button>
       </nav>
 
-      <section ref={squadPanelRef} className="squad-panel">
+      <section ref={squadPanelRef} className="squad-panel" aria-label="Equipped squad">
         {squad.map((slot) => {
           const owned = player.critters.find((critter) => critter.id === slot.user_critter_id);
           return (
@@ -1695,7 +1708,7 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
     owned.level,
     owned.xp,
   );
-  const relicSlotStates = relicSlotUnlocks(data.catalog.critterProgression, critter.id);
+  const relicSlotStates = relicSlotUnlocks(data.catalog.critterProgression, critter.id, 6);
 
   return (
     <article className="loadout-slot">
@@ -1763,19 +1776,18 @@ function GameTooltip({ label, content, children }: { label: string; content: Rea
     const anchorRect = anchor.getBoundingClientRect();
     const tooltipRect = tooltip.getBoundingClientRect();
     const gutter = 10;
-    const left = Math.max(
-      gutter,
-      Math.min(
-        anchorRect.left + anchorRect.width / 2 - tooltipRect.width / 2,
-        window.innerWidth - tooltipRect.width - gutter,
-      ),
+    const maxLeft = Math.max(gutter, window.innerWidth - tooltipRect.width - gutter);
+    const left = Math.min(
+      Math.max(anchorRect.left + anchorRect.width / 2 - tooltipRect.width / 2, gutter),
+      maxLeft,
     );
+    const maxTop = Math.max(gutter, window.innerHeight - tooltipRect.height - gutter);
     const preferredAbove = anchorRect.top - tooltipRect.height - 8;
-    const top = preferredAbove >= gutter
+    const preferredTop = preferredAbove >= gutter
       ? preferredAbove
       : Math.min(anchorRect.bottom + 8, window.innerHeight - tooltipRect.height - gutter);
     tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${Math.max(gutter, top)}px`;
+    tooltip.style.top = `${Math.min(Math.max(gutter, preferredTop), maxTop)}px`;
   }
 
   function hideTooltip() {
@@ -1795,7 +1807,10 @@ function GameTooltip({ label, content, children }: { label: string; content: Rea
       onBlur={hideTooltip}
     >
       {children}
-      <span ref={tooltipRef} id={tooltipId} className="game-tooltip viewport-game-tooltip" role="tooltip">{content}</span>
+      {createPortal(
+        <span ref={tooltipRef} id={tooltipId} className="game-tooltip viewport-game-tooltip" role="tooltip">{content}</span>,
+        document.body,
+      )}
     </span>
   );
 }
@@ -1947,13 +1962,28 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     const assigned = new Set(player.squadSlots.map((row) => row.user_critter_id).filter(Boolean));
     const eligible = sortByCollectibleId(player.critters, (owned) => owned.critter_id);
     const current = player.squadSlots.find((row) => row.slot_index === target.slotIndex)?.user_critter_id;
+    const equipSlotIndex = nextOpenSquadSlot(player.squadSlots, target.slotIndex);
+    const changeSquadSlot = async (slotIndex: number, userCritterId: string | null) => {
+      const previousUserCritterId = player.squadSlots.find((row) => row.slot_index === slotIndex)?.user_critter_id;
+      await setSquadSlot(slotIndex, userCritterId);
+      const critterIdsToClear = new Set(
+        [previousUserCritterId, userCritterId].filter((id): id is string => Boolean(id)),
+      );
+      for (const critterId of critterIdsToClear) {
+        for (const relicSlot of player.relicSlots
+          .filter((row) => row.user_critter_id === critterId && row.relic_id)
+          .sort((left, right) => left.slot_index - right.slot_index)) {
+          await setCritterRelicSlot(critterId, relicSlot.slot_index, null);
+        }
+      }
+    };
     const canRemoveCurrent = player.squadSlots.filter((row) => row.user_critter_id).length > 1;
     content = eligible.length ? <div className="candidate-grid">{eligible.map((owned) => {
       const critter = byId(data.catalog.critters, owned.critter_id)!;
       const selected = current === owned.id;
       const inSquad = assigned.has(owned.id);
       const disabled = saving || (inSquad && !selected) || (selected && !canRemoveCurrent);
-      return <button className={`candidate-card ${selected ? "selected" : ""} ${inSquad && !selected ? "in-squad" : ""}`} key={owned.id} disabled={disabled} onClick={() => onEquip(() => setSquadSlot(target.slotIndex, selected ? null : owned.id))}>
+      return <button className={`candidate-card ${selected ? "selected" : ""} ${inSquad && !selected ? "in-squad" : ""}`} key={owned.id} disabled={disabled} onClick={() => onEquip(() => changeSquadSlot(selected ? target.slotIndex : equipSlotIndex, selected ? null : owned.id))}>
         <SpriteFrame size="md" selected={selected}><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
         <CritterName data={data} critter={critter} /><span>Level {owned.level}</span>{selected ? <span className="state-badge remove-badge">Select again to remove</span> : inSquad && <span className="state-badge"><Check size={14} /> In squad</span>}
       </button>;
@@ -2051,10 +2081,19 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       const owned = player.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0;
       const used = player.relicSlots.filter((row) => row.relic_id === relic.id).length;
       const selected = current === relic.id;
-      const available = owned - used;
-      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={relic.id} disabled={saving || selected || available <= 0} onClick={() => onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id))}>
-        <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong>{attachmentRows(data.catalog.effectsByRelic[relic.id] ?? [], byId(data.catalog.critters, target.owned.critter_id))}<span className="inventory-count">Owned {owned} · Equipped {used} · Available {available}</span>
-      </button>;
+      const available = Math.max(0, owned - used);
+      const unavailable = available <= 0;
+      const effects = data.catalog.effectsByRelic[relic.id] ?? [];
+      const sourceCritter = byId(data.catalog.critters, target.owned.critter_id);
+      const details = `${relic.name}. ${relic.description} ${attachmentText(effects)}`.trim();
+      return <GameTooltip key={relic.id} label={details} content={<><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
+        <button className={`candidate-card relic-candidate ${selected ? "selected" : ""} ${unavailable ? "unavailable" : ""}`} disabled={saving || selected || unavailable} onClick={() => {
+          if (unavailable) return;
+          onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id));
+        }}>
+          <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong><span className="inventory-count relic-availability">Available: {available}</span>
+        </button>
+      </GameTooltip>;
     })}</div> : <p className="empty-state">No relics available</p>;
   } else if (target.type === "ability") {
     const ids = player.unlockedAbilityIdsByRollcaster[target.owned.id] ?? [];
@@ -4114,7 +4153,9 @@ function CombatScreen({
   const combatRootRef = useRef<HTMLElement>(null);
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
   const [menu, setMenu] = useState<"actions" | "skills" | "swap">("actions");
+  const [revealedOpponentKeys, setRevealedOpponentKeys] = useState<Set<string>>(new Set());
   const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill; phase: "primary" | "swap"; primaryTargetKey?: string } | null>(null);
+  const [swapSelection, setSwapSelection] = useState<{ actorKey: string; mode: "regular" | "skill" } | null>(null);
   const [submittingProgress, setSubmittingProgress] = useState(false);
   const [loadingDots, setLoadingDots] = useState(1);
   const [recordingResult, setRecordingResult] = useState(false);
@@ -4133,20 +4174,47 @@ function CombatScreen({
   const [swapMotion, setSwapMotion] = useState<{
     eventId: string;
     actorKey: string;
+    phase: "out" | "in";
     x: number;
     y: number;
   } | null>(null);
   const battle = combat.battle;
+  const enemyEncounter = combat.run.selectedEnemyEncounters?.find((encounter) => encounter.battleIndex === combat.run.battleIndex) ?? null;
+  const enemyRollcaster = enemyEncounter?.enemyRollcaster ?? null;
+  const enemyRollcasterAssetPath = enemyRollcaster
+    ? data.catalog.dungeonEnemyRollcasters?.find((candidate) => candidate.id === enemyRollcaster.id)?.asset_path ?? enemyRollcaster.asset_path
+    : null;
+  const enemyAbilities = (enemyRollcaster?.ability_ids ?? []).map((id) => byId(data.catalog.rollcasterAbilities, id)).filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
+  const dialogue = currentDungeonDialogue(combat);
   const activePlayer = orderedActiveCombatUnits(battle.playerUnits);
   const totalCost = Object.values(actions).reduce((sum, action) => sum + action.cost, 0);
   const manaAssetPath = findAssetPath(data, "mana", "mana");
   const activeOwnedRollcaster = data.player!.rollcasters.find((row) => row.id === data.player!.profile.active_rollcaster_id) ?? data.player!.rollcasters[0];
   const activeRollcaster = byId(data.catalog.rollcasters, activeOwnedRollcaster?.rollcaster_id);
-  const activeAbilities = data.player!.abilitySlots
-    .filter((slot) => slot.user_rollcaster_id === activeOwnedRollcaster?.id && slot.ability_id)
-    .sort((left, right) => left.slot_index - right.slot_index)
-    .map((slot) => byId(data.catalog.rollcasterAbilities, slot.ability_id))
-    .filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
+  const activeAbilitySlots = Array.from({ length: 5 }, (_, index) => {
+    const slot = data.player!.abilitySlots.find((candidate) => (
+      candidate.user_rollcaster_id === activeOwnedRollcaster?.id
+      && candidate.slot_index === index + 1
+    ));
+    return byId(data.catalog.rollcasterAbilities, slot?.ability_id);
+  });
+  useEffect(() => {
+    if (combat.phase === "lead_selection") return;
+    const encounteredOpponentKeys = new Set(
+      battle.opponentUnits.filter((unit) => unit.active).map((unit) => unit.key),
+    );
+    for (const recordedEvent of combat.events) {
+      for (const key of [recordedEvent.actorKey, ...recordedEvent.targetKeys, recordedEvent.swap?.outgoingKey, recordedEvent.swap?.incomingKey]) {
+        if (key?.startsWith("o")) encounteredOpponentKeys.add(key);
+      }
+    }
+    if (!encounteredOpponentKeys.size) return;
+    setRevealedOpponentKeys((current) => {
+      const next = new Set(current);
+      encounteredOpponentKeys.forEach((key) => next.add(key));
+      return next.size === current.size ? current : next;
+    });
+  }, [combat.events, combat.phase, battle.opponentUnits]);
   const legalTargets = targeting
     ? targeting.phase === "swap"
       ? healthyFriendlySwapTargets(battle, targeting.actorKey)
@@ -4154,11 +4222,19 @@ function CombatScreen({
     : [];
   const legalTargetKeys = new Set(legalTargets.map((unit) => unit.key));
   const inactiveLegalTargets = legalTargets.filter((unit) => !unit.active);
-  const queuedSwapIds = new Set(Object.values(actions).map((action) => action.swapToId).filter(Boolean));
+  const queuedSwapIds = new Set(Object.values(actions).flatMap((action) => [action.swapInKey, action.swapToId, action.swapTargetKey]).filter((id): id is string => Boolean(id)));
+  const availableHealthySwapTargets = (actorKey: string) => healthyFriendlySwapTargets(battle, actorKey)
+    .filter((unit) => !queuedSwapIds.has(unit.key) && !queuedSwapIds.has(unit.userCritter?.id ?? ""));
+  const swapTargetKeys = swapSelection
+    ? availableHealthySwapTargets(swapSelection.actorKey).map((unit) => unit.key)
+    : targeting?.phase === "swap"
+      ? availableHealthySwapTargets(targeting.actorKey).map((unit) => unit.key)
+      : [];
+  const swapActorKey = swapSelection?.actorKey ?? (targeting?.phase === "swap" ? targeting.actorKey : undefined);
   const currentActor = activePlayer.find((unit) => !actions[unit.key]);
   const currentActorIndex = currentActor ? activePlayer.findIndex((unit) => unit.key === currentActor.key) : activePlayer.length;
   const event = currentDungeonEvent(combat);
-  const swapRevealed = Boolean(event?.swap && battle.playerUnits.some((unit) => (
+  const swapRevealed = Boolean(event?.swap && [...battle.playerUnits, ...battle.opponentUnits].some((unit) => (
     unit.key === event.swap!.incomingKey
     && unit.active
     && unit.battlefieldSlot === event.swap!.battlefieldSlot
@@ -4173,6 +4249,8 @@ function CombatScreen({
     ? `Choose ${combat.requiredLeadCount} healthy lead Critter${combat.requiredLeadCount === 1 ? "" : "s"} before revealing the enemy lineup.`
     : combat.phase === "forced_replacements"
       ? `Choose ${combat.requiredLeadCount - combat.fixedLeadIds.length} replacement${combat.requiredLeadCount - combat.fixedLeadIds.length === 1 ? "" : "s"} for the knocked-out active slot${combat.requiredLeadCount - combat.fixedLeadIds.length === 1 ? "" : "s"}.`
+      : combat.phase === "entry_dialogue" || combat.phase === "outcome_dialogue"
+        ? dialogue ? `${dialogue.speaker}: ${dialogue.line}` : "Continue."
       : combat.phase === "await_roll"
         ? `Roll the Dice to start Turn ${battle.turn}.`
         : combat.phase === "roll_result"
@@ -4194,9 +4272,11 @@ function CombatScreen({
     && totalCost <= battle.playerMana
     && activePlayer.length > 0
     && Object.keys(actions).length === activePlayer.length;
-  const narrationAdvanceable = ((combat.phase === "event_playback" && !submittingProgress && eventSettled)
-    || (combat.phase === "roll_result" && diceSettled))
-    && (!narrationText || (narrationSettled && visibleNarration === narrationText));
+  const narrationAdvanceable = (
+    (combat.phase === "event_playback" && !submittingProgress && eventSettled)
+    || (combat.phase === "roll_result" && diceSettled)
+    || ["entry_dialogue", "outcome_dialogue"].includes(combat.phase)
+  ) && (!narrationText || (narrationSettled && visibleNarration === narrationText));
   const narrationComplete = !narrationText || loadingNarration || (narrationSettled && visibleNarration === narrationText);
   const playerManaRefund = event?.kind === "mana_refund" && event.manaRefund?.side === "player" ? event.manaRefund : null;
   const opponentManaRefund = event?.kind === "mana_refund" && event.manaRefund?.side === "opponent" ? event.manaRefund : null;
@@ -4265,7 +4345,7 @@ function CombatScreen({
     if (combat.phase === "await_roll") return "roll";
     if (combat.phase === "roll_result" || combat.phase === "event_playback") return "narration";
     if (combat.phase === "select_player_actions") {
-      if (targeting) return "target";
+      if (targeting || swapSelection) return "target";
       if (menu === "skills") return "skill";
       if (menu === "swap") return "swap";
       return currentActor ? "action-primary" : "submit";
@@ -4368,6 +4448,7 @@ function CombatScreen({
         .map((unit) => [unit.key, { actorKey: unit.key, type: "skip" as const, cost: 0 }]),
     ));
     setTargeting(null);
+    setSwapSelection(null);
     setMenu("actions");
   }, [combat.run.battleIndex, battle.turn, combat.phase === "select_player_actions"]);
 
@@ -4461,7 +4542,11 @@ function CombatScreen({
   function advanceNarration() {
     if (!narrationAdvanceable) return;
     setCombat((current) => current
-      ? current.phase === "event_playback" ? advanceDungeonEvent(current) : continueAfterRoll(current)
+      ? current.phase === "event_playback"
+        ? advanceDungeonEvent(current)
+        : current.phase === "entry_dialogue" || current.phase === "outcome_dialogue"
+          ? continueDungeonDialogue(current)
+          : continueAfterRoll(current)
       : current);
   }
 
@@ -4484,6 +4569,7 @@ function CombatScreen({
     menu,
     targeting?.actorKey ?? "",
     targeting?.skill.id ?? "",
+    swapSelection?.actorKey ?? "",
     currentActor?.key ?? "",
     Object.keys(actions).sort().join(","),
     diceSettled,
@@ -4507,7 +4593,7 @@ function CombatScreen({
       focusCombatControl(commandFocusKey);
       return;
     }
-    const actionMenuFocusKey = combat.phase === "select_player_actions" && menu === "actions" && !targeting && currentActor
+    const actionMenuFocusKey = combat.phase === "select_player_actions" && menu === "actions" && !targeting && !swapSelection && currentActor
       ? currentActor.key
       : "";
     const actionMenuStarted = actionMenuFocusKey !== "" && lastActionMenuFocusKeyRef.current !== actionMenuFocusKey;
@@ -4584,10 +4670,11 @@ function CombatScreen({
     if (combat.phase !== "event_playback" || event?.kind !== "swap" || !event.swap) return;
     const root = viewportFitRef.current;
     if (!root) return;
+    const movingKey = swapRevealed ? event.swap.incomingKey : event.swap.outgoingKey;
     const actor = [...root.querySelectorAll<HTMLElement>("[data-combat-unit-key]")]
-      .find((node) => node.dataset.combatUnitKey === event.swap!.outgoingKey);
+      .find((node) => node.dataset.combatUnitKey === movingKey);
     const source = actor?.querySelector<HTMLElement>(".critter-combat-frame");
-    const destination = root.querySelector<HTMLElement>(".rollcaster-combat-frame");
+    const destination = root.querySelector<HTMLElement>(`[data-combat-squad-unit-key="${movingKey}"]`);
     if (!source || !destination) return;
     const sourceRect = source.getBoundingClientRect();
     const destinationRect = destination.getBoundingClientRect();
@@ -4596,40 +4683,65 @@ function CombatScreen({
     if (!Number.isFinite(scale) || scale <= 0) return;
     setSwapMotion({
       eventId: event.id,
-      actorKey: event.swap.outgoingKey,
-      x: ((destinationRect.left + destinationRect.width / 2) - (sourceRect.left + sourceRect.width / 2)) / scale,
-      y: ((destinationRect.top + destinationRect.height / 2) - (sourceRect.top + sourceRect.height / 2)) / scale,
+      actorKey: movingKey,
+      phase: swapRevealed ? "in" : "out",
+      x: (swapRevealed ? -1 : 1) * (((destinationRect.left + destinationRect.width / 2) - (sourceRect.left + sourceRect.width / 2)) / scale),
+      y: (swapRevealed ? -1 : 1) * (((destinationRect.top + destinationRect.height / 2) - (sourceRect.top + sourceRect.height / 2)) / scale),
     });
-  }, [combat.phase, event?.id]);
+  }, [combat.phase, event?.id, swapRevealed]);
 
   function setAction(action: CombatAction) {
     setActions((current) => ({ ...current, [action.actorKey]: action }));
     setTargeting(null);
+    setSwapSelection(null);
     setMenu("actions");
+  }
+
+  function beginRegularSwap(actorKey: string) {
+    setTargeting(null);
+    setSwapSelection({ actorKey, mode: "regular" });
+    setMenu("actions");
+  }
+
+  function selectSwapTarget(targetKey: string) {
+    if (swapSelection) {
+      const actor = battle.playerUnits.find((unit) => unit.key === swapSelection.actorKey);
+      if (!actor || !availableHealthySwapTargets(actor.key).some((unit) => unit.key === targetKey)) return;
+      const action = { actorKey: actor.key, type: "swap" as const, swapInKey: targetKey, cost: actor.stats.swapCost };
+      setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
+      return;
+    }
+    if (!targeting || targeting.phase !== "swap") return;
+    const target = availableHealthySwapTargets(targeting.actorKey).find((unit) => unit.key === targetKey);
+    if (!target) return;
+    const action = {
+      actorKey: targeting.actorKey,
+      type: "skill" as const,
+      skillId: targeting.skill.id,
+      targetKey: targeting.primaryTargetKey,
+      swapTargetKey: target.key,
+      cost: targeting.skill.mana_cost,
+    };
+    setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
   }
 
   function selectSkillTarget(targetKey: string) {
     if (!targeting) return;
     if (targeting.phase === "primary") {
       const needsSwapTarget = skillHasPostAttackSwap(battle, targeting.actorKey, targeting.skill.id)
-        && healthyFriendlySwapTargets(battle, targeting.actorKey).length > 0;
+        && availableHealthySwapTargets(targeting.actorKey).length > 1;
       if (needsSwapTarget) {
         setTargeting({ ...targeting, phase: "swap", primaryTargetKey: targetKey });
         return;
       }
-      const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey, cost: targeting.skill.mana_cost };
+      const onlySwapTarget = skillHasPostAttackSwap(battle, targeting.actorKey, targeting.skill.id)
+        ? availableHealthySwapTargets(targeting.actorKey)[0]
+        : undefined;
+      const action = { actorKey: targeting.actorKey, type: "skill" as const, skillId: targeting.skill.id, targetKey, swapTargetKey: onlySwapTarget?.key, cost: targeting.skill.mana_cost };
       setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
       return;
     }
-    const action = {
-      actorKey: targeting.actorKey,
-      type: "skill" as const,
-      skillId: targeting.skill.id,
-      targetKey: targeting.primaryTargetKey,
-      swapTargetKey: targetKey,
-      cost: targeting.skill.mana_cost,
-    };
-    setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
+    selectSwapTarget(targetKey);
   }
 
   function chooseSkill(actorKey: string, skill: Skill) {
@@ -4640,11 +4752,14 @@ function CombatScreen({
       return;
     }
     const targetKey = isSingleTarget(skill) ? targets[0]?.key : undefined;
-    if (skillHasPostAttackSwap(battle, actorKey, skill.id) && healthyFriendlySwapTargets(battle, actorKey).length > 0) {
+    const healthySwapTargets = skillHasPostAttackSwap(battle, actorKey, skill.id)
+      ? availableHealthySwapTargets(actorKey)
+      : [];
+    if (healthySwapTargets.length > 1) {
       setTargeting({ actorKey, skill, phase: "swap", primaryTargetKey: targetKey });
       return;
     }
-    const action = { actorKey, type: "skill" as const, skillId: skill.id, targetKey, cost: skill.mana_cost };
+    const action = { actorKey, type: "skill" as const, skillId: skill.id, targetKey, swapTargetKey: healthySwapTargets[0]?.key, cost: skill.mana_cost };
     setAction({ ...action, cost: calculateActionCostBreakdown(battle, action).final });
   }
 
@@ -4663,6 +4778,7 @@ function CombatScreen({
     ));
     setMenu("actions");
     setTargeting(null);
+    setSwapSelection(null);
   }
 
   function reselectAction(actorKey: string) {
@@ -4676,6 +4792,7 @@ function CombatScreen({
     ));
     setMenu("actions");
     setTargeting(null);
+    setSwapSelection(null);
   }
 
   async function submitActions() {
@@ -4687,13 +4804,19 @@ function CombatScreen({
     // rules into a worker prematurely.
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     const resolved = submitDungeonActions(combat, selectedActions);
-    setCombat((current) => current
-      && current.run.id === combat.run.id
-      && current.battle.turn === combat.battle.turn
-      && current.phase === "select_player_actions"
-      ? resolved
-      : current);
-    try { await onTurnResolved(resolved); } finally { setSubmittingProgress(false); }
+    try {
+      await onTurnResolved(resolved);
+      // Keep the resolved presentation out of the tree until turn loading has
+      // finished. Presentation classes start their animations on mount.
+      setCombat((current) => current
+        && current.run.id === combat.run.id
+        && current.battle.turn === combat.battle.turn
+        && current.phase === "select_player_actions"
+        ? resolved
+        : current);
+    } finally {
+      setSubmittingProgress(false);
+    }
   }
 
   if (combat.phase === "dungeon_complete" || combat.phase === "dungeon_failed") {
@@ -4730,38 +4853,20 @@ function CombatScreen({
         </div>
 
         <div className="combat-board">
-          <aside className={`combat-mana-panel rollcaster-mana-panel ${playerManaRefund ? "mana-refund-panel" : ""}`}>
-            <span className="combat-sprite-frame rollcaster-combat-frame"><Sprite
-              name={activeRollcaster?.name ?? "Rollcaster"}
-              element="basic"
-              assetPath={catalogAssetPath(
-                data,
-                "rollcaster",
-                activeRollcaster?.id,
-                activeRollcaster?.asset_path,
-              )}
-              size="large"
-              fit="portrait"
-            /></span>
-            <h3>{activeRollcaster?.name ?? "Rollcaster"}</h3>
-            <div className="combat-mana-total-wrap">
-              <strong className={`combat-mana-total ${playerManaRefund ? "mana-refund-counter" : ""}`}><AssetIcon path={manaAssetPath} alt="Player Mana" fallback={<Gem />} /> {battle.playerMana}</strong>
-              {playerManaRefund && <span className="mana-refund-pop" aria-hidden="true">+{playerManaRefund.amount}</span>}
-            </div>
-            <div className="combat-ability-list">
-              {activeAbilities.length
-                ? activeAbilities.map((ability) => (
-                  <GameTooltip
-                    key={ability.id}
-                    label={`${ability.name}. ${ability.description} ${attachmentText(data.catalog.effectsByAbility[ability.id] ?? [])}`}
-                    content={<><strong>{ability.name}</strong><span>{ability.description}</span>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [])}</>}
-                  >
-                    <span className="combat-ability-slot">{ability.name}</span>
-                  </GameTooltip>
-                ))
-                : <span className="combat-ability-slot empty">No Ability equipped</span>}
-            </div>
-          </aside>
+          <CombatRollcasterPanel
+            data={data}
+            name={activeRollcaster?.name ?? "Rollcaster"}
+            assetPath={catalogAssetPath(data, "rollcaster", activeRollcaster?.id, activeRollcaster?.asset_path)}
+            mana={battle.playerMana}
+            manaAssetPath={manaAssetPath}
+            manaRefund={playerManaRefund?.amount}
+            abilities={activeAbilitySlots}
+            units={battle.playerUnits}
+            opponent={false}
+            revealedOpponentKeys={revealedOpponentKeys}
+            selectableSwapKeys={swapActorKey && battle.playerUnits.some((unit) => unit.key === swapActorKey) ? new Set(swapTargetKeys) : new Set()}
+            onSwapTarget={selectSwapTarget}
+          />
           <div className="battle-column player-column">
             {[0, 1, 2].map((slot) => {
               const unit = battle.playerUnits.find((candidate) => candidate.active && candidate.battlefieldSlot === slot);
@@ -4773,16 +4878,16 @@ function CombatScreen({
                 data={data}
                 allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
                 action={actions[unit.key]}
-                interactive={combat.phase === "select_player_actions" && currentActor?.key === unit.key && !targeting}
+                interactive={combat.phase === "select_player_actions" && currentActor?.key === unit.key && !targeting && !swapSelection}
                 waiting={combat.phase === "select_player_actions" && unit.active && unit.hp > 0 && currentActor?.key !== unit.key && !actions[unit.key]}
                 menu={currentActor?.key === unit.key ? menu : "actions"}
                 setMenu={setMenu}
-                bench={battle.playerUnits.filter((candidate) => !candidate.active && candidate.hp > 0 && !queuedSwapIds.has(candidate.userCritter?.id))}
                 availableMana={battle.playerMana - totalCost}
                 onAction={setAction}
+                onBeginSwap={beginRegularSwap}
                 onChooseSkill={chooseSkill}
-                onBack={backToPreviousActor}
-                canGoBack={currentActorIndex > 0 || menu !== "actions"}
+                onBack={menu === "skills" ? () => { setTargeting(null); setMenu("actions"); } : backToPreviousActor}
+                showBack={menu === "skills" || (menu === "actions" && currentActorIndex > 0)}
                 onReselectAction={combat.phase === "select_player_actions" && actions[unit.key] && !isActorRecharging(battle, unit.key)
                   ? () => reselectAction(unit.key)
                   : undefined}
@@ -4816,38 +4921,28 @@ function CombatScreen({
                     statuses={battle.statuses.filter((status) => status.holderKey === unit.key)}
                     manaAssetPath={manaAssetPath}
                     presentation={event}
+                    swapMotion={swapMotion !== null && swapMotion.eventId === event?.id && swapMotion.actorKey === unit.key
+                      ? swapMotion
+                      : undefined}
                   />
                 : <CombatEmptySlot key={slot} label="Inactive enemy slot" opponent />;
             })}
           </div>
-          <aside className={`combat-mana-panel enemy-mana-panel ${opponentManaRefund ? "mana-refund-panel" : ""}`}>
-            <span className="enemy-mana-emblem"><Skull size={44} /></span>
-            <h3>Enemy Mana</h3>
-            <div className="combat-mana-total-wrap">
-              <strong className={`combat-mana-total ${opponentManaRefund ? "mana-refund-counter" : ""}`}><AssetIcon path={manaAssetPath} alt="Enemy Mana" fallback={<Gem />} /> {battle.opponentMana}</strong>
-              {opponentManaRefund && <span className="mana-refund-pop" aria-hidden="true">+{opponentManaRefund.amount}</span>}
-            </div>
-          </aside>
+          <CombatRollcasterPanel
+            data={data}
+            name={enemyRollcaster?.name ?? "Enemy"}
+            assetPath={enemyRollcasterAssetPath}
+            mana={battle.opponentMana}
+            manaAssetPath={manaAssetPath}
+            manaRefund={opponentManaRefund?.amount}
+            abilities={Array.from({ length: 5 }, (_, index) => enemyAbilities[index])}
+            units={battle.opponentUnits}
+            opponent
+            revealedOpponentKeys={revealedOpponentKeys}
+            selectableSwapKeys={swapActorKey && battle.opponentUnits.some((unit) => unit.key === swapActorKey) ? new Set(swapTargetKeys) : new Set()}
+            onSwapTarget={selectSwapTarget}
+          />
         </div>
-
-        {targeting && targeting.phase === "swap" && legalTargets.length > 0 && (
-          <div className="combat-knocked-out-targets" aria-label="Healthy friendly swap targets">
-            <span>Healthy friendly Critters</span>
-            {inactiveLegalTargets.map((candidate) => (
-              <button
-                key={candidate.key}
-                type="button"
-                data-combat-control="true"
-                data-combat-focus-role="target"
-                data-combat-unit-key={candidate.key}
-                onClick={() => selectSkillTarget(candidate.key)}
-              >
-                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
-                <span><strong>{candidate.name}</strong><small>{candidate.hp} / {candidate.maxHp} HP</small></span>
-              </button>
-            ))}
-          </div>
-        )}
 
         {targeting && targeting.phase === "primary" && inactiveLegalTargets.length > 0 && (
           <div className="combat-knocked-out-targets" aria-label="Knocked-out revival targets">
@@ -4895,9 +4990,11 @@ function CombatScreen({
           onClick={submittingProgress ? undefined : advanceNarration}
         >
           <span className={`combat-narration-copy ${narrationComplete && narrationText !== "Rolling…" && !loadingNarration ? "" : "typing"}`}>
-            {narrationText === "Rolling…" || loadingNarration ? narrationText : visibleNarration}
+            {dialogue && (combat.phase === "entry_dialogue" || combat.phase === "outcome_dialogue") && visibleNarration.startsWith(`${dialogue.speaker}:`)
+              ? <><span className="enemy-dialogue-speaker">{dialogue.speaker}:</span>{visibleNarration.slice(dialogue.speaker.length + 1)}</>
+              : narrationText === "Rolling…" || loadingNarration ? narrationText : visibleNarration}
           </span>
-          {!submittingProgress && (combat.phase === "event_playback" || combat.phase === "roll_result") && <ChevronRight size={24} aria-label="Next" />}
+          {!submittingProgress && (["event_playback", "roll_result", "entry_dialogue", "outcome_dialogue"].includes(combat.phase)) && <ChevronRight size={24} aria-label="Next" />}
         </button>}
 
         {combat.phase === "battle_result" && !recordingResult && (
@@ -4926,6 +5023,105 @@ function CombatScreen({
         />
       )}
     </section>
+  );
+}
+
+function CombatRollcasterPanel({
+  data,
+  name,
+  assetPath,
+  mana,
+  manaAssetPath,
+  manaRefund,
+  abilities,
+  units,
+  opponent,
+  revealedOpponentKeys,
+  selectableSwapKeys = new Set(),
+  onSwapTarget,
+}: {
+  data: AppData;
+  name: string;
+  assetPath: string | null;
+  mana: number;
+  manaAssetPath: string | null;
+  manaRefund?: number;
+  abilities: Array<RollcasterAbility | undefined>;
+  units: CombatState["playerUnits"];
+  opponent: boolean;
+  revealedOpponentKeys: Set<string>;
+  selectableSwapKeys?: Set<string>;
+  onSwapTarget?: (targetKey: string) => void;
+}) {
+  return (
+    <aside className={`combat-mana-panel ${opponent ? "enemy-mana-panel" : "rollcaster-mana-panel"} ${manaRefund ? "mana-refund-panel" : ""}`}>
+      <span className="combat-sprite-frame rollcaster-combat-frame">
+        <Sprite name={name} element="basic" assetPath={assetPath} size="large" fit="portrait" flipped={opponent} />
+      </span>
+      <h3>{name}</h3>
+      <div className="combat-mana-total-wrap">
+        <strong className={`combat-mana-total ${manaRefund ? "mana-refund-counter" : ""}`}><AssetIcon path={manaAssetPath} alt={`${opponent ? "Enemy" : "Player"} Mana`} fallback={<Gem />} /> {mana}</strong>
+        {manaRefund && <span className="mana-refund-pop" aria-hidden="true">+{manaRefund}</span>}
+      </div>
+      <div className="combat-ability-list" aria-label={`${opponent ? "Enemy" : "User"} Rollcaster abilities`}>
+        {abilities.map((ability, index) => ability
+          ? <GameTooltip
+              key={ability.id}
+              label={`${ability.name}. ${ability.description} ${attachmentText(data.catalog.effectsByAbility[ability.id] ?? [])}`}
+              content={<><strong>{ability.name}</strong><span>{ability.description}</span>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [])}</>}
+            >
+              <span className={`combat-ability-slot ${opponent ? "enemy" : ""}`}>{ability.name}</span>
+            </GameTooltip>
+          : <span key={`empty-ability-${index}`} className={`combat-ability-slot empty ${opponent ? "enemy" : ""}`} aria-label={`Empty ability slot ${index + 1}`} />)}
+      </div>
+      <CombatSquadGrid data={data} units={units} opponent={opponent} revealedOpponentKeys={revealedOpponentKeys} selectableSwapKeys={selectableSwapKeys} onSwapTarget={onSwapTarget} />
+    </aside>
+  );
+}
+
+function CombatSquadGrid({
+  data,
+  units,
+  opponent,
+  revealedOpponentKeys,
+  selectableSwapKeys = new Set(),
+  onSwapTarget,
+}: {
+  data: AppData;
+  units: CombatState["playerUnits"];
+  opponent: boolean;
+  revealedOpponentKeys: Set<string>;
+  selectableSwapKeys?: Set<string>;
+  onSwapTarget?: (targetKey: string) => void;
+}) {
+  return (
+    <div className={`combat-squad-grid ${opponent ? "opponent" : "player"}`} aria-label={`${opponent ? "Enemy" : "User"} Critter squad`}>
+      {Array.from({ length: 5 }, (_, index) => {
+        const unit = units[index];
+        if (!unit) return <span key={`empty-squad-${index}`} className="combat-squad-slot empty" aria-label={`Empty squad slot ${index + 1}`} />;
+        const unknown = opponent && !revealedOpponentKeys.has(unit.key);
+        if (unknown) {
+          return <GameTooltip key={unit.key} label="Unknown enemy Critter" content={<><strong>Unknown enemy Critter</strong><span>This Critter has not been revealed.</span></>}>
+            <span className="combat-squad-slot unknown" data-combat-squad-unit-key={unit.key} aria-label="Unknown enemy Critter">?</span>
+          </GameTooltip>;
+        }
+        const ko = unit.hp <= 0;
+        const selectable = selectableSwapKeys.has(unit.key);
+        const slot = <span className={`combat-squad-slot ${unit.active ? "active" : "reserve"} ${ko ? "ko" : ""} ${selectable ? "legal-target" : ""}`} data-combat-squad-unit-key={unit.key} aria-label={`${unit.name}: ${unit.hp} / ${unit.maxHp} HP`}>
+          <Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" flipped={opponent} />
+        </span>;
+        const interactiveSlot = selectable
+          ? <button type="button" className="combat-squad-slot-button" data-combat-control="true" data-combat-focus-role="target" data-combat-unit-key={unit.key} aria-label={`Swap to ${unit.name}`} onClick={() => onSwapTarget?.(unit.key)}>{slot}</button>
+          : slot;
+        return <GameTooltip
+          key={unit.key}
+          label={`${unit.name}: ${unit.hp} / ${unit.maxHp} HP`}
+          content={<><span className="tooltip-heading"><CritterElementLogos data={data} critter={unit.critter} /><strong>{unit.name}</strong></span><span>{unit.hp} / {unit.maxHp} HP</span></>}
+        >
+          {interactiveSlot}
+        </GameTooltip>;
+      })}
+    </div>
   );
 }
 
@@ -4999,11 +5195,11 @@ function BattleUnit({
   waiting = false,
   menu = "actions",
   setMenu,
-  bench = [],
   onAction,
+  onBeginSwap,
   onChooseSkill,
   onBack,
-  canGoBack = false,
+  showBack = false,
   onReselectAction,
   opponent = false,
   availableMana = 0,
@@ -5026,11 +5222,11 @@ function BattleUnit({
   waiting?: boolean;
   menu?: "actions" | "skills" | "swap";
   setMenu?: (menu: "actions" | "skills" | "swap") => void;
-  bench?: CombatState["playerUnits"];
   onAction?: (action: CombatAction) => void;
+  onBeginSwap?: (actorKey: string) => void;
   onChooseSkill?: (actorKey: string, skill: Skill) => void;
   onBack?: () => void;
-  canGoBack?: boolean;
+  showBack?: boolean;
   onReselectAction?: () => void;
   opponent?: boolean;
   availableMana?: number;
@@ -5069,6 +5265,8 @@ function BattleUnit({
           ? "receiving-heal"
           : presentation.kind === "status"
             ? presentation.effectPolarity === "negative" ? "receiving-negative" : "receiving-status"
+            : presentation.kind === "other"
+              ? presentation.effectPolarity === "negative" ? "receiving-negative" : ""
             : presentation.kind === "block"
               ? (presentation.message.includes("failed") ? "block-failed" : "block-success")
               : ""
@@ -5077,6 +5275,7 @@ function BattleUnit({
   const effectSummaries = combatEffectSummaries(battle, unit.key);
   const blockCost = calculateActionCostBreakdown(battle, { actorKey: unit.key, type: "block", cost: unit.stats.blockCost });
   const swapCost = calculateActionCostBreakdown(battle, { actorKey: unit.key, type: "swap", cost: unit.stats.swapCost });
+  const regularSwapTargets = healthyFriendlySwapTargets(battle, unit.key);
   const relicIds = battle.setupSources
     .filter((source) => source.ownerType === "relic" && source.sourceKey === unit.key)
     .sort((left, right) => left.sourceOrder - right.sourceOrder)
@@ -5090,6 +5289,8 @@ function BattleUnit({
       style={swapMotion ? ({
         "--combat-swap-x": `${swapMotion.x}px`,
         "--combat-swap-y": `${swapMotion.y}px`,
+        "--combat-swap-in-x": `${swapMotion.x}px`,
+        "--combat-swap-in-y": `${swapMotion.y}px`,
       } as React.CSSProperties) : undefined}
       onClick={targetable ? onTarget : selectable ? onSelect : undefined}
       role={targetable || selectable ? "button" : undefined}
@@ -5142,13 +5343,13 @@ function BattleUnit({
       <div className="combat-action-space">
         {interactive && onAction && (
           <>
-            <button className="combat-back-row" data-combat-control="true" data-combat-focus-role="back" disabled={!canGoBack} onClick={(event) => { event.stopPropagation(); onBack?.(); }}>
+            {showBack && <button className="combat-back-row" data-combat-control="true" data-combat-focus-role="back" onClick={(event) => { event.stopPropagation(); onBack?.(); }}>
               <ChevronLeft size={14} /> {menu === "actions" ? "Back to previous Critter" : "Back to Action Menu"}
-            </button>
+            </button>}
             {menu === "actions" && <div className="combat-primary-actions">
               <button data-combat-control="true" data-combat-focus-role="action-primary" onClick={(event) => { event.stopPropagation(); setMenu?.("skills"); }}><Swords size={16} /> Skill</button>
               <button data-combat-control="true" data-combat-focus-role="action-primary" disabled={blockCost.final > availableMana} onClick={(event) => { event.stopPropagation(); onAction({ actorKey: unit.key, type: "block", cost: blockCost.final }); }}><Shield size={16} /> Block <ManaCost path={manaAssetPath} amount={blockCost.final} breakdown={blockCost} /></button>
-              <button data-combat-control="true" data-combat-focus-role="action-primary" disabled={bench.length === 0 || swapCost.final > availableMana} onClick={(event) => { event.stopPropagation(); setMenu?.("swap"); }}><RefreshCw size={16} /> Swap <ManaCost path={manaAssetPath} amount={swapCost.final} breakdown={swapCost} /></button>
+              <button data-combat-control="true" data-combat-focus-role="action-primary" disabled={regularSwapTargets.length === 0 || swapCost.final > availableMana} onClick={(event) => { event.stopPropagation(); onBeginSwap?.(unit.key); }}><RefreshCw size={16} /> Swap <ManaCost path={manaAssetPath} amount={swapCost.final} breakdown={swapCost} /></button>
               <button data-combat-control="true" data-combat-focus-role="action-primary" onClick={(event) => { event.stopPropagation(); onAction({ actorKey: unit.key, type: "skip", cost: 0 }); }}><ChevronRight size={16} /> Skip <ManaCost path={manaAssetPath} amount={0} /></button>
             </div>}
             {menu === "skills" && <div className="combat-skill-actions">
@@ -5176,15 +5377,6 @@ function BattleUnit({
                   : <button key={slot} className="combat-empty-skill" data-combat-control="true" data-combat-focus-role="skill" disabled>-----</button>;
               })}
             </div>}
-            {menu === "swap" && <div className="combat-swap-actions">
-              {bench.map((candidate) => <button key={candidate.key} data-combat-control="true" data-combat-focus-role="swap" data-swap-to-id={candidate.userCritter?.id} onClick={(event) => {
-                event.stopPropagation();
-                onAction({ actorKey: unit.key, type: "swap", swapToId: candidate.userCritter?.id, cost: swapCost.final });
-              }}>
-                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
-                <span>Swap to <strong>{candidate.name}</strong></span>
-              </button>)}
-            </div>}
           </>
         )}
         {!interactive && (
@@ -5209,7 +5401,6 @@ function BattleUnit({
         )}
       </div>
       {selected && <span className="combat-selection-label"><Check size={14} /> Selected</span>}
-      {targetable && <span className="combat-selection-label target"><Target size={14} /> Legal target</span>}
     </article>
   );
 }

@@ -21,6 +21,8 @@ export type ChallengeEventType =
   | "hp_damage_dealt"
   | "hp_damage_taken"
   | "hp_healed"
+  | "status_afflicted"
+  | "status_turn_completed"
   | "skill_resolved";
 
 export type ChallengeEvent = {
@@ -48,7 +50,7 @@ const trackedTypes = new Set([
   "knock_out_critters", "deal_damage", "take_damage", "use_skill",
   "squad_composition", "dungeon_clear", "resource_spending",
   "swap_action", "block_action", "dice_roll",
-  "heal_hp",
+  "heal_hp", "afflict_status",
 ]);
 
 function parametersOf(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
@@ -85,6 +87,7 @@ function eventTypeFor(challengeType: string): ChallengeEventType | null {
     block_action: "block_completed",
     dice_roll: "dice_resolved",
     heal_hp: "hp_healed",
+    afflict_status: "status_afflicted",
   }[challengeType] as ChallengeEventType | undefined ?? null;
 }
 
@@ -119,8 +122,16 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   const p = parametersOf(challenge);
   const expectedType = type === "squad_composition"
     ? String(p.completion_event ?? "battle_win") === "dungeon_clear" ? "dungeon_completed" : "battle_completed"
+    : type === "defeat_rollcaster_type" ? "battle_completed"
+    : type === "afflict_status" && String(p.affliction_mode ?? "fresh_afflictions") === "afflicted_turns" ? "status_turn_completed"
     : eventTypeFor(type);
   if (!expectedType || event.type !== expectedType) return 0;
+
+  if (type === "defeat_rollcaster_type") {
+    const payload = event.payload ?? {};
+    if (payload.won !== true) return 0;
+    return stringArray(p.rollcaster_types).includes(String(payload.enemy_rollcaster_type ?? "")) ? 1 : 0;
+  }
 
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(type)) {
     if (!matchesLegacyTarget(challenge, event)) return 0;
@@ -140,6 +151,22 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
       if (targetIds.length && !targetIds.some((id) => targetElements.includes(id))) return 0;
     }
     return Math.max(0, Math.floor(event.amount ?? 0));
+  }
+
+  if (type === "afflict_status") {
+    const payload = event.payload ?? {};
+    const mode = String(p.affliction_mode ?? "fresh_afflictions");
+    const expectedEvent = mode === "afflicted_turns" ? "status_turn_completed" : "status_afflicted";
+    if (event.type !== expectedEvent) return 0;
+    const targetSide = String(p.target_side ?? "any");
+    const eventTargetSide = String(payload.target_side ?? "");
+    if (targetSide === "enemies" && eventTargetSide !== "opponent") return 0;
+    if (targetSide === "friendlies" && eventTargetSide !== "player") return 0;
+    const selectedStatuses = stringArray(p.status_ids);
+    const eventStatuses = stringArray(payload.status_ids).concat(typeof payload.status_id === "string" ? [payload.status_id] : []);
+    if (selectedStatuses.length && !selectedStatuses.some((statusId) => eventStatuses.includes(statusId))) return 0;
+    if (mode === "fresh_afflictions" && payload.fresh !== true) return 0;
+    return 1;
   }
 
   if (type === "resource_spending") {

@@ -9,6 +9,7 @@ const client = createDbClient();
 const migrationSql = [
   "20260720030000_fix_indirect_player_revision_trigger.sql",
   "20260727020000_clear_relics_on_squad_unequip.sql",
+  "20260810170000_clear_relics_on_squad_changes.sql",
 ].map((file) => readMigration(file)).join("\n");
 let began = false;
 
@@ -84,11 +85,15 @@ try {
   const afterUnequip = (await client.query(`
     select
       (select skill_id from public.user_critter_skill_slots where user_critter_id=$1 and slot_index=2) as skill_id,
-      (select relic_id from public.user_critter_relic_slots where user_critter_id=$1 and slot_index=1) as relic_id
-  `, [owned.critter_id])).rows[0];
+      (select relic_id from public.user_critter_relic_slots where user_critter_id=$1 and slot_index=1) as relic_id,
+      (select quantity from public.user_relic_inventory where user_id=$2 and relic_id=$3)
+        - (select count(*) from public.user_critter_relic_slots slots join public.user_critters critter on critter.id=slots.user_critter_id where critter.user_id=$2 and slots.relic_id=$3) as available
+  `, [owned.critter_id, userId, starter.relic_id])).rows[0];
   check(afterUnequip.skill_id === secondSkill, "Removing a Critter from the squad must retain its equipped skills.");
   check(afterUnequip.relic_id === null, "Removing a Critter from the squad must clear its equipped Relics.");
+  check(Number(afterUnequip.available) === 1, "Removing a Critter must immediately return its Relic copy to availability.");
 
+  await client.query("select public.set_critter_relic_slot($1,1,$2)", [owned.critter_id, starter.relic_id]);
   await client.query("select public.set_squad_critter_slot($1,$2)", [1, owned.critter_id]);
   const afterReequip = (await client.query(`
     select
@@ -96,7 +101,7 @@ try {
       (select relic_id from public.user_critter_relic_slots where user_critter_id=$1 and slot_index=1) as relic_id
   `, [owned.critter_id])).rows[0];
   check(afterReequip.skill_id === secondSkill, "Re-equipping a Critter must restore its remembered skills.");
-  check(afterReequip.relic_id === null, "Re-equipping a Critter must not restore cleared Relics.");
+  check(afterReequip.relic_id === null, "Equipping a Critter must clear any stale Relics without clearing its remembered skills.");
 
   await client.query("select public.set_critter_skill_slot($1,2,null)", [owned.critter_id]);
   await client.query("select public.set_critter_relic_slot($1,1,null)", [owned.critter_id]);

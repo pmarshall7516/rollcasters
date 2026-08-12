@@ -30,6 +30,8 @@ export const TRACKED_CHALLENGE_TYPES = new Set([
   "block_action",
   "dice_roll",
   "heal_hp",
+  "defeat_rollcaster_type",
+  "afflict_status",
 ]);
 
 export function safeBigInt(value: string | number | bigint | null | undefined): bigint {
@@ -231,7 +233,7 @@ function stringParameters(parameters: Record<string, unknown>, key: string): str
     : [];
 }
 
-function namesFor(data: AppData, type: CollectibleType | "element" | "skill" | "dungeon", ids: string[]): string[] {
+function namesFor(data: AppData, type: CollectibleType | "element" | "skill" | "dungeon" | "status", ids: string[]): string[] {
   const rows = type === "critter"
     ? data.catalog.critters
     : type === "rollcaster"
@@ -242,7 +244,9 @@ function namesFor(data: AppData, type: CollectibleType | "element" | "skill" | "
           ? data.catalog.elements
           : type === "skill"
             ? data.catalog.skills
-            : data.catalog.dungeons;
+            : type === "dungeon"
+              ? data.catalog.dungeons
+              : data.catalog.statuses;
   return ids.map((id) => rows.find((row) => row.id === id)?.name ?? id);
 }
 
@@ -258,6 +262,11 @@ function targetNames(data: AppData, challenge: CollectibleUnlockChallenge): stri
 
 function humanize(value: string): string {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter: string) => letter.toUpperCase());
+}
+
+function rollcasterTypeNames(parameters: Record<string, unknown>): string {
+  const ids = stringParameters(parameters, "rollcaster_types");
+  return ids.length ? ids.map(humanize).join(" or ") : "selected";
 }
 
 function challengeParameters(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
@@ -354,6 +363,18 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
           : [];
       const qualifier = names.length ? ` ${names.join(", ")}` : "";
       return `Heal ${parameters.required_amount} HP on ${recipient ? `${recipient} ` : ""}${targetMode === "species" ? "Critters" : targetMode === "element" ? "Elements" : "Critters"}${qualifier}.`;
+    }
+    case "defeat_rollcaster_type": {
+      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
+      return `Defeat ${goal} ${rollcasterTypeNames(parameters)}-rank Rollcaster${goal === 1 ? "" : "s"}.`;
+    }
+    case "afflict_status": {
+      const statuses = namesFor(data, "status", stringParameters(parameters, "status_ids"));
+      const statusLabel = statuses.length ? statuses.join(" or ") : "any Status";
+      const target = parameters.target_side === "enemies" ? "enemies" : parameters.target_side === "friendlies" ? "friendlies" : "any Critter";
+      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
+      if (parameters.affliction_mode === "afflicted_turns") return `Keep ${statusLabel} on ${target} for ${goal} afflicted turn${goal === 1 ? "" : "s"}.`;
+      return `Afflict ${statusLabel} on ${target} ${goal} time${goal === 1 ? "" : "s"} from a fresh Status.`;
     }
     case "level_up_critter": {
       const id = String(challenge.target_id ?? parameters.critter_id ?? "");

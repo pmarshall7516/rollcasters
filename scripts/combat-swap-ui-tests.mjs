@@ -83,6 +83,7 @@ try {
                   <span class="combat-sprite-frame rollcaster-combat-frame"><span class="fixture-sprite">RC</span></span>
                   <h3>Roland</h3>
                   <strong class="combat-mana-total">Mana 7</strong>
+                  <div class="combat-squad-grid"><span class="combat-squad-slot reserve" data-combat-squad-unit-key="outgoing"><span class="fixture-sprite">OUT</span></span></div>
                 </aside>
                 <div class="battle-column player-column">
                   <article class="battle-unit combat-empty-slot" aria-label="Inactive player slot"></article>
@@ -114,7 +115,7 @@ try {
                 </div>
                 <aside class="combat-mana-panel enemy-mana-panel"><span class="enemy-mana-emblem">☠</span><h3>Enemy Mana</h3><strong class="combat-mana-total">Mana 4</strong></aside>
               </div>
-              <button class="combat-narration advanceable" disabled><span>Ramber swapped with Cragram.</span><span>›</span></button>
+              <button class="combat-narration advanceable" disabled><span>You sent in Cragram.</span><span>›</span></button>
             </div>
           </section>
         </main>
@@ -125,7 +126,7 @@ try {
   const motion = await page.evaluate(() => {
     const unit = document.querySelector("[data-combat-unit-key='outgoing']");
     const source = unit.querySelector(".critter-combat-frame").getBoundingClientRect();
-    const destination = document.querySelector(".rollcaster-combat-frame").getBoundingClientRect();
+    const destination = document.querySelector("[data-combat-squad-unit-key='outgoing']").getBoundingClientRect();
     const x = destination.left + destination.width / 2 - (source.left + source.width / 2);
     const y = destination.top + destination.height / 2 - (source.top + source.height / 2);
     unit.style.setProperty("--combat-swap-x", `${x}px`);
@@ -166,15 +167,17 @@ try {
       transform: stack ? getComputedStyle(stack).transform : "",
       narrationDisabled: document.querySelector(".combat-narration").disabled,
       visualState: window.swapVisualState,
+      narration: document.querySelector(".combat-narration span")?.textContent,
     };
   });
   check(
     outgoing.visualState === "outgoing"
-      && outgoing.animationName === "combat-swap-to-rollcaster"
+      && outgoing.animationName === "combat-swap-to-squad"
       && outgoing.transform !== "none"
       && outgoing.narrationDisabled,
     `Outgoing playback must animate toward the Rollcaster while narration is locked: ${JSON.stringify(outgoing)}`,
   );
+  check(outgoing.narration === "You sent in Cragram.", `Swap playback must use send-in narration: ${JSON.stringify(outgoing)}`);
   await page.screenshot({
     path: path.join(outputDir, "swap-outgoing.png"),
     animations: "allow",

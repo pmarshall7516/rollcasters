@@ -3,6 +3,7 @@ import {
   calculateActionCost,
   calculateSkillDamage,
   classifyEffectiveness,
+  chooseRandomEnemyActions,
   combatEffectSummaries,
   createInitialCombatState,
   critterElementIds,
@@ -12,6 +13,8 @@ import {
   matchesSelectedElements,
   orderedActiveCombatUnits,
   resolveTurn,
+  simApplyStatus,
+  startTurn,
   refreshSetupRuntimeEffects,
   roundHalfUp,
   rollDamagePercent,
@@ -23,7 +26,9 @@ import {
 import {
   advanceDungeonEvent,
   confirmDungeonLeads,
+  continueDungeonDialogue,
   createDungeonRunState,
+  currentDungeonDialogue,
   currentDungeonEvent,
   revealDungeonSwapEvent,
   type DungeonRunState,
@@ -166,7 +171,29 @@ function takeTurn(state: ReturnType<typeof battle>, actions: CombatAction[], man
   return resolveTurn({ ...state, phase: "selecting", playerMana: mana }, actions);
 }
 
+const randomPolicyBase = battle(makeCatalog(), makePlayer(), "random-policy");
+const randomPolicyState = {
+  ...randomPolicyBase,
+  enemyPolicyKey: "random_action_v1",
+  opponentMana: 99,
+  opponentUnits: randomPolicyBase.opponentUnits.map((unit) => ({ ...unit, skills: [makeCatalog().skills[0]] })),
+};
+const randomPolicyTypes = new Set<CombatAction["type"]>();
+for (let rngState = 1; rngState <= 64; rngState += 1) {
+  for (const action of chooseRandomEnemyActions({ ...randomPolicyState, rngState })) randomPolicyTypes.add(action.type);
+}
+check(randomPolicyTypes.has("skill") && !randomPolicyTypes.has("block") && !randomPolicyTypes.has("swap"), "Random Action must use affordable Skills only and never Block or Swap.");
+const randomNoMana = chooseRandomEnemyActions({ ...randomPolicyState, opponentMana: 0, rngState: 1 });
+check(randomNoMana.every((action) => action.type === "skip"), "Random Action must wait when no Skill can be afforded.");
+
 const eventCatalog = makeCatalog();
+eventCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "mark-status",
+  "apply_status",
+  { status_id: "finite", chance: 1, target: "targets", indefinite: true },
+)];
 check(critterElementIds(eventCatalog.critters[0]).join(",") === "basic", "A one-type Critter must expose only Element 1.");
 check(critterElementIds(eventCatalog.critters[1]).join(",") === "bloom,aqua", "A two-type Critter must preserve Element 1 then Element 2.");
 check(critterHasElement(eventCatalog.critters[1], "bloom") && critterHasElement(eventCatalog.critters[1], "aqua"), "Element membership must match either Critter slot.");
@@ -181,6 +208,14 @@ check(eventResult.turnEvents.some((event) => event.event_type === "resource_spen
 check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit one normalized hp_damage_dealt progress event.");
 check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
+const statusBattle = battle(eventCatalog, makePlayer(), "status-progress-events");
+const statusTarget = statusBattle.opponentUnits[0];
+const statusResult = takeTurn(statusBattle, [{ actorKey: statusBattle.playerUnits[0].key, type: "skill", skillId: "mark", targetKey: statusTarget.key, cost: 1 }]);
+check(statusResult.turnEvents.some((event) => event.event_type === "status_afflicted" && event.target_critter_id === statusTarget.critter.id && Array.isArray(event.payload?.status_ids) && event.payload.status_ids.includes("finite") && event.payload?.target_side === "opponent" && event.payload?.fresh === true), "A player Skill must emit a fresh Status affliction event with the authoritative target side.");
+check(statusResult.turnEvents.some((event) => event.event_type === "status_turn_completed" && event.target_critter_id === statusTarget.critter.id && Array.isArray(event.payload?.status_ids) && event.payload.status_ids.includes("finite") && event.payload?.target_side === "opponent"), "A Status present at the end of a turn must emit one afflicted-turn progress event.");
+const reappliedStatusResult = takeTurn(startTurn(statusResult), [{ actorKey: statusBattle.playerUnits[0].key, type: "skill", skillId: "mark", targetKey: statusTarget.key, cost: 1 }]);
+check(!reappliedStatusResult.turnEvents.some((event) => event.event_type === "status_afflicted"), "Reapplying an existing Status must not count as a fresh affliction.");
+check(reappliedStatusResult.turnEvents.some((event) => event.event_type === "status_turn_completed" && Array.isArray(event.payload?.status_ids) && event.payload.status_ids.includes("finite")), "Reapplying an existing Status must continue to count its completed afflicted turn.");
 
 const cycloneBaseCatalog = makeCatalog();
 const cyclone = { ...cycloneBaseCatalog.skills[0], id: "cyclone", name: "Cyclone", element_id: "basic", power: 100, mana_cost: 0, targeting: "single_enemy" as const };
@@ -196,7 +231,7 @@ cycloneBaseCatalog.effectsBySkill.cyclone = [
     target: "self",
     condition: "action_order",
     comparison: "equal",
-    condition_value: "first",
+    condition_value: "first_overall",
     true_effect_ids: [cycloneDamageModifierId],
     false_effect_ids: [],
     check_timing: "continuous",
@@ -207,6 +242,9 @@ cycloneBaseCatalog.effectsBySkill.cyclone = [
     direction: "dealt",
     modifier_type: "percentage",
     modifier_value: 0.25,
+    minimum_final_damage: null,
+    maximum_final_damage: null,
+    usage_limit: null,
     applicable_source: "skill",
     applicable_target: "any",
     condition: "none",
@@ -272,6 +310,9 @@ icebreakerCatalog.effectsBySkill[icebreaker.id] = [
     direction: "dealt",
     modifier_type: "percentage",
     modifier_value: 0.25,
+    minimum_final_damage: null,
+    maximum_final_damage: null,
+    usage_limit: null,
     applicable_source: "skill",
     applicable_target: "any",
     condition: "none",
@@ -302,12 +343,45 @@ check(
   icebreakerUnshielded.opponentUnits[0].hp === icebreakerUnshieldedBaseline.opponentUnits[0].hp,
   "Icebreaker's shield conditional must not increase damage against an unshielded target.",
 );
+check(
+  icebreakerWithShield.effectActivations.includes("icebreaker-condition"),
+  "Icebreaker's conditional event must activate when the target has a shield.",
+);
+check(
+  !icebreakerUnshielded.effectActivations.includes("icebreaker-condition"),
+  "Icebreaker's conditional event must not activate when the target has no shield.",
+);
 check(icebreakerWithShield.runtimeEffects.every((instance) => instance.sourceEffectId !== icebreakerModifierId), "Icebreaker's current-action modifier must expire after the Skill resolves.");
 
 const lastActionCatalog = structuredClone(cycloneBaseCatalog);
-lastActionCatalog.effectsBySkill.cyclone[0].parameters = { ...lastActionCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "last" };
+lastActionCatalog.effectsBySkill.cyclone[0].parameters = { ...lastActionCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "last_overall" };
 const lastActionResult = takeTurn(battle(lastActionCatalog, cyclonePlayer, "cyclone-last"), cycloneActions, 0);
-check(100 - lastActionResult.opponentUnits[0].hp > cycloneWithoutEffectDamage, "Action-order conditionals must also resolve the last Skill action.");
+check(100 - lastActionResult.opponentUnits[0].hp > cycloneWithoutEffectDamage, "Action Order conditionals must also resolve the last overall Skill action.");
+
+const setSpeed = (state: ReturnType<typeof battle>, playerSpeed: number, opponentSpeed: number) => ({
+  ...state,
+  playerUnits: state.playerUnits.map((unit) => unit.key === "p1"
+    ? { ...unit, baseStats: { ...unit.baseStats, spd: playerSpeed }, persistentStats: { ...unit.persistentStats, spd: playerSpeed }, stats: { ...unit.stats, spd: playerSpeed } }
+    : unit),
+  opponentUnits: state.opponentUnits.map((unit) => unit.key === "o1"
+    ? { ...unit, baseStats: { ...unit.baseStats, spd: opponentSpeed }, persistentStats: { ...unit.persistentStats, spd: opponentSpeed }, stats: { ...unit.stats, spd: opponentSpeed } }
+    : unit),
+});
+const beforeTargetCatalog = structuredClone(cycloneBaseCatalog);
+beforeTargetCatalog.effectsBySkill.cyclone[0].parameters = { ...beforeTargetCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "before_skill_target" };
+const beforeTargetBattle = setSpeed(battle(beforeTargetCatalog, cyclonePlayer, "cyclone-before-target"), 100, 1);
+const beforeTargetBaseline = setSpeed(battle(cycloneBaselineCatalog, cyclonePlayer, "cyclone-before-target-baseline"), 100, 1);
+const beforeTargetResult = takeTurn(beforeTargetBattle, cycloneActions, 0);
+const beforeTargetBaselineResult = takeTurn(beforeTargetBaseline, cycloneActions, 0);
+check(100 - beforeTargetResult.opponentUnits[0].hp > 100 - beforeTargetBaselineResult.opponentUnits[0].hp, "Before Skill Target must match when Cyclone acts before its target.");
+
+const afterTargetCatalog = structuredClone(cycloneBaseCatalog);
+afterTargetCatalog.effectsBySkill.cyclone[0].parameters = { ...afterTargetCatalog.effectsBySkill.cyclone[0].parameters, condition_value: "after_skill_target" };
+const afterTargetBattle = setSpeed(battle(afterTargetCatalog, cyclonePlayer, "cyclone-after-target"), 1, 100);
+const afterTargetBaseline = setSpeed(battle(cycloneBaselineCatalog, cyclonePlayer, "cyclone-after-target-baseline"), 1, 100);
+const afterTargetResult = takeTurn(afterTargetBattle, cycloneActions, 0);
+const afterTargetBaselineResult = takeTurn(afterTargetBaseline, cycloneActions, 0);
+check(100 - afterTargetResult.opponentUnits[0].hp > 100 - afterTargetBaselineResult.opponentUnits[0].hp, "After Skill Target must match when Cyclone acts after its target.");
 
 const lowHpCatalog = structuredClone(cycloneBaseCatalog);
 lowHpCatalog.effectsBySkill.cyclone[0].parameters = {
@@ -406,14 +480,18 @@ const manaForceAction = (state: ReturnType<typeof battle>) => [{ actorKey: state
 let manaForceActivated = false;
 let manaForceSkipped = false;
 for (let seedIndex = 0; seedIndex < 100 && (!manaForceActivated || !manaForceSkipped); seedIndex += 1) {
-  const result = takeTurn({ ...battle(manaForceCatalog, manaForcePlayer, `mana-force-${seedIndex}`), opponentMana: 3 }, manaForceAction(battle(manaForceCatalog, manaForcePlayer, `mana-force-action-${seedIndex}`)), 5);
+  const seeded = battle(manaForceCatalog, manaForcePlayer, `mana-force-${seedIndex}`);
+  const noEnemyAction = { ...seeded, opponentMana: 3, opponentUnits: seeded.opponentUnits.map((unit) => ({ ...unit, stats: { ...unit.stats, blockCost: 99 }, persistentStats: { ...unit.persistentStats, blockCost: 99 } })) };
+  const result = takeTurn(noEnemyAction, manaForceAction(noEnemyAction), 5);
   manaForceActivated ||= result.playerMana === 6 && result.opponentMana === 2;
   manaForceSkipped ||= result.playerMana === 5 && result.opponentMana === 3;
 }
 check(manaForceActivated && manaForceSkipped, "Mana Force's 50% activation chance must produce both transfer and no-transfer outcomes.");
 const guaranteedManaForceCatalog = structuredClone(manaForceCatalog);
 guaranteedManaForceCatalog.effectsBySkill[manaForce.id][0].parameters = { ...manaForceParameters, activation_chance: 0 };
-const guaranteedManaForce = takeTurn({ ...battle(guaranteedManaForceCatalog, manaForcePlayer, "mana-force-zero"), opponentMana: 3 }, manaForceAction(battle(guaranteedManaForceCatalog, manaForcePlayer, "mana-force-zero-action")), 5);
+const guaranteedSeed = battle(guaranteedManaForceCatalog, manaForcePlayer, "mana-force-zero");
+const guaranteedNoEnemyAction = { ...guaranteedSeed, opponentMana: 3, opponentUnits: guaranteedSeed.opponentUnits.map((unit) => ({ ...unit, stats: { ...unit.stats, blockCost: 99 }, persistentStats: { ...unit.persistentStats, blockCost: 99 } })) };
+const guaranteedManaForce = takeTurn(guaranteedNoEnemyAction, manaForceAction(guaranteedNoEnemyAction), 5);
 check(guaranteedManaForce.playerMana === 5 && guaranteedManaForce.opponentMana === 3, "Mana Force activation chance zero must not transfer Mana.");
 
 const voltSwitchCatalog = makeCatalog();
@@ -433,6 +511,15 @@ check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p1")?.active ===
 check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p3")?.active === true, "Swap After Attack must activate the selected healthy friendly Critter.");
 check(voltSwitchResult.playerUnits.find((unit) => unit.key === "p3")?.battlefieldSlot === 0, "Swap After Attack must preserve the outgoing Critter's battlefield slot.");
 check(voltSwitchResult.presentationEvents.findIndex((event) => event.kind === "damage") < voltSwitchResult.presentationEvents.findIndex((event) => event.kind === "swap"), "Swap After Attack must present the attack before the forced swap.");
+const voltSwitchWithoutTarget = takeTurn(voltSwitchBattle, [{ actorKey: "p1", type: "skill", skillId: voltSwitch.id, targetKey: "o1", cost: 0 }], 0);
+check(voltSwitchWithoutTarget.playerUnits.find((unit) => unit.key === "p1")?.active === true, "Swap After Attack must not swap when no healthy reserve is selected.");
+check(!voltSwitchWithoutTarget.presentationEvents.some((event) => event.kind === "swap"), "Swap After Attack must not emit a swap presentation without a valid reserve target.");
+const voltSwitchNoHealthyReserve = {
+  ...voltSwitchBattle,
+  playerUnits: voltSwitchBattle.playerUnits.map((unit) => unit.key === "p3" ? { ...unit, hp: 0 } : unit),
+};
+const noHealthyReserveResult = takeTurn(voltSwitchNoHealthyReserve, [{ actorKey: "p1", type: "skill", skillId: voltSwitch.id, targetKey: "o1", cost: 0 }], 0);
+check(noHealthyReserveResult.playerUnits.find((unit) => unit.key === "p1")?.active === true, "Swap After Attack must leave the attacker active when every reserve is knocked out.");
 
 const mechanicalPressCatalog = makeCatalog();
 const mechanicalPress = { ...mechanicalPressCatalog.skills[0], id: "mechanical-press", name: "Mechanical Press" };
@@ -759,6 +846,36 @@ const resetBlock = takeTurn(blockFailure!, [{ actorKey: "p1", type: "block", cos
 check(resetBlock.playerUnits[0].blocking && resetBlock.playerUnits[0].blockStreak === 1, "A failed Block must reset the next Block odds to 1/1 and allow it to succeed.");
 check(resetBlock.presentationEvents.some((event) => event.kind === "block" && event.message === "Your Player One blocks."), "A reset successful Block must use the concise success narration.");
 
+const nonConsecutiveBlock = takeTurn(
+  takeTurn(
+    takeTurn(battle(makeCatalog(), makePlayer(), "non-consecutive-block"), [{ actorKey: "p1", type: "block", cost: 3 }], 10),
+    [{ actorKey: "p1", type: "skip", cost: 0 }],
+    10,
+  ),
+  [{ actorKey: "p1", type: "block", cost: 3 }],
+  10,
+);
+check(nonConsecutiveBlock.playerUnits[0].blocking && nonConsecutiveBlock.playerUnits[0].blockStreak === 1, "A non-Block action must reset the next Block to full odds.");
+
+let enemyBlockFailure: ReturnType<typeof battle> | null = null;
+for (let seedIndex = 0; seedIndex < 1000 && !enemyBlockFailure; seedIndex += 1) {
+  const base = battle(makeCatalog(), makePlayer(), `enemy-block-odds-${seedIndex}`);
+  const enemyOnly = {
+    ...base,
+    opponentMana: 10,
+    opponentUnits: base.opponentUnits.map((unit, index) => index === 0 ? { ...unit, skills: [] } : { ...unit, active: false, battlefieldSlot: null, skills: [] }),
+  };
+  const first = takeTurn(enemyOnly, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+  const second = takeTurn(first, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+  const enemy = second.opponentUnits[0];
+  if (!enemy.blocking && enemy.blockStreak === 0) enemyBlockFailure = second;
+}
+check(enemyBlockFailure, "The legacy main-game enemy policy must submit Blocks and expose consecutive-block failure odds.");
+check(
+  enemyBlockFailure!.presentationEvents.filter((event) => event.kind === "block" && event.actorKey === "o1").map((event) => event.message).join("|") === "The enemy Opponent One blocks.|Opponent One's block failed.",
+  "Enemy Block declarations and failures must use the same presentation sequence as user Blocks.",
+);
+
 const knockoutCatalog = makeCatalog();
 knockoutCatalog.dungeonOpponents[0].skill_ids = ["strike"];
 let playerKnockoutBattle = battle(knockoutCatalog, makePlayer(), "player-knockout-refund");
@@ -1062,6 +1179,66 @@ check(
   "A continuously active Relic Conditional Effect must install its true child before the Skill hit.",
 );
 
+const splitTargetStatCatalog = makeCatalog();
+splitTargetStatCatalog.effectsByStatus.aura = [
+  { ...effect("status", "aura", "negative-defense", "stat_modifier", { stat: "def", value_mode: "flat", amount: -5, chance: 1, application_mode: "single_application", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" },
+];
+splitTargetStatCatalog.effectsBySkill.strike = [
+  effect("skill", "strike", "hollow-rot-style-check", "conditional_effect", {
+    effect_target: "using_critter",
+    condition_target: "skill_targets",
+    condition: "has_stat_modifier",
+    comparison: "negative",
+    condition_stats: ["atk", "def", "spd"],
+    true_effect_ids: ["hollow-rot-style-damage"],
+    false_effect_ids: [],
+    check_timing: "continuous",
+    remove_effects_when_false: true,
+  }),
+  { ...effect("skill", "strike", "hollow-rot-style-damage", "damage_modifier", {
+    target: "self", direction: "dealt", modifier_type: "percentage", modifier_value: 0.25,
+    applicable_source: "skill", applicable_target: "any", condition: "none", duration_type: "current_action", duration_clock: "owner_turn",
+  }, 1), execution: "child", classification: "positive" },
+];
+const splitTargetWithDebuff = simApplyStatus(battle(splitTargetStatCatalog, makePlayer(), "split-target-stat-debuff"), "aura", "o1", null);
+const splitTargetWithoutDebuff = battle(splitTargetStatCatalog, makePlayer(), "split-target-stat-clean");
+const splitTargetAction = [{ actorKey: "p1", type: "skill" as const, skillId: "strike", targetKey: "o1", cost: 5 }];
+const splitTargetBoosted = takeTurn(splitTargetWithDebuff, splitTargetAction, 50);
+const splitTargetBase = takeTurn(splitTargetWithoutDebuff, splitTargetAction, 50);
+check(
+  100 - splitTargetBoosted.opponentUnits[0].hp > 100 - splitTargetBase.opponentUnits[0].hp,
+  "Has Stat Modifier must inspect Skill Targets while applying its child damage modifier to the independent Effect Target.",
+);
+
+const multiStatusConditionalCatalog = makeCatalog();
+multiStatusConditionalCatalog.effectsByRelic.carrier = [
+  effect("relic", "carrier", "boost-status-gate", "conditional_effect", {
+    effect_target: "equipped_critter",
+    condition_target: "equipped_critter",
+    condition: "has_status",
+    comparison: "equal",
+    condition_status_ids: ["finite", "aura"],
+    true_effect_ids: ["boost-status-damage"],
+    false_effect_ids: [],
+    check_timing: "continuous",
+    remove_effects_when_false: true,
+  }),
+  { ...effect("relic", "carrier", "boost-status-damage", "damage_modifier", {
+    target: "equipped_critter", direction: "dealt", modifier_type: "percentage", modifier_value: 0.25,
+    applicable_source: "skill", applicable_target: "any", condition: "none", duration_type: "end_of_battle", duration_clock: "global_round",
+  }, 1), execution: "child", classification: "positive" },
+];
+const multiStatusPlayer = makePlayer();
+multiStatusPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "carrier" }];
+const multiStatusActive = simApplyStatus(battle(multiStatusConditionalCatalog, multiStatusPlayer, "has-status-multi-select"), "aura", "p1", null);
+const multiStatusBase = battle(makeCatalog(), multiStatusPlayer, "has-status-multi-select-base");
+const multiStatusBoosted = takeTurn(multiStatusActive, splitTargetAction, 50);
+const multiStatusUnboosted = takeTurn(multiStatusBase, splitTargetAction, 50);
+check(
+  100 - multiStatusBoosted.opponentUnits[0].hp > 100 - multiStatusUnboosted.opponentUnits[0].hp,
+  "Has Status must treat any selected Status as satisfying Equal to and keep the relic's Effect Target separate.",
+);
+
 const sourceGateCatalog = makeCatalog();
 sourceGateCatalog.effectsBySkill.wave = [
   effect("skill", "wave", "attuned-pressure", "stat_modifier", {
@@ -1167,6 +1344,33 @@ check(passive.opponentUnits[0].stats.atk === 22 && passive.opponentUnits[1].stat
 check(passive.opponentUnits[0].stats.spd === 10 && passive.opponentUnits[1].stats.spd === 8, "Relic all_enemies must resolve relative to its carrier.");
 check(passive.opponentUnits[0].stats.diceMin === 1 && passive.opponentUnits[1].stats.diceMin === 4 && passive.opponentUnits[1].stats.diceMax === 8, "Ability element enemy targeting must filter active opponents by element.");
 
+const enemyAbilityCatalog = makeCatalog();
+enemyAbilityCatalog.effectsByAbility = {
+  "friendly-stat": [effect("ability", "friendly-stat", "enemy-owned-friendly-stat", "stat_modifier", { stat: "def", value_mode: "percentage", amount: 0.1, target: "all_friendlies" })],
+  "enemy-stat": [effect("ability", "enemy-stat", "enemy-owned-enemy-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: -2, target: "all_enemies" })],
+};
+const enemyAbilityState = createInitialCombatState(
+  enemyAbilityCatalog,
+  makePlayer(),
+  enemyAbilityCatalog.dungeons[0],
+  "enemy-ability-relative-targets",
+  undefined,
+  "enemy-ability-relative-targets",
+  { eclipse_order_type: "acolyte", ability_ids: ["friendly-stat", "enemy-stat"] },
+);
+check(
+  enemyAbilityState.opponentUnits[0].stats.def === 28 && enemyAbilityState.opponentUnits[1].stats.def === 22,
+  "An enemy Rollcaster Ability targeting all_friendlies must affect the enemy Critters, not the player's side.",
+);
+check(
+  enemyAbilityState.playerUnits[0].stats.atk === 23 && enemyAbilityState.playerUnits[1].stats.atk === 18,
+  "An enemy Rollcaster Ability targeting all_enemies must affect the player's Critters; ownership must never restrict an Ability to its own side.",
+);
+check(
+  enemyAbilityState.playerUnits[0].stats.def === 25 && enemyAbilityState.opponentUnits[0].stats.atk === 24,
+  "Enemy Rollcaster targeting must follow only the authored target selector and must not leak across sides.",
+);
+
 const mechCoreCatalog = makeCatalog();
 mechCoreCatalog.elements.push(
   { id: "mechanical", name: "Mechanical", description: null, asset_path: null, sort_order: 3 },
@@ -1244,6 +1448,18 @@ const mechRun = {
     battleIndex: 0,
     battlefieldSlot: index + 1,
   })),
+  selectedEnemyEncounters: [{
+    battleIndex: 0,
+    enemyRollcaster: {
+      id: "eclipse-test", dungeon_id: "d", sequence_index: 0, name: "Acolyte Test", eclipse_order_type: "acolyte",
+      asset_path: "eclipse-order/001-acolyte-1.png", selection_weight: 1, policy_key: "random_action_v1", policy_revision: 1,
+      policy_artifact_id: null, ability_ids: [], dialogue_lines: [], currencyDrops: [], itemDrops: [],
+    },
+    entryLine: { id: "entry", enemy_rollcaster_id: "eclipse-test", moment: "entry", line_text: "Face the Order.", sequence_index: 0 },
+    victoryLine: { id: "victory", enemy_rollcaster_id: "eclipse-test", moment: "victory", line_text: "Your squad falls.", sequence_index: 0 },
+    defeatLine: { id: "defeat", enemy_rollcaster_id: "eclipse-test", moment: "defeat", line_text: "This is not over.", sequence_index: 0 },
+    squadMemberInstanceIds: ["mech-opponent-0", "mech-opponent-1"],
+  }],
   randomSeed: "mech-run-seed",
   randomCursor: 0,
   status: "started",
@@ -1254,6 +1470,55 @@ const mechDungeonState = createDungeonRunState(mechCoreCatalog, mechCorePlayer, 
 check(mechDungeonState.battle.playerUnits.every((unit) => unit.shield === 0), "Dungeon lead selection must not apply a Shield before the encounter starts.");
 const confirmedMechDungeon = confirmDungeonLeads({ ...mechDungeonState, selectedLeadIds: ["up1", "up2"] });
 check(confirmedMechDungeon.battle.playerUnits[0].shield === 10 && confirmedMechDungeon.battle.playerUnits[1].shield === 0, "Dungeon encounter start must apply Mech Core only to the selected Mechanical lead.");
+check(confirmedMechDungeon.phase === "entry_dialogue" && currentDungeonDialogue(confirmedMechDungeon)?.line === "Face the Order.", "Entry dialogue must gate the first Mana roll after lead selection.");
+check(continueDungeonDialogue(confirmedMechDungeon).phase === "await_roll", "Clicking through a fully displayed Entry line must start the encounter.");
+const enemyDefeatedDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "defeat" as const };
+check(currentDungeonDialogue(enemyDefeatedDialogue)?.line === "This is not over." && continueDungeonDialogue(enemyDefeatedDialogue).phase === "battle_result", "A user victory must show the enemy Defeat line before encounter results.");
+const enemyVictoryDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "victory" as const };
+check(currentDungeonDialogue(enemyVictoryDialogue)?.line === "Your squad falls.", "A user defeat must show the enemy Victor line.");
+const opponentReserve = { ...confirmedMechDungeon.battle.opponentUnits[1], key: "opponent-reserve", active: false, battlefieldSlot: null };
+const opponentAfterKnockout = confirmedMechDungeon.battle.opponentUnits
+  .map((unit, index) => index === 0 ? { ...unit, hp: 0 } : unit)
+  .concat(opponentReserve);
+const forcedEnemyReplacement = advanceDungeonEvent({
+  ...confirmedMechDungeon,
+  phase: "event_playback",
+  pendingBattle: { ...confirmedMechDungeon.battle, opponentUnits: opponentAfterKnockout },
+  events: [],
+  eventCursor: -1,
+});
+check(
+  forcedEnemyReplacement.phase === "event_playback"
+    && forcedEnemyReplacement.dialogueMoment === null
+    && currentDungeonDialogue(forcedEnemyReplacement) === null
+    && forcedEnemyReplacement.events[0]?.message === "Acolyte Test sent out Opponent Two.",
+  "An automatic enemy replacement must use named send-out narration without replaying the enemy entry line.",
+);
+const revealedForcedEnemyReplacement = revealDungeonSwapEvent(forcedEnemyReplacement);
+check(
+  revealedForcedEnemyReplacement.battle.opponentUnits.find((unit) => unit.key === "opponent-reserve")?.active
+    && revealedForcedEnemyReplacement.battle.opponentUnits.find((unit) => unit.key === "opponent-reserve")?.battlefieldSlot === 0,
+  "A healthy enemy reserve must automatically replace a knocked-out active Critter in the vacated battlefield slot.",
+);
+const confirmedPlayerReplacement = confirmDungeonLeads({
+  ...confirmedMechDungeon,
+  phase: "forced_replacements",
+  requiredLeadCount: 2,
+  selectedLeadIds: ["up1", "up3"],
+  fixedLeadIds: ["up1"],
+  dialogueMoment: null,
+  battle: {
+    ...confirmedMechDungeon.battle,
+    playerUnits: confirmedMechDungeon.battle.playerUnits.map((unit) => unit.key === "p2" ? { ...unit, hp: 0 } : unit),
+  },
+});
+check(
+  confirmedPlayerReplacement.phase === "event_playback"
+    && confirmedPlayerReplacement.dialogueMoment === null
+    && currentDungeonDialogue(confirmedPlayerReplacement) === null
+    && confirmedPlayerReplacement.events[0]?.message === "You sent in Player Three.",
+  "Confirming a knocked-out player's replacement must use send-in narration without replaying the enemy entry line.",
+);
 const cappedDiceCatalog = makeCatalog();
 cappedDiceCatalog.effectsByAbility["capped-dice"] = [
   effect("ability", "capped-dice", "capped-dice", "mana_dice_modifier", { minimum_delta: 10, maximum_delta: 0, target: "all_friendlies" }),
@@ -1277,8 +1542,9 @@ const passiveSwapEvent = passive.presentationEvents.find((event) => event.kind =
 check(
   passiveSwapEvent?.swap?.outgoingKey === "p1"
     && passiveSwapEvent.swap.incomingKey === "p3"
-    && passiveSwapEvent.swap.battlefieldSlot === passiveSwapSlot,
-  "Swap presentation must identify the outgoing Critter, incoming Critter, and preserved battlefield slot.",
+    && passiveSwapEvent.swap.battlefieldSlot === passiveSwapSlot
+    && passiveSwapEvent.message === "You sent in Player Three.",
+  "Swap presentation must identify the outgoing Critter, incoming Critter, preserved battlefield slot, and send-in narration.",
 );
 passive = takeTurn(passive, [{ actorKey: "p3", type: "swap", swapToId: "up1", cost: 4 }]);
 check(
@@ -1609,7 +1875,10 @@ check(
 
 const stackingCatalog = makeCatalog();
 stackingCatalog.effectsBySkill.ritual = [
-  effect("skill", "ritual", "stacking-glare", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.1, chance: 1, target: "all_enemies" }),
+  {
+    ...effect("skill", "ritual", "stacking-glare", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.1, chance: 1, target: "all_enemies" }),
+    classification: "positive",
+  },
   effect("skill", "ritual", "tiny-buff", "stat_modifier", { stat: "atk", value_mode: "percentage", amount: 0.01, chance: 1, target: "self" }, 1),
   effect("skill", "ritual", "tiny-debuff", "stat_modifier", { stat: "spd", value_mode: "percentage", amount: -0.01, chance: 1, target: "self" }, 2),
 ];
@@ -1634,8 +1903,43 @@ check(
   "Repeated modifiers from the same Skill and stat must appear as one accumulated tooltip total.",
 );
 check(
+  stackedGlareRows[0].classification === "negative",
+  "A negative resolved DEF delta must render as a negative combat effect even when its source classification is positive for the effect owner.",
+);
+check(
   stacked.presentationEvents.some((event) => event.message === "The enemy Opponent One lost −3 DEF from Ritual."),
   "Each repeated percentage application must narrate the exact base-referenced amount applied on that turn.",
+);
+
+const costPolarityCatalog = makeCatalog();
+costPolarityCatalog.effectsBySkill.ritual = [
+  {
+    ...effect("skill", "ritual", "block-discount", "stat_modifier", { stat: "block_cost", value_mode: "flat", amount: -1, target: "self" }),
+    runtimeVersion: 2,
+    classification: "negative",
+  },
+  {
+    ...effect("skill", "ritual", "swap-surcharge", "stat_modifier", { stat: "swap_cost", value_mode: "flat", amount: 1, target: "self" }, 1),
+    runtimeVersion: 2,
+    classification: "positive",
+  },
+  {
+    ...effect("skill", "ritual", "skill-discount", "action_cost_modifier", { applicable_action: "skills_all", modifier_type: "flat", modifier_value: -2, minimum_cost: null, maximum_cost: null, target: "self" }, 2),
+    classification: "negative",
+  },
+  {
+    ...effect("skill", "ritual", "skill-surcharge", "action_cost_modifier", { applicable_action: "skills_all", modifier_type: "flat", modifier_value: 1, minimum_cost: null, maximum_cost: null, target: "self" }, 3),
+    classification: "positive",
+  },
+];
+const costPolarityState = takeTurn(battle(costPolarityCatalog, makePlayer(), "cost-polarity"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+const costPolarityRows = combatEffectSummaries(costPolarityState, "p1");
+check(
+  costPolarityRows.some((row) => row.amountLabel === "−1 BLOCK COST" && row.classification === "positive")
+    && costPolarityRows.some((row) => row.amountLabel === "+1 SWAP COST" && row.classification === "negative")
+    && costPolarityRows.some((row) => row.name === "skill-discount" && row.classification === "positive")
+    && costPolarityRows.some((row) => row.name === "skill-surcharge" && row.classification === "negative"),
+  `Cost modifiers must invert numeric polarity for combat effect colors: ${JSON.stringify(costPolarityRows)}`,
 );
 
 const temporarySwapCatalog = makeCatalog();
@@ -1908,8 +2212,8 @@ const dotCatalog = makeCatalog();
 dotCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "apply-aura", "apply_status", { status_id: "aura", chance: 1, target: "self", indefinite: true })];
 dotCatalog.effectsByStatus.aura = [
   effect("status", "aura", "holder-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 1, chance: 1, target: "status_holder" }, 0),
-  effect("status", "aura", "allies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 2, chance: 1, target: "status_holder_allies" }, 1),
-  effect("status", "aura", "friendlies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 3, chance: 1, target: "status_holder_friendlies" }, 2),
+  effect("status", "aura", "allies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 2, chance: 1, target: "status_holder_allies_without_holder" }, 1),
+  effect("status", "aura", "friendlies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 3, chance: 1, target: "status_holder_allies_with_holder" }, 2),
   effect("status", "aura", "enemies-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 4, chance: 1, target: "status_holder_enemies" }, 3),
   effect("status", "aura", "failed-dot", "damage_over_time", { timing: "end_of_turn", value_mode: "flat", amount: 50, chance: 0, target: "status_holder" }, 4),
 ];
@@ -1919,6 +2223,41 @@ check(dotted.opponentUnits[0].hp === 96 && dotted.opponentUnits[1].hp === 116, "
 const inactiveHolderHp = dotted.playerUnits.map((unit) => unit.hp);
 dotted = takeTurn(dotted, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }]);
 check(dotted.playerUnits.every((unit, index) => unit.hp === inactiveHolderHp[index]) && dotted.opponentUnits[0].hp === 96, "Status effects must stop triggering while their holder is inactive.");
+
+const statusStatCatalog = makeCatalog();
+statusStatCatalog.effectsByStatus.aura = [
+  { ...effect("status", "aura", "status-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 5, chance: 1, application_mode: "single_application", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" },
+  { ...effect("status", "aura", "status-cost", "stat_modifier", { stat: "skill_cost", skill_scope: "attack", skill_element_ids: ["basic"], value_mode: "flat", amount: -2, chance: 1, application_mode: "single_application", target: "status_holder" }, 1), runtimeVersion: 2, classification: "positive", execution: "root" },
+];
+let statusStatState = simApplyStatus(battle(statusStatCatalog, makePlayer(), "status-static"), "aura", "p1", 1);
+check(statusStatState.playerUnits[0].stats.atk === 30, "A Single Application Status Stat Modifier must apply its ATK change immediately.");
+check(calculateActionCost(statusStatState, { actorKey: "p1", type: "skill", skillId: "strike", cost: 5 }) === 3, "A Status Skill Cost modifier must discount matching attack Skills and their selected Elements.");
+statusStatState = takeTurn(statusStatState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+check(statusStatState.playerUnits[0].stats.atk === 25 && statusStatState.statuses.length === 0, "Status Stat Modifiers must be removed when their finite Status expires.");
+
+let swappedStatusState = simApplyStatus(battle(statusStatCatalog, makePlayer(), "status-swap"), "aura", "p1", null);
+swappedStatusState = takeTurn(swappedStatusState, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }], 10);
+swappedStatusState = takeTurn(swappedStatusState, [{ actorKey: "p3", type: "swap", swapToId: "up1", cost: 4 }], 10);
+check(swappedStatusState.playerUnits[0].stats.atk === 30, "A Status Stat Modifier must return when its holder swaps back into the active battlefield.");
+
+const incrementalStatusCatalog = makeCatalog();
+incrementalStatusCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "incremental-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "start_of_turn", spacing: 2, removal_behavior: "expire_on_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
+let incrementalStatusState = simApplyStatus(battle(incrementalStatusCatalog, makePlayer(), "status-incremental"), "aura", "p1", null);
+check(incrementalStatusState.playerUnits[0].stats.atk === 25, "An incremental Status Stat Modifier must not apply before its first scheduled timing.");
+incrementalStatusState = takeTurn(incrementalStatusState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+incrementalStatusState = startTurn(incrementalStatusState);
+check(incrementalStatusState.playerUnits[0].stats.atk === 27, "Spacing 2 must apply an incremental Status Stat Modifier every other turn.");
+
+const retainedIncrementalCatalog = makeCatalog();
+retainedIncrementalCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "retained-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "end_of_turn", spacing: 1, removal_behavior: "keep_after_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
+let retainedIncrementalState = simApplyStatus(battle(retainedIncrementalCatalog, makePlayer(), "status-retained"), "aura", "p1", 1);
+retainedIncrementalState = takeTurn(retainedIncrementalState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+check(retainedIncrementalState.statuses.length === 0 && retainedIncrementalState.playerUnits[0].stats.atk === 27, "Keep after Effect Removal must preserve accumulated incremental modifiers when the Status expires.");
+const expiredIncrementalCatalog = makeCatalog();
+expiredIncrementalCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "expired-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "end_of_turn", spacing: 1, removal_behavior: "expire_on_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
+let expiredIncrementalState = simApplyStatus(battle(expiredIncrementalCatalog, makePlayer(), "status-expired"), "aura", "p1", 1);
+expiredIncrementalState = takeTurn(expiredIncrementalState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+check(expiredIncrementalState.statuses.length === 0 && expiredIncrementalState.playerUnits[0].stats.atk === 25, "Expire on Effect Removal must remove accumulated incremental modifiers when the Status expires.");
 
 const skipCatalog = makeCatalog();
 skipCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "apply-stun", "apply_status", { status_id: "stun", chance: 1, target: "self", indefinite: true })];
@@ -1931,7 +2270,7 @@ check(blocked.playerMana === 7 && blocked.playerUnits[0].blocking, "A skill-only
 
 const allySkipCatalog = makeCatalog();
 allySkipCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "apply-ally-stun", "apply_status", { status_id: "stun", chance: 1, target: "self", indefinite: true })];
-allySkipCatalog.effectsByStatus.stun = [effect("status", "stun", "ally-skip", "skip_action_chance", { chance: 1, combat_action: "all", target: "status_holder_allies" })];
+allySkipCatalog.effectsByStatus.stun = [effect("status", "stun", "ally-skip", "skip_action_chance", { chance: 1, combat_action: "all", target: "status_holder_allies_without_holder" })];
 let allySkipped = takeTurn(battle(allySkipCatalog, makePlayer(), "ally-skip"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
 allySkipped = takeTurn(allySkipped, [{ actorKey: "p2", type: "block", cost: 2 }], 10);
 check(allySkipped.playerMana === 8 && !allySkipped.playerUnits[1].blocking, "Status skip targeting must resolve holder-relative recipients, cancel Swap/Block/Skill, and retain the submitted Mana cost.");
@@ -1956,6 +2295,74 @@ check(
 );
 check(JSON.stringify(frozen.snapshot) === JSON.stringify(battle(makeCatalogWithFrozenEffect(), makePlayer(), "frozen").snapshot), "Effect snapshots must be deterministic for an identical run and inline catalog.");
 
+const weightedCatalog = makeCatalog();
+const weightedChildOne = { ...effect("skill", "ritual", "weighted-one", "direct_health_modifier", {
+  target: "self", operation: "lose_hp", value_type: "flat", value: 1,
+  can_defeat_target: false, affected_by_shield: false, affected_by_healing_modifiers: false,
+  overhealing_behavior: "discard",
+}), execution: "child" as const, classification: "negative" as const };
+const weightedChildTwo = { ...effect("skill", "ritual", "weighted-two", "direct_health_modifier", {
+  target: "self", operation: "lose_hp", value_type: "flat", value: 2,
+  can_defeat_target: false, affected_by_shield: false, affected_by_healing_modifiers: false,
+  overhealing_behavior: "discard",
+}, 1), execution: "child" as const, classification: "negative" as const };
+const weightedParent = { ...effect("skill", "ritual", "weighted-parent", "weighted_child_selector", {
+  outcome_rows: [
+    { effect_id: weightedChildOne.id, probability: 0.5 },
+    { effect_id: weightedChildTwo.id, probability: 0.5 },
+  ],
+}), execution: "root" as const, classification: "mixed" as const };
+weightedCatalog.effectsBySkill.ritual = [weightedParent, weightedChildOne, weightedChildTwo];
+const weightedLosses = new Set<number>();
+for (let seed = 1; seed <= 256; seed += 1) {
+  const state = { ...battle(weightedCatalog, makePlayer(), `weighted-${seed}`), rngState: seed };
+  const result = takeTurn(state, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
+  weightedLosses.add(100 - result.playerUnits[0].hp);
+}
+check(weightedLosses.has(1) && weightedLosses.has(2), "Weighted Child Effect Selector must resolve both 50% child outcomes across deterministic rolls.");
+check(!weightedLosses.has(3), "Weighted Child Effect Selector must resolve at most one child outcome per Skill use.");
+
+const weightedNothingCatalog = structuredClone(weightedCatalog);
+weightedNothingCatalog.effectsBySkill.ritual[0].parameters.outcome_rows = [
+  { effect_id: weightedChildOne.id, probability: 0.4 },
+  { effect_id: weightedChildTwo.id, probability: 0.4 },
+  { effect_id: null, probability: 0.2 },
+];
+const weightedNothingLosses = new Set<number>();
+for (let seed = 1; seed <= 256; seed += 1) {
+  const state = { ...battle(weightedNothingCatalog, makePlayer(), `weighted-nothing-${seed}`), rngState: seed };
+  const result = takeTurn(state, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
+  weightedNothingLosses.add(100 - result.playerUnits[0].hp);
+}
+check(weightedNothingLosses.has(0) && weightedNothingLosses.has(1) && weightedNothingLosses.has(2), "An explicit Nothing outcome must leave the Skill unchanged while other weighted rows still resolve.");
+
+const weightedTargetCatalog = makeCatalog();
+const weightedTargetChildOne = { ...weightedChildOne, id: "weighted-target-one", ownerId: "mark", parameters: { ...weightedChildOne.parameters, target: "targets" } };
+const weightedTargetChildTwo = { ...weightedChildTwo, id: "weighted-target-two", ownerId: "mark", parameters: { ...weightedChildTwo.parameters, target: "targets" } };
+const weightedTargetParent = { ...effect("skill", "mark", "weighted-target-parent", "weighted_child_selector", {
+  target_element_ids: ["bloom", "aqua"],
+  outcome_rows: [
+    { effect_id: weightedTargetChildOne.id, probability: 0.5 },
+    { effect_id: weightedTargetChildTwo.id, probability: 0.5 },
+  ],
+}), execution: "root" as const, classification: "mixed" as const };
+weightedTargetCatalog.effectsBySkill.mark = [weightedTargetParent, weightedTargetChildOne, weightedTargetChildTwo];
+const nonMatchingTargetState = battle(weightedTargetCatalog, makePlayer(), "weighted-target-nonmatch");
+const nonMatchingTarget = nonMatchingTargetState.opponentUnits.find((unit) => unit.critter.id === "o1")!;
+const nonMatchingTargetResult = takeTurn(nonMatchingTargetState, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: nonMatchingTarget.key, cost: 2 }], 10);
+check(nonMatchingTargetResult.opponentUnits.find((unit) => unit.key === nonMatchingTarget.key)?.hp === nonMatchingTarget.hp, "A weighted selector must not roll or resolve children when no selected Skill target matches its required Elements.");
+const matchingTargetState = battle(weightedTargetCatalog, makePlayer(), "weighted-target-match");
+const matchingTarget = matchingTargetState.opponentUnits.find((unit) => unit.critter.id === "o2")!;
+const matchingTargetResult = takeTurn(matchingTargetState, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: matchingTarget.key, cost: 2 }], 10);
+const matchingTargetLoss = matchingTarget.hp - (matchingTargetResult.opponentUnits.find((unit) => unit.key === matchingTarget.key)?.hp ?? matchingTarget.hp);
+check(matchingTargetLoss === 1 || matchingTargetLoss === 2, "A weighted selector must roll its children when a selected Skill target matches any required Element, including a dual-element target.");
+
+const invalidWeighted = structuredClone(weightedParent);
+invalidWeighted.parameters.outcome_rows = [{ effect_id: weightedChildOne.id, probability: 0.6 }, { effect_id: weightedChildTwo.id, probability: 0.5 }];
+let invalidWeightedRejected = false;
+try { battle({ ...weightedCatalog, effectsBySkill: { ...weightedCatalog.effectsBySkill, ritual: [invalidWeighted, weightedChildOne, weightedChildTwo] } }, makePlayer(), "invalid-weighted"); } catch { invalidWeightedRejected = true; }
+check(invalidWeightedRejected, "Weighted Child Effect Selector probabilities above 100% must be rejected before combat.");
+
 function makeCatalogWithFrozenEffect(): Catalog {
   const catalog = makeCatalog();
   catalog.effectsBySkill.ritual = [effect("skill", "ritual", "frozen", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 5, chance: 1, target: "self" })];
@@ -1979,5 +2386,57 @@ invalidVersion.effectsBySkill.ritual = [{ ...effect("skill", "ritual", "future",
 let versionRejected = false;
 try { battle(invalidVersion, makePlayer(), "invalid-version"); } catch { versionRejected = true; }
 check(versionRejected, "Unsupported runtime versions must fail encounter creation before combat starts.");
+
+function delayedEffectCatalog(options: { timing?: "start_of_turn" | "end_of_turn"; allowMultiple?: boolean; delayType?: string; activationChance?: number } = {}) {
+  const catalog = makeCatalog();
+  const skill = { ...catalog.skills[0], id: "possessive-strike", name: "Possessive Strike", power: 1, mana_cost: 0, targeting: "single_enemy" as const };
+  catalog.skills = [...catalog.skills, skill];
+  const player = makePlayer();
+  player.skillSlots = player.skillSlots.map((slot) => slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: skill.id } : slot);
+  const child = { ...effect("skill", skill.id, "visionary-damage", "direct_health_modifier", {
+    target: "targets", operation: "lose_hp", value_type: "percent_max_hp", value: 0.2,
+    can_defeat_target: true, affected_by_shield: false, affected_by_healing_modifiers: false,
+    overhealing_behavior: "discard", overheal_effect_ids: [],
+  }), execution: "child" as const, classification: "negative" as const };
+  const delayed = { ...effect("skill", skill.id, "visionary", "delayed_effect", {
+    target: "targets", activation_chance: options.activationChance ?? 1, delay_type: options.delayType ?? "turns", delay_value: 3,
+    delay_timing: options.timing ?? "end_of_turn", child_effect_ids: [child.id], target_tracking: "original",
+    cancel_condition: "none", visible_countdown: true, repeat: false,
+    allow_multiple_at_once: options.allowMultiple ?? false, trigger_description: "Visionary attacks!",
+  }), classification: "negative" as const };
+  catalog.effectsBySkill[skill.id] = [delayed, child];
+  return { catalog, player, skill };
+}
+
+const delayedBase = delayedEffectCatalog({ allowMultiple: false });
+const delayedInitial = battle(delayedBase.catalog, delayedBase.player, "delayed-end-inclusive");
+const delayedTurnOne = takeTurn(delayedInitial, [{ actorKey: "p1", type: "skill", skillId: delayedBase.skill.id, targetKey: "o1", cost: 0 }], 10);
+const delayedFirstTimer = delayedTurnOne.runtimeEffects.filter((instance) => instance.sourceEffectId === "visionary");
+check(delayedFirstTimer.length === 1 && delayedFirstTimer[0]?.remaining === 2, "An end-of-turn delay of 3 must tick to 1/3 on the turn in which the target is hit.");
+check(delayedTurnOne.presentationEvents.some((event) => event.message.includes("1/3 turns")), "Visible delayed countdowns must narrate the first end-of-turn tick.");
+const delayedTurnTwo = takeTurn(delayedTurnOne, [{ actorKey: "p1", type: "skill", skillId: delayedBase.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(delayedTurnTwo.runtimeEffects.filter((instance) => instance.sourceEffectId === "visionary").length === 1, "Allow multiple at once must default to false and deduplicate a timer on one target.");
+const delayedTurnThree = takeTurn(delayedTurnTwo, [{ actorKey: "p1", type: "skill", skillId: delayedBase.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(delayedTurnThree.presentationEvents.some((event) => event.message === "Visionary attacks!"), "The configured delayed description must display before the child Effect resolves.");
+check(delayedTurnThree.presentationEvents.some((event) => event.kind === "damage" && event.targetKeys.includes("o1")), "A delayed child Effect must resolve against the originally hit target.");
+
+const delayedNever = delayedEffectCatalog({ activationChance: 0 });
+const neverInitial = battle(delayedNever.catalog, delayedNever.player, "delayed-zero-chance");
+const neverTurn = takeTurn(neverInitial, [{ actorKey: "p1", type: "skill", skillId: delayedNever.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(!neverTurn.runtimeEffects.some((instance) => instance.sourceEffectId === "visionary"), "A delayed Effect with zero activation chance must not create a timer.");
+
+const delayedMultiple = delayedEffectCatalog({ allowMultiple: true });
+const multipleInitial = battle(delayedMultiple.catalog, delayedMultiple.player, "delayed-multiple");
+const multipleTurnOne = takeTurn(multipleInitial, [{ actorKey: "p1", type: "skill", skillId: delayedMultiple.skill.id, targetKey: "o1", cost: 0 }], 10);
+const multipleTurnTwo = takeTurn(multipleTurnOne, [{ actorKey: "p1", type: "skill", skillId: delayedMultiple.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(multipleTurnTwo.runtimeEffects.filter((instance) => instance.sourceEffectId === "visionary").length === 2, "Allow multiple at once must keep overlapping timers on one target.");
+
+const delayedStart = delayedEffectCatalog({ timing: "start_of_turn" });
+const startInitial = battle(delayedStart.catalog, delayedStart.player, "delayed-start-timing");
+const startTurnOne = takeTurn(startInitial, [{ actorKey: "p1", type: "skill", skillId: delayedStart.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(!startTurnOne.presentationEvents.some((event) => event.message.includes("1/3 turns")), "A start-of-turn delayed timer must not tick at the end of its creation turn.");
+const startTurnTwo = { ...startTurnOne, phase: "ready" as const };
+const startTurnTwoStarted = startTurn(startTurnTwo);
+check(startTurnTwoStarted.presentationEvents.some((event) => event.message.includes("1/3 turns")), "A start-of-turn delayed timer must tick when the next turn starts.");
 
 console.log("Inline effect combat runtime tests passed.");

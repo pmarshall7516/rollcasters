@@ -1,6 +1,24 @@
 # Rollcasters progress
 Original prompt: On the main page, show level-eligible Critter skills in skill-slot popups and allow unlocking them with skill points.
 
+## 2026-08-10 — Critter send-out presentation
+
+- Combat Swap narration now uses explicit send-out copy: `You sent in <Critter>` for the user and `<enemy name> sent out <Critter>` for enemy replacements/Swaps.
+- Knockout replacements at the next turn boundary are staged as the same animated Swap presentation used by ordinary Swaps. The outgoing slot remains visible, the incoming Critter reveals from the squad pane, and the next turn is unavailable until the reveal settles.
+- Confirmed player replacements and automatic enemy replacements both use the staged event path; entry dialogue is not replayed during a replacement.
+- Typecheck, production build, inline combat runtime tests, and the Playwright swap animation fixture passed. Inspected outgoing/incoming captures with the new narration and zero fixture browser errors.
+
+## 2026-08-10 — Combat primary action grid anchoring
+
+- Fixed the primary Skill/Block/Swap/Skip menu placing into the reserved Back-control row when no Back control is visible, which caused the two action rows to overlap at narrow combat viewports.
+- Anchored all combat action submenus to the second action-space row so primary actions and the Back + skills menu share stable geometry.
+- Added `npm run test:combat-action-layout` with narrow viewport geometry assertions and inspected primary/skills captures; typecheck, build, and the existing combat swap UI regression pass.
+
+## 2026-08-10
+
+- Added home-page Critter equip slot compaction: selecting a Critter for an empty higher-numbered squad slot now uses the earliest open slot up to the requested slot, while replacements and removals stay in the selected slot.
+- Added pure helper coverage for slot 4/5 requests with slot 3 open and the occupied-slot guard.
+
 ## 2026-07-29
 
 - Updated the home Critter skill picker so level-eligible locked skills use the same dimmed tile and opaque centered unlock-button treatment as the Critter collection popup.
@@ -8,6 +26,11 @@ Original prompt: On the main page, show level-eligible Critter skills in skill-s
 
 The working progress log is maintained in the shared Obsidian vault:
 `../rollcaster-docs/10 Source Docs/rollcasters/progress.md`.
+
+## 2026-08-10 — Equip Relic tooltips
+
+- Moved Relic effects out of the equip-popup cards and into the shared hover/focus tooltip, preserving positive/negative/mixed effect coloring and source-Critter inactive styling.
+- Kept each card focused on the Relic sprite, name, and available count; normalized the tooltip-wrapped card width and three-row layout.
 
 ## 2026-07-30
 
@@ -212,3 +235,74 @@ The working progress log is maintained in the shared Obsidian vault:
 ## 2026-08-05 — Animated combat loading copy
 
 - Combat’s locked narration now cycles quickly through `Loading.`, `Loading..`, and `Loading...` while action submission is pending, resetting cleanly for each pending state. Updated the browser assertion and text-state loading flag to recognize the animated copy. Typecheck, production build, focused combat UI regression, and Chromium smoke capture pass.
+
+## 2026-08-10 — Eclipse Order enemies and five-Critter squads
+
+- Original request for this work: implement `rollcaster-docs/docs/26-eclipse-order-enemies-and-new-squad.md` across the game, Content Studio, and AI Lab; create and apply the centralized Dungeon migration; and verify database, runtime, browser, and visual behavior.
+- Implemented enemy Rollcaster profiles, relative two-sided Ability targeting, Random Action Block/Skill selection, dialogue-gated encounter flow, five-Critter squads, two-sided reserves/replacements, fixed Boss squads, and the compact five-slot home summary with full loadout modal.
+- Synced the combat contract into AI Lab schema/runtime v2 with 1–5 Critters per side, reserve Swap actions for both trainable roles, replay support, and explicit active/reserve setup guidance.
+- Added and applied the additive schema, five-slot, compatibility, and 100-Dungeon Eclipse Order migrations. Postflight: 100 reports, 303 Rollcasters/regular encounters, 39 Boss encounters, and zero economy, pool, encounter, profile, or slot violations.
+- Added regression coverage for enemy-relative Ability targets, Random Action behavior, enemy forced replacement, Entry/Victor/Defeat sequencing, fixed Boss ordering, non-duplicated Rollcaster rewards, asset-save routing, and Dungeon Ability-tier hydration. All three builds, simulator tests, database integration, Content Studio browser layout, and focused main-game runtime/UI tests pass.
+
+## 2026-08-10 — Home squad slot layout cleanup
+
+- Replaced the home-page five-row squad summary and Edit Squad modal with the existing full `CritterLoadoutSlot` presentation used on `main`.
+- Desktop layouts now place five slots in two columns over three rows, with slot five centered in the bottom row; narrower layouts retain full-width slots so the existing skill, relic, stat, and XP design stays readable.
+- Updated the home loadout fixture to render five slots and assert slot count, row count, equal sizing, and centered final-slot geometry. Typecheck, production build, focused Playwright layout checks, visual inspection, and the running-app Chromium smoke check pass.
+
+## 2026-08-10 — Home squad card spacing cleanup
+
+- Loadout cards now place the Critter sprite, name, level, and XP in the top row, followed by a full-width four-column, two-row stat grid and the skill/relic equipment immediately below.
+- Narrow cards retain responsive two-column and single-column stat fallbacks for readable XP, skill, and relic content. Focused responsive layout checks and visual captures pass.
+
+## 2026-08-10 — Home loadout equipment sizing cleanup
+
+- Limited the home Critter loadout presentation to six visible Relic slots in a three-by-two matrix and gave the two-by-two skill grid the larger share of the equipment width so its labels and icons scale up naturally.
+- Empty squad slots now inherit the measured filled-slot height, including the minimum height fallback, keeping all five cards aligned across the three-row layout.
+
+## 2026-08-10 — Combat Rollcaster panels and squad status
+
+- Consolidated the combat squad strips into identical five-slot Rollcaster side panels: sprite, name, Mana, five fixed ability slots, and a centered-final-cell 3×2 Critter squad grid.
+- Equipped abilities retain viewport-positioned hover tooltips on both sides; empty ability/squad slots use the filled dark treatment. Enemy reserve Critters remain `?` until revealed, then stay revealed through KO/revive state changes and expose element/name/HP tooltips.
+- Relic icons in active Critter cards are larger while remaining in one row, and the Back control now appears only in Skill mode or on later Critter action menus.
+- `npm run typecheck`, `npm run build`, the focused combat swap UI regression, and a representative browser geometry/screenshot fixture pass. The disposable live Dungeon regression reaches its existing three-Critter fixture assertion and stops before this combat scenario; no implementation error was reported.
+
+## 2026-08-10 — Home squad equip slot compaction
+
+- Empty higher-numbered Critter equip requests now resolve to the earliest open squad slot up to the requested position; selected Critter replacements and removals remain anchored to their chosen slot.
+- Added unit coverage for slot 4/5 requests with slot 3 open and a browser-fixture assertion for the real slot-5-to-slot-3 flow. Typecheck, focused loadout tests, production build, and the authenticated-shell smoke capture pass.
+- The disposable live equip-order flow was not counted as a backend pass in this environment: the default Node 20 runtime lacks the native WebSocket required by the installed Supabase client, and the bundled-runtime invocation returned without producing test artifacts.
+
+## 2026-08-10 — Combat turn-loading animation gate
+
+- Resolved combat turns now stay out of the rendered combat tree until turn-loading persistence finishes, preventing presentation animations from starting behind the transient `Loading` narration.
+- Added a live Dungeon browser regression that asserts no running combat animations at the loading checkpoint before verifying Swap playback still animates afterward.
+- Typecheck, production build, JavaScript syntax validation, and local Chromium auth-screen smoke pass. The live Dungeon regression remains blocked here because the configured Supabase hostname cannot resolve.
+
+## 2026-08-10 — Relic availability and squad cleanup
+
+- Squad Critter replacements/removals now clear the outgoing Critter's equipped Relic slots through the loadout flow so those copies return to availability immediately.
+- Relic equip cards now show one bottom-aligned `Available: X` pill, grey out unavailable Relics, and guard zero-availability clicks.
+
+## 2026-08-10 — Repair stale bench Relics
+
+- Added a new post-five-slot migration that clears Relics from existing bench Critters before replacing the squad RPC, so legacy stale rows no longer keep inventory copies unavailable.
+- The loadout regression now applies the repair migration in its rollback-only fixture.
+
+## 2026-08-10 — Clear incoming Critter Relics
+
+- Equipping a Critter now clears any stale Relic rows already attached to the incoming Critter as well as the outgoing Critter; skill slots remain remembered.
+
+## 2026-08-10 — Tune combat squad panel proportions
+
+- Slightly reduced the combat Rollcaster panel's five-cell Critter squad footprint, increased the Rollcaster portrait size, raised ability-slot text from 10px to 12px, and removed the enemy-only red ability-slot treatment so both sides share the same slot styling.
+
+## 2026-08-10 — Keep combat hover tooltips inside the viewport
+
+- Rendered viewport tooltips through `document.body` so the combat viewport's responsive transform cannot shift or clip them; the existing edge-aware left/top clamping now applies in true viewport coordinates for enemy ability slots and Critter squad icons.
+- Extended the Dungeon browser regression to hover user abilities, enemy abilities, and enemy Critter squad icons and assert every tooltip edge stays within the viewport.
+
+## 2026-08-10 — Combat skill target emphasis
+
+- Removed the `Legal target` pill from skill-targetable Critters.
+- Added one stronger yellow hover/focus treatment for legal targets, including keyboard selection, and suppressed the generic purple/blue focus outline so selection reads as an enhanced version of the existing yellow glow.

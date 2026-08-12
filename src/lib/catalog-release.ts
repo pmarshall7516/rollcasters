@@ -25,6 +25,9 @@ const CATALOG_KEYS = [
   "relics",
   "dungeons",
   "dungeonOpponents",
+  "dungeonEnemyRollcasters",
+  "dungeonRegularEncounters",
+  "dungeonBossEncounters",
   "dungeonCompletionDrops",
   "starterRollcasterOptions",
   "starterOptions",
@@ -269,7 +272,7 @@ async function verifiedResponse(
 
 async function fetchPointer(url: string): Promise<{ pointer: CatalogReleasePointer; source: FetchSource }> {
   try {
-    const response = await fetch(url, { cache: "no-cache", credentials: "omit" });
+    const response = await fetch(url, { cache: "no-store", credentials: "omit" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return { pointer: parseCatalogReleasePointer(await response.json()), source: "network" };
   } catch (networkError) {
@@ -304,6 +307,12 @@ export function assembleCatalog(packs: readonly CatalogPack[]): Catalog {
   // releases remain playable and expose empty Lootbox surfaces until republished.
   assembled.lootboxes ??= [];
   assembled.lootboxPoolEntries ??= [];
+  // Eclipse Order encounter catalogs were added compatibly to schema 2. Old
+  // immutable releases remain browseable; the server will not start a v3 run
+  // until the corresponding dungeon content migration has populated them.
+  assembled.dungeonEnemyRollcasters ??= [];
+  assembled.dungeonRegularEncounters ??= [];
+  assembled.dungeonBossEncounters ??= [];
   for (const key of CATALOG_KEYS) {
     if (!(key in assembled)) throw new Error(`Catalog release is missing ${key}.`);
   }

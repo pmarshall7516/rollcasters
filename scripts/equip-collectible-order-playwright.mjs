@@ -247,6 +247,25 @@ try {
   await modal.screenshot({ path: path.join(outputDir, "critters-id-order.png"), animations: "disabled" });
   await modal.getByRole("button", { name: "Cancel" }).click();
 
+  const firstExtraCritterName = critterCatalog.find((row) => row.id === extraCritters[0].id)?.name;
+  const firstExtraCritter = ownedCrittersResult.data.find((row) => row.critter_id === extraCritters[0].id);
+  check(firstExtraCritterName, "The first extra Critter must exist in the catalog.");
+  check(firstExtraCritter, "The first extra Critter grant must create an owned Critter row.");
+  await page.locator(".loadout-slot").nth(4).click();
+  modal = page.getByRole("dialog");
+  await modal.locator(".candidate-card").filter({ hasText: firstExtraCritterName }).click();
+  const afterFirstEquip = await admin
+    .from("user_squad_slots")
+    .select("slot_index,user_critter_id")
+    .eq("user_id", userId)
+    .order("slot_index");
+  if (afterFirstEquip.error) throw afterFirstEquip.error;
+  check(
+    afterFirstEquip.data.find((row) => row.slot_index === 3)?.user_critter_id === firstExtraCritter.id
+      && afterFirstEquip.data.find((row) => row.slot_index === 5)?.user_critter_id == null,
+    "Selecting a Critter for empty slot 5 must equip it in open slot 3.",
+  );
+
   const secondCritterName = critterCatalog.find((row) => row.id === secondCritter.critter_id)?.name;
   const secondCritterSlot = page.locator(".loadout-slot").filter({ hasText: secondCritterName });
   await secondCritterSlot.getByRole("button", { name: "Equip relic · Slot 1" }).click();
@@ -275,8 +294,13 @@ try {
   const committedRelicCard = modal.locator(".candidate-card").filter({ hasText: committedRelicName });
   check(
     await committedRelicCard.isDisabled()
-      && (await committedRelicCard.locator(".inventory-count").textContent())?.includes("Available 0"),
+      && (await committedRelicCard.locator(".relic-availability").textContent())?.trim() === "Available: 0"
+      && await committedRelicCard.locator(".relic-availability").count() === 1,
     "A fully committed owned Relic must remain visible, show zero availability, and stay disabled.",
+  );
+  check(
+    await modal.locator(".candidate-card .relic-availability").count() === relicCatalog.length,
+    "Every Relic equip card must put its Available pill in the same bottom slot.",
   );
   const relicDescriptionsVisible = await modal.locator(".candidate-card").evaluateAll(
     (cards, descriptions) => cards.some((card) => descriptions.some((description) => description && card.textContent?.includes(description))),
