@@ -724,6 +724,192 @@ function addRuntimeEffect(
   return { ...state, effectSequence: sequence, runtimeEffects: [...state.runtimeEffects, instance] };
 }
 
+type DelayedAdvanceEvent = {
+  delayType: string;
+  timing?: "start_of_turn" | "end_of_turn";
+  actorKey?: string;
+  targetKeys?: string[];
+  ignoreAppliedAfter?: number;
+};
+
+function delayedParameters(instance: RuntimeEffectInstance): Record<string, unknown> {
+  return instance.state.parameters as Record<string, unknown> | undefined ?? {};
+}
+
+function delayedUnitLabel(delayType: string): string {
+  return delayType === "turns" ? "turns"
+    : delayType === "rounds" ? "rounds"
+      : delayType === "actions" ? "actions"
+        : delayType === "attacks_received" ? "attacks received"
+          : delayType === "skills_used" ? "skills used"
+            : delayType === "blocks_performed" ? "blocks performed"
+              : delayType === "swaps_performed" ? "swaps performed"
+                : delayType;
+}
+
+function delayedTargetKeys(
+  state: CombatState,
+  parent: ResolvedEffectRef,
+  instance: RuntimeEffectInstance,
+): string[] {
+  const parameters = delayedParameters(instance);
+  if (parameters.target_tracking === "new_valid") {
+    return effectTargets(state, String(parent.parameters.target ?? ""), {
+      sourceOwnerType: instance.sourceOwnerType,
+      sourceOwnerId: instance.sourceOwnerId,
+      sourceSide: instance.sourceSide,
+      sourceCritterKey: instance.sourceCritterKey,
+      elementIds: effectElementIdsForTargeting(parent),
+    }).map((target) => target.key);
+  }
+  if (!instance.targetCritterKey) return [];
+  const target = findUnit(state, instance.targetCritterKey);
+  return target && target.hp > 0 ? [target.key] : [];
+}
+
+function delayedTimerCancelled(state: CombatState, instance: RuntimeEffectInstance): boolean {
+  const parameters = delayedParameters(instance);
+  const source = instance.sourceCritterKey ? findUnit(state, instance.sourceCritterKey) : undefined;
+  const target = instance.targetCritterKey ? findUnit(state, instance.targetCritterKey) : undefined;
+  const condition = String(parameters.cancel_condition ?? "none");
+  if (condition === "source_defeated" && (!source || source.hp <= 0)) return true;
+  if (condition === "target_defeated" && (!target || target.hp <= 0)) return true;
+  if (condition === "target_leaves_active" && (!target || !target.active)) return true;
+  if (condition === "shield_breaks" && Number(instance.state.initialShield ?? 0) > 0 && (!target || target.shield <= 0)) return true;
+  return false;
+}
+
+function delayedEventMatches(instance: RuntimeEffectInstance, event: DelayedAdvanceEvent): boolean {
+  const parameters = delayedParameters(instance);
+  const delayType = String(parameters.delay_type ?? "turns");
+  if (delayType !== event.delayType) return false;
+  if (delayType === "turns" && String(parameters.delay_timing ?? "end_of_turn") !== String(event.timing)) return false;
+  if (["turns", "rounds", "actions"].includes(delayType)) return true;
+  if (delayType === "attacks_received") {
+    return !instance.targetCritterKey || Boolean(event.targetKeys?.includes(instance.targetCritterKey));
+  }
+  return !instance.targetCritterKey || instance.targetCritterKey === event.actorKey;
+}
+
+function scheduleDelayedEffect(
+  state: CombatState,
+  effect: ResolvedEffectRef,
+  context: RuntimeContext,
+  targets: CombatUnit[],
+): CombatState {
+  const delay = Math.max(1, Number(effect.parameters.delay_value ?? 1));
+  const targetTracking = String(effect.parameters.target_tracking ?? "original");
+  const allowMultiple = effect.parameters.allow_multiple_at_once === true;
+  const targetKeys = targetTracking === "new_valid"
+    ? [undefined]
+    : targets.map((target) => target.key);
+  let next = state;
+  for (const targetKey of targetKeys) {
+    if (!allowMultiple && next.runtimeEffects.some((instance) => (
+      instance.runtimeKind === "delayed_effect"
+      && instance.sourceOwnerType === context.sourceOwnerType
+      && instance.sourceOwnerId === context.sourceOwnerId
+      && instance.sourceEffectId === effect.id
+      && instance.sourceCritterKey === context.sourceCritterKey
+      && instance.remaining !== undefined
+      && (instance.targetCritterKey ?? undefined) === targetKey
+    ))) continue;
+    const target = targetKey ? findUnit(next, targetKey) : undefined;
+    next = addRuntimeEffect(
+      next,
+      effect,
+      { ...context, skillTargetKeys: targetKey ? [targetKey] : undefined },
+      {
+        delayed: true,
+        parameters: structuredClone(effect.parameters),
+        delayElapsed: 0,
+        delayMax: delay,
+        initialShield: target?.shield ?? 0,
+      },
+      delay,
+    );
+  }
+  return next;
+}
+
+function advanceDelayedEffects(state: CombatState, event: DelayedAdvanceEvent): CombatState {
+  let next = state;
+  for (const instance of [...state.runtimeEffects]) {
+    if (instance.runtimeKind !== "delayed_effect" || instance.remaining === undefined || instance.state.delayed !== true) continue;
+    if (event.ignoreAppliedAfter !== undefined && instance.appliedAtSequence > event.ignoreAppliedAfter) continue;
+    const parent = effectForReference(next, instance.sourceOwnerType, instance.sourceOwnerId, instance.sourceEffectId);
+    if (!parent) continue;
+    if (delayedTimerCancelled(next, instance)) {
+      next = { ...next, runtimeEffects: next.runtimeEffects.filter((candidate) => candidate.instanceId !== instance.instanceId) };
+      continue;
+    }
+    if (!delayedEventMatches(instance, event)) continue;
+
+    const parameters = delayedParameters(instance);
+    const maximum = Math.max(1, Number(instance.state.delayMax ?? parameters.delay_value ?? 1));
+    const remaining = Math.max(0, Number(instance.remaining) - 1);
+    const elapsed = Math.min(maximum, maximum - remaining);
+    next = {
+      ...next,
+      runtimeEffects: next.runtimeEffects.map((candidate) => candidate.instanceId === instance.instanceId
+        ? { ...candidate, remaining, state: { ...candidate.state, delayElapsed: elapsed, delayMax: maximum } }
+        : candidate),
+    };
+
+    const targetKeys = delayedTargetKeys(next, parent, instance);
+    const target = targetKeys.map((key) => findUnit(next, key)).find((candidate): candidate is CombatUnit => Boolean(candidate));
+    if (parameters.visible_countdown === true && target) {
+      const message = `${combatantPossessive(target)} ${parent.name || "Delayed Effect"} timer is at ${elapsed}/${maximum} ${delayedUnitLabel(String(parameters.delay_type ?? "turns"))}.`;
+      next = appendPresentationEvent(next, {
+        kind: "other",
+        effectPolarity: "negative",
+        message,
+        actorKey: instance.sourceCritterKey,
+        targetKeys: [target.key],
+        hpChanges: [],
+      });
+    }
+    if (remaining > 0) continue;
+
+    if (!targetKeys.length) {
+      next = { ...next, runtimeEffects: next.runtimeEffects.filter((candidate) => candidate.instanceId !== instance.instanceId) };
+      continue;
+    }
+    const description = String(parameters.trigger_description ?? parent.description ?? "").trim();
+    if (description) {
+      next = appendPresentationEvent(next, {
+        kind: "other",
+        effectPolarity: parent.classification === "positive" ? "positive" : "negative",
+        message: description,
+        actorKey: instance.sourceCritterKey,
+        targetKeys,
+        hpChanges: [],
+      });
+    }
+    next = resolveChildEffects(next, parent, {
+      sourceOwnerType: instance.sourceOwnerType,
+      sourceOwnerId: instance.sourceOwnerId,
+      sourceSide: instance.sourceSide,
+      sourceCritterKey: instance.sourceCritterKey,
+      skillTargetKeys: targetKeys,
+      parentInstanceId: instance.instanceId,
+    }, parent.parameters.child_effect_ids);
+    const repeat = parent.parameters.repeat === true;
+    const stillPresent = next.runtimeEffects.some((candidate) => candidate.instanceId === instance.instanceId);
+    if (repeat && stillPresent) {
+      next = {
+        ...next,
+        runtimeEffects: next.runtimeEffects.map((candidate) => candidate.instanceId === instance.instanceId
+          ? { ...candidate, remaining: maximum, state: { ...candidate.state, delayElapsed: 0, delayMax: maximum } }
+          : candidate),
+      };
+    } else {
+      next = { ...next, runtimeEffects: next.runtimeEffects.filter((candidate) => candidate.instanceId !== instance.instanceId) };
+    }
+  }
+  return next;
+}
+
 function resolveChildEffects(state: CombatState, parent: ResolvedEffectRef, context: RuntimeContext, ids: unknown): CombatState {
   const childIds = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
   if (childIds.length === 0 || (context.resolutionDepth ?? 0) >= 16) return state;
@@ -762,12 +948,18 @@ function refreshConditionalSetupEffects(state: CombatState, actionContext: Actio
         next = addRuntimeEffect(next, effect, context, { sourceOrder: source.sourceOrder, parameters: structuredClone(effect.parameters) });
         parent = next.runtimeEffects[next.runtimeEffects.length - 1];
       }
-      const target = effectTargets(next, String(effect.parameters.target ?? ""), {
+      const effectTarget = String(effect.parameters.effect_target ?? effect.parameters.target ?? "");
+      const conditionTarget = String(effect.parameters.condition_target ?? effectTarget);
+      const effectTargetsForParent = effectTargets(next, effectTarget, {
         ...context,
         elementIds: effectElementIdsForTargeting(effect),
-      })[0];
-      if (!target) continue;
-      const active = conditionalEffectMatches(next, effect, target, context);
+      });
+      if (!effectTargetsForParent.length) continue;
+      const conditionTargets = effectTargets(next, conditionTarget, {
+        ...context,
+        elementIds: undefined,
+      });
+      const active = conditionalEffectMatches(next, effect, conditionTargets, context);
       if (parent.state.conditionalActive === active) continue;
       if (active) next = recordEffectActivation(next, effect, context.sourceCritterKey);
       next = {
@@ -777,6 +969,7 @@ function refreshConditionalSetupEffects(state: CombatState, actionContext: Actio
       };
       next = resolveChildEffects(next, effect, {
         ...context,
+        skillTargetKeys: effectTargetsForParent.map((target) => target.key),
         parentInstanceId: parent.instanceId,
         conditionalParentInstanceId: parent.instanceId,
       }, active ? effect.parameters.true_effect_ids : effect.parameters.false_effect_ids);
@@ -815,7 +1008,10 @@ function installRootEffects(state: CombatState, options: SetupRuntimeRefreshOpti
       else if (effect.runtimeKind === "effect_amplification") {
         next = resolveEffect(next, effect, context);
       }
-      else if (["reactive_trigger", "retaliation", "repeating_effect", "delayed_effect", "conditional_effect", "effect_duration", "effect_immunity", "damage_modifier", "damage_prevention", "action_cost_modifier"].includes(effect.runtimeKind)) {
+      else if (effect.runtimeKind === "delayed_effect") {
+        next = resolveEffect(next, effect, context);
+      }
+      else if (["reactive_trigger", "retaliation", "repeating_effect", "conditional_effect", "effect_duration", "effect_immunity", "damage_modifier", "damage_prevention", "action_cost_modifier"].includes(effect.runtimeKind)) {
         next = addRuntimeEffect(next, effect, context, { sourceOrder: source.sourceOrder, parameters: structuredClone(effect.parameters) });
       }
     }
@@ -1486,6 +1682,8 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
   const positionByActorKey = new Map(ordered.map((action, position) => [action.actorKey, position]));
   return ordered.reduce((current, action, position) => {
     const actor = findUnit(current, action.actorKey);
+    const effectSequenceBeforeAction = current.effectSequence;
+    const actionTargetKeys = action.type === "skill" ? actionSkillTargetKeys(current, action) : [];
     const targetPositions = stage === "skill" ? actionSkillTargetKeys(state, action)
       .map((targetKey) => positionByActorKey.get(targetKey))
       .filter((targetPosition): targetPosition is number => targetPosition !== undefined) : [];
@@ -1502,9 +1700,19 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
           },
         }
       : undefined));
-    return actor && actor.active && actor.hp > 0
-      ? decrementTargetTurnRuntimeEffects(resolved, action.actorKey)
-      : resolved;
+    if (!actor || !actor.active || actor.hp <= 0) return resolved;
+    let next = decrementTargetTurnRuntimeEffects(resolved, action.actorKey);
+    const delayedEvents: DelayedAdvanceEvent[] = [{ delayType: "actions", ignoreAppliedAfter: effectSequenceBeforeAction }];
+    if (action.type === "skill") {
+      delayedEvents.push({ delayType: "skills_used", actorKey: action.actorKey, ignoreAppliedAfter: effectSequenceBeforeAction });
+      const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
+      if (skill?.skill_type === "attack") delayedEvents.push({ delayType: "attacks_received", targetKeys: actionTargetKeys, ignoreAppliedAfter: effectSequenceBeforeAction });
+    } else if (action.type === "block" && findUnit(next, action.actorKey)?.blocking) {
+      delayedEvents.push({ delayType: "blocks_performed", actorKey: action.actorKey, ignoreAppliedAfter: effectSequenceBeforeAction });
+    } else if (action.type === "swap" && findUnit(next, action.actorKey)?.active === false) {
+      delayedEvents.push({ delayType: "swaps_performed", actorKey: action.actorKey, ignoreAppliedAfter: effectSequenceBeforeAction });
+    }
+    return delayedEvents.reduce((currentState, event) => advanceDelayedEffects(currentState, event), next);
   }, { ...state, rngState });
 }
 
@@ -1549,6 +1757,108 @@ function conditionIds(parameters: Record<string, unknown>): string[] {
   const primary = String(parameters.condition_value ?? "").trim();
   const additional = String(parameters.condition_ids ?? "").split(",").map((value) => value.trim()).filter(Boolean);
   return [...new Set([primary, ...additional].filter(Boolean))];
+}
+
+function conditionStatusIds(parameters: Record<string, unknown>): string[] {
+  const configured = Array.isArray(parameters.condition_status_ids)
+    ? parameters.condition_status_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : [];
+  return configured.length ? [...new Set(configured)] : conditionIds(parameters);
+}
+
+function conditionStatKeys(parameters: Record<string, unknown>): string[] {
+  const configured = Array.isArray(parameters.condition_stats)
+    ? parameters.condition_stats.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : [];
+  return configured.length ? [...new Set(configured)] : [];
+}
+
+function statModifierCategory(stat: string): string | undefined {
+  if (["atk", "def", "spd"].includes(stat)) return stat;
+  if (["mana_dice_min", "mana_dice_max"].includes(stat)) return "mana_dice";
+  if (["block_cost", "swap_cost", "skill_cost"].includes(stat)) return stat;
+  return undefined;
+}
+
+function modifierPolarity(stat: string, amount: number): "positive" | "negative" | undefined {
+  if (!Number.isFinite(amount) || amount === 0) return undefined;
+  // Raising a combat stat is positive; raising a resource cost is negative.
+  const cost = ["block_cost", "swap_cost", "skill_cost"].includes(stat);
+  const improves = cost ? amount < 0 : amount > 0;
+  return improves ? "positive" : "negative";
+}
+
+function effectHasStatPolarity(effect: ResolvedEffectRef, selected: Set<string>, desired: string): boolean {
+  const matches = (category: string | undefined, amount: number) => Boolean(
+    category && (selected.has("any") || selected.has(category)) && modifierPolarity(category, amount) === desired,
+  );
+  if (effect.runtimeKind === "stat_modifier" || effect.runtimeKind === "stat_modifier_v2") {
+    return matches(statModifierCategory(String(effect.parameters.stat ?? "")), Number(effect.parameters.amount ?? 0));
+  }
+  if (effect.runtimeKind === "mana_dice_modifier") {
+    return matches("mana_dice", Number(effect.parameters.minimum_delta ?? 0))
+      || matches("mana_dice", Number(effect.parameters.maximum_delta ?? 0));
+  }
+  return false;
+}
+
+function actionCostEffectHasPolarity(
+  parameters: Record<string, unknown>,
+  unit: CombatUnit,
+  selected: Set<string>,
+  desired: string,
+): boolean {
+  if (!(selected.has("any") || selected.has("skill_cost"))) return false;
+  const applicable = String(parameters.applicable_action ?? "all_actions");
+  if (!["all_actions", "skills_all", "skills_support", "skills_attack", "matching_skills", "attacks"].includes(applicable)) return false;
+  const skills = unit.skills.filter((skill) => actionCostModifierApplies(parameters, {
+    type: "skill",
+    skillId: skill.id,
+    skillType: skill.skill_type,
+    skillElementId: skill.element_id,
+  }));
+  return skills.some((skill) => {
+    const before = skill.mana_cost;
+    const after = applyActionCostModifiers(before, [{ parameters, sourceName: "" }]).final;
+    return modifierPolarity("skill_cost", after - before) === desired;
+  });
+}
+
+function hasStatModifier(state: CombatState, unit: CombatUnit, parameters: Record<string, unknown>, desired: string): boolean {
+  const selected = new Set(conditionStatKeys(parameters));
+  if (!selected.size) return false;
+  const directModifiers = state.modifiers
+    .filter((modifier) => modifier.holderKey === unit.key)
+    .map((modifier) => modifier.effect);
+  if (directModifiers.some((effect) => effectHasStatPolarity(effect, selected, desired))) return true;
+
+  for (const source of statSetupSources(state)) {
+    for (const effect of source.effects) {
+      if (effect.execution === "child" || !["stat_modifier", "mana_dice_modifier"].includes(effect.runtimeKind)) continue;
+      if (!effectMatchesSourceCritter(effect, source.sourceKey ? findUnit(state, source.sourceKey)?.critter : undefined)) continue;
+      let targets: CombatUnit[] = [];
+      try {
+        targets = effectTargets(state, String(effect.parameters.target ?? ""), {
+          sourceOwnerType: source.ownerType,
+          sourceOwnerId: source.ownerId,
+          sourceSide: source.side,
+          sourceCritterKey: source.sourceKey,
+          allowInactiveSource: source.ownerType === "relic",
+          elementIds: targetElementIds(effect),
+        });
+      } catch {
+        targets = [];
+      }
+      if (targets.some((target) => target.key === unit.key) && effectHasStatPolarity(effect, selected, desired)) return true;
+    }
+  }
+
+  for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "action_cost_modifier")) {
+    if (!runtimeActionCostAppliesToActor(state, instance, unit.key)) continue;
+    const effectParameters = instance.state.parameters as Record<string, unknown> | undefined;
+    if (effectParameters && actionCostEffectHasPolarity(effectParameters, unit, selected, desired)) return true;
+  }
+  return false;
 }
 
 function damageModifierMatches(
@@ -2110,21 +2420,29 @@ function effectTargets(state: CombatState, target: string, context: RuntimeConte
   };
   const finish = (units: CombatUnit[]) => filterByElements(units);
   switch (target) {
-    case "self": {
+    case "self":
+    case "using_critter": {
       if (!source) throw new Error(`Missing source Critter for ${context.sourceOwnerType} effect from ${context.sourceOwnerId}.`);
       return finish(active(source) || (context.allowInactiveSource && source.hp > 0) ? [source] : []);
     }
     case "all_critters": return finish(ordered([...friendlies, ...enemies].filter(active)));
     case "all_others": return finish(ordered([...friendlies, ...enemies].filter((unit) => active(unit) && unit.key !== source?.key)));
-    case "all_enemies": return finish(ordered(enemies.filter(active)));
-    case "all_allies": return finish(ordered(friendlies.filter((unit) => active(unit) && unit.key !== source?.key)));
-    case "all_friendlies": return finish(ordered(friendlies.filter(active)));
+    case "all_enemies":
+    case "using_critter_enemies":
+    case "equipped_critter_enemies": return finish(ordered(enemies.filter(active)));
+    case "all_allies":
+    case "using_critter_allies_without_equipped":
+    case "equipped_critter_allies_without_equipped": return finish(ordered(friendlies.filter((unit) => active(unit) && unit.key !== source?.key)));
+    case "all_friendlies":
+    case "using_critter_allies_with_equipped":
+    case "equipped_critter_allies_with_equipped": return finish(ordered(friendlies.filter(active)));
     case "all_squad_friendlies": return finish(ordered(friendlies.filter((unit) => unit.hp > 0)));
     case "attacker_and_targets": {
       const selected = new Set([context.attackerKey, ...(context.skillTargetKeys ?? [])].filter((key): key is string => Boolean(key)));
       return finish(ordered([...friendlies, ...enemies].filter((unit) => active(unit) && selected.has(unit.key))));
     }
-    case "targets": {
+    case "targets":
+    case "skill_targets": {
       const selected = new Set(context.skillTargetKeys ?? []);
       return finish(ordered([...friendlies, ...enemies].filter((unit) => active(unit) && selected.has(unit.key))));
     }
@@ -2303,15 +2621,16 @@ function parseConditionBoolean(value: unknown, activeLabel = "active"): boolean 
 function conditionalEffectMatches(
   state: CombatState,
   effect: ResolvedEffectRef,
-  target: CombatUnit,
+  conditionTargets: CombatUnit[],
   context: RuntimeContext,
 ): boolean {
   const parameters = effect.parameters;
   const condition = String(parameters.condition ?? "");
   const comparison = String(parameters.comparison ?? "equal");
   const rawValue = parameters.condition_value;
-  const ids = conditionIds(parameters);
+  const ids = condition === "has_status" ? conditionStatusIds(parameters) : conditionIds(parameters);
   const compareBoolean = (actual: boolean, expected: boolean) => comparison === "not_equal" ? actual !== expected : comparison === "equal" ? actual === expected : compareValues(actual ? 1 : 0, comparison, expected ? 1 : 0);
+  const anyTargetMatches = (predicate: (target: CombatUnit) => boolean) => conditionTargets.some(predicate);
   if (condition === "action_order") {
     const expected = String(rawValue ?? "").toLowerCase();
     const actual = expected === "first_overall" || expected === "first" || expected === "1"
@@ -2325,14 +2644,21 @@ function conditionalEffectMatches(
             : false;
     return comparison === "not_equal" ? !actual : comparison === "equal" ? actual : compareValues(actual ? 1 : 0, comparison, 1);
   }
+  if (condition === "has_stat_modifier") {
+    return conditionTargets.some((target) => hasStatModifier(state, target, parameters, comparison));
+  }
   if (["shield_present", "active_state", "has_status", "has_relic", "last_squad_member", "ally_defeated", "enemy_defeated", "element"].includes(condition)) {
-    const actual = condition === "shield_present"
+    if (condition === "has_status") {
+      const hasSelectedStatus = (target: CombatUnit) => hasRuntimeStatus(state, target.key, ids);
+      return comparison === "not_equal"
+        ? conditionTargets.length > 0 && conditionTargets.every((target) => !hasSelectedStatus(target))
+        : conditionTargets.some(hasSelectedStatus);
+    }
+    const actual = (target: CombatUnit) => condition === "shield_present"
       ? target.shield > 0
       : condition === "active_state"
         ? target.active
-        : condition === "has_status"
-          ? hasRuntimeStatus(state, target.key, ids)
-          : condition === "has_relic"
+        : condition === "has_relic"
             ? state.setupSources.some((source) => source.ownerType === "relic" && source.sourceKey === target.key && ids.includes(source.ownerId))
             : condition === "last_squad_member"
               ? (target.side === "player" ? state.playerUnits : state.opponentUnits).filter((unit) => unit.hp > 0).length === 1
@@ -2344,7 +2670,7 @@ function conditionalEffectMatches(
     const expected = ["has_status", "has_relic", "element"].includes(condition)
       ? true
       : parseConditionBoolean(rawValue, condition === "active_state" ? "active" : "true");
-    return compareBoolean(actual, expected);
+    return anyTargetMatches((target) => compareBoolean(actual(target), expected));
   }
   if (condition === "previous_action") {
     const previous = [...state.turnEvents].reverse().find((event) => ["skill_resolved", "block_completed", "swap_completed"].includes(event.event_type));
@@ -2352,20 +2678,24 @@ function conditionalEffectMatches(
     return comparison === "not_equal" ? actual !== String(rawValue ?? "none") : comparison === "equal" ? actual === String(rawValue ?? "none") : false;
   }
   if (condition === "relic_count") {
-    const actual = state.setupSources.filter((source) => source.ownerType === "relic" && source.sourceKey === target.key).length;
-    return compareValues(actual, comparison, Number(rawValue ?? 0));
+    return anyTargetMatches((target) => {
+      const actual = state.setupSources.filter((source) => source.ownerType === "relic" && source.sourceKey === target.key).length;
+      return compareValues(actual, comparison, Number(rawValue ?? 0));
+    });
   }
   if (condition === "mana") {
-    const actual = target.side === "player" ? state.playerMana : state.opponentMana;
-    return compareValues(actual, comparison, Number(rawValue ?? 0));
+    return anyTargetMatches((target) => {
+      const actual = target.side === "player" ? state.playerMana : state.opponentMana;
+      return compareValues(actual, comparison, Number(rawValue ?? 0));
+    });
   }
-  if (condition === "shield_value") return compareValues(target.shield, comparison, Number(rawValue ?? 0));
+  if (condition === "shield_value") return anyTargetMatches((target) => compareValues(target.shield, comparison, Number(rawValue ?? 0)));
   if (condition === "hp_percent") {
     const authored = Number(rawValue ?? 0);
     const expected = authored > 1 ? authored / 100 : authored;
-    return compareValues(target.hp / Math.max(1, target.maxHp), comparison, expected);
+    return anyTargetMatches((target) => compareValues(target.hp / Math.max(1, target.maxHp), comparison, expected));
   }
-  if (condition === "previous_mana_roll") return compareValues(target.manaRoll, comparison, Number(rawValue ?? 0));
+  if (condition === "previous_mana_roll") return anyTargetMatches((target) => compareValues(target.manaRoll, comparison, Number(rawValue ?? 0)));
   if (condition === "turn_interval" || condition === "round_interval") {
     const interval = Math.max(1, Number(rawValue ?? 1));
     return compareValues(state.turn % interval, comparison, 0);
@@ -2459,24 +2789,32 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   const sourceCritter = context.sourceCritterKey ? findUnit(state, context.sourceCritterKey)?.critter : undefined;
   if (!effectMatchesSourceCritter(effect, sourceCritter)) return state;
   const key = `${effect.runtimeKind}@${effect.runtimeVersion}`;
-  const hasTarget = effect.parameters.target !== undefined;
+  const isConditional = effect.runtimeKind === "conditional_effect";
+  const effectTargetValue = isConditional
+    ? effect.parameters.effect_target ?? effect.parameters.target
+    : effect.parameters.target;
+  const conditionTargetValue = isConditional
+    ? effect.parameters.condition_target ?? effectTargetValue
+    : undefined;
+  const hasTarget = effectTargetValue !== undefined;
   let targets = effect.runtimeKind === "critter_revival"
-    ? revivalTargets(state, String(effect.parameters.target), {
+    ? revivalTargets(state, String(effectTargetValue), {
       ...context,
       elementIds: effectElementIdsForTargeting(effect),
     })
-    : hasTarget
-      ? effectTargets(state, String(effect.parameters.target), {
+      : hasTarget
+      ? effectTargets(state, String(effectTargetValue), {
         ...context,
         elementIds: effectElementIdsForTargeting(effect),
       })
       : [];
   if (hasTarget && !targets.length) return state;
   let next = state;
-  const activationChance = effect.runtimeKind === "resource_gain_loss"
-    ? effect.parameters.activation_chance === undefined ? 1 : Number(effect.parameters.activation_chance)
-    : effect.parameters.chance === undefined ? 1 : Number(effect.parameters.chance);
-  const hasPerTargetChance = hasTarget && effect.parameters.chance !== undefined;
+  const chanceParameter = effect.runtimeKind === "resource_gain_loss" || effect.runtimeKind === "delayed_effect"
+    ? "activation_chance"
+    : "chance";
+  const activationChance = effect.parameters[chanceParameter] === undefined ? 1 : Number(effect.parameters[chanceParameter]);
+  const hasPerTargetChance = hasTarget && effect.parameters[chanceParameter] !== undefined;
   if (effect.runtimeKind === "weighted_child_selector") {
     if (!weightedSelectorTargetMatches(next, effect, context)) return next;
     // This runtime owns its single random roll: the roll selects one
@@ -2485,7 +2823,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   } else if (hasPerTargetChance) {
     const activatedTargets: CombatUnit[] = [];
     for (const target of targets) {
-      const chance = rollChance(next, Number(effect.parameters.chance));
+      const chance = rollChance(next, activationChance);
       next = chance.state;
       if (chance.activated) activatedTargets.push(target);
     }
@@ -2498,12 +2836,13 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   }
   if (effect.execution === "root" && context.parentInstanceId) return next;
   if ((context.resolutionDepth ?? 0) > 16) return next;
-  const targetContext = hasPerTargetChance
+  const targetContext = (hasPerTargetChance || isConditional)
     ? { ...context, skillTargetKeys: targets.map((target) => target.key) }
     : context;
-  const conditionalTarget = targets[0];
-  const conditionalMatched = effect.runtimeKind !== "conditional_effect"
-    || (conditionalTarget ? conditionalEffectMatches(next, effect, conditionalTarget, context) : false);
+  const conditionTargets = isConditional && conditionTargetValue !== undefined
+    ? effectTargets(next, String(conditionTargetValue), { ...context, elementIds: undefined })
+    : targets;
+  const conditionalMatched = !isConditional || conditionalEffectMatches(next, effect, conditionTargets, context);
   if (conditionalMatched) {
     next = recordEffectActivation(next, effect, context.sourceCritterKey);
   }
@@ -2665,6 +3004,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     return swapCombatUnitByKey(next, source.key, target.key);
   }
   if (effect.runtimeKind === "delayed_effect" || effect.runtimeKind === "repeating_effect") {
+    if (effect.runtimeKind === "delayed_effect") return scheduleDelayedEffect(next, effect, targetContext, targets);
     const delay = Number(effect.parameters.delay_value ?? effect.parameters.initial_delay ?? effect.parameters.repeat_interval ?? 1);
     return addRuntimeEffect(next, effect, { ...targetContext, skillTargetKeys: targets.map((target) => target.key) }, { childEffectIds: effect.parameters.child_effect_ids, repeat: effect.parameters.repeat === true }, delay);
   }
@@ -3091,14 +3431,17 @@ function applyStatus(
     const statusContext: RuntimeContext = { sourceOwnerType: "status", sourceOwnerId: statusId, sourceCritterKey: holderKey, statusHolderKey: holderKey, statusInstanceId: instanceId, skillTargetKeys: [holderKey] };
     if (["damage_over_time", "skip_action_chance"].includes(effect.runtimeKind)) continue;
     if (effect.runtimeKind === "stat_modifier" && effect.parameters.application_mode === "incremental") continue;
-    if (["reactive_trigger", "retaliation", "damage_modifier", "damage_prevention", "action_cost_modifier", "effect_immunity", "effect_amplification", "delayed_effect", "repeating_effect"].includes(effect.runtimeKind)) next = addRuntimeEffect(next, effect, statusContext);
+    if (effect.runtimeKind === "delayed_effect") next = resolveEffect(next, effect, statusContext);
+    else if (["reactive_trigger", "retaliation", "damage_modifier", "damage_prevention", "action_cost_modifier", "effect_immunity", "effect_amplification", "repeating_effect"].includes(effect.runtimeKind)) next = addRuntimeEffect(next, effect, statusContext);
     else next = resolveEffect(next, effect, statusContext);
   }
   return next;
 }
 
 function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_of_turn"): CombatState {
-  let next = state;
+  let next = timing === "start_of_turn"
+    ? advanceDelayedEffects(state, { delayType: "turns", timing: "start_of_turn" })
+    : state;
   for (const instance of state.statuses) {
     for (const effect of instance.effects) {
       if (effect.runtimeKind !== "damage_over_time" || effect.parameters.timing !== timing) continue;
@@ -3175,8 +3518,13 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
       });
     }
   }
+  if (timing === "end_of_turn") {
+    next = advanceDelayedEffects(next, { delayType: "turns", timing: "end_of_turn" });
+    next = advanceDelayedEffects(next, { delayType: "rounds", timing: "end_of_turn" });
+  }
   const scheduled = [...next.runtimeEffects];
   for (const instance of scheduled) {
+    if (instance.runtimeKind === "delayed_effect") continue;
     if (instance.remaining === undefined || instance.remaining > 0) continue;
     const parent = effectForReference(next, instance.sourceOwnerType, instance.sourceOwnerId, instance.sourceEffectId);
     if (!parent) continue;
@@ -3201,6 +3549,7 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
       runtimeEffects: next.runtimeEffects
         .map((instance) => {
           if (instance.remaining === undefined) return instance;
+          if (instance.runtimeKind === "delayed_effect") return instance;
           const parameters = instance.state.parameters as Record<string, unknown> | undefined;
           if (String(parameters?.duration_clock ?? "global_round") === "target_turn") return instance;
           return { ...instance, remaining: instance.remaining - 1 };

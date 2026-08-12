@@ -300,7 +300,15 @@ export type EffectTarget =
   | "active_enemy"
   | "attacker"
   | "defender"
-  | "effect_owner";
+  | "effect_owner"
+  | "using_critter"
+  | "using_critter_allies_with_equipped"
+  | "using_critter_allies_without_equipped"
+  | "using_critter_enemies"
+  | "skill_targets"
+  | "equipped_critter_allies_with_equipped"
+  | "equipped_critter_allies_without_equipped"
+  | "equipped_critter_enemies";
 
 export type CombatEffectRow = {
   owner_type: EffectOwnerType;

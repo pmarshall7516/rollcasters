@@ -5265,6 +5265,8 @@ function BattleUnit({
           ? "receiving-heal"
           : presentation.kind === "status"
             ? presentation.effectPolarity === "negative" ? "receiving-negative" : "receiving-status"
+            : presentation.kind === "other"
+              ? presentation.effectPolarity === "negative" ? "receiving-negative" : ""
             : presentation.kind === "block"
               ? (presentation.message.includes("failed") ? "block-failed" : "block-success")
               : ""

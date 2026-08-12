@@ -1179,6 +1179,66 @@ check(
   "A continuously active Relic Conditional Effect must install its true child before the Skill hit.",
 );
 
+const splitTargetStatCatalog = makeCatalog();
+splitTargetStatCatalog.effectsByStatus.aura = [
+  { ...effect("status", "aura", "negative-defense", "stat_modifier", { stat: "def", value_mode: "flat", amount: -5, chance: 1, application_mode: "single_application", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" },
+];
+splitTargetStatCatalog.effectsBySkill.strike = [
+  effect("skill", "strike", "hollow-rot-style-check", "conditional_effect", {
+    effect_target: "using_critter",
+    condition_target: "skill_targets",
+    condition: "has_stat_modifier",
+    comparison: "negative",
+    condition_stats: ["atk", "def", "spd"],
+    true_effect_ids: ["hollow-rot-style-damage"],
+    false_effect_ids: [],
+    check_timing: "continuous",
+    remove_effects_when_false: true,
+  }),
+  { ...effect("skill", "strike", "hollow-rot-style-damage", "damage_modifier", {
+    target: "self", direction: "dealt", modifier_type: "percentage", modifier_value: 0.25,
+    applicable_source: "skill", applicable_target: "any", condition: "none", duration_type: "current_action", duration_clock: "owner_turn",
+  }, 1), execution: "child", classification: "positive" },
+];
+const splitTargetWithDebuff = simApplyStatus(battle(splitTargetStatCatalog, makePlayer(), "split-target-stat-debuff"), "aura", "o1", null);
+const splitTargetWithoutDebuff = battle(splitTargetStatCatalog, makePlayer(), "split-target-stat-clean");
+const splitTargetAction = [{ actorKey: "p1", type: "skill" as const, skillId: "strike", targetKey: "o1", cost: 5 }];
+const splitTargetBoosted = takeTurn(splitTargetWithDebuff, splitTargetAction, 50);
+const splitTargetBase = takeTurn(splitTargetWithoutDebuff, splitTargetAction, 50);
+check(
+  100 - splitTargetBoosted.opponentUnits[0].hp > 100 - splitTargetBase.opponentUnits[0].hp,
+  "Has Stat Modifier must inspect Skill Targets while applying its child damage modifier to the independent Effect Target.",
+);
+
+const multiStatusConditionalCatalog = makeCatalog();
+multiStatusConditionalCatalog.effectsByRelic.carrier = [
+  effect("relic", "carrier", "boost-status-gate", "conditional_effect", {
+    effect_target: "equipped_critter",
+    condition_target: "equipped_critter",
+    condition: "has_status",
+    comparison: "equal",
+    condition_status_ids: ["finite", "aura"],
+    true_effect_ids: ["boost-status-damage"],
+    false_effect_ids: [],
+    check_timing: "continuous",
+    remove_effects_when_false: true,
+  }),
+  { ...effect("relic", "carrier", "boost-status-damage", "damage_modifier", {
+    target: "equipped_critter", direction: "dealt", modifier_type: "percentage", modifier_value: 0.25,
+    applicable_source: "skill", applicable_target: "any", condition: "none", duration_type: "end_of_battle", duration_clock: "global_round",
+  }, 1), execution: "child", classification: "positive" },
+];
+const multiStatusPlayer = makePlayer();
+multiStatusPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "carrier" }];
+const multiStatusActive = simApplyStatus(battle(multiStatusConditionalCatalog, multiStatusPlayer, "has-status-multi-select"), "aura", "p1", null);
+const multiStatusBase = battle(makeCatalog(), multiStatusPlayer, "has-status-multi-select-base");
+const multiStatusBoosted = takeTurn(multiStatusActive, splitTargetAction, 50);
+const multiStatusUnboosted = takeTurn(multiStatusBase, splitTargetAction, 50);
+check(
+  100 - multiStatusBoosted.opponentUnits[0].hp > 100 - multiStatusUnboosted.opponentUnits[0].hp,
+  "Has Status must treat any selected Status as satisfying Equal to and keep the relic's Effect Target separate.",
+);
+
 const sourceGateCatalog = makeCatalog();
 sourceGateCatalog.effectsBySkill.wave = [
   effect("skill", "wave", "attuned-pressure", "stat_modifier", {
@@ -2326,5 +2386,57 @@ invalidVersion.effectsBySkill.ritual = [{ ...effect("skill", "ritual", "future",
 let versionRejected = false;
 try { battle(invalidVersion, makePlayer(), "invalid-version"); } catch { versionRejected = true; }
 check(versionRejected, "Unsupported runtime versions must fail encounter creation before combat starts.");
+
+function delayedEffectCatalog(options: { timing?: "start_of_turn" | "end_of_turn"; allowMultiple?: boolean; delayType?: string; activationChance?: number } = {}) {
+  const catalog = makeCatalog();
+  const skill = { ...catalog.skills[0], id: "possessive-strike", name: "Possessive Strike", power: 1, mana_cost: 0, targeting: "single_enemy" as const };
+  catalog.skills = [...catalog.skills, skill];
+  const player = makePlayer();
+  player.skillSlots = player.skillSlots.map((slot) => slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: skill.id } : slot);
+  const child = { ...effect("skill", skill.id, "visionary-damage", "direct_health_modifier", {
+    target: "targets", operation: "lose_hp", value_type: "percent_max_hp", value: 0.2,
+    can_defeat_target: true, affected_by_shield: false, affected_by_healing_modifiers: false,
+    overhealing_behavior: "discard", overheal_effect_ids: [],
+  }), execution: "child" as const, classification: "negative" as const };
+  const delayed = { ...effect("skill", skill.id, "visionary", "delayed_effect", {
+    target: "targets", activation_chance: options.activationChance ?? 1, delay_type: options.delayType ?? "turns", delay_value: 3,
+    delay_timing: options.timing ?? "end_of_turn", child_effect_ids: [child.id], target_tracking: "original",
+    cancel_condition: "none", visible_countdown: true, repeat: false,
+    allow_multiple_at_once: options.allowMultiple ?? false, trigger_description: "Visionary attacks!",
+  }), classification: "negative" as const };
+  catalog.effectsBySkill[skill.id] = [delayed, child];
+  return { catalog, player, skill };
+}
+
+const delayedBase = delayedEffectCatalog({ allowMultiple: false });
+const delayedInitial = battle(delayedBase.catalog, delayedBase.player, "delayed-end-inclusive");
+const delayedTurnOne = takeTurn(delayedInitial, [{ actorKey: "p1", type: "skill", skillId: delayedBase.skill.id, targetKey: "o1", cost: 0 }], 10);
+const delayedFirstTimer = delayedTurnOne.runtimeEffects.filter((instance) => instance.sourceEffectId === "visionary");
+check(delayedFirstTimer.length === 1 && delayedFirstTimer[0]?.remaining === 2, "An end-of-turn delay of 3 must tick to 1/3 on the turn in which the target is hit.");
+check(delayedTurnOne.presentationEvents.some((event) => event.message.includes("1/3 turns")), "Visible delayed countdowns must narrate the first end-of-turn tick.");
+const delayedTurnTwo = takeTurn(delayedTurnOne, [{ actorKey: "p1", type: "skill", skillId: delayedBase.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(delayedTurnTwo.runtimeEffects.filter((instance) => instance.sourceEffectId === "visionary").length === 1, "Allow multiple at once must default to false and deduplicate a timer on one target.");
+const delayedTurnThree = takeTurn(delayedTurnTwo, [{ actorKey: "p1", type: "skill", skillId: delayedBase.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(delayedTurnThree.presentationEvents.some((event) => event.message === "Visionary attacks!"), "The configured delayed description must display before the child Effect resolves.");
+check(delayedTurnThree.presentationEvents.some((event) => event.kind === "damage" && event.targetKeys.includes("o1")), "A delayed child Effect must resolve against the originally hit target.");
+
+const delayedNever = delayedEffectCatalog({ activationChance: 0 });
+const neverInitial = battle(delayedNever.catalog, delayedNever.player, "delayed-zero-chance");
+const neverTurn = takeTurn(neverInitial, [{ actorKey: "p1", type: "skill", skillId: delayedNever.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(!neverTurn.runtimeEffects.some((instance) => instance.sourceEffectId === "visionary"), "A delayed Effect with zero activation chance must not create a timer.");
+
+const delayedMultiple = delayedEffectCatalog({ allowMultiple: true });
+const multipleInitial = battle(delayedMultiple.catalog, delayedMultiple.player, "delayed-multiple");
+const multipleTurnOne = takeTurn(multipleInitial, [{ actorKey: "p1", type: "skill", skillId: delayedMultiple.skill.id, targetKey: "o1", cost: 0 }], 10);
+const multipleTurnTwo = takeTurn(multipleTurnOne, [{ actorKey: "p1", type: "skill", skillId: delayedMultiple.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(multipleTurnTwo.runtimeEffects.filter((instance) => instance.sourceEffectId === "visionary").length === 2, "Allow multiple at once must keep overlapping timers on one target.");
+
+const delayedStart = delayedEffectCatalog({ timing: "start_of_turn" });
+const startInitial = battle(delayedStart.catalog, delayedStart.player, "delayed-start-timing");
+const startTurnOne = takeTurn(startInitial, [{ actorKey: "p1", type: "skill", skillId: delayedStart.skill.id, targetKey: "o1", cost: 0 }], 10);
+check(!startTurnOne.presentationEvents.some((event) => event.message.includes("1/3 turns")), "A start-of-turn delayed timer must not tick at the end of its creation turn.");
+const startTurnTwo = { ...startTurnOne, phase: "ready" as const };
+const startTurnTwoStarted = startTurn(startTurnTwo);
+check(startTurnTwoStarted.presentationEvents.some((event) => event.message.includes("1/3 turns")), "A start-of-turn delayed timer must tick when the next turn starts.");
 
 console.log("Inline effect combat runtime tests passed.");
