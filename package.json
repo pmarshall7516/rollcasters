@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build",
     "test:effect-runtime": "tsc scripts/effect-runtime-tests.ts src/lib/game.ts src/lib/types.ts --outDir /tmp/rollcasters-effect-runtime-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-effect-runtime-tests/scripts/effect-runtime-tests.js",
+    "test:tag-filters": "tsc scripts/tag-filter-tests.ts src/lib/challenges.ts src/lib/effects.ts src/lib/types.ts --outDir /tmp/rollcasters-tag-filter-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-tag-filter-tests/scripts/tag-filter-tests.js",
+    "test:tag-challenges:db": "node scripts/tag-challenge-db-tests.mjs",
     "test:combat-swap-ui": "node scripts/combat-swap-ui-tests.mjs",
     "test:combat-action-layout": "node scripts/combat-action-layout-tests.mjs",
     "test:combat-target-emphasis": "node scripts/combat-target-emphasis-tests.mjs",

@@ -244,6 +244,9 @@ export type CombatProgressEvent = {
   target_critter_id: string | null;
   skill_id: string | null;
   amount: number;
+  source_critter_tag_ids?: string[];
+  target_critter_tag_ids?: string[];
+  skill_tag_ids?: string[];
   payload?: Record<string, unknown>;
 };
 
@@ -252,6 +255,14 @@ export type ElementDef = {
   name: string;
   description: string | null;
   asset_path: string | null;
+  sort_order: number;
+};
+
+export type ContentTag = {
+  id: string;
+  name: string;
+  description: string | null;
+  tag_type: "critter" | "skill";
   sort_order: number;
 };
 
@@ -361,6 +372,7 @@ export type Skill = {
   targeting: SkillTargeting;
   description: string;
   sort_order: number;
+  tag_ids: string[];
 };
 
 export type Critter = {
@@ -381,6 +393,7 @@ export type Critter = {
   sort_order: number;
   is_active?: boolean;
   is_archived?: boolean;
+  tag_ids: string[];
 };
 
 export type CritterProgression = {
@@ -756,6 +769,7 @@ export type Catalog = {
   lootboxPoolEntries: LootboxPoolEntry[];
   elements: ElementDef[];
   elementEffectiveness: ElementEffectiveness[];
+  tags: ContentTag[];
   skills: Skill[];
   critters: Critter[];
   critterProgression: CritterProgression[];

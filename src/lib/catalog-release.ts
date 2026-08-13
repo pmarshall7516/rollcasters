@@ -14,6 +14,7 @@ const CATALOG_KEYS = [
   "lootboxPoolEntries",
   "elements",
   "elementEffectiveness",
+  "tags",
   "skills",
   "critters",
   "critterProgression",
@@ -313,6 +314,10 @@ export function assembleCatalog(packs: readonly CatalogPack[]): Catalog {
   assembled.dungeonEnemyRollcasters ??= [];
   assembled.dungeonRegularEncounters ??= [];
   assembled.dungeonBossEncounters ??= [];
+  // Tags were added compatibly to schema 2. Older immutable releases remain
+  // playable with no tag assignments until a release containing the new pack
+  // is published.
+  assembled.tags ??= [];
   for (const key of CATALOG_KEYS) {
     if (!(key in assembled)) throw new Error(`Catalog release is missing ${key}.`);
   }

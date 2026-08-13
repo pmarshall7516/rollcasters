@@ -16,7 +16,7 @@ import type {
   Status,
   UserCritter,
 } from "./types.js";
-import { assertEffectContract, effectMatchesSourceCritter, normalizeEffectElementParameters, skillElementIds, targetElementIds } from "./effects.js";
+import { assertEffectContract, effectMatchesSourceCritter, effectMatchesSourceSkill, normalizeEffectElementParameters, skillElementIds, sourceCritterTagIds, sourceSkillTagIds, targetCritterTagIds, targetElementIds } from "./effects.js";
 import { battlefieldSlotsForCount } from "./dungeons.js";
 
 export type StatBlock = {
@@ -36,6 +36,7 @@ export type ActionCostAction = {
   skillId?: string;
   skillType?: Skill["skill_type"];
   skillElementId?: string;
+  skillTagIds?: string[];
 };
 
 export type ActionCostSource = {
@@ -337,6 +338,10 @@ export function critterElementIds(
   return critter.element_2_id
     ? [critter.element_1_id, critter.element_2_id]
     : [critter.element_1_id];
+}
+
+export function critterTagIds(critter: Pick<Critter, "tag_ids">): string[] {
+  return Array.isArray(critter.tag_ids) ? critter.tag_ids : [];
 }
 
 export function critterHasElement(
@@ -760,6 +765,7 @@ function delayedTargetKeys(
       sourceSide: instance.sourceSide,
       sourceCritterKey: instance.sourceCritterKey,
       elementIds: effectElementIdsForTargeting(parent),
+      tagIds: effectTagIdsForTargeting(parent),
     }).map((target) => target.key);
   }
   if (!instance.targetCritterKey) return [];
@@ -953,11 +959,13 @@ function refreshConditionalSetupEffects(state: CombatState, actionContext: Actio
       const effectTargetsForParent = effectTargets(next, effectTarget, {
         ...context,
         elementIds: effectElementIdsForTargeting(effect),
+        tagIds: targetCritterTagIds(effect),
       });
       if (!effectTargetsForParent.length) continue;
       const conditionTargets = effectTargets(next, conditionTarget, {
         ...context,
         elementIds: undefined,
+        tagIds: undefined,
       });
       const active = conditionalEffectMatches(next, effect, conditionTargets, context);
       if (parent.state.conditionalActive === active) continue;
@@ -1067,6 +1075,7 @@ export function recomputeCombatStats(state: CombatState): CombatState {
         sourceCritterKey: source.sourceKey,
         allowInactiveSource: source.ownerType === "relic",
         elementIds: targetElementIds(effect),
+        tagIds: targetCritterTagIds(effect),
       });
       for (const unit of targets) effectsByTarget.set(unit.key, [...(effectsByTarget.get(unit.key) ?? []), effect]);
     }
@@ -1166,6 +1175,7 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
         sourceCritterKey: source.sourceKey,
         allowInactiveSource: source.ownerType === "relic",
         elementIds: targetElementIds(effect),
+        tagIds: targetCritterTagIds(effect),
       });
       if (!targets.some((target) => target.key === unitKey)) continue;
       const next = applyStatEffects(persistent, [effect]);
@@ -1228,6 +1238,7 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
       sourceCritterKey: instance.sourceCritterKey,
       skillTargetKeys: instance.targetCritterKey ? [instance.targetCritterKey] : undefined,
       elementIds: effectElementIdsForTargeting(effect),
+      tagIds: effectTagIdsForTargeting(effect),
     }).some((target) => target.key === unitKey));
     if (applies) addEffect(effect, instance.sourceOwnerType, instance.sourceOwnerId, instance.instanceId, undefined, undefined, instance.remaining);
   }
@@ -1334,14 +1345,17 @@ export function normalizeManaDiceBounds(
 }
 
 export function startTurn(state: CombatState): CombatState {
-  let next = resolveTimedEffects({ ...state, turnEvents: [] }, "start_of_turn");
-  let rngState = next.rngState;
-  const playerUnits = next.playerUnits.map((unit) =>
+  // Dice resolve first. Start-of-turn effects are then staged as presentation
+  // events so both combat UIs can play their text and reactions before action
+  // selection begins.
+  const turnState = { ...state, turnEvents: [], presentationEvents: [] };
+  let rngState = turnState.rngState;
+  const playerUnits = turnState.playerUnits.map((unit) =>
     unit.active && unit.hp > 0
       ? (() => { const roll = rollManaDieSeeded(unit.stats.diceMin, unit.stats.diceMax, rngState); rngState = roll.state; return { ...unit, blocking: false, manaRoll: roll.value }; })()
       : { ...unit, blocking: false, blockStreak: 0 },
   );
-  const opponentUnits = next.opponentUnits.map((unit) =>
+  const opponentUnits = turnState.opponentUnits.map((unit) =>
     unit.active && unit.hp > 0
       ? (() => { const roll = rollManaDieSeeded(unit.stats.diceMin, unit.stats.diceMax, rngState); rngState = roll.state; return { ...unit, blocking: false, manaRoll: roll.value }; })()
       : { ...unit, blocking: false, blockStreak: 0 },
@@ -1353,19 +1367,19 @@ export function startTurn(state: CombatState): CombatState {
   );
 
   const rolledState: CombatState = {
-    ...next,
+    ...turnState,
     playerUnits,
     opponentUnits,
-    playerMana: next.playerMana + playerRoll,
-    opponentMana: next.opponentMana + opponentRoll,
+    playerMana: turnState.playerMana + playerRoll,
+    opponentMana: turnState.opponentMana + opponentRoll,
     rngState,
     phase: "selecting",
     log: [
-      `Turn ${next.turn}: player rolled ${playerRoll} mana, opponents rolled ${opponentRoll} mana.`,
-      ...next.log,
+      `Turn ${turnState.turn}: player rolled ${playerRoll} mana, opponents rolled ${opponentRoll} mana.`,
+      ...turnState.log,
     ],
   };
-  let withDice = rolledState;
+  let withDice = resolveTimedEffects(rolledState, "start_of_turn");
   for (const unit of playerUnits.filter((candidate) => candidate.active && candidate.hp > 0)) {
     withDice = appendProgressEvent(withDice, {
       event_type: "dice_resolved",
@@ -1503,7 +1517,10 @@ export function actionCostModifierApplies(parameters: Record<string, unknown>, a
 
 function skillMatchesElementFilter(parameters: Record<string, unknown>, action: ActionCostAction): boolean {
   const elementIds = skillElementIds(parameters);
-  return elementIds.length === 0 || (action.skillElementId !== undefined && elementIds.includes(action.skillElementId));
+  const tagIds = Array.isArray(parameters.skill_tag_ids) ? parameters.skill_tag_ids.filter((id): id is string => typeof id === "string") : [];
+  const matchesElement = elementIds.length === 0 || (action.skillElementId !== undefined && elementIds.includes(action.skillElementId));
+  const matchesTag = tagIds.length === 0 || tagIds.some((id) => (action.skillTagIds ?? []).includes(id));
+  return matchesElement && matchesTag;
 }
 
 function statusStatModifierAsActionCost(effect: ResolvedEffectRef): ActionCostModifier | undefined {
@@ -1515,6 +1532,7 @@ function statusStatModifierAsActionCost(effect: ResolvedEffectRef): ActionCostMo
       modifier_type: effect.parameters.value_mode,
       modifier_value: effect.parameters.amount,
       skill_element_ids: effect.parameters.skill_element_ids,
+      skill_tag_ids: effect.parameters.skill_tag_ids,
     },
     sourceName: effect.name,
   };
@@ -1558,6 +1576,7 @@ function runtimeActionCostAppliesToActor(state: CombatState, instance: RuntimeEf
       sourceCritterKey: instance.sourceCritterKey,
       statusHolderKey: instance.sourceOwnerType === "status" ? instance.sourceCritterKey : undefined,
       elementIds: effect ? targetElementIds(effect) : undefined,
+      tagIds: effect ? targetCritterTagIds(effect) : undefined,
     }).some((unit) => unit.key === actorKey);
   } catch {
     // Keep older snapshots with incomplete targeting context usable. The
@@ -1582,7 +1601,7 @@ export function calculateActionCostBreakdown(state: CombatState, action: CombatA
     .filter((instance) => runtimeActionCostAppliesToActor(state, instance, actor.key))
     .map((instance) => {
       const parameters = instance.state.parameters as Record<string, unknown> | undefined;
-      if (!parameters || !actionCostModifierApplies(parameters, { type: action.type, skillId: action.skillId, skillType: skill?.skill_type, skillElementId: skill?.element_id })) return null;
+      if (!parameters || !actionCostModifierApplies(parameters, { type: action.type, skillId: action.skillId, skillType: skill?.skill_type, skillElementId: skill?.element_id, skillTagIds: skill?.tag_ids })) return null;
       const effect = effectForReference(state, instance.sourceOwnerType, instance.sourceOwnerId, instance.sourceEffectId);
       return {
         parameters,
@@ -1816,6 +1835,7 @@ function actionCostEffectHasPolarity(
     skillId: skill.id,
     skillType: skill.skill_type,
     skillElementId: skill.element_id,
+    skillTagIds: skill.tag_ids,
   }));
   return skills.some((skill) => {
     const before = skill.mana_cost;
@@ -1845,6 +1865,7 @@ function hasStatModifier(state: CombatState, unit: CombatUnit, parameters: Recor
           sourceCritterKey: source.sourceKey,
           allowInactiveSource: source.ownerType === "relic",
           elementIds: targetElementIds(effect),
+          tagIds: targetCritterTagIds(effect),
         });
       } catch {
         targets = [];
@@ -1876,6 +1897,15 @@ function damageModifierMatches(
   const direction = String(parameters.direction ?? "dealt");
   const subject = direction === "received" ? defender : attacker;
   const source = instance.sourceCritterKey ? findUnit(state, instance.sourceCritterKey) : undefined;
+  const requiredSourceTags = sourceCritterTagIds({ parameters } as ResolvedEffectRef);
+  const requiredTargetTags = targetCritterTagIds({ parameters } as ResolvedEffectRef);
+  if (requiredSourceTags.length && !requiredSourceTags.some((tagId) => critterTagIds(attacker.critter).includes(tagId))) return false;
+  if (requiredTargetTags.length && !requiredTargetTags.some((tagId) => critterTagIds(defender.critter).includes(tagId))) return false;
+  const requiredSkillTags = sourceSkillTagIds({ parameters } as ResolvedEffectRef);
+  if (requiredSkillTags.length) {
+    const sourceSkill = context.sourceOwnerType === "skill" ? state.catalog.skills.find((skill) => skill.id === context.sourceOwnerId) : undefined;
+    if (!effectMatchesSourceSkill({ parameters } as ResolvedEffectRef, sourceSkill)) return false;
+  }
   const targetState = String(parameters.applicable_target ?? "any");
   if (targetState === "self" && subject.key !== source?.key) return false;
   if (targetState === "allies" && subject.side !== source?.side) return false;
@@ -2127,7 +2157,9 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
           { sourceOwnerType: "skill", sourceOwnerId: skill.id, sourceCritterKey: actor.key, skillTargetKeys: targets.map((item) => item.key), damageSource: "skill", ...actionContext },
         );
         const actualDamage = damage.hpDamage;
-        damageDone += actualDamage;
+        // Recoil, drain, and other post-attack effects scale from durability
+        // actually removed, whether the hit landed on HP or Shield.
+        damageDone += damage.hpDamage + damage.shieldDamage;
         const afterHp = findUnit(damage.state, target.key)?.hp ?? target.hp;
         const shieldBroken = damage.shieldDamage > 0 && (findUnit(damage.state, target.key)?.shield ?? target.shield) <= 0;
         const impactMessage = damage.shieldDamage > 0
@@ -2166,7 +2198,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
             },
           );
         }
-        let progress = appendDamageProgressEvents(withPresentation, actor, target, actualDamage, afterHp <= 0);
+        let progress = appendDamageProgressEvents(withPresentation, actor, target, actualDamage, afterHp <= 0, skill);
         if (damage.blockPrevented > 0 && target.side === "player") {
           progress = appendProgressEvent(progress, {
             event_type: "block_completed",
@@ -2194,7 +2226,14 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         target_critter_id: targets[0]?.critter.id ?? null,
         skill_id: skill.id,
         amount: 1,
-        payload: { source_element_ids: critterElementIds(actor.critter), target_element_ids: targets.flatMap((target) => critterElementIds(target.critter)) },
+        payload: {
+          source_element_ids: critterElementIds(actor.critter),
+          target_element_ids: targets.flatMap((target) => critterElementIds(target.critter)),
+          source_critter_tag_ids: critterTagIds(actor.critter),
+          target_critter_tag_ids: [...new Set(targets.flatMap((target) => critterTagIds(target.critter)))],
+          skill_tag_ids: skill.tag_ids,
+          skill_element_id: skill.element_id,
+        },
       });
     }
     next = recomputeCombatStats(next);
@@ -2271,6 +2310,7 @@ export function skillHasPostAttackSwap(state: CombatState, actorKey: string, ski
       && effect.runtimeKind === "swap_after_attack"
       && Number(effect.parameters.chance ?? 1) > 0
       && effectMatchesSourceCritter(effect, actor.critter)
+      && effectMatchesSourceSkill(effect, skill)
   ));
 }
 
@@ -2287,9 +2327,11 @@ function skillUsageKey(actorKey: string, skillId: string): string {
 
 function skillRestrictionEffects(state: CombatState, skillId: string, actorKey?: string): ResolvedEffectRef[] {
   const sourceCritter = actorKey ? findUnit(state, actorKey)?.critter : undefined;
+  const skill = state.catalog.skills.find((candidate) => candidate.id === skillId);
   return (state.runEffects.skill[skillId] ?? [])
     .filter((effect) => effect.runtimeKind === "skill_usage_restriction" && effect.execution !== "child")
-    .filter((effect) => effectMatchesSourceCritter(effect, sourceCritter));
+    .filter((effect) => effectMatchesSourceCritter(effect, sourceCritter))
+    .filter((effect) => effectMatchesSourceSkill(effect, skill));
 }
 
 export function isActorRecharging(state: CombatState, actorKey: string): boolean {
@@ -2336,7 +2378,8 @@ function recordSkillUseAndRestrictions(
   const sourceCritter = findUnit(state, actorKey)?.critter;
   const restrictions = effects
     .filter((effect) => effect.runtimeKind === "skill_usage_restriction" && effect.execution !== "child")
-    .filter((effect) => effectMatchesSourceCritter(effect, sourceCritter));
+    .filter((effect) => effectMatchesSourceCritter(effect, sourceCritter))
+    .filter((effect) => effectMatchesSourceSkill(effect, state.catalog.skills.find((skill) => skill.id === skillId)));
   if (!restrictions.length) return state;
   const key = skillUsageKey(actorKey, skillId);
   let next: CombatState = {
@@ -2375,6 +2418,7 @@ type RuntimeContext = {
   statusInstanceId?: string;
   damageDone?: number;
   elementIds?: string[];
+  tagIds?: string[];
   attackerKey?: string;
   defenderKey?: string;
   actionId?: string;
@@ -2385,6 +2429,7 @@ type RuntimeContext = {
   eventType?: string;
   parentInstanceId?: string;
   resolutionDepth?: number;
+  activationAlreadyRolled?: boolean;
   allowInactiveSource?: boolean;
   actionOrder?: {
     position: number;
@@ -2418,7 +2463,11 @@ function effectTargets(state: CombatState, target: string, context: RuntimeConte
       ? units
       : units.filter((unit) => matchesSelectedElements(unit.critter, selected));
   };
-  const finish = (units: CombatUnit[]) => filterByElements(units);
+  const filterByTags = (units: CombatUnit[]) => {
+    const selected = new Set(context.tagIds ?? []);
+    return selected.size === 0 ? units : units.filter((unit) => critterTagIds(unit.critter).some((tagId) => selected.has(tagId)));
+  };
+  const finish = (units: CombatUnit[]) => filterByTags(filterByElements(units));
   switch (target) {
     case "self":
     case "using_critter": {
@@ -2498,12 +2547,18 @@ function effectElementIdsForTargeting(effect: ResolvedEffectRef): string[] | und
   return targetElementIds(effect);
 }
 
+function effectTagIdsForTargeting(effect: ResolvedEffectRef): string[] | undefined {
+  return targetCritterTagIds(effect);
+}
+
 function weightedSelectorTargetMatches(state: CombatState, effect: ResolvedEffectRef, context: RuntimeContext): boolean {
   const required = new Set(targetElementIds(effect));
-  if (required.size === 0) return true;
+  const requiredTags = new Set(targetCritterTagIds(effect));
+  if (required.size === 0 && requiredTags.size === 0) return true;
   return (context.skillTargetKeys ?? []).some((key) => {
     const target = findUnit(state, key);
-    return Boolean(target && matchesSelectedElements(target.critter, required));
+    return Boolean(target && matchesSelectedElements(target.critter, required)
+      && (requiredTags.size === 0 || critterTagIds(target.critter).some((tagId) => requiredTags.has(tagId))));
   });
 }
 
@@ -2520,14 +2575,19 @@ function revivalTargets(state: CombatState, target: string, context: RuntimeCont
     const selected = new Set(context.elementIds ?? []);
     return selected.size === 0 ? units : units.filter((unit) => matchesSelectedElements(unit.critter, selected));
   };
+  const filterByTags = (units: CombatUnit[]) => {
+    const selected = new Set(context.tagIds ?? []);
+    return selected.size === 0 ? units : units.filter((unit) => critterTagIds(unit.critter).some((tagId) => selected.has(tagId)));
+  };
+  const finish = (units: CombatUnit[]) => filterByTags(filterByElements(units));
   if (target === "target_friendlies") {
     const selected = new Set(context.skillTargetKeys ?? []);
-    return filterByElements(ordered(friendlies.filter((unit) => knockedOut(unit) && selected.has(unit.key))));
+    return finish(ordered(friendlies.filter((unit) => knockedOut(unit) && selected.has(unit.key))));
   }
   if (target === "all_allies") {
-    return filterByElements(ordered(friendlies.filter((unit) => knockedOut(unit) && unit.key !== source.key)));
+    return finish(ordered(friendlies.filter((unit) => knockedOut(unit) && unit.key !== source.key)));
   }
-  if (target === "all_friendlies") return filterByElements(ordered(friendlies.filter(knockedOut)));
+  if (target === "all_friendlies") return finish(ordered(friendlies.filter(knockedOut)));
   throw new Error(`Unsupported revival target: ${target}`);
 }
 
@@ -2538,7 +2598,7 @@ function numericEffectValue(effect: ResolvedEffectRef, target: CombatUnit, conte
   if (type === "percent_max_hp" || type === "percentage") return target.maxHp * value;
   if (type === "percent_current_hp") return target.hp * value;
   if (type === "percent_missing_hp") return (target.maxHp - target.hp) * value;
-  if (type === "percent_damage_dealt") return Number(context.damageAttempted ?? context.hpDamage ?? 0) * value;
+  if (type === "percent_damage_dealt") return Number(context.damageDone ?? context.damageAttempted ?? context.hpDamage ?? 0) * value;
   return value;
 }
 
@@ -2566,6 +2626,13 @@ function amplifiedHealingAmount(
     for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "effect_amplification")) {
       const parameters = instance.state.parameters as Record<string, unknown> | undefined;
       if (parameters?.affected_effect_category !== "healing") continue;
+      const requiredSkillTags = sourceSkillTagIds({ parameters: parameters ?? {} } as ResolvedEffectRef);
+      if (requiredSkillTags.length) {
+        const sourceSkill = context.sourceOwnerType === "skill"
+          ? state.catalog.skills.find((skill) => skill.id === context.sourceOwnerId)
+          : undefined;
+        if (!effectMatchesSourceSkill({ parameters: parameters ?? {} } as ResolvedEffectRef, sourceSkill)) continue;
+      }
       const direction = String(parameters.direction ?? "received");
       const applies = direction === "received"
         ? instance.targetCritterKey === target.key
@@ -2591,6 +2658,13 @@ function amplifiedShieldAmount(
   for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "effect_amplification")) {
     const parameters = instance.state.parameters as Record<string, unknown> | undefined;
     if (parameters?.affected_effect_category !== "shields") continue;
+    const requiredSkillTags = sourceSkillTagIds({ parameters: parameters ?? {} } as ResolvedEffectRef);
+    if (requiredSkillTags.length) {
+      const sourceSkill = context.sourceOwnerType === "skill"
+        ? state.catalog.skills.find((skill) => skill.id === context.sourceOwnerId)
+        : undefined;
+      if (!effectMatchesSourceSkill({ parameters: parameters ?? {} } as ResolvedEffectRef, sourceSkill)) continue;
+    }
     const direction = String(parameters.direction ?? "received");
     const applies = direction === "received"
       ? instance.targetCritterKey === targetKey
@@ -2672,6 +2746,17 @@ function conditionalEffectMatches(
       : parseConditionBoolean(rawValue, condition === "active_state" ? "active" : "true");
     return anyTargetMatches((target) => compareBoolean(actual(target), expected));
   }
+  if (condition === "tags") {
+    const requiredTags = new Set(
+      Array.isArray(parameters.condition_target_critter_tag_ids)
+        ? parameters.condition_target_critter_tag_ids.filter((id): id is string => typeof id === "string")
+        : [],
+    );
+    const matches = (target: CombatUnit) => critterTagIds(target.critter).some((tagId) => requiredTags.has(tagId));
+    return comparison === "not_equal"
+      ? conditionTargets.length > 0 && conditionTargets.every((target) => !matches(target))
+      : conditionTargets.some(matches);
+  }
   if (condition === "previous_action") {
     const previous = [...state.turnEvents].reverse().find((event) => ["skill_resolved", "block_completed", "swap_completed"].includes(event.event_type));
     const actual = previous?.event_type === "skill_resolved" ? "skill" : previous?.event_type === "block_completed" ? "block" : previous?.event_type === "swap_completed" ? "swap" : "none";
@@ -2740,7 +2825,10 @@ function applyDirectHealthValue(state: CombatState, effect: ResolvedEffectRef, t
     ? amplifiedHealingAmount(state, target, rawAmount, context, p.affected_by_healing_modifiers !== false)
     : Math.max(0, roundHalfUp(rawAmount));
   const operation = String(p.operation);
-  const sourceName = effectSourceName(state, context.sourceOwnerType, context.sourceOwnerId, effect.name);
+  const selfInflictedSkillEffect = context.sourceOwnerType === "skill" && context.sourceCritterKey === target.key;
+  const sourceName = selfInflictedSkillEffect
+    ? effect.name
+    : effectSourceName(state, context.sourceOwnerType, context.sourceOwnerId, effect.name);
   if (operation === "heal") {
     const applied = Math.min(amount, target.maxHp - target.hp);
     const excess = Math.max(0, amount - applied);
@@ -2756,7 +2844,10 @@ function applyDirectHealthValue(state: CombatState, effect: ResolvedEffectRef, t
   const maximumLoss = Boolean(p.can_defeat_target) ? target.hp : Math.max(0, target.hp - 1);
   const applied = Math.min(maximumLoss, remaining);
   let next = shieldAbsorb > 0 ? applyShieldValue(state, target.key, "subtract", shieldAbsorb) : state;
-  next = recomputeCombatStats(updateUnit(next, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - applied) }), `${combatantName(target)} took ${applied} damage from ${sourceName}.`));
+  const message = selfInflictedSkillEffect && (operation === "lose_hp" || operation === "drain")
+    ? `${combatantName(target)} lost ${applied} health from ${sourceName}.`
+    : `${combatantName(target)} took ${applied} damage from ${sourceName}.`;
+  next = recomputeCombatStats(updateUnit(next, target.key, (unit) => ({ ...unit, hp: Math.max(0, unit.hp - applied) }), message));
   return { state: next, applied, excess: 0 };
 }
 
@@ -2768,6 +2859,7 @@ function appendHealingProgressEvent(
 ): CombatState {
   if (restored <= 0 || healingSourceSide(state, context) !== "player") return state;
   const source = context.sourceCritterKey ? findUnit(state, context.sourceCritterKey) : undefined;
+  const sourceSkill = context.sourceOwnerType === "skill" ? state.catalog.skills.find((skill) => skill.id === context.sourceOwnerId) : undefined;
   return appendProgressEvent(state, {
     event_type: "hp_healed",
     source_critter_id: source?.critter.id ?? null,
@@ -2777,6 +2869,10 @@ function appendHealingProgressEvent(
     payload: {
       source_side: "player",
       recipient_side: target.side === "player" ? "friendly" : "enemy",
+      source_element_ids: source ? critterElementIds(source.critter) : [],
+      source_critter_tag_ids: source ? critterTagIds(source.critter) : [],
+      target_critter_tag_ids: critterTagIds(target.critter),
+      skill_tag_ids: sourceSkill?.tag_ids ?? [],
       target_element_ids: critterElementIds(target.critter),
       source_owner_type: context.sourceOwnerType,
       source_owner_id: context.sourceOwnerId,
@@ -2788,6 +2884,10 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   assertEffectContract(effect, context.sourceOwnerType);
   const sourceCritter = context.sourceCritterKey ? findUnit(state, context.sourceCritterKey)?.critter : undefined;
   if (!effectMatchesSourceCritter(effect, sourceCritter)) return state;
+  const sourceSkillId = context.sourceOwnerType === "skill"
+    ? context.sourceOwnerId
+    : effect.ownerType === "skill" ? effect.ownerId : undefined;
+  if (sourceSkillId && !effectMatchesSourceSkill(effect, state.catalog.skills.find((skill) => skill.id === sourceSkillId))) return state;
   const key = `${effect.runtimeKind}@${effect.runtimeVersion}`;
   const isConditional = effect.runtimeKind === "conditional_effect";
   const effectTargetValue = isConditional
@@ -2801,21 +2901,26 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     ? revivalTargets(state, String(effectTargetValue), {
       ...context,
       elementIds: effectElementIdsForTargeting(effect),
+      tagIds: targetCritterTagIds(effect),
     })
       : hasTarget
       ? effectTargets(state, String(effectTargetValue), {
         ...context,
         elementIds: effectElementIdsForTargeting(effect),
+        tagIds: targetCritterTagIds(effect),
       })
       : [];
   if (hasTarget && !targets.length) return state;
   let next = state;
-  const chanceParameter = effect.runtimeKind === "resource_gain_loss" || effect.runtimeKind === "delayed_effect"
+  const chanceParameter = effect.runtimeKind === "resource_gain_loss" || effect.runtimeKind === "delayed_effect" || effect.runtimeKind === "direct_health_modifier"
     ? "activation_chance"
     : "chance";
   const activationChance = effect.parameters[chanceParameter] === undefined ? 1 : Number(effect.parameters[chanceParameter]);
   const hasPerTargetChance = hasTarget && effect.parameters[chanceParameter] !== undefined;
-  if (effect.runtimeKind === "weighted_child_selector") {
+  if (context.activationAlreadyRolled) {
+    // A reactive parent owns this roll so the child runtime must not consume a
+    // second random value or square the authored activation chance.
+  } else if (effect.runtimeKind === "weighted_child_selector") {
     if (!weightedSelectorTargetMatches(next, effect, context)) return next;
     // This runtime owns its single random roll: the roll selects one
     // cumulative outcome row, so it must not also consume the generic Effect
@@ -2840,7 +2945,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     ? { ...context, skillTargetKeys: targets.map((target) => target.key) }
     : context;
   const conditionTargets = isConditional && conditionTargetValue !== undefined
-    ? effectTargets(next, String(conditionTargetValue), { ...context, elementIds: undefined })
+    ? effectTargets(next, String(conditionTargetValue), { ...context, elementIds: undefined, tagIds: undefined })
     : targets;
   const conditionalMatched = !isConditional || conditionalEffectMatches(next, effect, conditionTargets, context);
   if (conditionalMatched) {
@@ -3109,7 +3214,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       return candidate.classification === category;
     };
     const candidates: Array<{
-      kind: "modifier" | "runtime";
+      kind: "modifier" | "runtime" | "status";
       id: string;
       sequence: number;
       strength: number;
@@ -3134,6 +3239,20 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
         strength: Math.abs(Number(candidate.parameters.amount ?? candidate.parameters.value ?? candidate.parameters.shield_value ?? 0)),
       });
     }
+    for (const [index, instance] of next.statuses.entries()) {
+      if (!targetKeys.has(instance.holderKey)) continue;
+      const classification = statusClassification(instance.effects);
+      const matchesStatusCategory = category === "statuses"
+        || category === "all_removable"
+        || category === classification;
+      if (!matchesStatusCategory) continue;
+      candidates.push({
+        kind: "status",
+        id: instance.instanceId,
+        sequence: index,
+        strength: Math.max(0, ...instance.effects.map((candidate) => Math.abs(Number(candidate.parameters.amount ?? candidate.parameters.value ?? 0)))),
+      });
+    }
     const selection = String(effect.parameters.selection_method ?? "oldest");
     const ordered = [...candidates];
     if (selection === "newest") ordered.sort((a, b) => b.sequence - a.sequence);
@@ -3150,11 +3269,32 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     const rawLimit = effect.parameters.maximum_effects_removed;
     const limit = rawLimit === null || rawLimit === undefined ? ordered.length : Math.max(0, Number(rawLimit));
     const remove = new Set(ordered.slice(0, limit).map((candidate) => `${candidate.kind}:${candidate.id}`));
-    return {
+    const removedStatusIds = new Set(
+      next.statuses
+        .filter((instance) => remove.has(`status:${instance.instanceId}`))
+        .map((instance) => instance.instanceId),
+    );
+    let removedState: CombatState = {
       ...next,
-      modifiers: next.modifiers.filter((modifier) => !remove.has(`modifier:${modifier.instanceId}`)),
-      runtimeEffects: next.runtimeEffects.filter((instance) => !remove.has(`runtime:${instance.instanceId}`)),
+      statuses: next.statuses.filter((instance) => !removedStatusIds.has(instance.instanceId)),
+      modifiers: next.modifiers.filter((modifier) => !remove.has(`modifier:${modifier.instanceId}`) && (!modifier.statusInstanceId || !removedStatusIds.has(modifier.statusInstanceId))),
+      runtimeEffects: next.runtimeEffects.filter((instance) => (
+        !remove.has(`runtime:${instance.instanceId}`)
+        && !(instance.sourceOwnerType === "status" && removedStatusIds.has(`${instance.sourceOwnerId}:${instance.sourceCritterKey}`))
+      )),
     };
+    removedState = recomputeCombatStats(removedState);
+    for (const removed of next.statuses.filter((instance) => removedStatusIds.has(instance.instanceId))) {
+      const holder = findUnit(removedState, removed.holderKey);
+      const status = removedState.statusRegistry[removed.statusId];
+      if (!holder || !status) continue;
+      const message = `${combatantName(holder)} was cured of ${status.name}.`;
+      removedState = appendPresentationEvent(
+        { ...removedState, log: [message, ...removedState.log] },
+        { kind: "status", effectPolarity: "positive", message, actorKey: context.sourceCritterKey, targetKeys: [holder.key], hpChanges: [] },
+      );
+    }
+    return removedState;
   }
   if (effect.runtimeKind === "effect_copy") {
     const copies = next.runtimeEffects.filter((instance) => instance.targetCritterKey && targets.some((target) => target.key === instance.targetCritterKey)).slice(0, Number(effect.parameters.maximum_effects_copied ?? 1));
@@ -3275,6 +3415,7 @@ function resolveReactiveEffects(
         attackerKey: attacker.key,
         defenderKey: defender.key,
         elementIds: targetElementIds(parent),
+        tagIds: targetCritterTagIds(parent),
       });
       const watchedKey = isAttackRetaliation ? attacker.key : defender.key;
       if (!watched.some((unit) => unit.key === watchedKey)) continue;
@@ -3323,6 +3464,7 @@ function resolveReactiveEffects(
         shieldDamage,
         eventType,
         resolutionDepth: 1,
+        activationAlreadyRolled: true,
       });
       continue;
     }
@@ -3360,7 +3502,12 @@ function applyStatus(
 ): CombatState {
   const status = state.statusRegistry[statusId];
   if (!status) throw new Error(`Unknown status: ${statusId}`);
-  const existingIndex = state.statuses.findIndex((item) => item.statusId === statusId && item.holderKey === holderKey);
+  const holderStatusIndex = state.statuses.findIndex((item) => item.holderKey === holderKey);
+  // Status exclusivity is evaluated at the instant the application resolves.
+  // A cure earlier in the same action sequence therefore opens the slot for a
+  // later application, while an existing different Status blocks it.
+  if (holderStatusIndex >= 0 && state.statuses[holderStatusIndex].statusId !== statusId) return state;
+  const existingIndex = holderStatusIndex;
   let statuses = [...state.statuses];
   const instanceId = existingIndex >= 0 ? statuses[existingIndex].instanceId : `${statusId}:${holderKey}`;
   if (existingIndex >= 0) {
@@ -3405,6 +3552,7 @@ function applyStatus(
     }),
     {
       kind: "status",
+      effectPolarity: classification === "negative" ? "negative" : "positive",
       message,
       actorKey: context.sourceCritterKey,
       targetKeys: [holderKey],
@@ -3423,6 +3571,9 @@ function applyStatus(
         status_ids: [statusId],
         target_side: holder.side,
         source_side: sourceSide,
+        source_critter_tag_ids: source ? critterTagIds(source.critter) : [],
+        target_critter_tag_ids: critterTagIds(holder.critter),
+        skill_tag_ids: context.sourceOwnerType === "skill" ? state.catalog.skills.find((skill) => skill.id === context.sourceOwnerId)?.tag_ids ?? [] : [],
       },
     });
   }
@@ -3443,6 +3594,26 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
     ? advanceDelayedEffects(state, { delayType: "turns", timing: "start_of_turn" })
     : state;
   for (const instance of state.statuses) {
+    if (timing === "start_of_turn" && instance.duration !== null) {
+      const holder = findUnit(next, instance.holderKey);
+      const status = next.statusRegistry[instance.statusId];
+      if (holder?.active && holder.hp > 0 && status) {
+        const remaining = Math.max(0, Number(instance.duration));
+        const message = `${combatantName(holder)} is affected by ${status.name}; ${remaining} turn${remaining === 1 ? "" : "s"} remain.`;
+        const classification = statusClassification(instance.effects);
+        next = appendPresentationEvent(
+          { ...next, log: [message, ...next.log] },
+          {
+            kind: "status",
+            effectPolarity: classification === "negative" ? "negative" : "positive",
+            message,
+            actorKey: instance.sourceCritterKey,
+            targetKeys: [instance.holderKey],
+            hpChanges: [],
+          },
+        );
+      }
+    }
     for (const effect of instance.effects) {
       if (effect.runtimeKind !== "damage_over_time" || effect.parameters.timing !== timing) continue;
       const holder = findUnit(next, instance.holderKey);
@@ -3839,6 +4010,7 @@ function appendDamageProgressEvents(
   target: CombatUnit,
   actualDamage: number,
   knockedOut: boolean,
+  skill?: Skill,
 ): CombatState {
   if (actualDamage <= 0 || source.side === target.side) return state;
   let next = state;
@@ -3847,18 +4019,18 @@ function appendDamageProgressEvents(
       event_type: "hp_damage_dealt",
       source_critter_id: source.critter.id,
       target_critter_id: target.critter.id,
-      skill_id: null,
+      skill_id: skill?.id ?? null,
       amount: actualDamage,
-      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
+      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter), source_critter_tag_ids: critterTagIds(source.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
     });
     if (knockedOut) {
       next = appendProgressEvent(next, {
         event_type: "critter_knocked_out",
         source_critter_id: source.critter.id,
         target_critter_id: target.critter.id,
-        skill_id: null,
+        skill_id: skill?.id ?? null,
         amount: 1,
-        payload: { target_element_ids: critterElementIds(target.critter) },
+        payload: { source_element_ids: critterElementIds(source.critter), source_critter_tag_ids: critterTagIds(source.critter), target_element_ids: critterElementIds(target.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
       });
     }
   } else if (source.side === "opponent" && target.side === "player") {
@@ -3866,9 +4038,9 @@ function appendDamageProgressEvents(
       event_type: "hp_damage_taken",
       source_critter_id: source.critter.id,
       target_critter_id: target.critter.id,
-      skill_id: null,
+      skill_id: skill?.id ?? null,
       amount: actualDamage,
-      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter) },
+      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter), source_critter_tag_ids: critterTagIds(source.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
     });
   }
   return next;

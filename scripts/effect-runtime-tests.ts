@@ -26,11 +26,13 @@ import {
 import {
   advanceDungeonEvent,
   confirmDungeonLeads,
+  continueAfterRoll,
   continueDungeonDialogue,
   createDungeonRunState,
   currentDungeonDialogue,
   currentDungeonEvent,
   revealDungeonSwapEvent,
+  rollDungeonDice,
   type DungeonRunState,
 } from "../src/lib/dungeon-run.js";
 import { battlefieldSlotsForCount, effectiveDungeon, parseBattleFormat, sortDungeonsNaturally } from "../src/lib/dungeons.js";
@@ -70,6 +72,14 @@ function makeCatalog(): Catalog {
       { id: "bloom", name: "Bloom", description: null, asset_path: null, sort_order: 1 },
       { id: "aqua", name: "Aqua", description: null, asset_path: null, sort_order: 2 },
     ],
+    tags: [
+      { id: "first-stage", name: "First Stage", description: null, tag_type: "critter", sort_order: 10 },
+      { id: "middle-stage", name: "Middle Stage", description: null, tag_type: "critter", sort_order: 20 },
+      { id: "final-stage", name: "Final Stage", description: null, tag_type: "critter", sort_order: 30 },
+      { id: "contact", name: "Contact", description: null, tag_type: "skill", sort_order: 10 },
+      { id: "pulse", name: "Pulse", description: null, tag_type: "skill", sort_order: 20 },
+      { id: "burst", name: "Burst", description: null, tag_type: "skill", sort_order: 30 },
+    ],
     elementEffectiveness: ["basic", "bloom", "aqua"].flatMap((attacking_element_id) =>
       ["basic", "bloom", "aqua"].map((defending_element_id) => ({
         attacking_element_id,
@@ -82,17 +92,17 @@ function makeCatalog(): Catalog {
       })),
     ),
     skills: [
-      { id: "strike", name: "Strike", element_id: "basic", skill_type: "attack", power: 50, mana_cost: 5, targeting: "single_enemy", description: "Strike.", sort_order: 0 },
-      { id: "mark", name: "Mark", element_id: "basic", skill_type: "support", power: 0, mana_cost: 2, targeting: "single_any", description: "Mark.", sort_order: 1 },
-      { id: "ritual", name: "Ritual", element_id: "basic", skill_type: "support", power: 0, mana_cost: 0, targeting: "self_only", description: "Ritual.", sort_order: 2 },
-      { id: "wave", name: "Wave", element_id: "basic", skill_type: "attack", power: 1, mana_cost: 0, targeting: "all_enemies", description: "Wave.", sort_order: 3 },
+      { id: "strike", name: "Strike", element_id: "basic", skill_type: "attack", power: 50, mana_cost: 5, targeting: "single_enemy", description: "Strike.", sort_order: 0, tag_ids: ["contact"] },
+      { id: "mark", name: "Mark", element_id: "basic", skill_type: "support", power: 0, mana_cost: 2, targeting: "single_any", description: "Mark.", sort_order: 1, tag_ids: ["pulse"] },
+      { id: "ritual", name: "Ritual", element_id: "basic", skill_type: "support", power: 0, mana_cost: 0, targeting: "self_only", description: "Ritual.", sort_order: 2, tag_ids: ["burst"] },
+      { id: "wave", name: "Wave", element_id: "basic", skill_type: "attack", power: 1, mana_cost: 0, targeting: "all_enemies", description: "Wave.", sort_order: 3, tag_ids: [] },
     ],
     critters: [
-      { id: "p1", name: "Player One", element_1_id: "basic", element_2_id: null, base_hp: 100, base_atk: 25, base_def: 25, base_spd: 30, base_dice_min: 2, base_dice_max: 4, base_block_cost: 3, base_swap_cost: 4, asset_path: null, description: null, sort_order: 0 },
-      { id: "p2", name: "Player Two", element_1_id: "bloom", element_2_id: "aqua", base_hp: 80, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 3, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 1 },
-      { id: "p3", name: "Player Three", element_1_id: "basic", element_2_id: null, base_hp: 90, base_atk: 22, base_def: 22, base_spd: 15, base_dice_min: 1, base_dice_max: 5, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 2 },
-      { id: "o1", name: "Opponent One", element_1_id: "basic", element_2_id: null, base_hp: 100, base_atk: 24, base_def: 25, base_spd: 12, base_dice_min: 1, base_dice_max: 4, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 3 },
-      { id: "o2", name: "Opponent Two", element_1_id: "bloom", element_2_id: "aqua", base_hp: 120, base_atk: 26, base_def: 20, base_spd: 10, base_dice_min: 2, base_dice_max: 5, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 4 },
+      { id: "p1", name: "Player One", element_1_id: "basic", element_2_id: null, base_hp: 100, base_atk: 25, base_def: 25, base_spd: 30, base_dice_min: 2, base_dice_max: 4, base_block_cost: 3, base_swap_cost: 4, asset_path: null, description: null, sort_order: 0, tag_ids: ["first-stage"] },
+      { id: "p2", name: "Player Two", element_1_id: "bloom", element_2_id: "aqua", base_hp: 80, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 3, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 1, tag_ids: ["middle-stage"] },
+      { id: "p3", name: "Player Three", element_1_id: "basic", element_2_id: null, base_hp: 90, base_atk: 22, base_def: 22, base_spd: 15, base_dice_min: 1, base_dice_max: 5, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 2, tag_ids: ["first-stage"] },
+      { id: "o1", name: "Opponent One", element_1_id: "basic", element_2_id: null, base_hp: 100, base_atk: 24, base_def: 25, base_spd: 12, base_dice_min: 1, base_dice_max: 4, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 3, tag_ids: ["final-stage"] },
+      { id: "o2", name: "Opponent Two", element_1_id: "bloom", element_2_id: "aqua", base_hp: 120, base_atk: 26, base_def: 20, base_spd: 10, base_dice_min: 2, base_dice_max: 5, base_block_cost: 2, base_swap_cost: 4, asset_path: null, description: null, sort_order: 4, tag_ids: ["final-stage"] },
     ],
     critterProgression: [],
     critterSkillUnlocks: [],
@@ -264,6 +274,35 @@ const cycloneWithEffectDamage = 100 - cycloneWithEffect.opponentUnits[0].hp;
 const cycloneWithoutEffectDamage = 100 - cycloneWithoutEffect.opponentUnits[0].hp;
 check(cycloneWithEffectDamage > cycloneWithoutEffectDamage, `Cyclone's first-action conditional should increase damage (got ${cycloneWithEffectDamage} vs ${cycloneWithoutEffectDamage}).`);
 check(cycloneWithEffect.runtimeEffects.every((instance) => instance.sourceEffectId !== cycloneDamageModifierId), "Cyclone's current-action damage modifier must expire after its Skill resolves.");
+
+const taggedConditionalCatalog = structuredClone(cycloneBaseCatalog);
+taggedConditionalCatalog.effectsBySkill.cyclone[0].parameters = {
+  ...taggedConditionalCatalog.effectsBySkill.cyclone[0].parameters,
+  effect_target: "using_critter",
+  condition_target: "skill_targets",
+  condition: "tags",
+  comparison: "equal",
+  condition_target_critter_tag_ids: ["final-stage"],
+  effect_target_critter_tag_ids: ["first-stage"],
+};
+const taggedConditionalResult = takeTurn(battle(taggedConditionalCatalog, cyclonePlayer, "tagged-conditional"), cycloneActions, 0);
+const taggedConditionalDamage = 100 - taggedConditionalResult.opponentUnits[0].hp;
+check(taggedConditionalDamage > cycloneWithoutEffectDamage, "A Tags Conditional Effect must activate when the condition target has the selected Critter Tag and the effect target passes its tag filter.");
+const nonMatchingTaggedPlayer = makePlayer();
+nonMatchingTaggedPlayer.critters[0] = { ...nonMatchingTaggedPlayer.critters[0], critter_id: "p2" };
+const nonMatchingTaggedResult = takeTurn(battle(taggedConditionalCatalog, nonMatchingTaggedPlayer, "tagged-conditional-miss"), cycloneActions, 0);
+const nonMatchingBaselineCatalog = structuredClone(cycloneBaselineCatalog);
+const nonMatchingBaselineResult = takeTurn(battle(nonMatchingBaselineCatalog, nonMatchingTaggedPlayer, "tagged-conditional-miss-baseline"), cycloneActions, 0);
+check(100 - nonMatchingTaggedResult.opponentUnits[0].hp === 100 - nonMatchingBaselineResult.opponentUnits[0].hp, "A Tags Conditional Effect must skip child resolution when the Effect Target does not carry one of its selected Critter Tags.");
+
+const inverseTaggedConditionalCatalog = structuredClone(taggedConditionalCatalog);
+inverseTaggedConditionalCatalog.effectsBySkill.cyclone[0].parameters = {
+  ...inverseTaggedConditionalCatalog.effectsBySkill.cyclone[0].parameters,
+  comparison: "not_equal",
+  condition_target_critter_tag_ids: ["first-stage"],
+};
+const inverseTaggedResult = takeTurn(battle(inverseTaggedConditionalCatalog, cyclonePlayer, "tagged-conditional-inverse"), cycloneActions, 0);
+check(100 - inverseTaggedResult.opponentUnits[0].hp > cycloneWithoutEffectDamage, "A Tags Conditional Effect with Not Equal must evaluate nonmatching Condition Targets instead of filtering them out before comparison.");
 
 const shieldConditionalCatalog = structuredClone(cycloneBaseCatalog);
 shieldConditionalCatalog.effectsBySkill.cyclone[0].parameters = {
@@ -2057,6 +2096,36 @@ selectedCatalog.effectsBySkill.wave = [effect("skill", "wave", "target-status", 
 const selected = takeTurn(battle(selectedCatalog, makePlayer(), "target-enemies"), [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }]);
 check(selected.statuses.length === 2 && selected.statuses.every((item) => item.holderKey.startsWith("o")), "target_enemies must use every active enemy slot selected by the Skill.");
 
+const exclusiveStatusCatalog = makeCatalog();
+let exclusiveStatusState = simApplyStatus(battle(exclusiveStatusCatalog, makePlayer(), "exclusive-status"), "finite", "p1", 2);
+exclusiveStatusState = simApplyStatus(exclusiveStatusState, "aura", "p1", 3);
+check(
+  exclusiveStatusState.statuses.length === 1 && exclusiveStatusState.statuses[0].statusId === "finite",
+  "A Critter with an active Status must reject every different Status application.",
+);
+exclusiveStatusState = simApplyStatus(exclusiveStatusState, "finite", "p1", 4);
+check(
+  exclusiveStatusState.statuses.length === 1 && exclusiveStatusState.statuses[0].duration === 4,
+  "Reapplying the same active Status must refresh that one Status instance.",
+);
+exclusiveStatusCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "cure-current-status", "effect_removal", {
+    target: "self", removal_category: "statuses", maximum_effects_removed: 1, selection_method: "oldest", specific_effect_id: "", prevent_reapplication: false,
+  }, 0),
+  effect("skill", "ritual", "apply-after-cure", "apply_status", { status_id: "aura", chance: 1, target: "self", indefinite: false, turns: 3 }, 1),
+];
+let curedThenAfflicted = simApplyStatus(battle(exclusiveStatusCatalog, makePlayer(), "cure-then-afflict"), "finite", "p1", 3);
+curedThenAfflicted = takeTurn(curedThenAfflicted, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(
+  curedThenAfflicted.statuses.length === 1 && curedThenAfflicted.statuses[0].statusId === "aura",
+  "A Status applied later in the same turn must succeed when an earlier Effect has already cured the target.",
+);
+check(
+  curedThenAfflicted.presentationEvents.some((event) => event.message === "Your Player One was cured of Finite.")
+    && curedThenAfflicted.presentationEvents.some((event) => event.message.includes("Aura from Ritual")),
+  "Status cures and later same-turn applications must each receive ordered narration.",
+);
+
 const selectedSideCatalog = makeCatalog();
 selectedSideCatalog.effectsBySkill.mark = [
   effect("skill", "mark", "selected-ally", "stat_modifier", { stat: "def", value_mode: "flat", amount: 3, chance: 1, target: "selected_ally" }, 0),
@@ -2100,6 +2169,55 @@ check(
   vampireKinds.includes("skill,damage,heal"),
   "Damage-drain Skills must present skill use, damage, and healing in that order.",
 );
+
+const draconovaCatalog = makeCatalog();
+const draconova = { ...draconovaCatalog.skills[0], id: "draconova", name: "Draconova", power: 100, mana_cost: 0 };
+draconovaCatalog.skills = [...draconovaCatalog.skills, draconova];
+const draconovaPlayer = makePlayer();
+draconovaPlayer.skillSlots = draconovaPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: "draconova" } : slot
+));
+draconovaCatalog.effectsBySkill.draconova = [{
+  ...effect("skill", "draconova", "expended-energy", "direct_health_modifier", {
+    target: "self",
+    operation: "lose_hp",
+    value_type: "percent_damage_dealt",
+    value: 0.15,
+    activation_chance: 1,
+    can_defeat_target: false,
+    affected_by_shield: false,
+    affected_by_healing_modifiers: false,
+    overhealing_behavior: "discard",
+    overheal_effect_ids: [],
+  }),
+  name: "Expended Energy",
+}];
+let draconovaBattle = battle(draconovaCatalog, draconovaPlayer, "draconova-recoil");
+draconovaBattle = {
+  ...draconovaBattle,
+  playerUnits: draconovaBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 80 } : unit),
+  opponentUnits: draconovaBattle.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, shield: 100, maxShield: 100 } : unit),
+};
+const draconovaResult = takeTurn(draconovaBattle, [{ actorKey: "p1", type: "skill", skillId: "draconova", targetKey: "o1", cost: 0 }]);
+const draconovaImpact = draconovaResult.presentationEvents.find((event) => event.kind === "damage" && event.targetKeys.includes("o1"));
+const draconovaDamage = 100 - draconovaResult.opponentUnits[0].shield;
+const draconovaRecoil = 80 - draconovaResult.playerUnits[0].hp;
+const draconovaRecoilEvent = draconovaResult.presentationEvents.find((event) => event.kind === "damage" && event.targetKeys.includes("p1") && event.message.includes("Expended Energy"));
+check(draconovaDamage > 0 && draconovaRecoil === roundHalfUp(draconovaDamage * 0.15), "Draconova recoil must use 15% of actual HP or Shield damage dealt.");
+check(
+  Boolean(draconovaImpact) && Boolean(draconovaRecoilEvent)
+    && draconovaResult.presentationEvents.indexOf(draconovaRecoilEvent!) > draconovaResult.presentationEvents.indexOf(draconovaImpact!)
+    && draconovaRecoilEvent!.message === `Your Player One lost ${draconovaRecoil} health from Expended Energy.`,
+  "Direct health recoil must animate and narrate the user after the attack impact.",
+);
+draconovaCatalog.effectsBySkill.draconova[0].parameters.activation_chance = 0;
+let noDraconovaRecoilBattle = battle(draconovaCatalog, draconovaPlayer, "draconova-no-recoil");
+noDraconovaRecoilBattle = {
+  ...noDraconovaRecoilBattle,
+  playerUnits: noDraconovaRecoilBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 80 } : unit),
+};
+const noDraconovaRecoil = takeTurn(noDraconovaRecoilBattle, [{ actorKey: "p1", type: "skill", skillId: "draconova", targetKey: "o1", cost: 0 }]);
+check(noDraconovaRecoil.playerUnits[0].hp === 80, "A Direct Health Modifier with zero activation chance must not activate.");
 
 const stimCatalog = makeCatalog();
 stimCatalog.relics.push({ id: "stim", name: "Stim Shot", description: "Healing amplifier.", max_owned: 1, asset_path: null, sort_order: 10 });
@@ -2242,11 +2360,42 @@ check(swappedStatusState.playerUnits[0].stats.atk === 30, "A Status Stat Modifie
 
 const incrementalStatusCatalog = makeCatalog();
 incrementalStatusCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "incremental-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "start_of_turn", spacing: 2, removal_behavior: "expire_on_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
-let incrementalStatusState = simApplyStatus(battle(incrementalStatusCatalog, makePlayer(), "status-incremental"), "aura", "p1", null);
+let incrementalStatusState = simApplyStatus(battle(incrementalStatusCatalog, makePlayer(), "status-incremental"), "aura", "p1", 3);
 check(incrementalStatusState.playerUnits[0].stats.atk === 25, "An incremental Status Stat Modifier must not apply before its first scheduled timing.");
 incrementalStatusState = takeTurn(incrementalStatusState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
 incrementalStatusState = startTurn(incrementalStatusState);
 check(incrementalStatusState.playerUnits[0].stats.atk === 27, "Spacing 2 must apply an incremental Status Stat Modifier every other turn.");
+const incrementalTriggerEvent = incrementalStatusState.presentationEvents.find((event) => event.kind === "status" && event.message.includes("ATK"));
+const incrementalCountdownEvent = incrementalStatusState.presentationEvents.find((event) => event.kind === "status" && event.message.includes("turn") && event.message.includes("Aura"));
+check(Boolean(incrementalTriggerEvent), "A start-of-turn Status stat change must emit a presentation event for text and animation playback.");
+check(Boolean(incrementalCountdownEvent), "A finite start-of-turn Status checkup must narrate its remaining duration.");
+check(
+  incrementalStatusState.playerUnits[0].manaRoll > 0
+    && Number(incrementalTriggerEvent?.state?.playerMana ?? 0) > 0,
+  "Start-of-turn Status presentation must be staged after the turn's dice have rolled.",
+);
+const startPlaybackBattle = simApplyStatus(battle(incrementalStatusCatalog, makePlayer(), "status-start-playback"), "aura", "p1", 3);
+const startPlaybackDungeon = {
+  ...confirmedMechDungeon,
+  battle: { ...startPlaybackBattle, statuses: startPlaybackBattle.statuses.map((status) => ({ ...status, turnsElapsed: 1 })), phase: "ready" as const },
+  pendingBattle: null,
+  phase: "await_roll" as const,
+  rollSummary: null,
+  events: [],
+  eventCursor: -1,
+} as DungeonRunState;
+const rolledStatusDungeon = rollDungeonDice(startPlaybackDungeon);
+check(
+  rolledStatusDungeon.phase === "roll_result" && rolledStatusDungeon.pendingBattle !== null && rolledStatusDungeon.events.length >= 2,
+  "The main game must retain start-of-turn Status events after showing the dice result.",
+);
+let playedStatusDungeon = continueAfterRoll(rolledStatusDungeon);
+check(
+  playedStatusDungeon.phase === "event_playback" && currentDungeonEvent(playedStatusDungeon)?.message.includes("Aura"),
+  "Continuing after the dice result must enter Status narration playback before action selection.",
+);
+while (playedStatusDungeon.phase === "event_playback") playedStatusDungeon = advanceDungeonEvent(playedStatusDungeon);
+check(playedStatusDungeon.phase === "select_player_actions", "Start-of-turn Status playback must return the main game to action selection.");
 
 const retainedIncrementalCatalog = makeCatalog();
 retainedIncrementalCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "retained-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "end_of_turn", spacing: 1, removal_behavior: "keep_after_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];

@@ -1,4 +1,4 @@
-import type { CombatEffectRow, Critter, EffectOwnerType, EffectTarget, ResolvedEffectRef } from "./types.js";
+import type { CombatEffectRow, Critter, EffectOwnerType, EffectTarget, ResolvedEffectRef, Skill } from "./types.js";
 
 export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "stat_modifier@1",
@@ -40,11 +40,16 @@ const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
   status: new Set(["status_holder", "status_holder_allies_without_holder", "status_holder_allies_with_holder", "status_holder_enemies"]),
 };
 
-const CONDITIONAL_TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
+const CONDITIONAL_EFFECT_TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
   skill: new Set(["using_critter", "using_critter_allies_with_equipped", "using_critter_allies_without_equipped", "using_critter_enemies", "skill_targets"]),
   ability: TARGETS_BY_OWNER.ability,
   relic: new Set(["equipped_critter", "equipped_critter_allies_with_equipped", "equipped_critter_allies_without_equipped", "equipped_critter_enemies"]),
   status: TARGETS_BY_OWNER.status,
+};
+
+const CONDITIONAL_CONDITION_TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
+  ...CONDITIONAL_EFFECT_TARGETS_BY_OWNER,
+  relic: new Set([...CONDITIONAL_EFFECT_TARGETS_BY_OWNER.relic, "skill_targets"]),
 };
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
@@ -69,7 +74,11 @@ function requireChoice<T extends string>(value: unknown, choices: readonly T[], 
 }
 
 function rejectUnknownKeys(parameters: Record<string, unknown>, allowed: readonly string[], label: string): void {
-  const unknown = Object.keys(parameters).filter((key) => !allowed.includes(key));
+  const commonFilters = new Set([
+    "target_critter_tag_ids", "source_critter_tag_ids", "source_skill_tag_ids",
+    "effect_target_critter_tag_ids", "condition_target_critter_tag_ids", "skill_tag_ids",
+  ]);
+  const unknown = Object.keys(parameters).filter((key) => !allowed.includes(key) && !commonFilters.has(key));
   if (unknown.length) throw new Error(`${label} contains unsupported parameter(s): ${unknown.join(", ")}.`);
 }
 
@@ -127,8 +136,18 @@ function validateOptionalElementIds(value: unknown, label: string): void {
   }
 }
 
+function validateOptionalTagIds(value: unknown, label: string): void {
+  if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || !id)) {
+    throw new Error(`${label} must be a string array when present.`);
+  }
+}
+
 function stringIds(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string" && id.length > 0) : [];
+}
+
+function matchesAnyTag(tagIds: string[], required: string[]): boolean {
+  return required.length === 0 || required.some((id) => tagIds.includes(id));
 }
 
 export function targetElementIds(effect: ResolvedEffectRef): string[] {
@@ -143,14 +162,33 @@ export function sourceElementIds(effect: ResolvedEffectRef): string[] {
   return stringIds(effect.parameters.source_element_ids);
 }
 
+export function targetCritterTagIds(effect: ResolvedEffectRef): string[] {
+  return stringIds(effect.parameters.target_critter_tag_ids);
+}
+
+export function sourceCritterTagIds(effect: ResolvedEffectRef): string[] {
+  return stringIds(effect.parameters.source_critter_tag_ids);
+}
+
+export function sourceSkillTagIds(effect: ResolvedEffectRef): string[] {
+  return stringIds(effect.parameters.source_skill_tag_ids);
+}
+
 export function effectMatchesSourceCritter(
   effect: ResolvedEffectRef,
-  critter: Pick<Critter, "element_1_id" | "element_2_id"> | undefined,
+  critter: Pick<Critter, "element_1_id" | "element_2_id" | "tag_ids"> | undefined,
 ): boolean {
   const required = new Set(sourceElementIds(effect));
-  if (required.size === 0) return true;
+  const requiredTags = sourceCritterTagIds(effect);
+  if (required.size === 0 && requiredTags.length === 0) return true;
   if (!critter) return false;
-  return required.has(critter.element_1_id) || Boolean(critter.element_2_id && required.has(critter.element_2_id));
+  const elementsMatch = required.size === 0 || required.has(critter.element_1_id) || Boolean(critter.element_2_id && required.has(critter.element_2_id));
+  return elementsMatch && matchesAnyTag(critter.tag_ids ?? [], requiredTags);
+}
+
+export function effectMatchesSourceSkill(effect: ResolvedEffectRef, skill: Pick<Skill, "tag_ids"> | undefined): boolean {
+  const required = sourceSkillTagIds(effect);
+  return required.length === 0 || Boolean(skill && matchesAnyTag(skill.tag_ids ?? [], required));
 }
 
 export function normalizeEffectElementParameters(runtimeKind: string, input: Record<string, unknown>): Record<string, unknown> {
@@ -198,18 +236,19 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   const target = parameters.target;
   if (runtimeKey === "conditional_effect@1") {
     const explicitConditionalTargets = parameters.effect_target !== undefined || parameters.condition_target !== undefined;
-    const allowedConditionalTargets = explicitConditionalTargets ? CONDITIONAL_TARGETS_BY_OWNER[effect.ownerType] : TARGETS_BY_OWNER[effect.ownerType];
+    const allowedEffectTargets = explicitConditionalTargets ? CONDITIONAL_EFFECT_TARGETS_BY_OWNER[effect.ownerType] : TARGETS_BY_OWNER[effect.ownerType];
+    const allowedConditionTargets = explicitConditionalTargets ? CONDITIONAL_CONDITION_TARGETS_BY_OWNER[effect.ownerType] : TARGETS_BY_OWNER[effect.ownerType];
     const effectTarget = requireChoice(
       parameters.effect_target ?? parameters.target,
-      [...allowedConditionalTargets],
+      [...allowedEffectTargets],
       `Effect ${effect.id} Effect Target for ${effect.ownerType}`,
     );
     const conditionTarget = requireChoice(
       parameters.condition_target ?? parameters.effect_target ?? parameters.target,
-      [...allowedConditionalTargets],
+      [...allowedConditionTargets],
       `Effect ${effect.id} Condition Target for ${effect.ownerType}`,
     );
-    if (!allowedConditionalTargets.has(effectTarget) || !allowedConditionalTargets.has(conditionTarget)) {
+    if (!allowedEffectTargets.has(effectTarget) || !allowedConditionTargets.has(conditionTarget)) {
       throw new Error(`Effect ${effect.id} has an unsupported conditional target.`);
     }
   } else if (!targetlessRuntimes.has(runtimeKey) || parameters.target !== undefined) {
@@ -239,6 +278,40 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       throw new Error(`Effect ${effect.id} source_element_ids requires a Skill or Relic owner.`);
     }
     validateOptionalElementIds(parameters.source_element_ids, `Effect ${effect.id} source_element_ids`);
+  }
+  if (parameters.target_critter_tag_ids !== undefined) {
+    if (effect.ownerType === "status" || (parameters.target === undefined && runtimeKey !== "conditional_effect@1")) {
+      throw new Error(`Effect ${effect.id} target_critter_tag_ids requires a Critter-targeting effect.`);
+    }
+    validateOptionalTagIds(parameters.target_critter_tag_ids, `Effect ${effect.id} target_critter_tag_ids`);
+  }
+  if (parameters.source_critter_tag_ids !== undefined) {
+    if (effect.ownerType !== "skill" && effect.ownerType !== "relic") {
+      throw new Error(`Effect ${effect.id} source_critter_tag_ids requires a Skill or Relic owner.`);
+    }
+    validateOptionalTagIds(parameters.source_critter_tag_ids, `Effect ${effect.id} source_critter_tag_ids`);
+  }
+  if (parameters.source_skill_tag_ids !== undefined) {
+    if (effect.ownerType !== "skill" && effect.ownerType !== "relic") {
+      throw new Error(`Effect ${effect.id} source_skill_tag_ids requires a Skill or Relic owner.`);
+    }
+    if (effect.ownerType === "relic" && stringIds(parameters.source_skill_tag_ids).length && !["damage_modifier@1", "effect_amplification@1"].includes(runtimeKey)) {
+      throw new Error(`Effect ${effect.id} source_skill_tag_ids requires a Relic Damage Modifier or Effect Amplification.`);
+    }
+    validateOptionalTagIds(parameters.source_skill_tag_ids, `Effect ${effect.id} source_skill_tag_ids`);
+  }
+  for (const key of ["effect_target_critter_tag_ids", "condition_target_critter_tag_ids"] as const) {
+    if (parameters[key] === undefined) continue;
+    if (runtimeKey !== "conditional_effect@1") {
+      throw new Error(`Effect ${effect.id} ${key} requires a Conditional Effect.`);
+    }
+    validateOptionalTagIds(parameters[key], `Effect ${effect.id} ${key}`);
+  }
+  if (parameters.skill_tag_ids !== undefined) {
+    const isSkillCost = runtimeKey === "action_cost_modifier@1"
+      || (runtimeKey === "stat_modifier@2" && effect.ownerType === "status" && parameters.stat === "skill_cost");
+    if (!isSkillCost) throw new Error(`Effect ${effect.id} skill_tag_ids requires a Skill cost modifier.`);
+    validateOptionalTagIds(parameters.skill_tag_ids, `Effect ${effect.id} skill_tag_ids`);
   }
 
   // The expanded runtime contract is intentionally validated here as a
@@ -366,18 +439,19 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     if (runtimeKey === "direct_health_modifier@1") {
       requireChoice(parameters.operation, ["heal", "lose_hp", "set_hp", "drain"], `Effect ${effect.id} operation`);
       requireChoice(parameters.value_type, ["flat", "percent_max_hp", "percent_current_hp", "percent_missing_hp", "percent_damage_dealt"], `Effect ${effect.id} value_type`);
+      validateChance(parameters.activation_chance === undefined ? 1 : parameters.activation_chance, `Effect ${effect.id} activation_chance`);
     }
     if (runtimeKey === "conditional_effect@1") {
-      const condition = requireChoice(parameters.condition, ["hp_percent", "shield_present", "shield_value", "mana", "active_state", "has_status", "has_relic", "relic_count", "last_squad_member", "action_order", "ally_defeated", "enemy_defeated", "turn_interval", "round_interval", "element", "previous_action", "previous_mana_roll", "has_stat_modifier"], `Effect ${effect.id} condition`);
+      const condition = requireChoice(parameters.condition, ["hp_percent", "shield_present", "shield_value", "mana", "active_state", "has_status", "has_relic", "relic_count", "last_squad_member", "action_order", "ally_defeated", "enemy_defeated", "turn_interval", "round_interval", "element", "tags", "previous_action", "previous_mana_roll", "has_stat_modifier"], `Effect ${effect.id} condition`);
       const comparison = requireChoice(parameters.comparison, ["equal", "not_equal", "above", "below", "at_least", "at_most", "negative", "positive"], `Effect ${effect.id} comparison`);
       if (condition === "has_stat_modifier" && !["negative", "positive"].includes(comparison)) {
         throw new Error(`Effect ${effect.id} comparison ${comparison} is not valid for Has Stat Modifier.`);
       }
-      if (["shield_present", "active_state", "has_status", "has_relic", "last_squad_member", "ally_defeated", "enemy_defeated", "element", "action_order", "previous_action"].includes(condition) && !["equal", "not_equal"].includes(comparison)) {
+      if (["shield_present", "active_state", "has_status", "has_relic", "last_squad_member", "ally_defeated", "enemy_defeated", "element", "tags", "action_order", "previous_action"].includes(condition) && !["equal", "not_equal"].includes(comparison)) {
         throw new Error(`Effect ${effect.id} comparison ${comparison} is not valid for ${condition}.`);
       }
       const conditionValue = String(parameters.condition_value ?? "");
-      if (!["has_status", "has_stat_modifier"].includes(condition) && !conditionValue) throw new Error(`Effect ${effect.id} condition_value must be configured.`);
+      if (!["has_status", "has_stat_modifier", "tags"].includes(condition) && !conditionValue) throw new Error(`Effect ${effect.id} condition_value must be configured.`);
       if (condition === "has_status") {
         const statusIds = stringIds(parameters.condition_status_ids);
         if (!statusIds.length) throw new Error(`Effect ${effect.id} condition_status_ids must contain at least one Status ID.`);
@@ -387,6 +461,9 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
         const allowedStats = new Set(["any", "atk", "def", "spd", "mana_dice", "swap_cost", "block_cost", "skill_cost"]);
         if (!stats.length || stats.some((stat) => !allowedStats.has(stat))) throw new Error(`Effect ${effect.id} condition_stats must contain supported stat keys.`);
         if (stats.includes("any") && stats.length > 1) throw new Error(`Effect ${effect.id} condition_stats cannot combine any with individual stats.`);
+      }
+      if (condition === "tags" && !stringIds(parameters.condition_target_critter_tag_ids).length) {
+        throw new Error(`Effect ${effect.id} condition_target_critter_tag_ids must contain at least one Critter Tag ID.`);
       }
       if (condition === "hp_percent") {
         const value = Number(conditionValue);

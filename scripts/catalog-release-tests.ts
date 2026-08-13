@@ -65,6 +65,7 @@ await expectError(() => assertServerCatalogCompatibility(releaseInfo, undefined,
 const emptyCatalog: Catalog = {
   currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], lootboxes: [], lootboxPoolEntries: [],
   elements: [], elementEffectiveness: [], skills: [], critters: [], critterProgression: [], critterSkillUnlocks: [],
+  tags: [],
   rollcasters: [], rollcasterProgression: [], rollcasterAbilities: [], rollcasterAbilityUnlocks: [], relics: [],
   dungeons: [], dungeonOpponents: [], dungeonEnemyRollcasters: [], dungeonRegularEncounters: [], dungeonBossEncounters: [], dungeonCompletionDrops: [], starterRollcasterOptions: [], starterOptions: [],
   gameAssets: [], statuses: [], effectsBySkill: {}, effectsByAbility: {}, effectsByRelic: {}, effectsByStatus: {},

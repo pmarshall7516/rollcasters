@@ -271,27 +271,66 @@ export function continueDungeonDialogue(state: DungeonRunState): DungeonRunState
 
 export function rollDungeonDice(state: DungeonRunState): DungeonRunState {
   if (state.phase !== "await_roll") return state;
-  const battle = startTurn(state.battle);
-  const player = battle.playerUnits.reduce(
+  const before = state.battle;
+  const resolved = startTurn(before);
+  const player = resolved.playerUnits.reduce(
     (sum, unit) => sum + (unit.active && unit.hp > 0 ? unit.manaRoll : 0),
     0,
   );
-  const opponent = battle.opponentUnits.reduce(
+  const opponent = resolved.opponentUnits.reduce(
     (sum, unit) => sum + (unit.active && unit.hp > 0 ? unit.manaRoll : 0),
     0,
   );
+  const events = resolved.presentationEvents.map((presentation, index): DungeonCombatEvent => ({
+    ...presentation,
+    id: `${state.run.id}:${state.run.battleIndex}:${before.turn}:start:${index + 1}`,
+    turn: before.turn,
+    phase: "start_turn",
+    requiresAdvance: true,
+  }));
+  const battle = events.length ? startTurnPlaybackBase(before, resolved, player, opponent) : resolved;
   return {
     ...state,
     battle,
+    pendingBattle: events.length ? resolved : null,
     phase: "roll_result",
     rollSummary: { player, opponent },
+    events,
+    eventCursor: -1,
   };
 }
 
 export function continueAfterRoll(state: DungeonRunState): DungeonRunState {
-  return state.phase === "roll_result"
-    ? { ...state, phase: "select_player_actions" }
-    : state;
+  if (state.phase !== "roll_result") return state;
+  if (state.pendingBattle && state.events.length) {
+    return {
+      ...state,
+      battle: applyEventState(state.battle, state.events[0]),
+      phase: "event_playback",
+      eventCursor: 0,
+    };
+  }
+  return { ...state, phase: "select_player_actions" };
+}
+
+function startTurnPlaybackBase(before: CombatState, resolved: CombatState, playerRoll: number, opponentRoll: number): CombatState {
+  const rolledUnits = new Map([...resolved.playerUnits, ...resolved.opponentUnits].map((unit) => [unit.key, unit]));
+  const withDice = (unit: CombatState["playerUnits"][number]) => {
+    const rolled = rolledUnits.get(unit.key);
+    return { ...unit, blocking: false, blockStreak: rolled?.blockStreak ?? unit.blockStreak, manaRoll: rolled?.manaRoll ?? 0 };
+  };
+  return {
+    ...before,
+    playerUnits: before.playerUnits.map(withDice),
+    opponentUnits: before.opponentUnits.map(withDice),
+    playerMana: before.playerMana + playerRoll,
+    opponentMana: before.opponentMana + opponentRoll,
+    rngState: resolved.rngState,
+    phase: "selecting",
+    presentationEvents: [],
+    turnEvents: resolved.turnEvents,
+    log: [`Turn ${before.turn}: player rolled ${playerRoll} mana, opponents rolled ${opponentRoll} mana.`, ...before.log],
+  };
 }
 
 function resolvedMessages(before: CombatState, after: CombatState): string[] {
@@ -547,6 +586,16 @@ export function advanceDungeonEvent(state: DungeonRunState): DungeonRunState {
       ...revealed,
       battle: applyEventState(revealed.battle, state.events[nextCursor], state.events[nextCursor].kind === "swap"),
       eventCursor: nextCursor,
+    };
+  }
+  if (state.events[0]?.phase === "start_turn") {
+    return {
+      ...state,
+      battle: state.pendingBattle,
+      pendingBattle: null,
+      phase: "select_player_actions",
+      events: [],
+      eventCursor: -1,
     };
   }
   return finishResolvedTurn({

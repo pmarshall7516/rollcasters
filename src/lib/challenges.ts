@@ -37,6 +37,9 @@ export type ChallengeEvent = {
   targetCritterId?: string;
   sourceElementIds?: string[];
   targetElementIds?: string[];
+  sourceCritterTagIds?: string[];
+  targetCritterTagIds?: string[];
+  skillTagIds?: string[];
   skillId?: string;
   abilityId?: string;
   rollcasterId?: string;
@@ -72,6 +75,39 @@ function stringArray(value: unknown): string[] {
 
 function includesOrAny(filter: string[], value: string | undefined): boolean {
   return filter.length === 0 || (value !== undefined && filter.includes(value));
+}
+
+function eventArray(event: ChallengeEvent, key: "sourceCritterTagIds" | "targetCritterTagIds" | "skillTagIds", payloadKey: string): string[] {
+  return stringArray(event[key] ?? event.payload?.[payloadKey]);
+}
+
+function matchesAnyFilter(filter: unknown, values: string[] | string | undefined): boolean {
+  const selected = stringArray(filter);
+  const candidates = Array.isArray(values) ? values : values ? [values] : [];
+  return selected.length === 0 || selected.some((value) => candidates.includes(value));
+}
+
+function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): boolean {
+  const p = parametersOf(challenge);
+  const payload = event.payload ?? {};
+  const sourceElements = event.sourceElementIds ?? stringArray(payload.source_element_ids);
+  const targetElements = event.targetElementIds ?? stringArray(payload.target_element_ids);
+  const sourceTags = eventArray(event, "sourceCritterTagIds", "source_critter_tag_ids");
+  const targetTags = eventArray(event, "targetCritterTagIds", "target_critter_tag_ids");
+  const skillTags = eventArray(event, "skillTagIds", "skill_tag_ids");
+  if (!matchesAnyFilter(p.source_critter_ids, event.sourceCritterId)) return false;
+  if (!matchesAnyFilter(p.source_element_ids, sourceElements)) return false;
+  if (!matchesAnyFilter(p.source_critter_tag_ids, sourceTags)) return false;
+  if (!matchesAnyFilter(p.source_skill_tag_ids, skillTags)) return false;
+  if (!matchesAnyFilter(p.target_critter_ids, event.targetCritterId)) return false;
+  if (!matchesAnyFilter(p.target_element_ids, targetElements)) return false;
+  if (!matchesAnyFilter(p.target_critter_tag_ids, targetTags)) return false;
+  if (challenge.challenge_type === "use_skill") {
+    if (!matchesAnyFilter(p.skill_tag_ids, skillTags)) return false;
+    if (!matchesAnyFilter(p.skill_ids, event.skillId)) return false;
+    if (!matchesAnyFilter(p.element_ids, [String(event.payload?.skill_element_id ?? "")])) return false;
+  }
+  return true;
 }
 
 function eventTypeFor(challengeType: string): ChallengeEventType | null {
@@ -134,7 +170,8 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   }
 
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(type)) {
-    if (!matchesLegacyTarget(challenge, event)) return 0;
+    const hasExpandedFilters = Object.keys(p).some((key) => key.endsWith("_tag_ids") || ["source_critter_ids", "source_element_ids", "target_critter_ids", "target_element_ids", "skill_ids", "element_ids", "tracking_scope"].includes(key));
+    if (hasExpandedFilters ? !matchesCombatFilters(challenge, event) : !matchesLegacyTarget(challenge, event)) return 0;
     return type === "knock_out_critters" || type === "use_skill" ? 1 : Math.max(0, Math.floor(event.amount ?? 0));
   }
 
@@ -143,13 +180,13 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
     if (String(payload.source_side ?? "") !== "player") return 0;
     const recipientSide = String(p.recipient_side ?? "any");
     if (recipientSide !== "any" && recipientSide !== String(payload.recipient_side ?? "")) return 0;
-    const targetMode = String(p.target_mode ?? "any");
-    const targetIds = stringArray(p.target_ids);
-    if (targetMode === "species" && targetIds.length && !includesOrAny(targetIds, event.targetCritterId)) return 0;
-    if (targetMode === "element") {
-      const targetElements = event.targetElementIds ?? stringArray(payload.target_element_ids);
-      if (targetIds.length && !targetIds.some((id) => targetElements.includes(id))) return 0;
-    }
+    if (!matchesAnyFilter(p.target_critter_ids, event.targetCritterId)) return 0;
+    if (!matchesAnyFilter(p.target_element_ids, event.targetElementIds ?? stringArray(payload.target_element_ids))) return 0;
+    if (!matchesAnyFilter(p.source_critter_ids, event.sourceCritterId)) return 0;
+    if (!matchesAnyFilter(p.source_element_ids, event.sourceElementIds ?? stringArray(payload.source_element_ids))) return 0;
+    if (!matchesAnyFilter(p.source_critter_tag_ids, eventArray(event, "sourceCritterTagIds", "source_critter_tag_ids"))) return 0;
+    if (!matchesAnyFilter(p.source_skill_tag_ids, eventArray(event, "skillTagIds", "skill_tag_ids"))) return 0;
+    if (!matchesAnyFilter(p.target_critter_tag_ids, eventArray(event, "targetCritterTagIds", "target_critter_tag_ids"))) return 0;
     return Math.max(0, Math.floor(event.amount ?? 0));
   }
 
