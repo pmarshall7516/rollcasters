@@ -858,11 +858,6 @@ button.catalog-card:hover,
   grid-template-columns: 1fr auto;
 }
 
-.battle-unit.opponent .sprite {
-  grid-column: 2;
-  grid-row: 1;
-}
-
 .battle-unit.opponent .combat-sprite-stack {
   grid-column: 2;
   grid-row: 1;
@@ -2010,11 +2005,21 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .shop-entry-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px; border: 1px solid var(--border-soft); border-radius: 11px; background: rgb(8 10 24 / 48%); color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .shop-price { display: inline-flex; align-items: center; gap: 6px; color: var(--accent-gold); font-size: 18px; font-weight: 950; white-space: nowrap; }
 .shop-price .asset-icon { width: 24px; height: 24px; }
+.shop-purchase-quantity, .shop-price-cost { font-variant-numeric: tabular-nums; }
 .shop-owned { margin: 0 !important; color: var(--text-secondary) !important; font-size: 13px; font-variant-numeric: tabular-nums; }
 .shop-complete-status { display: grid; place-items: center; width: 100%; min-height: 40px; margin: 0 !important; color: var(--success) !important; font-size: 14px; font-weight: 950; letter-spacing: .01em; }
 .shop-purchase { width: 100%; }
 .shop-screen .shop-purchase { width: min(100%, 214px); justify-self: center; }
 .shop-screen .lootbox-shop-actions > .shop-purchase { flex: 0 1 214px; }
+.shop-purchase-row { display: grid; grid-template-columns: minmax(48px, 1fr) minmax(0, 3fr); align-items: stretch; gap: 7px; width: 100%; }
+.shop-quantity-input { width: 100%; min-width: 0; min-height: 40px; padding: 8px 6px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: rgb(8 10 24 / 72%); color: var(--text-primary); font: inherit; font-size: 14px; font-variant-numeric: tabular-nums; line-height: 1.2; text-align: center; color-scheme: dark; }
+.shop-quantity-input:hover { border-color: var(--border-bright); }
+.shop-quantity-input:focus-visible { border-color: var(--border-bright); outline: 3px solid var(--focus); outline-offset: 3px; }
+.shop-purchase-row .shop-purchase { width: 100%; min-width: 0; }
+.lootbox-modal-purchase-row { width: min(100%, 420px); margin: 0 auto; }
+.lootbox-modal-purchase-stack { display: grid; justify-items: center; gap: 8px; width: 100%; }
+.lootbox-modal-purchase-price { min-height: 24px; font-size: 18px; }
+.lootbox-modal-purchase-price .asset-icon { width: 22px; height: 22px; }
 .shop-unavailable { min-height: 18px; margin: 0 !important; color: var(--danger) !important; font-size: 12px; font-weight: 800; }
 .shop-empty { display: grid; grid-column: 1 / -1; justify-items: center; gap: 8px; min-height: 220px; padding: 36px; border: 1px dashed var(--border-soft); border-radius: var(--radius-md); color: var(--text-secondary); text-align: center; }
 .shop-empty svg { color: var(--accent-magic); }
@@ -2225,6 +2230,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .lootbox-price-icon > .asset-icon { position:absolute; inset:0; z-index:1; width:24px; height:24px; }
 .lootbox-price-icon .asset-icon__image { width:100%; height:100%; object-fit:contain; }
 .lootbox-shop-card .shop-purchase { width:min(100%,178px); margin:2px auto 0; min-height:34px; padding:7px 12px; font-size:13px; }
+.lootbox-shop-card .shop-purchase-row .shop-purchase { width:100%; max-width:none; }
 .lootbox-bag-card { grid-template-rows:auto auto auto auto; aspect-ratio:auto; align-content:start; gap:6px; padding:10px; }
 .lootbox-bag-card .lootbox-sprite { align-self:center; width:128px; height:128px; }
 .lootbox-bag-card > b { color:var(--accent-cyan); font-size:17px; }
@@ -3190,6 +3196,10 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   min-height: 0;
   overflow: hidden;
   padding: 7px clamp(8px, 1.2vw, 18px);
+}
+
+.combat-shell:has(.dungeon-outcome-screen) {
+  overflow-y: auto;
 }
 
 .combat-shell .top-bar {

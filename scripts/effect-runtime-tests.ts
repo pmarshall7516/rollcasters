@@ -30,6 +30,7 @@ import {
   continueDungeonDialogue,
   createDungeonRunState,
   currentDungeonDialogue,
+  outcomePhaseForBattle,
   currentDungeonEvent,
   revealDungeonSwapEvent,
   rollDungeonDice,
@@ -1515,6 +1516,18 @@ const enemyDefeatedDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogu
 check(currentDungeonDialogue(enemyDefeatedDialogue)?.line === "This is not over." && continueDungeonDialogue(enemyDefeatedDialogue).phase === "battle_result", "A user victory must show the enemy Defeat line before encounter results.");
 const enemyVictoryDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "victory" as const };
 check(currentDungeonDialogue(enemyVictoryDialogue)?.line === "Your squad falls.", "A user defeat must show the enemy Victor line.");
+const noOutcomeDialogue = {
+  ...confirmedMechDungeon,
+  run: {
+    ...confirmedMechDungeon.run,
+    selectedEnemyEncounters: confirmedMechDungeon.run.selectedEnemyEncounters?.map((encounter) => ({
+      ...encounter,
+      victoryLine: null,
+      defeatLine: null,
+    })),
+  },
+};
+check(outcomePhaseForBattle(noOutcomeDialogue, "defeat").phase === "battle_result", "An encounter without authored outcome dialogue must skip the extra Continue step.");
 const opponentReserve = { ...confirmedMechDungeon.battle.opponentUnits[1], key: "opponent-reserve", active: false, battlefieldSlot: null };
 const opponentAfterKnockout = confirmedMechDungeon.battle.opponentUnits
   .map((unit, index) => index === 0 ? { ...unit, hp: 0 } : unit)

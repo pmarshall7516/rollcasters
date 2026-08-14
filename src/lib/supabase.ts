@@ -34,6 +34,7 @@ import type {
 } from "./types";
 import { parseBattleFormat, sortDungeonsNaturally } from "./dungeons";
 import { createRequestId } from "./uuid";
+import { aggregateShopPurchaseReceipts, indexedShopPurchaseRequestId } from "./shop";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
@@ -1033,12 +1034,46 @@ export async function acknowledgeCollectibleUnlockEvent(eventId: string): Promis
   if (error) throw error;
 }
 
-export async function purchaseShopEntry(entryId: string, requestId: string): Promise<ShopPurchaseReceipt> {
-  const { data, error } = await requireClient().rpc("purchase_shop_entry", {
+export async function purchaseShopEntry(entryId: string, requestId: string, quantity = 1): Promise<ShopPurchaseReceipt> {
+  const client = requireClient();
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 9999) {
+    throw new Error("Shop purchase quantity must be a positive integer between 1 and 9999.");
+  }
+  const { data, error } = await client.rpc("purchase_shop_entry", {
     p_entry_id: entryId,
     p_request_id: requestId,
+    p_quantity: quantity,
   });
-  if (error) throw error;
+  const missingQuantityRpc = error && (
+    error.code === "42883"
+    || error.code === "PGRST202"
+    || /could not find the function|function .* does not exist/i.test(error.message ?? "")
+  );
+  if (error && (!missingQuantityRpc || quantity !== 1)) throw error;
+  if (missingQuantityRpc) {
+    const purchaseLegacyUnit = async (unitRequestId: string): Promise<ShopPurchaseReceipt> => {
+      const legacy = await client.rpc("purchase_shop_entry", {
+        p_entry_id: entryId,
+        p_request_id: unitRequestId,
+      });
+      if (legacy.error) throw legacy.error;
+      return legacy.data as ShopPurchaseReceipt;
+    };
+    if (quantity === 1) return purchaseLegacyUnit(requestId);
+
+    const receipts: ShopPurchaseReceipt[] = [];
+    for (let index = 0; index < quantity; index += 1) {
+      try {
+        receipts.push(await purchaseLegacyUnit(indexedShopPurchaseRequestId(requestId, index)));
+      } catch (legacyError) {
+        if (receipts.length === 0) throw legacyError;
+        const partialError = legacyError instanceof Error ? legacyError : new Error(String(legacyError));
+        Object.assign(partialError, { partialReceipt: aggregateShopPurchaseReceipts(receipts, requestId) });
+        throw partialError;
+      }
+    }
+    return aggregateShopPurchaseReceipts(receipts, requestId);
+  }
   return data as ShopPurchaseReceipt;
 }
 

@@ -263,6 +263,17 @@ export function currentDungeonDialogue(state: DungeonRunState) {
   return line ? { speaker: encounter.enemyRollcaster.name, line: line.line_text, moment: state.dialogueMoment } : null;
 }
 
+export function outcomePhaseForBattle(state: DungeonRunState, moment: "victory" | "defeat"): DungeonRunState {
+  const dialogueState: DungeonRunState = {
+    ...state,
+    phase: "outcome_dialogue",
+    dialogueMoment: moment,
+  };
+  return currentDungeonDialogue(dialogueState)
+    ? dialogueState
+    : { ...state, phase: "battle_result", dialogueMoment: null };
+}
+
 export function continueDungeonDialogue(state: DungeonRunState): DungeonRunState {
   if (state.phase === "entry_dialogue") return { ...state, phase: "await_roll", dialogueMoment: null };
   if (state.phase === "outcome_dialogue") return { ...state, phase: "battle_result", dialogueMoment: null };
@@ -616,8 +627,8 @@ function finishResolvedTurn(state: DungeonRunState): DungeonRunState {
   const activeHealthy = state.battle.playerUnits.filter((unit) => unit.active && unit.hp > 0);
   const allHealthy = state.battle.playerUnits.filter((unit) => unit.hp > 0);
   const opponentsAlive = state.battle.opponentUnits.some((unit) => unit.hp > 0);
-  if (!opponentsAlive) return { ...state, phase: "outcome_dialogue", dialogueMoment: "defeat" };
-  if (allHealthy.length === 0) return { ...state, phase: "outcome_dialogue", dialogueMoment: "victory" };
+  if (!opponentsAlive) return outcomePhaseForBattle(state, "defeat");
+  if (allHealthy.length === 0) return outcomePhaseForBattle(state, "victory");
   const opponentCapacity = parseBattleFormat(state.run.battleFormat).opponentActiveCount;
   const healthyActiveOpponents = state.battle.opponentUnits.filter((unit) => unit.active && unit.hp > 0);
   const healthyOpponentCount = state.battle.opponentUnits.filter((unit) => unit.hp > 0).length;

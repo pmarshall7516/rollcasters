@@ -110,7 +110,7 @@ import { calculateLoadoutStats, nextOpenSquadSlot, type LoadoutStatKey, type Sta
 import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
-import { combatSwapTravelOffset } from "./lib/presentation";
+import { combatLoadingNarration, combatSwapTravelOffset } from "./lib/presentation";
 import {
   challengeDescription,
   completedTrackedChallengeIds,
@@ -134,6 +134,13 @@ import {
   trackedChallengesForDisplay,
   trackedSlotFor,
 } from "./lib/collectibles";
+import {
+  applyOptimisticShopPurchase,
+  applyShopPurchaseReceipt,
+  partialShopPurchaseReceipt,
+  shopPurchaseItemQuantity,
+  shopPurchasePrice,
+} from "./lib/shop";
 import {
   promoCodeErrorMessage,
   promoRewardOutcomeLabel,
@@ -162,6 +169,7 @@ import type {
   RollcasterAbility,
   Skill,
   ShopEntry,
+  ShopPurchaseReceipt,
   UserCritter,
   UserRollcaster,
   View,
@@ -243,6 +251,8 @@ export function App() {
   const [isAuthed, setIsAuthed] = useState(false);
   const [view, setView] = useState<View>("auth");
   const [data, setData] = useState<AppData | null>(null);
+  const [pendingShopPurchases, setPendingShopPurchases] = useState<Record<string, { entry: ShopEntry; quantity: number }>>({});
+  const shopPurchaseRevisionRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("critters");
@@ -272,6 +282,39 @@ export function App() {
   const appKeyboardFocusRef = useRef<HTMLElement | null>(null);
   const appKeyboardFocusProxyRef = useRef<HTMLElement | null>(null);
   const appInvalidFocusTimerRef = useRef<number | null>(null);
+  const combatProgressQueue = useRef<Promise<void>>(Promise.resolve());
+
+  const optimisticShopData = useMemo(() => {
+    if (!data) return null;
+    return Object.values(pendingShopPurchases).reduce(
+      (projected, pending) => applyOptimisticShopPurchase(projected, pending.entry, pending.quantity),
+      data,
+    );
+  }, [data, pendingShopPurchases]);
+
+  function queueOptimisticShopPurchase(token: string, entry: ShopEntry, quantity: number) {
+    shopPurchaseRevisionRef.current += 1;
+    setPendingShopPurchases((current) => ({ ...current, [token]: { entry, quantity } }));
+  }
+
+  function commitShopPurchase(tokens: string[], entry: ShopEntry, receipt: ShopPurchaseReceipt) {
+    shopPurchaseRevisionRef.current += 1;
+    setPendingShopPurchases((current) => {
+      const next = { ...current };
+      tokens.forEach((token) => delete next[token]);
+      return next;
+    });
+    setData((current) => current ? applyShopPurchaseReceipt(current, entry, receipt) : current);
+  }
+
+  function failShopPurchase(tokens: string[]) {
+    shopPurchaseRevisionRef.current += 1;
+    setPendingShopPurchases((current) => {
+      const next = { ...current };
+      tokens.forEach((token) => delete next[token]);
+      return next;
+    });
+  }
 
   function enqueueNotification(notification: BannerNotification) {
     setNotificationQueue((current) => {
@@ -302,6 +345,9 @@ export function App() {
   function commitLoadedData(loaded: AppData) {
     const previous = data;
     const userId = loaded.player?.profile.user_id;
+    if (previous?.player?.profile.user_id && previous.player.profile.user_id !== userId) {
+      setPendingShopPurchases({});
+    }
     const storage = localNotificationStorage();
     const previousForNotifications = previous?.player?.profile.user_id === userId ? previous : null;
     if (userId && seenChallengeCompletionUserId.current !== userId) {
@@ -515,9 +561,11 @@ export function App() {
     const showLoading = options.showLoading ?? true;
     if (showLoading) setLoading(true);
     setError(null);
+    const shopPurchaseRevisionAtStart = shopPurchaseRevisionRef.current;
     try {
       await ensureUserGameState();
       const loaded = await loadAppData();
+      if (shopPurchaseRevisionAtStart !== shopPurchaseRevisionRef.current) return;
       commitLoadedData(loaded);
       const requiredView = requiredStarterView(loaded.player);
       if (requiredView) {
@@ -572,6 +620,18 @@ export function App() {
     }
   }
 
+  function queueCombatProgressEvents(runId: string, turnNumber: number, events: Parameters<typeof submitCollectibleCombatEvents>[2]) {
+    if (events.length === 0) return;
+    const work = combatProgressQueue.current.then(async () => {
+      await submitCollectibleCombatEvents(runId, turnNumber, events);
+      void refresh("combat", { showLoading: false });
+    });
+    combatProgressQueue.current = work.catch((progressError) => {
+      console.error("Unable to submit collectible combat progress.", progressError);
+      setError(errorMessage(progressError, "Unable to update challenge progress."));
+    });
+  }
+
   useEffect(() => {
     if (!hasSupabaseConfig || !supabase) {
       setSessionReady(true);
@@ -592,6 +652,7 @@ export function App() {
       setIsAuthed(Boolean(session));
       if (!session) {
         setData(null);
+        setPendingShopPurchases({});
         setView("auth");
       }
     });
@@ -694,14 +755,15 @@ export function App() {
   }, [combat]);
 
   useEffect(() => {
+    const textData = optimisticShopData ?? data;
     window.render_game_to_text = () =>
       JSON.stringify({
         view,
         loading,
         authed: isAuthed,
-        catalogRelease: data?.catalogRelease ?? null,
-        playerStateRevision: data?.player?.playerStateRevision ?? null,
-        serverCatalogVersion: data?.player?.serverCatalogVersion ?? null,
+        catalogRelease: textData?.catalogRelease ?? null,
+        playerStateRevision: textData?.player?.playerStateRevision ?? null,
+        serverCatalogVersion: textData?.player?.serverCatalogVersion ?? null,
         lootboxOpeningPhase: document.documentElement.dataset.lootboxOpeningPhase ?? null,
         starterRollcasterSelected: data?.player?.profile.starter_rollcaster_selected_at != null,
         starterSelected: data?.player?.profile.starter_selected_at != null,
@@ -717,21 +779,21 @@ export function App() {
               }
             : null,
         coins: data?.player?.profile.coins ?? 0,
-        currencies: data?.player?.collectibleSnapshot.currencies ?? [],
+        currencies: textData?.player?.collectibleSnapshot.currencies ?? [],
         trackedChallenges: data?.player?.collectibleSnapshot.tracked ?? [],
         shop: view === "shop"
           ? {
               tab: shopTab,
-              offers: data?.catalog.shopEntries.filter((entry) => entry.shop_type === shopTab).length ?? 0,
+              offers: textData?.catalog.shopEntries.filter((entry) => entry.shop_type === shopTab).length ?? 0,
               promo: shopTab === "promo" ? promoState : null,
             }
           : null,
         bag: view === "bag"
           ? {
               tab: bagTab,
-              currencies: data ? orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite").length : 0,
-              shards: data?.player?.collectibleSnapshot.shards.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
-              lootboxes: data?.player?.collectibleSnapshot.lootboxes.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
+              currencies: textData ? orderedCurrencies(textData).filter((currency) => currency.id === "coins" || currency.id === "prismite").length : 0,
+              shards: textData?.player?.collectibleSnapshot.shards.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
+              lootboxes: textData?.player?.collectibleSnapshot.lootboxes.filter((row) => BigInt(row.quantity || "0") > 0n).length ?? 0,
             }
           : null,
         unlockNotification: notificationQueue[0]?.kind === "collectible-unlock"
@@ -852,7 +914,7 @@ export function App() {
           : null,
       });
     window.advanceTime = () => undefined;
-  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, notificationQueue, promoState]);
+  }, [view, shopTab, bagTab, loading, isAuthed, data, optimisticShopData, combat, notificationQueue, promoState]);
 
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
@@ -868,8 +930,8 @@ export function App() {
           : ""
     }>
       <TopBar
-        data={data}
-        player={data.player}
+        data={optimisticShopData ?? data}
+        player={(optimisticShopData ?? data).player!}
         refreshing={view !== "combat" && loading}
         onHome={() => navigate(requiredStarterView(data.player) ?? "home")}
         onSignOut={async () => {
@@ -934,7 +996,7 @@ export function App() {
       )}
       {view === "bag" && (
         <BagScreen
-          data={data}
+          data={optimisticShopData ?? data}
           tab={bagTab}
           setTab={setBagTab}
           onRefresh={() => refresh("bag")}
@@ -943,11 +1005,15 @@ export function App() {
       )}
       {view === "shop" && (
         <ShopScreen
-          data={data}
+          data={optimisticShopData ?? data}
           tab={shopTab}
           setTab={(tab) => navigate("shop", tab)}
           onBack={() => navigate("home")}
           onRefresh={() => refresh("shop")}
+          onBackgroundRefresh={() => refresh(undefined, { showLoading: false })}
+          onOptimisticPurchase={queueOptimisticShopPurchase}
+          onPurchaseCommitted={commitShopPurchase}
+          onPurchaseFailed={failShopPurchase}
           onPromoStateChange={setPromoState}
           onNotify={enqueueNotification}
         />
@@ -964,18 +1030,13 @@ export function App() {
           data={data}
           combat={combat}
           setCombat={setCombat}
-          onTurnResolved={async (resolved) => {
+          onTurnResolved={(resolved) => {
             const turn = resolved.pendingBattle ?? resolved.battle;
             if (turn.turnEvents.length === 0) return;
-            try {
-              await submitCollectibleCombatEvents(resolved.run.id, resolved.battle.turn, turn.turnEvents);
-              // Keep the full player/catalog refresh off the turn presentation
-              // path; CombatScreen applies the resolved state after this load.
-              void refresh("combat", { showLoading: false });
-            } catch (progressError) {
-              console.error("Unable to submit collectible combat progress.", progressError);
-              setError(errorMessage(progressError, "Unable to update challenge progress."));
-            }
+            // Challenge progress is durable but not required to render the
+            // already-resolved turn. Keep it ordered in the background so a
+            // slow progress RPC cannot delay combat presentation.
+            queueCombatProgressEvents(resolved.run.id, resolved.battle.turn, turn.turnEvents);
           }}
           onBattleResult={async (resolved) => {
             setLoading(true);
@@ -990,7 +1051,7 @@ export function App() {
                 const activatedRelicIds = [...new Set(resolved.battle.runtimeEffects
                   .filter((effect) => effect.sourceOwnerType === "relic" && effect.activationCount > 0)
                   .map((effect) => effect.sourceOwnerId))];
-                await submitCollectibleCombatEvents(resolved.run.id, resolved.battle.turn, [{
+                queueCombatProgressEvents(resolved.run.id, resolved.battle.turn, [{
                   event_key: `dungeon:${resolved.run.id}:completed`,
                   event_type: "dungeon_completed",
                   source_critter_id: null,
@@ -1009,9 +1070,11 @@ export function App() {
                   },
                 }]);
               }
-              const loaded = await loadAppData();
-              commitLoadedData(loaded);
-              setCombat(applyDungeonBattleResult(resolved, result, loaded.catalog, loaded.player!));
+              setCombat(applyDungeonBattleResult(resolved, result, data.catalog, data.player!));
+              // Refresh the catalog/player projection after the result screen
+              // is visible. The authoritative result already contains the
+              // run and reward state needed for this immediate transition.
+              void refresh("combat", { showLoading: false });
             } catch (resultError) {
               setError(errorMessage(resultError, "Unable to record the encounter result."));
             } finally {
@@ -2373,12 +2436,29 @@ function BagShardCard({ data, type, id }: { data: AppData; type: CollectibleType
   );
 }
 
+type ShopPurchaseBatch = {
+  entry: ShopEntry;
+  requestId: string;
+  quantity: number;
+  tokens: string[];
+  deferreds: Array<{
+    resolve: (receipt: ShopPurchaseReceipt) => void;
+    reject: (error: unknown) => void;
+  }>;
+  timer: number | null;
+  sending: boolean;
+};
+
 function ShopScreen({
   data,
   tab,
   setTab,
   onBack,
   onRefresh,
+  onBackgroundRefresh,
+  onOptimisticPurchase,
+  onPurchaseCommitted,
+  onPurchaseFailed,
   onPromoStateChange,
   onNotify,
 }: {
@@ -2387,16 +2467,24 @@ function ShopScreen({
   setTab: (tab: ShopTab) => void;
   onBack: () => void;
   onRefresh: () => Promise<void>;
+  onBackgroundRefresh: () => Promise<void>;
+  onOptimisticPurchase: (token: string, entry: ShopEntry, quantity: number) => void;
+  onPurchaseCommitted: (tokens: string[], entry: ShopEntry, receipt: ShopPurchaseReceipt) => void;
+  onPurchaseFailed: (tokens: string[]) => void;
   onPromoStateChange: (state: PromoRenderState) => void;
   onNotify: (notification: BannerNotification) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [busyEntry, setBusyEntry] = useState<string | null>(null);
+  const [quantityByEntry, setQuantityByEntry] = useState<Record<string, number>>({});
+  const [pendingEntryIds, setPendingEntryIds] = useState<Set<string>>(() => new Set());
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [purchasedLootboxEntries, setPurchasedLootboxEntries] = useState<Set<string>>(() => new Set());
   const [selectedLootboxEntry, setSelectedLootboxEntry] = useState<ShopEntry | null>(null);
-  const [purchaseLootboxOnOpen, setPurchaseLootboxOnOpen] = useState(false);
-  const requestIds = useRef(new Map<string, string>());
+  const [selectedLootboxQuantity, setSelectedLootboxQuantity] = useState(1);
+  const purchaseBatches = useRef<ShopPurchaseBatch[]>([]);
+  const purchaseRequestChain = useRef<Promise<void>>(Promise.resolve());
+  const reconcileTimer = useRef<number | null>(null);
+  const unmountedRef = useRef(false);
   const normalized = query.trim().toLocaleLowerCase();
   const authoredEntries = data.catalog.shopEntries.filter((entry): entry is Extract<ShopEntry,{ shop_type: "shard" | "relic" }> => (
     tab === "shard" || tab === "relic"
@@ -2414,29 +2502,123 @@ function ShopScreen({
     });
   }, [authoredEntries.map((entry) => entry.id).join("|"), validEntries.map((entry) => entry.id).join("|")]);
 
-  async function purchase(entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>) {
-    setBusyEntry(entry.id); setPurchaseError(null);
-    const requestId = requestIds.current.get(entry.id) ?? createRequestId();
-    requestIds.current.set(entry.id, requestId);
+  useEffect(() => () => {
+    unmountedRef.current = true;
+    if (reconcileTimer.current !== null) window.clearTimeout(reconcileTimer.current);
+    purchaseBatches.current.forEach((batch) => {
+      if (batch.timer !== null) {
+        window.clearTimeout(batch.timer);
+        batch.timer = null;
+      }
+      startBatch(batch);
+    });
+  }, []);
+
+  function quantityFor(entryId: string): number {
+    return quantityByEntry[entryId] ?? 1;
+  }
+
+  function setQuantity(entryId: string, raw: string | number) {
+    const parsed = Number(raw);
+    const quantity = Number.isSafeInteger(parsed) ? Math.max(1, Math.min(9999, parsed)) : 1;
+    setQuantityByEntry((current) => ({ ...current, [entryId]: quantity }));
+  }
+
+  function scheduleReconcile() {
+    if (unmountedRef.current) return;
+    if (reconcileTimer.current !== null) window.clearTimeout(reconcileTimer.current);
+    reconcileTimer.current = window.setTimeout(() => {
+      reconcileTimer.current = null;
+      if (unmountedRef.current) return;
+      if (purchaseBatches.current.some((batch) => batch.sending || batch.timer !== null)) {
+        scheduleReconcile();
+        return;
+      }
+      void onBackgroundRefresh().catch((refreshFailure) => console.error("Shop background refresh failed.", refreshFailure));
+    }, 220);
+  }
+
+  async function flushBatch(batch: ShopPurchaseBatch) {
     try {
-      const receipt = await purchaseShopEntry(entry.id, requestId);
-      if (receipt.shop_type === "lootbox" || receipt.target_category === "lootbox") throw new Error("Unexpected Lootbox purchase receipt.");
-      requestIds.current.delete(entry.id);
-      onNotify({
-        id: `shop:${receipt.request_id}`,
-        kind: "shop-reward",
-        targetCategory: receipt.target_category,
-        targetId: receipt.target_id,
-        shard: receipt.shop_type === "shard",
-        granted: receipt.granted,
-        discarded: receipt.discarded,
-      });
-      await onRefresh();
+      const receipt = await purchaseShopEntry(batch.entry.id, batch.requestId, batch.quantity);
+      onPurchaseCommitted(batch.tokens, batch.entry, receipt);
+      if (receipt.shop_type !== "lootbox" && receipt.target_category !== "lootbox") {
+        onNotify({
+          id: `shop:${receipt.request_id}`,
+          kind: "shop-reward",
+          targetCategory: receipt.target_category,
+          targetId: receipt.target_id,
+          shard: receipt.shop_type === "shard",
+          granted: receipt.granted,
+          discarded: receipt.discarded,
+        });
+      }
+      batch.deferreds.forEach(({ resolve }) => resolve(receipt));
     } catch (error) {
-      setPurchaseError(shopErrorMessage(error));
+      const partialReceipt = partialShopPurchaseReceipt(error);
+      if (partialReceipt) {
+        onPurchaseCommitted(batch.tokens, batch.entry, partialReceipt);
+        if (!unmountedRef.current) setPurchaseError("Some purchases could not be completed; completed purchases were saved.");
+      } else {
+        onPurchaseFailed(batch.tokens);
+        if (!unmountedRef.current) setPurchaseError(shopErrorMessage(error));
+      }
+      batch.deferreds.forEach(({ reject }) => reject(error));
     } finally {
-      setBusyEntry(null);
+      purchaseBatches.current = purchaseBatches.current.filter((candidate) => candidate !== batch);
+      if (!unmountedRef.current) {
+        setPendingEntryIds((current) => {
+          const next = new Set(current);
+          if (!purchaseBatches.current.some((candidate) => candidate.entry.id === batch.entry.id)) next.delete(batch.entry.id);
+          return next;
+        });
+      }
+      scheduleReconcile();
     }
+  }
+
+  function startBatch(batch: ShopPurchaseBatch) {
+    if (batch.sending) return;
+    batch.sending = true;
+    const work = purchaseRequestChain.current.then(() => flushBatch(batch));
+    purchaseRequestChain.current = work.catch(() => undefined);
+  }
+
+  function queuePurchase(entry: ShopEntry, quantity: number): Promise<ShopPurchaseReceipt> {
+    const safeQuantity = Math.max(1, Math.min(9999, Math.trunc(quantity)));
+    if (reconcileTimer.current !== null) {
+      window.clearTimeout(reconcileTimer.current);
+      reconcileTimer.current = null;
+    }
+    setPurchaseError(null);
+    const token = createRequestId();
+    onOptimisticPurchase(token, entry, safeQuantity);
+    setPendingEntryIds((current) => new Set(current).add(entry.id));
+    return new Promise<ShopPurchaseReceipt>((resolve, reject) => {
+      let batch = [...purchaseBatches.current].reverse().find((candidate) => candidate.entry.id === entry.id && !candidate.sending);
+      if (!batch) {
+        batch = { entry, requestId: createRequestId(), quantity: 0, tokens: [], deferreds: [], timer: null, sending: false };
+        purchaseBatches.current.push(batch);
+      }
+      batch.quantity += safeQuantity;
+      batch.tokens.push(token);
+      batch.deferreds.push({ resolve, reject });
+      if (batch.timer !== null) window.clearTimeout(batch.timer);
+      batch.timer = window.setTimeout(() => {
+        batch!.timer = null;
+        startBatch(batch!);
+      }, 180);
+    });
+  }
+
+  function flushPendingBatches() {
+    purchaseBatches.current.forEach((batch) => {
+      if (batch.timer !== null) {
+        window.clearTimeout(batch.timer);
+        batch.timer = null;
+      }
+      startBatch(batch);
+    });
   }
 
   const groups: Array<{ type: CollectibleType; label: string }> = [
@@ -2447,12 +2629,12 @@ function ShopScreen({
 
   return (
     <section className="screen-stack shop-screen">
-      <div className="screen-heading row"><div><p className="eyebrow">Camp Market</p><h1>Shop</h1><p>Find shards, Relics, and special rewards.</p></div><button className="secondary-button" onClick={onBack}>Back</button></div>
+      <div className="screen-heading row"><div><p className="eyebrow">Camp Market</p><h1>Shop</h1><p>Find shards, Relics, and special rewards.</p></div><button className="secondary-button" onClick={() => { flushPendingBatches(); onBack(); }}>Back</button></div>
       <div className="tabs shop-tabs" role="tablist" aria-label="Shop categories">
-        <button role="tab" aria-selected={tab === "shard"} className={tab === "shard" ? "active" : ""} onClick={() => setTab("shard")}>Shard Shop</button>
-        <button role="tab" aria-selected={tab === "relic"} className={tab === "relic" ? "active" : ""} onClick={() => setTab("relic")}>Relic Shop</button>
-        <button role="tab" aria-selected={tab === "lootbox"} className={tab === "lootbox" ? "active" : ""} onClick={() => setTab("lootbox")}>Lootbox Shop</button>
-        <button role="tab" aria-selected={tab === "promo"} className={tab === "promo" ? "active" : ""} onClick={() => setTab("promo")}><Ticket size={17} aria-hidden="true" /> Promo Codes</button>
+        <button role="tab" aria-selected={tab === "shard"} className={tab === "shard" ? "active" : ""} onClick={() => { flushPendingBatches(); setTab("shard"); }}>Shard Shop</button>
+        <button role="tab" aria-selected={tab === "relic"} className={tab === "relic" ? "active" : ""} onClick={() => { flushPendingBatches(); setTab("relic"); }}>Relic Shop</button>
+        <button role="tab" aria-selected={tab === "lootbox"} className={tab === "lootbox" ? "active" : ""} onClick={() => { flushPendingBatches(); setTab("lootbox"); }}>Lootbox Shop</button>
+        <button role="tab" aria-selected={tab === "promo"} className={tab === "promo" ? "active" : ""} onClick={() => { flushPendingBatches(); setTab("promo"); }}><Ticket size={17} aria-hidden="true" /> Promo Codes</button>
       </div>
       {(tab === "shard" || tab === "relic" || tab === "lootbox") && <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, name, or ID" /></label>}
       {(tab === "shard" || tab === "relic" || tab === "lootbox") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
@@ -2469,14 +2651,17 @@ function ShopScreen({
         const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.target_id)!;
         const currency = currencyFor(data, entry.currency_id);
         if (!currency) return null;
+        const quantity = quantityFor(entry.id);
+        const availability = shopAvailability(data, entry, quantity);
+        const busy = pendingEntryIds.has(entry.id);
+        const totalPrice = shopPurchasePrice(entry, quantity);
         // Bag ownership is durable inventory state, not an in-progress shop
         // decision. Every visit to the shop should start with Purchase; only
         // the purchase made from this card may temporarily expose the choice
         // to open it or send it to the Bag.
         const purchased = purchasedLootboxEntries.has(entry.id);
-        const busy = busyEntry === entry.id;
-        const openDetails = (purchaseImmediately = false) => {
-          setPurchaseLootboxOnOpen(purchaseImmediately);
+        const openDetails = (requestedQuantity = quantity) => {
+          setSelectedLootboxQuantity(requestedQuantity);
           setSelectedLootboxEntry(entry);
         };
         return <article
@@ -2484,7 +2669,7 @@ function ShopScreen({
           key={entry.id}
           tabIndex={0}
           role="button"
-          aria-label={`${lootbox.name}, ${formatAmount(entry.price)} ${currency.name}`}
+          aria-label={`${lootbox.name}, ${formatAmount(totalPrice)} ${currency.name}`}
           onClick={() => openDetails()}
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget) return;
@@ -2508,7 +2693,7 @@ function ShopScreen({
             aria-hidden="true"
           ><LootboxSprite lootbox={lootbox} variant="closed" /></span>
           <strong className="lootbox-shop-name">{lootbox.name}</strong>
-          <b className="shop-price lootbox-shop-price"><span className="lootbox-price-icon" aria-hidden="true"><Coins /><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={null} /></span>{formatAmount(entry.price)}</b>
+          <b className="shop-price lootbox-shop-price"><span className="shop-purchase-quantity">{formatAmount(quantity)}×</span><span className="lootbox-price-icon" aria-hidden="true"><Coins /><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={null} /></span><span className="shop-price-cost">{formatAmount(totalPrice)}</span></b>
           <div className="lootbox-shop-actions">
             {purchased ? <>
               <button type="button" className="primary-button" disabled={busy} onClick={(event) => { event.stopPropagation(); openDetails(); }}>Open Now</button>
@@ -2530,7 +2715,27 @@ function ShopScreen({
                     .catch((refreshFailure) => console.error("Lootbox Bag refresh failed.", refreshFailure))
                 }}
               >Send to Bag</button>
-            </> : <button className="primary-button shop-purchase" disabled={busy} onClick={(event) => { event.stopPropagation(); openDetails(true); }}>Purchase</button>}
+            </> : <div className="shop-purchase-row">
+              <input
+                className="shop-quantity-input"
+                aria-label={`Quantity of ${lootbox.name}`}
+                type="number"
+                min={1}
+                max={9999}
+                step={1}
+                value={quantity}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => setQuantity(entry.id, event.target.value)}
+              />
+              <button
+                className="primary-button shop-purchase"
+                disabled={!availability.enabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openDetails(quantity);
+                }}
+              >Purchase</button>
+            </div>}
           </div>
         </article>;
         })}{lootboxEntries.length===0 && <ShopEmptyState hasAuthoredEntries={false} />}</div>
@@ -2539,30 +2744,35 @@ function ShopScreen({
           {groups.map((group) => {
             const grouped = entries.filter((entry) => entry.target_category === group.type);
             if (!grouped.length) return null;
-            return <section className="shop-group shop-grid-section" key={group.type}><h2 className="shop-grid-heading-slot">{group.label}</h2><div className="shop-grid">{grouped.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}</div></section>;
+            return <section className="shop-group shop-grid-section" key={group.type}><h2 className="shop-grid-heading-slot">{group.label}</h2><div className="shop-grid">{grouped.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} quantity={quantityFor(entry.id)} onQuantityChange={(value) => setQuantity(entry.id, value)} onPurchase={() => { void queuePurchase(entry, quantityFor(entry.id)).catch(() => undefined); }} />)}</div></section>;
           })}
           {entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}
         </div>
       ) : <div className="shop-grid-section shop-grid-headingless">
         <div className="shop-grid-heading-slot" aria-hidden="true" />
-        <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} busy={busyEntry === entry.id} onPurchase={() => purchase(entry)} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>
+        <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} quantity={quantityFor(entry.id)} onQuantityChange={(value) => setQuantity(entry.id, value)} onPurchase={() => { void queuePurchase(entry, quantityFor(entry.id)).catch(() => undefined); }} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>
       </div>}
       {selectedLootboxEntry && <LootboxModal
         data={data}
         lootboxId={selectedLootboxEntry.target_id}
         mode="purchase"
-        autoPurchase={purchaseLootboxOnOpen}
         initialPurchased={purchasedLootboxEntries.has(selectedLootboxEntry.id)}
         shopEntry={selectedLootboxEntry}
+        purchaseQuantity={selectedLootboxQuantity}
+        onPurchaseRequested={(quantity) => queuePurchase(selectedLootboxEntry, quantity)}
         onRefresh={onRefresh}
         onPurchased={() => setPurchasedLootboxEntries((current) => new Set(current).add(selectedLootboxEntry.id))}
+        onPurchaseFailed={() => setPurchasedLootboxEntries((current) => {
+          const next = new Set(current);
+          next.delete(selectedLootboxEntry.id);
+          return next;
+        })}
         onOpened={() => setPurchasedLootboxEntries((current) => {
           const next = new Set(current);
           next.delete(selectedLootboxEntry.id);
           return next;
         })}
         onClose={() => {
-          setPurchaseLootboxOnOpen(false);
           setSelectedLootboxEntry(null);
         }}
       />}
@@ -2606,6 +2816,10 @@ function lootboxRewardName(data: AppData, receipt: LootboxOpeningReceipt, winnin
     return `${receipt.reward.name} Shards`;
   }
   return receipt.reward.name;
+}
+
+function lootboxQuantity(data: AppData, lootboxId: string): bigint {
+  return safeBigInt(data.player?.collectibleSnapshot.lootboxes.find((row) => row.lootbox_id === lootboxId)?.quantity);
 }
 
 type LootboxRewardProgressState = {
@@ -2706,36 +2920,41 @@ function LootboxRewardProgress({ data, progress, duplicateAmount, duplicateCurre
   </div>;
 }
 
-function LootboxModal({ data, lootboxId, mode, autoPurchase = false, initialPurchased = false, shopEntry, onRefresh, onPurchased, onOpened, onClose }: {
+function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
   data: AppData;
   lootboxId: string;
   mode: "purchase" | "owned";
-  autoPurchase?: boolean;
   initialPurchased?: boolean;
   shopEntry?: ShopEntry;
+  purchaseQuantity?: number;
+  onPurchaseRequested?: (quantity: number) => Promise<ShopPurchaseReceipt>;
   onRefresh: () => Promise<void>;
   onPurchased?: () => void;
+  onPurchaseFailed?: () => void;
   onOpened?: () => void;
   onClose: () => void;
 }) {
   const lootbox = data.catalog.lootboxes.find((row) => row.id === lootboxId);
   const pool = data.catalog.lootboxPoolEntries.filter((entry) => entry.lootbox_id === lootboxId).sort((left,right) => left.sort_order-right.sort_order);
   const [purchased, setPurchased] = useState(mode === "owned" || initialPurchased);
+  const [selectedPurchaseQuantity, setSelectedPurchaseQuantity] = useState(purchaseQuantity);
+  const [purchasePending, setPurchasePending] = useState(false);
   const [busy, setBusy] = useState(false);
+  const initialBagQuantity = lootboxQuantity(data, lootboxId);
+  const startingBagQuantityRef = useRef(initialBagQuantity);
+  const [availableToOpen, setAvailableToOpen] = useState<bigint | null>(() => mode === "owned" || initialPurchased ? initialBagQuantity : null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<LootboxModalPhase>("idle");
   const [receipt, setReceipt] = useState<LootboxOpeningReceipt | null>(null);
   const [rewardProgress, setRewardProgress] = useState<LootboxRewardProgressState | null>(null);
   const [reelTarget, setReelTarget] = useState<number | null>(null);
-  const purchaseRequest = useRef(createRequestId());
-  const autoPurchaseStarted = useRef(false);
   const openingRequest = useRef(createRequestId());
   const openButtonRef = useRef<HTMLButtonElement>(null);
   const reelViewportRef = useRef<HTMLDivElement>(null);
   const reelTrackRef = useRef<HTMLDivElement>(null);
   const reelAnimationRef = useRef<Animation | null>(null);
   const timers = useRef<number[]>([]);
-  const canOpen = purchased && phase === "idle" && !busy;
+  const canOpen = purchased && !purchasePending && phase === "idle" && !busy && (availableToOpen === null || availableToOpen > 0n);
 
   useEffect(() => () => {
     timers.current.forEach((timer) => window.clearTimeout(timer));
@@ -2747,32 +2966,40 @@ function LootboxModal({ data, lootboxId, mode, autoPurchase = false, initialPurc
   }, [phase]);
 
   async function purchaseBox() {
-    if (!shopEntry || busy) return;
-    setBusy(true); setError(null);
+    if (!shopEntry || !onPurchaseRequested || busy || purchasePending) return;
+    setError(null);
+    setPurchased(true);
+    setPurchasePending(true);
+    onPurchased?.();
     try {
-      await purchaseShopEntry(shopEntry.id,purchaseRequest.current);
-      setPurchased(true);
-      onPurchased?.();
-      // The purchase and Bag write happen in one server transaction. Refresh
-      // is only a view update and must not turn a successful purchase into a
-      // retryable error.
-      await onRefresh().catch((refreshFailure) => console.error("Lootbox purchase succeeded but refresh failed.", refreshFailure));
+      const purchase = onPurchaseRequested(selectedPurchaseQuantity);
+      setBusy(false);
+      const receipt = await purchase;
+      setAvailableToOpen(startingBagQuantityRef.current + safeBigInt(receipt.granted));
+      setPurchasePending(false);
     } catch (purchaseFailure) {
+      const partialReceipt = partialShopPurchaseReceipt(purchaseFailure);
+      if (partialReceipt) {
+        setPurchased(true);
+        setAvailableToOpen(startingBagQuantityRef.current + safeBigInt(partialReceipt.granted));
+        setPurchasePending(false);
+        setError("Some purchases could not be completed; completed purchases were saved.");
+        return;
+      }
+      setPurchased(false);
+      setPurchasePending(false);
+      onPurchaseFailed?.();
       setError(shopErrorMessage(purchaseFailure));
-    } finally { setBusy(false); }
+    }
   }
 
-  useEffect(() => {
-    if (!autoPurchase || autoPurchaseStarted.current || purchased || !shopEntry) return;
-    autoPurchaseStarted.current = true;
-    void purchaseBox();
-  }, [autoPurchase, purchased, shopEntry]);
-
-  async function openBox() {
-    if (!canOpen || !lootbox) return;
+  async function openBox(force = false) {
+    if ((!force && !canOpen) || !lootbox || (availableToOpen !== null && availableToOpen <= 0n)) return;
     setBusy(true); setError(null);
     try {
-      const opening = await openLootbox(lootbox.id,openingRequest.current);
+      const opening = await openLootbox(lootbox.id, openingRequest.current);
+      openingRequest.current = createRequestId();
+      setAvailableToOpen((current) => current === null ? null : current > 0n ? current - 1n : 0n);
       setRewardProgress(lootboxRewardProgress(data, opening.reward));
       setReceipt(opening);
       // The opening RPC consumes the Bag item and grants the reward in one
@@ -2792,6 +3019,15 @@ function LootboxModal({ data, lootboxId, mode, autoPurchase = false, initialPurc
     } catch (openingFailure) {
       setError(errorMessage(openingFailure,"Unable to open this Lootbox."));
     } finally { setBusy(false); }
+  }
+
+  function openAnother() {
+    if (busy || availableToOpen === null || availableToOpen <= 0n) return;
+    setReceipt(null);
+    setRewardProgress(null);
+    setReelTarget(null);
+    setPhase("idle");
+    void openBox(true);
   }
 
   async function sendToBag() {
@@ -2928,13 +3164,30 @@ function LootboxModal({ data, lootboxId, mode, autoPurchase = false, initialPurc
               <strong>+{formatAmount(receipt.reward.convertedCurrencyAmount)}</strong>
               <small>{formatAmount(receipt.reward.discarded)} duplicate {receipt.reward.discarded === "1" ? "unit" : "units"} converted to {duplicateCurrency?.name ?? receipt.reward.dupeCurrencyId ?? "currency"}</small>
             </div>}
-            <button className="primary-button" onClick={onClose}>Continue</button>
+            <button className="primary-button" onClick={availableToOpen !== null && availableToOpen > 0n ? openAnother : onClose}>{availableToOpen !== null && availableToOpen > 0n ? `Open Another (${formatAmount(availableToOpen)} left)` : "Continue"}</button>
           </div>}
         </div>
       </div> : <>
         <button className="lootbox-click-target" disabled={!canOpen} aria-label={canOpen?`Open ${lootbox.name}`:lootbox.name} onClick={() => void openBox()}><LootboxSprite lootbox={lootbox} variant="closed" /></button>
         {error&&<p className="notice error" role="alert">{error}</p>}
-        <footer>{!purchased&&shopEntry&&currency?<button className="primary-button lootbox-purchase-button" disabled={busy} onClick={() => void purchaseBox()}>{busy?"Purchasing…":<><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /> Purchase · {formatAmount(shopEntry.price)}</>}</button>:<><button ref={openButtonRef} className="primary-button" disabled={busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy} onClick={() => void sendToBag()}>Send to Bag</button>}</>}</footer>
+        <footer>{!purchased&&shopEntry&&currency?<div className="lootbox-modal-purchase-stack">
+          <div className="shop-price lootbox-modal-purchase-price" aria-live="polite"><span className="shop-purchase-quantity">{formatAmount(selectedPurchaseQuantity)}×</span><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt={currency.name} loading="eager" fallback={<Coins />} /><span className="shop-price-cost">{formatAmount(shopPurchasePrice(shopEntry, selectedPurchaseQuantity))}</span></div>
+          <div className="shop-purchase-row lootbox-modal-purchase-row">
+          <input
+            className="shop-quantity-input"
+            aria-label={`Quantity of ${lootbox.name}`}
+            type="number"
+            min={1}
+            max={9999}
+            step={1}
+            value={selectedPurchaseQuantity}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              setSelectedPurchaseQuantity(Number.isSafeInteger(next) ? Math.max(1, Math.min(9999, next)) : 1);
+            }}
+          />
+          <button className="primary-button lootbox-purchase-button" disabled={busy || purchasePending} onClick={() => void purchaseBox()}>Purchase</button>
+        </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={() => void sendToBag()}>Send to Bag</button>}</>}</footer>
         <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
       </>}
     </section>
@@ -3239,12 +3492,13 @@ function ShopEmptyState({ hasAuthoredEntries }: { hasAuthoredEntries: boolean })
   return <div className="shop-empty"><ShoppingBag size={34} /><h2>{hasAuthoredEntries ? "No shop entries match" : "No offers available yet"}</h2><p>{hasAuthoredEntries ? "Try a different name or collectible ID." : "Active offers authored in Content Studio will appear here."}</p></div>;
 }
 
-function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>; busy: boolean; onPurchase: () => void }) {
-  const availability = shopAvailability(data, entry);
-  const complete = entry.shop_type === "shard" && availability.goal > 0n && availability.current >= availability.goal;
+function ShopEntryCard({ data, entry, quantity, onQuantityChange, onPurchase }: { data: AppData; entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>; quantity: number; onQuantityChange: (quantity: number) => void; onPurchase: () => void }) {
+  const availability = shopAvailability(data, entry, quantity);
+  const statusAvailability = shopAvailability(data, entry, 1);
+  const complete = entry.shop_type === "shard" && statusAvailability.goal > 0n && statusAvailability.current >= statusAvailability.goal;
   const alreadyUnlocked = entry.shop_type === "shard"
-    && (availability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || availability.code === "SHOP_SHARDS_CHALLENGE_COMPLETE");
-  const maxOwned = entry.shop_type === "relic" && availability.code === "RELIC_MAX_OWNED_REACHED";
+    && (statusAvailability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || statusAvailability.code === "SHOP_SHARDS_CHALLENGE_COMPLETE");
+  const maxOwned = entry.shop_type === "relic" && statusAvailability.code === "RELIC_MAX_OWNED_REACHED";
   const completedStatus = alreadyUnlocked ? "Already Unlocked!" : maxOwned ? "Max Owned!" : null;
   const currency = currencyFor(data, entry.currency_id)!;
   const targetName = collectibleName(data, entry.target_category, entry.target_id);
@@ -3276,14 +3530,29 @@ function ShopEntryCard({ data, entry, busy, onPurchase }: { data: AppData; entry
         {showDescription && <p>{description}</p>}
       </div>
       <div className="shop-entry-meta">
-        <strong>{formatAmount(entry.quantity)} × {entry.shop_type === "shard" ? "Shards" : targetName}</strong>
-        <span className="shop-price"><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} />{formatAmount(entry.price)}</span>
+        <strong>{formatAmount(shopPurchaseItemQuantity(entry, quantity))} × {entry.shop_type === "shard" ? "Shards" : targetName}</strong>
+        <span className="shop-price"><span className="shop-purchase-quantity">{formatAmount(quantity)}×</span><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} /><span className="shop-price-cost">{formatAmount(shopPurchasePrice(entry, quantity))}</span></span>
       </div>
       {entry.shop_type === "shard" && <ShardProgressBar current={availability.current} goal={availability.goal} showCompletion={complete} />}
       {entry.shop_type !== "shard" && <p className="shop-owned">{ownershipLabel}</p>}
       <div className="shop-entry-actions">
         {!availability.enabled && !completedStatus && <p className="shop-unavailable">{availability.reason}</p>}
-        {completedStatus ? <p className="shop-complete-status">{completedStatus}</p> : <button className="primary-button shop-purchase" disabled={busy || !availability.enabled} onClick={onPurchase}>{busy ? "Purchasing…" : "Purchase"}</button>}
+        {completedStatus ? <p className="shop-complete-status">{completedStatus}</p> : <div className="shop-purchase-row">
+          <input
+            className="shop-quantity-input"
+            aria-label={`Quantity of ${entry.name}`}
+            type="number"
+            min={1}
+            max={9999}
+            step={1}
+            value={quantity}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              onQuantityChange(Number.isSafeInteger(next) ? Math.max(1, Math.min(9999, next)) : 1);
+            }}
+          />
+          <button className="primary-button shop-purchase" disabled={!availability.enabled} onClick={onPurchase}>Purchase</button>
+        </div>}
       </div>
     </article>
   );
@@ -4143,7 +4412,7 @@ function CombatScreen({
   data: AppData;
   combat: DungeonRunState;
   setCombat: Dispatch<SetStateAction<DungeonRunState | null>>;
-  onTurnResolved: (state: DungeonRunState) => Promise<void>;
+  onTurnResolved: (state: DungeonRunState) => void | Promise<void>;
   onBattleResult: (state: DungeonRunState) => Promise<void>;
   onBack: () => void;
   onHome: () => void;
@@ -4239,6 +4508,7 @@ function CombatScreen({
   const currentActor = activePlayer.find((unit) => !actions[unit.key]);
   const currentActorIndex = currentActor ? activePlayer.findIndex((unit) => unit.key === currentActor.key) : activePlayer.length;
   const event = currentDungeonEvent(combat);
+  const manaRefundNarration = event?.kind === "mana_refund" && combat.phase === "event_playback";
   const swapRevealed = Boolean(event?.swap && [...battle.playerUnits, ...battle.opponentUnits].some((unit) => (
     unit.key === event.swap!.incomingKey
     && unit.active
@@ -4247,9 +4517,9 @@ function CombatScreen({
   const playerFieldSlots = battlefieldSlotsForCount(battle.dungeon.player_active_count);
   const opponentFieldSlots = battlefieldSlotsForCount(battle.dungeon.opponent_active_count);
   const viewportFitRef = useViewportFitScale();
-  const loadingNarration = submittingProgress;
+  const loadingNarration = submittingProgress || recordingResult;
   const narrationText = loadingNarration
-    ? `Loading${".".repeat(loadingDots)}`
+    ? combatLoadingNarration(recordingResult ? "result" : "turn", loadingDots)
     : combat.phase === "lead_selection"
     ? `Choose ${combat.requiredLeadCount} healthy lead Critter${combat.requiredLeadCount === 1 ? "" : "s"} before revealing the enemy lineup.`
     : combat.phase === "forced_replacements"
@@ -4265,7 +4535,7 @@ function CombatScreen({
       : combat.phase === "select_player_actions"
             ? (targeting ? targeting.phase === "swap" ? `Choose a healthy friendly Critter to swap in after ${targeting.skill.name}.` : `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose your ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")
             : combat.phase === "event_playback"
-              ? (event?.message ?? "")
+              ? (event?.kind === "mana_refund" ? "Mana restored." : (event?.message ?? ""))
               : combat.phase === "battle_result"
                 ? (recordingResult ? "" : "Encounter resolved.")
                 : combat.phase === "encounter_rewards"
@@ -4278,7 +4548,7 @@ function CombatScreen({
     && activePlayer.length > 0
     && Object.keys(actions).length === activePlayer.length;
   const narrationAdvanceable = (
-    (combat.phase === "event_playback" && !submittingProgress && eventSettled)
+    (combat.phase === "event_playback" && !manaRefundNarration && !loadingNarration && eventSettled)
     || (combat.phase === "roll_result" && diceSettled)
     || ["entry_dialogue", "outcome_dialogue"].includes(combat.phase)
   ) && (!narrationText || (narrationSettled && visibleNarration === narrationText));
@@ -4458,7 +4728,7 @@ function CombatScreen({
     setMenu("actions");
   }, [combat.run.battleIndex, battle.turn, combat.phase === "select_player_actions"]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (combat.phase !== "battle_result" || recordingResult) return;
     setRecordingResult(true);
     void onBattleResult(combat).finally(() => setRecordingResult(false));
@@ -4475,7 +4745,7 @@ function CombatScreen({
   }, [combat.phase, battle.turn, combat.rollSummary?.player, combat.rollSummary?.opponent]);
 
   useEffect(() => {
-    if (!submittingProgress) {
+    if (!loadingNarration) {
       setLoadingDots(1);
       return;
     }
@@ -4483,7 +4753,7 @@ function CombatScreen({
       setLoadingDots((current) => current >= 3 ? 1 : current + 1);
     }, 220);
     return () => window.clearInterval(timer);
-  }, [submittingProgress]);
+  }, [loadingNarration]);
 
   useEffect(() => {
     if (!manaSubmitAnimating || combat.phase === "select_player_actions") return;
@@ -4573,7 +4843,7 @@ function CombatScreen({
     }
     window.addEventListener("keydown", handleSpacebar);
     return () => window.removeEventListener("keydown", handleSpacebar);
-  }, [narrationAdvanceable, combat.phase, diceSettled, eventSettled, submittingProgress]);
+  }, [narrationAdvanceable, combat.phase, diceSettled, eventSettled, loadingNarration]);
 
   const keyboardFocusSignature = [
     combat.phase,
@@ -4586,7 +4856,7 @@ function CombatScreen({
     diceSettled,
     event?.id ?? "",
     eventSettled,
-    submittingProgress,
+    loadingNarration,
     recordingResult,
   ].join("|");
 
@@ -4674,7 +4944,7 @@ function CombatScreen({
     }
     window.addEventListener("keydown", handleCombatKeyboard);
     return () => window.removeEventListener("keydown", handleCombatKeyboard);
-  }, [combat.phase, menu, targeting, currentActor?.key, currentActorIndex, actions, narrationAdvanceable]);
+  }, [combat.phase, menu, targeting, currentActor?.key, currentActorIndex, actions, narrationAdvanceable, loadingNarration]);
 
   useLayoutEffect(() => {
     setSwapMotion(null);
@@ -4856,7 +5126,7 @@ function CombatScreen({
     <section
       ref={combatRootRef}
       className="combat-screen"
-      data-combat-loading={submittingProgress ? "true" : "false"}
+      data-combat-loading={loadingNarration ? "true" : "false"}
       aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft"
     >
       <div ref={viewportFitRef} className="combat-viewport-fit">
@@ -5002,25 +5272,25 @@ function CombatScreen({
           onSubmit={submitActions}
         />
 
-        {!(combat.phase === "event_playback" && event?.kind === "mana_refund") && <button
+        <button
           type="button"
           className={`combat-narration ${narrationAdvanceable ? "advanceable" : ""}`}
-          data-combat-control={submittingProgress ? undefined : "true"}
-          data-combat-focus-role={submittingProgress ? undefined : "narration"}
-          tabIndex={submittingProgress ? -1 : undefined}
-          aria-label={submittingProgress ? "Loading" : undefined}
-          disabled={submittingProgress || !narrationAdvanceable}
+          data-combat-control={loadingNarration || manaRefundNarration ? undefined : "true"}
+          data-combat-focus-role={loadingNarration || manaRefundNarration ? undefined : "narration"}
+          tabIndex={loadingNarration || manaRefundNarration ? -1 : undefined}
+          aria-label={loadingNarration ? (recordingResult ? "Waiting for encounter results" : "Loading") : manaRefundNarration ? "Mana restored" : undefined}
+          disabled={loadingNarration || manaRefundNarration || !narrationAdvanceable}
           aria-keyshortcuts="Space"
-          title={!submittingProgress && narrationAdvanceable ? "Click or press Space to continue" : undefined}
-          onClick={submittingProgress ? undefined : advanceNarration}
+          title={!loadingNarration && !manaRefundNarration && narrationAdvanceable ? "Click or press Space to continue" : undefined}
+          onClick={loadingNarration || manaRefundNarration ? undefined : advanceNarration}
         >
           <span className={`combat-narration-copy ${narrationComplete && narrationText !== "Rolling…" && !loadingNarration ? "" : "typing"}`}>
             {dialogue && (combat.phase === "entry_dialogue" || combat.phase === "outcome_dialogue") && visibleNarration.startsWith(`${dialogue.speaker}:`)
               ? <><span className="enemy-dialogue-speaker">{dialogue.speaker}:</span>{visibleNarration.slice(dialogue.speaker.length + 1)}</>
               : narrationText === "Rolling…" || loadingNarration ? narrationText : visibleNarration}
           </span>
-          {!submittingProgress && (["event_playback", "roll_result", "entry_dialogue", "outcome_dialogue"].includes(combat.phase)) && <ChevronRight size={24} aria-label="Next" />}
-        </button>}
+          {!loadingNarration && !manaRefundNarration && (["event_playback", "roll_result", "entry_dialogue", "outcome_dialogue"].includes(combat.phase)) && <ChevronRight size={24} aria-label="Next" />}
+        </button>
 
         {combat.phase === "battle_result" && !recordingResult && (
           <div className="combat-command-row">
@@ -5749,7 +6019,6 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
       frameB = window.requestAnimationFrame(() => {
         timeout = window.setTimeout(() => {
           if (cancelled) return;
-          sectionRef.current?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
           setXpReady(true);
         }, XP_REVEAL_DELAY_MS);
       });

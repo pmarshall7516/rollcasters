@@ -10,6 +10,13 @@ const STAT_LABELS: Record<string, string> = {
 
 export type CombatSwapMotionPhase = "out" | "in";
 
+export type CombatLoadingPhase = "turn" | "result";
+
+export function combatLoadingNarration(phase: CombatLoadingPhase, dots: number): string {
+  const count = Math.max(1, Math.min(3, Math.floor(dots)));
+  return `${phase === "result" ? "Waiting" : "Loading"}${".".repeat(count)}`;
+}
+
 export function combatSwapTravelOffset(
   source: { x: number; y: number },
   destination: { x: number; y: number },

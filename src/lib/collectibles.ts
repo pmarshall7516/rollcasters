@@ -437,10 +437,12 @@ export type ShopAvailability = {
   goal: bigint;
 };
 
-export function shopAvailability(data: AppData, entry: ShopEntry): ShopAvailability {
+export function shopAvailability(data: AppData, entry: ShopEntry, purchaseQuantity = 1): ShopAvailability {
   const currency = currencyFor(data, entry.currency_id);
   const balance = currencyBalance(data, entry.currency_id);
-  const price = safeBigInt(entry.price);
+  const count = Number.isSafeInteger(purchaseQuantity) && purchaseQuantity > 0 ? BigInt(purchaseQuantity) : 1n;
+  const price = safeBigInt(entry.price) * count;
+  const itemQuantity = safeBigInt(entry.quantity) * count;
   const unavailable = (code: string, reason: string, current = 0n, goal = 0n): ShopAvailability => ({
     enabled: false, code, reason, current, goal,
   });
@@ -474,7 +476,7 @@ export function shopAvailability(data: AppData, entry: ShopEntry): ShopAvailabil
   const unlocked = collectibleIsUnlocked(data, "relic", entry.target_id);
   const challenge = challengesFor(data, "relic", entry.target_id).find((row) => row.challenge_type === "shop_relic");
   if (!unlocked && !challenge) return unavailable("SHOP_RELIC_CHALLENGE_MISSING", "Relic unlock not configured", current, goal);
-  if (current + safeBigInt(entry.quantity) > goal) return unavailable("RELIC_MAX_OWNED_REACHED", "Maximum owned", current, goal);
+  if (current + itemQuantity > goal) return unavailable("RELIC_MAX_OWNED_REACHED", "Maximum owned", current, goal);
   if (balance < price) return unavailable("INSUFFICIENT_FUNDS", `Need ${formatAmount(price - balance)} more ${currency.name}`, current, goal);
   return { enabled: true, code: null, reason: null, current, goal };
 }

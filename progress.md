@@ -1,6 +1,23 @@
 # Rollcasters progress
 Original prompt: On the main page, show level-eligible Critter skills in skill-slot popups and allow unlocking them with skill points.
 
+## 2026-08-14 — Quantity shop purchases
+
+- Current task: add integer quantity controls to every shop, multiply displayed prices, make rapid purchases optimistic and responsive, and reconcile durable currency/inventory safely without duplication.
+- Added client quantity pricing/projection helpers and a serialized per-account purchase queue. Rapid clicks on one offer coalesce into one idempotent batch request after a short quiet period; the server receipt replaces the optimistic projection.
+- Added the quantity purchase RPC migration and focused client/DB regression coverage. Migration application and live browser verification remain to be run.
+- Typecheck, production build, collectible/shop business rules, quantity projection tests, responsive shell browser tests, the generic web-game smoke capture, and inspected quantity-row geometry pass. The configured Supabase hostname is unreachable from this environment, so the migration and rollback-only DB test remain unapplied/unrun here.
+- Follow-up: quantity inputs now use the shared shop theme radius, borders, hover state, and focus ring. Lootbox card purchases open the purchase popup with the selected count visible, keeping the same 25/75 quantity-to-purchase row on desktop and mobile.
+- Follow-up: purchase buttons now stay labeled `Purchase`; changing quantity updates only the adjacent `quantity × currency icon cost` display on Shop cards and Lootbox purchase popups.
+- Follow-up: multi-quantity purchases now detect an unavailable deployed quantity RPC and serialize deterministic, idempotent legacy unit calls instead of surfacing the generic purchase error. Partial legacy batches reconcile their committed receipt without rolling the local state back; stale refreshes are ignored while a purchase revision is newer, and pending batches flush on tab changes, Back, or Shop unmount.
+- Follow-up: Lootbox purchases retain every granted box in the Bag, opening consumes one fresh idempotent request at a time, and the result action becomes `Open Another (X left)` while local remainder is available. Focused purchase-flow, projection, collectible/shop, typecheck, build, and app smoke checks pass; live Supabase verification remains blocked by DNS resolution for the configured project host.
+
+## 2026-08-14 — Combat opponent Critter sprite sizing
+
+- Removed a legacy opponent descendant `.sprite` grid-placement rule that could interfere with the current shared Critter sprite frame layout.
+- Added `npm run test:combat-critter-sprite-layout` coverage across desktop, tablet, small-PC, and mobile viewports to verify matching player/enemy frame, sprite, and image dimensions, contained art, and enemy-only horizontal flipping.
+- Typecheck, production build, combat panel/action/swap regressions, sprite containment, and the required web-game smoke capture pass; focused desktop/mobile captures were inspected.
+
 ## 2026-08-14 — Enemy replacement swap direction
 
 - Fixed the incoming half of the combat Swap animation using the inverse of the field-to-squad vector, which made an automatically selected enemy replacement enter from the wrong side and look like a zoom.
@@ -350,3 +367,23 @@ The working progress log is maintained in the shared Obsidian vault:
 - Promoted the combat mobile composition through 900px viewport width so narrow PC windows use the compact header, hidden phase badge, two-column battlefield, and mobile-sized controls before the layout becomes crowded.
 - Kept the intermediate tablet layout at 960px and added a 900px small-PC assertion to `npm run test:combat-panel-layout`.
 - Re-ran the panel, action, and Swap UI regressions, typecheck, production build, and Chromium smoke capture successfully.
+
+## 2026-08-14 — Knockout result loading and completion handoff
+
+- Encounter-result recording no longer leaves the combat narration box blank: it now shows animated `Waiting...` copy, disables narration advancement, removes the temporary loading state from keyboard controls, and exposes an accessible waiting label.
+- Removed the smooth XP-section `scrollIntoView` call that could shift the combat shell during the knockout-to-completion transition; completed outcomes can scroll within the combat shell when their content exceeds the viewport.
+- Added `npm run test:combat-result-loading` covering the shared loading copy and its CombatScreen integration. Typecheck, production build, focused Swap/panel/responsive regressions, and the Chromium smoke capture pass.
+- The disposable live Dungeon flow still stops before combat because its existing fixture requires three equipped Critters while the current active catalog cannot supply the two additional records.
+
+## 2026-08-14 — Combat transition latency cleanup
+
+- Turn resolution now presents the deterministic resolved state without waiting for the non-authoritative collectible-progress RPC; those writes remain serialized in the background and errors still surface normally.
+- Encounter results now use the authoritative battle-result payload immediately instead of blocking on a full catalog/player reload before showing dungeon completion or failure.
+- Knockout completion skips the outcome-dialogue step when the encounter has no authored outcome line, while authored victory/defeat dialogue remains unchanged.
+- Added source/runtime regression coverage for the non-blocking paths and no-dialogue result handoff. `npm run test:combat-latency`, `npm run test:combat-result-loading`, `npm run test:effect-runtime`, `npm run typecheck`, `npm run build`, the focused Chromium combat/layout checks, and the generic browser smoke capture pass.
+
+## 2026-08-14 — Keep combat narration mounted during KO playback
+
+- Found the exact disappearing-box cause: `CombatScreen` intentionally removed `.combat-narration` for `mana_refund` events. That changed the viewport-fit content height and let the remaining combat UI reflow/scale.
+- The narration control now stays mounted for every normal combat phase. Mana-refund playback uses a disabled `Mana restored.` placeholder while its automatic transition completes, so the footer height and fit-scale inputs remain stable.
+- Added `npm run test:combat-narration-layout`; it was red against the original conditional and passes after the fix. Result-loading, effect-runtime, typecheck, production build, focused Chromium layout/swap checks, and the browser smoke capture also pass.
