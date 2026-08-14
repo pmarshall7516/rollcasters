@@ -3,8 +3,9 @@ import { pathToFileURL } from "node:url";
 
 import { parseArgs, readEnv } from "./db-utils.mjs";
 
-const ACTIONS = new Set(["grant", "revoke"]);
+const ACTIONS = new Set(["grant", "revoke", "grant-all"]);
 const COLLECTIBLE_TYPES = new Set(["relic", "critter", "rollcaster"]);
+const ALL_COLLECTIBLES_TYPE = "all";
 const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
 export function commandOptions(argv = process.argv.slice(2), env = process.env) {
@@ -26,16 +27,22 @@ export function commandOptions(argv = process.argv.slice(2), env = process.env) 
 
 export function validateCommand(options) {
   if (!ACTIONS.has(options.action)) {
-    throw new Error("Action must be grant or revoke.");
+    throw new Error("Action must be grant, revoke, or grant-all.");
   }
-  if (!COLLECTIBLE_TYPES.has(options.collectibleType)) {
+  if (!COLLECTIBLE_TYPES.has(options.collectibleType) && !(options.action === "grant-all" && options.collectibleType === ALL_COLLECTIBLES_TYPE)) {
     throw new Error("Collectible type must be relic, critter, or rollcaster.");
   }
   if (!/^\S+@\S+\.\S+$/.test(options.email)) {
     throw new Error("Pass a valid email with --user=user@example.com.");
   }
-  if (!options.collectibleId) {
+  if (options.action === "grant-all" && options.collectibleType !== ALL_COLLECTIBLES_TYPE) {
+    throw new Error("grant-all must target all collectibles.");
+  }
+  if (options.action !== "grant-all" && !options.collectibleId) {
     throw new Error("Pass a catalog ID with --id=<collectible_id>.");
+  }
+  if (options.action !== "grant" && options.action !== "revoke" && options.countWasProvided) {
+    throw new Error("--count is only supported for single relic grant or revoke commands.");
   }
   if (options.collectibleType !== "relic" && options.countWasProvided) {
     throw new Error("--count is only supported for relic commands.");
@@ -72,7 +79,11 @@ export async function runCollectibleCommand({
 }
 
 export async function callCollectibleRpc(options, env, fetchImpl = fetch) {
-  const url = new URL("/rest/v1/rpc/dev_manage_user_collectible", env.VITE_SUPABASE_URL);
+  const isGrantAll = options.action === "grant-all";
+  const url = new URL(
+    `/rest/v1/rpc/${isGrantAll ? "dev_grant_all_collectibles" : "dev_manage_user_collectible"}`,
+    env.VITE_SUPABASE_URL,
+  );
   const response = await fetchImpl(url, {
     method: "POST",
     headers: {
@@ -80,13 +91,17 @@ export async function callCollectibleRpc(options, env, fetchImpl = fetch) {
       Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      p_action: options.action,
-      p_collectible_type: options.collectibleType,
-      p_user_email: options.email,
-      p_collectible_id: options.collectibleId,
-      p_count: options.count,
-    }),
+    body: JSON.stringify(
+      isGrantAll
+        ? { p_user_email: options.email }
+        : {
+            p_action: options.action,
+            p_collectible_type: options.collectibleType,
+            p_user_email: options.email,
+            p_collectible_id: options.collectibleId,
+            p_count: options.count,
+          },
+    ),
   });
 
   const text = await response.text();
@@ -99,7 +114,7 @@ export async function callCollectibleRpc(options, env, fetchImpl = fetch) {
 
   if (!response.ok) {
     const message = data?.message ?? data?.error_description ?? data?.error ?? text ?? response.statusText;
-    if (response.status === 404 && /dev_manage_user_collectible|schema cache/i.test(message)) {
+    if (response.status === 404 && /dev_manage_user_collectible|dev_grant_all_collectibles|schema cache/i.test(message)) {
       throw new Error(
         "The collectible admin database function is unavailable. Apply the corresponding migration from rollcaster-docs/migrations, then retry.",
       );
@@ -114,6 +129,13 @@ export async function callCollectibleRpc(options, env, fetchImpl = fetch) {
 }
 
 export function formatSuccess(result) {
+  if (result.action === "grant_all") {
+    return [
+      `Granted all active collectibles to ${result.user_email}.`,
+      `Added ${result.granted_rollcasters} Rollcasters, ${result.granted_critters} Critters, and ${result.granted_relics} Relics`,
+      `(already owned: ${result.already_owned_rollcasters} Rollcasters, ${result.already_owned_critters} Critters, ${result.already_owned_relics} Relics).`,
+    ].join(" ");
+  }
   const action = result.action === "revoke" ? "Revoked" : "Granted";
   const email = result.user_email;
   const idAndName = `${result.collectible_id} “${result.collectible_name}”`;
@@ -158,6 +180,7 @@ function capitalize(value) {
 
 export function usage() {
   return `Usage:
+  npm run game:grant:all-items --user=user@example.com
   npm run game:grant:relic --user=user@example.com --id=001 [--count=1]
   npm run game:revoke:relic --user=user@example.com --id=001 [--count=1]
   npm run game:grant:critter --user=user@example.com --id=001
@@ -165,9 +188,10 @@ export function usage() {
   npm run game:grant:rollcaster --user=user@example.com --id=001
   npm run game:revoke:rollcaster --user=user@example.com --id=001
 
-The relic count defaults to 1. Critters and Rollcasters are granted or revoked as
-whole collectibles and do not accept --count. These commands require
-VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.
+The all-items command unlocks every active, non-archived Rollcaster, Critter, and
+Relic and is safe to repeat. It grants one copy of each Relic. The single-relic
+count defaults to 1. These commands require VITE_SUPABASE_URL and
+SUPABASE_SERVICE_ROLE_KEY.
 `;
 }
 

@@ -1923,8 +1923,11 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .challenge-replacement-modal .challenge-tracking-slots { grid-template-rows: repeat(3, minmax(80px, auto)); margin-top: 4px; }
 .challenge-replacement-modal > .challenge-note { margin-top: 8px !important; }
 
-.challenge-rows { display: grid; align-content: start; gap: 7px; width: 100%; min-width: 0; }
-.challenge-row { display: grid; grid-template-columns: minmax(0, 1fr) max-content max-content; grid-template-areas: "description action progress"; align-items: center; column-gap: 7px; color: var(--text-secondary); font-size: 12px; line-height: 1.35; scroll-snap-align: start; text-align: left; }
+.challenge-rows { display: grid; grid-template-columns: minmax(0, 1fr) max-content max-content; align-content: start; gap: 7px; width: 100%; min-width: 0; }
+.challenge-gate-boundary,
+.challenge-row,
+.grid-challenge-error { grid-column: 1 / -1; }
+.challenge-row { display: grid; grid-template-columns: subgrid; grid-template-areas: "description action progress"; align-items: center; column-gap: 7px; color: var(--text-secondary); font-size: 12px; line-height: 1.35; scroll-snap-align: start; text-align: left; }
 .challenge-detail-copy { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .challenge-gate-boundary { display: flex; align-items: center; min-width: 0; padding-top: 1px; scroll-snap-align: start; text-align: left; }
 .challenge-row-description { grid-area: description; min-width: 0; overflow-wrap: anywhere; }
@@ -1949,9 +1952,11 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .challenge-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .challenge-panel-heading h3, .challenge-panel-heading p { margin: 2px 0; }
 .challenge-panel-heading > strong { color: var(--accent-cyan); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.challenge-detail-rows { display: grid; gap: 8px; }
+.challenge-detail-rows { display: grid; grid-template-columns: minmax(0, 1fr) minmax(108px, max-content) max-content; gap: 8px 12px; }
 .challenge-detail-gate-boundary { padding: 4px 3px 0; }
-.challenge-detail-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(108px, max-content) max-content; grid-template-areas: "description action progress"; align-items: center; gap: 12px; min-height: 54px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: 11px; background: rgb(16 21 42 / 70%); color: var(--text-secondary); }
+.challenge-detail-gate-boundary,
+.challenge-detail-row { grid-column: 1 / -1; }
+.challenge-detail-row { display: grid; grid-template-columns: subgrid; grid-template-areas: "description action progress"; align-items: center; gap: 12px; min-height: 54px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: 11px; background: rgb(16 21 42 / 70%); color: var(--text-secondary); }
 .challenge-detail-row > .challenge-detail-copy { grid-area: description; }
 .challenge-detail-row > strong { grid-area: progress; justify-self: end; color: var(--accent-cyan); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .challenge-detail-row.complete { border-color: rgb(97 221 160 / 38%); }
@@ -3318,6 +3323,23 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   font-size: 22px;
 }
 
+.combat-mana-value {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.combat-mana-total.mana-reserved .combat-mana-value {
+  color: var(--focus);
+}
+
+.combat-mana-total.mana-submit-shake {
+  animation: combat-mana-submit-shake .86s cubic-bezier(.2, .85, .3, 1) both;
+}
+
+.combat-mana-total.mana-submit-shake .combat-mana-value {
+  color: var(--accent-cyan);
+}
+
 .combat-mana-total-wrap {
   position: relative;
   width: 100%;
@@ -3356,6 +3378,17 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   18% { opacity: 1; transform: translateY(-2px) scale(1.12); }
   72% { opacity: 1; transform: translateY(-8px) scale(1); }
   100% { opacity: 0; transform: translateY(-20px) scale(.9); }
+}
+
+@keyframes combat-mana-submit-shake {
+  0% { transform: translateX(0) rotate(0); }
+  14% { transform: translateX(-5px) rotate(-1deg); }
+  28% { transform: translateX(5px) rotate(1deg); }
+  42% { transform: translateX(-4px) rotate(-.8deg); }
+  56% { transform: translateX(4px) rotate(.8deg); }
+  72% { transform: translateX(-2px) rotate(-.35deg); }
+  86% { transform: translateX(1px) rotate(.15deg); }
+  100% { transform: translateX(0) rotate(0); }
 }
 
 .combat-mana-total .asset-icon {
@@ -4969,7 +5002,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .dungeon-opponent-list {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -5522,7 +5555,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .combat-squad-strips > div > span.ko { filter: grayscale(1); opacity: .36; }
 .combat-squad-strips .sprite { width: 38px; height: 38px; }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .combat-squad-strips { gap: 10px; }
   .combat-squad-strips > div { gap: 4px; }
   .combat-squad-strips > div > span { width: 34px; height: 34px; border-radius: 9px; }
@@ -5531,6 +5564,25 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 @media (min-width: 1200px) {
   .squad-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .squad-panel > .loadout-slot:last-child { grid-column: 1 / -1; justify-self: center; width: calc((100% - var(--squad-grid-gap)) / 2); }
+}
+
+/* Keep desktop Critter cards in the same compact two-row stat shape as the
+   wider layout. The card container, rather than the viewport, is the useful
+   breakpoint here because the squad shares the home page with the menu panes.
+   Below this width the stat labels and values no longer have enough breathing
+   room, so the mobile/tablet fallback can take over. */
+@media (min-width: 601px) {
+  @container (min-width: 300px) and (max-width: 500px) {
+    .loadout-critter-summary > .stat-grid.compact {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-rows: repeat(2, auto);
+    }
+
+    .loadout-critter-summary > .stat-grid .stat-cell {
+      padding: clamp(5px, 1.3cqi, 8px) clamp(4px, 0.9cqi, 10px);
+      font-size: clamp(14px, 4cqi, 18px);
+    }
+  }
 }
 
 /* Combat Rollcaster panels keep the complete five-slot loadout anchored beside
@@ -5735,7 +5787,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .combat-mana-panel {
     padding: 5px;
   }
@@ -5774,5 +5826,64 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
     width: 25px;
     height: 25px;
     padding: 1px;
+  }
+}
+
+/* Keep the Rollcaster loadout in a real vertical flow. The panel used to
+   reserve a flexible final row for the squad while allowing that row to
+   collapse; the square squad cells then overflowed into the ability rows at
+   short or narrow viewport sizes. */
+.combat-mana-panel {
+  --combat-panel-gap: clamp(4px, .7vh, 9px);
+  --combat-ability-row-height: clamp(24px, min(8cqi, calc((100dvh - 520px) / 8)), 40px);
+  display: grid;
+  grid-template-rows: auto auto auto auto auto;
+  align-content: start;
+  align-items: start;
+  gap: var(--combat-panel-gap);
+  height: auto;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+.combat-ability-list {
+  grid-template-rows: repeat(5, var(--combat-ability-row-height));
+  gap: clamp(3px, .35vh, 6px);
+  min-height: 0;
+  height: calc(var(--combat-ability-row-height) * 5 + clamp(3px, .35vh, 6px) * 4);
+}
+
+.combat-ability-list .tooltip-anchor {
+  height: var(--combat-ability-row-height);
+}
+
+.combat-ability-slot {
+  height: 100%;
+  min-height: 0;
+}
+
+.combat-squad-grid {
+  align-self: start;
+  width: 100%;
+  min-height: 0;
+  margin-top: 0;
+  grid-template-rows: repeat(3, minmax(0, auto));
+}
+
+@container (min-width: 300px) {
+  .combat-squad-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: minmax(0, auto);
+  }
+
+  .combat-squad-grid > :last-child {
+    grid-column: auto;
+    width: 100%;
+  }
+}
+
+@media (min-width: 1051px) {
+  .combat-mana-panel {
+    min-height: calc(var(--combat-unit-height) * 3 + 18px);
   }
 }

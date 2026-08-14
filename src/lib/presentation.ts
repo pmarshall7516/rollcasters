@@ -8,6 +8,26 @@ const STAT_LABELS: Record<string, string> = {
   swap_cost: "swap cost",
 };
 
+export type CombatSwapMotionPhase = "out" | "in";
+
+export function combatSwapTravelOffset(
+  source: { x: number; y: number },
+  destination: { x: number; y: number },
+  phase: CombatSwapMotionPhase,
+  scale = 1,
+): { x: number; y: number } {
+  const x = (destination.x - source.x) / scale;
+  const y = (destination.y - source.y) / scale;
+  // Both legs use the same field-to-squad vector. The incoming animation
+  // starts at the squad and interpolates that offset back to zero, so
+  // negating it would make the Critter enter from the opposite side.
+  switch (phase) {
+    case "out":
+    case "in":
+      return { x, y };
+  }
+}
+
 function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }

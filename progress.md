@@ -1,6 +1,26 @@
 # Rollcasters progress
 Original prompt: On the main page, show level-eligible Critter skills in skill-slot popups and allow unlocking them with skill points.
 
+## 2026-08-14 — Enemy replacement swap direction
+
+- Fixed the incoming half of the combat Swap animation using the inverse of the field-to-squad vector, which made an automatically selected enemy replacement enter from the wrong side and look like a zoom.
+- Shared the field-to-squad offset calculation between outgoing and incoming Swap legs and added `npm run test:combat-swap-motion` with red-before-fix coverage for both directions.
+- Typecheck, production build, effect runtime, combat Swap UI, and generic web-game smoke checks pass; inspected the Swap and smoke screenshots. The disposable live Dungeon flow remains blocked by its existing three-Critter fixture setup before combat begins.
+
+## 2026-08-14 — Combat Mana reservation display
+
+- Player combat Mana now derives its visible value from the battle balance minus queued action costs during action selection. The reserved balance is yellow, and submitting the complete action set starts a shake/color transition toward the normal blue value.
+- Follow-up: removed the submit color fade so the value switches directly from yellow reservation styling to the normal blue/cyan while the shake plays.
+- Follow-up: kept the submit blue state active until the combat phase advances, preventing slow turn loading from restoring yellow before the resolved state arrives.
+- Added `npm run test:combat-mana-selection` for source, color, animation, accessibility-label, and settled-state coverage.
+- Typecheck, production build, combat Mana/panel/action/target Playwright regressions, and the generic web-game smoke capture pass; the new reserved/shake/settled captures were inspected.
+
+## 2026-08-14 — Back to Skill Menu during target selection
+
+- Combat target selection now keeps the acting Critter's back-control row visible.
+- The control reads `Back to Skill Menu` and returns to the selected Critter's Skill Menu without submitting or clearing the action.
+- Typecheck, production build, combat action-layout and target-emphasis Playwright regressions, and the generic web-game smoke capture pass; the generated screenshots were inspected.
+
 ## 2026-08-10 — Critter send-out presentation
 
 - Combat Swap narration now uses explicit send-out copy: `You sent in <Critter>` for the user and `<enemy name> sent out <Critter>` for enemy replacements/Swaps.
@@ -219,6 +239,12 @@ The working progress log is maintained in the shared Obsidian vault:
 - Unlocked Critter and Rollcaster collection cards now share a centered 260px XP progress width, keeping the bars equal and more compact than the full card width.
 - Increased those collection-only bars to 12px tall to use the available unlocked-card space more effectively.
 
+## 2026-08-14 — Responsive home Critter stat rows
+
+- PC Critter loadout slots now keep the stat grid in four columns and two rows through laptop-sized slot containers instead of collapsing to one-column vertical stats.
+- In the compact PC range, stat-cell font size and padding scale with the slot container so stat names and values retain a small readable gap; the existing mobile/tablet fallback remains available below the compact threshold.
+- Updated the home loadout layout fixture to assert two-row stats across the PC viewports and allow the tighter compact-cell padding.
+
 ## 2026-08-05 — Collection dynamic card height and Rollcaster descriptions
 
 - Collection height measurement now observes every hidden card across the Critter, Rollcaster, and Relic grids, so the shared row height remeasures when any collectible’s content changes.
@@ -306,3 +332,21 @@ The working progress log is maintained in the shared Obsidian vault:
 
 - Removed the `Legal target` pill from skill-targetable Critters.
 - Added one stronger yellow hover/focus treatment for legal targets, including keyboard selection, and suppressed the generic purple/blue focus outline so selection reads as an enhanced version of the existing yellow glow.
+
+## 2026-08-14 — Catalog challenge Track alignment
+
+- Catalog detail challenge rows now share their action/progress columns with CSS subgrid, keeping every Track/Untrack button vertically aligned even when progress goals have different digit lengths.
+- Expanded the collection interaction fixture to cover multiple Track buttons and differing progress widths.
+- Follow-up reproduction showed the same inset in compact catalog-card challenge rows; those rows now also share one action/progress column set, with regression coverage using `0 / 30`, `0 / 100`, and `0 / 500` goals.
+
+## 2026-08-14 — Responsive combat Rollcaster panels
+
+- Fixed the combat Rollcaster side panels so their ability and Critter-squad rows stay in normal vertical flow instead of allowing the squad grid to overflow a collapsed final row.
+- Ability rows now size from viewport height and panel width, while the five Critter slots remain square and switch from the compact 2×3 layout to a single five-slot row when the panel container is wide enough.
+- Added `npm run test:combat-panel-layout` with desktop, narrow desktop, tablet, and mobile geometry assertions plus screenshots. Typecheck, production build, the existing combat action layout regression, the new panel regression, and the generic Chromium smoke check pass.
+
+## 2026-08-14 — Small-PC combat mobile breakpoint
+
+- Promoted the combat mobile composition through 900px viewport width so narrow PC windows use the compact header, hidden phase badge, two-column battlefield, and mobile-sized controls before the layout becomes crowded.
+- Kept the intermediate tablet layout at 960px and added a 900px small-PC assertion to `npm run test:combat-panel-layout`.
+- Re-ran the panel, action, and Swap UI regressions, typecheck, production build, and Chromium smoke capture successfully.

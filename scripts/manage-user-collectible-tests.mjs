@@ -31,6 +31,20 @@ const baseEnv = {
 }
 
 {
+  const options = commandOptions(["grant-all", "all", "--user=PLAYER@EXAMPLE.COM"], baseEnv);
+  assert.deepEqual(options, {
+    action: "grant-all",
+    collectibleType: "all",
+    email: "player@example.com",
+    collectibleId: "",
+    count: 1,
+    countWasProvided: false,
+    help: false,
+  });
+  validateCommand(options);
+}
+
+{
   const options = commandOptions(["revoke", "relic"], {
     ...baseEnv,
     npm_config_user: "player@example.com",
@@ -122,6 +136,42 @@ const baseEnv = {
 }
 
 {
+  let request;
+  const stdout = captureStream();
+  const stderr = captureStream();
+  const exitCode = await runCollectibleCommand({
+    argv: ["grant-all", "all", "--user=player@example.com"],
+    env: baseEnv,
+    fetchImpl: async (url, options) => {
+      request = { url: String(url), options };
+      return jsonResponse(200, {
+        action: "grant_all",
+        collectible_type: "relic",
+        user_email: "player@example.com",
+        granted_rollcasters: 2,
+        granted_critters: 12,
+        granted_relics: 15,
+        already_owned_rollcasters: 1,
+        already_owned_critters: 3,
+        already_owned_relics: 0,
+      });
+    },
+    stdout,
+    stderr,
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(stderr.value, "");
+  assert.match(stdout.value, /Granted all active collectibles/);
+  assert.match(stdout.value, /Added 2 Rollcasters, 12 Critters, and 15 Relics/);
+  assert.match(stdout.value, /already owned: 1 Rollcasters, 3 Critters, 0 Relics/);
+  assert.equal(request.url, "https://example.supabase.co/rest/v1/rpc/dev_grant_all_collectibles");
+  assert.deepEqual(JSON.parse(request.options.body), {
+    p_user_email: "player@example.com",
+  });
+}
+
+{
   assert.equal(
     formatSuccess({
       action: "grant",
@@ -162,9 +212,10 @@ const baseEnv = {
       );
     }
   }
+  assert.equal(packageJson.scripts["game:grant:all-items"], "node scripts/manage-user-collectible.mjs grant-all all");
 }
 
-process.stdout.write("Collectible command tests passed (8 checks).\n");
+process.stdout.write("Collectible command tests passed (10 checks).\n");
 
 function captureStream() {
   return {

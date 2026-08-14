@@ -17,10 +17,11 @@ try {
       <div class="modal ui-test-modal">
         <div class="modal-header"><div><p class="eyebrow">Loadout & collection</p><h2>Ramber</h2><p>Item details</p></div><button class="icon-button">×</button></div>
         <section class="collectible-challenge-panel ui-test-challenges">
-          <div class="challenge-panel-heading"><div><p class="eyebrow">Collect</p><h3>Complete 1 of 2 challenges</h3></div><strong>0 complete</strong></div>
+          <div class="challenge-panel-heading"><div><p class="eyebrow">Collect</p><h3>Complete 1 of 3 challenges</h3></div><strong>0 complete</strong></div>
           <div class="challenge-detail-rows">
             <article class="challenge-detail-row"><span>Damage Critters (Any Species)</span><strong>0 / 5</strong><button class="secondary-button">Untrack · Slot 1</button></article>
-            <article class="challenge-detail-row"><span>Unlock Ramber shards</span><strong>0 / 4</strong></article>
+            <article class="challenge-detail-row"><span>Unlock Ramber shards</span><strong>0 / 30</strong><button class="primary-button">Track</button></article>
+            <article class="challenge-detail-row"><span>Use Air Skills</span><strong>0 / 500</strong><button class="primary-button">Track</button></article>
           </div>
         </section>
         <section class="ui-test-layout">
@@ -118,6 +119,10 @@ try {
         const progressRect = row.querySelector(":scope > strong").getBoundingClientRect();
         return actionRect.right <= progressRect.left;
       })(),
+      challengeActionsAligned: (() => {
+        const actions = [...document.querySelectorAll(".ui-test-challenges .challenge-detail-row button")].map((button) => button.getBoundingClientRect());
+        return actions.length > 1 && actions.every((action) => Math.abs(action.left - actions[0].left) < 1 && Math.abs(action.width - actions[0].width) < 1);
+      })(),
     };
   });
 
@@ -125,7 +130,7 @@ try {
   if (result.unlockedSkillOpacity !== 1 || !result.unlockButtonOpaque || !result.unlockButtonCentered) throw new Error(`Skill detail presentation failed: ${JSON.stringify(result)}`);
   if (!result.tooltipVisible || !result.effectRowsNamed || !result.abilityRequirementsBelowCards || !result.uniformHomeStatBorders) throw new Error(`Tooltip, effect rows, ability metadata, or stat borders failed: ${JSON.stringify(result)}`);
   if (!result.skillAbilityCardsAreSolidAndMatching) throw new Error(`Skill and ability card background contract failed: ${JSON.stringify(result)}`);
-  if (!result.challengeProgressRightAligned || !result.challengeActionBeforeProgress) throw new Error(`Challenge progress alignment failed: ${JSON.stringify(result)}`);
+  if (!result.challengeProgressRightAligned || !result.challengeActionBeforeProgress || !result.challengeActionsAligned) throw new Error(`Challenge progress alignment failed: ${JSON.stringify(result)}`);
   if (result.descriptionSection.title !== "Description" || !result.descriptionSection.text || !result.descriptionSection.visible || !result.descriptionSection.beforeBottomSpacer) throw new Error(`Collectible description section failed: ${JSON.stringify(result.descriptionSection)}`);
   if ((appSource.match(/<CollectibleDescriptionSection description=/g) ?? []).length !== 3) throw new Error("Critter, Relic, and Rollcaster detail popups must each render the shared description section.");
   if (!appSource.includes("initial?.focus({ preventScroll: true });") || !appSource.includes("if (modal) modal.scrollTop = 0;")) throw new Error("Modal opening must focus without scrolling and reset the pane to the top.");

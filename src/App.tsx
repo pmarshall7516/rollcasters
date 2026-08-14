@@ -110,6 +110,7 @@ import { calculateLoadoutStats, nextOpenSquadSlot, type LoadoutStatKey, type Sta
 import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
+import { combatSwapTravelOffset } from "./lib/presentation";
 import {
   challengeDescription,
   completedTrackedChallengeIds,
@@ -4157,6 +4158,7 @@ function CombatScreen({
   const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill; phase: "primary" | "swap"; primaryTargetKey?: string } | null>(null);
   const [swapSelection, setSwapSelection] = useState<{ actorKey: string; mode: "regular" | "skill" } | null>(null);
   const [submittingProgress, setSubmittingProgress] = useState(false);
+  const [manaSubmitAnimating, setManaSubmitAnimating] = useState(false);
   const [loadingDots, setLoadingDots] = useState(1);
   const [recordingResult, setRecordingResult] = useState(false);
   const [resultAttempt, setResultAttempt] = useState(0);
@@ -4188,6 +4190,9 @@ function CombatScreen({
   const dialogue = currentDungeonDialogue(combat);
   const activePlayer = orderedActiveCombatUnits(battle.playerUnits);
   const totalCost = Object.values(actions).reduce((sum, action) => sum + action.cost, 0);
+  const selectingActions = combat.phase === "select_player_actions";
+  const displayedPlayerMana = selectingActions ? Math.max(0, battle.playerMana - totalCost) : battle.playerMana;
+  const playerManaReserved = selectingActions && totalCost > 0;
   const manaAssetPath = findAssetPath(data, "mana", "mana");
   const activeOwnedRollcaster = data.player!.rollcasters.find((row) => row.id === data.player!.profile.active_rollcaster_id) ?? data.player!.rollcasters[0];
   const activeRollcaster = byId(data.catalog.rollcasters, activeOwnedRollcaster?.rollcaster_id);
@@ -4447,6 +4452,7 @@ function CombatScreen({
         .filter((unit) => isActorRecharging(battle, unit.key))
         .map((unit) => [unit.key, { actorKey: unit.key, type: "skip" as const, cost: 0 }]),
     ));
+    setManaSubmitAnimating(false);
     setTargeting(null);
     setSwapSelection(null);
     setMenu("actions");
@@ -4478,6 +4484,11 @@ function CombatScreen({
     }, 220);
     return () => window.clearInterval(timer);
   }, [submittingProgress]);
+
+  useEffect(() => {
+    if (!manaSubmitAnimating || combat.phase === "select_player_actions") return;
+    setManaSubmitAnimating(false);
+  }, [combat.phase, manaSubmitAnimating]);
 
   useEffect(() => {
     setVisibleNarration("");
@@ -4681,12 +4692,18 @@ function CombatScreen({
     const rootRect = root.getBoundingClientRect();
     const scale = root.offsetWidth > 0 ? rootRect.width / root.offsetWidth : 1;
     if (!Number.isFinite(scale) || scale <= 0) return;
+    const travel = combatSwapTravelOffset(
+      { x: sourceRect.left + sourceRect.width / 2, y: sourceRect.top + sourceRect.height / 2 },
+      { x: destinationRect.left + destinationRect.width / 2, y: destinationRect.top + destinationRect.height / 2 },
+      swapRevealed ? "in" : "out",
+      scale,
+    );
     setSwapMotion({
       eventId: event.id,
       actorKey: movingKey,
       phase: swapRevealed ? "in" : "out",
-      x: (swapRevealed ? -1 : 1) * (((destinationRect.left + destinationRect.width / 2) - (sourceRect.left + sourceRect.width / 2)) / scale),
-      y: (swapRevealed ? -1 : 1) * (((destinationRect.top + destinationRect.height / 2) - (sourceRect.top + sourceRect.height / 2)) / scale),
+      x: travel.x,
+      y: travel.y,
     });
   }, [combat.phase, event?.id, swapRevealed]);
 
@@ -4798,6 +4815,7 @@ function CombatScreen({
   async function submitActions() {
     if (!actionsReady) return;
     const selectedActions = activePlayer.map((unit) => actions[unit.key]);
+    setManaSubmitAnimating(true);
     setSubmittingProgress(true);
     // Let the Loading narration paint before the synchronous resolver does its
     // work. This keeps the UI responsive without moving deterministic combat
@@ -4857,9 +4875,11 @@ function CombatScreen({
             data={data}
             name={activeRollcaster?.name ?? "Rollcaster"}
             assetPath={catalogAssetPath(data, "rollcaster", activeRollcaster?.id, activeRollcaster?.asset_path)}
-            mana={battle.playerMana}
+            mana={displayedPlayerMana}
             manaAssetPath={manaAssetPath}
             manaRefund={playerManaRefund?.amount}
+            manaReserved={playerManaReserved}
+            manaSubmitting={manaSubmitAnimating}
             abilities={activeAbilitySlots}
             units={battle.playerUnits}
             opponent={false}
@@ -4878,7 +4898,7 @@ function CombatScreen({
                 data={data}
                 allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
                 action={actions[unit.key]}
-                interactive={combat.phase === "select_player_actions" && currentActor?.key === unit.key && !targeting && !swapSelection}
+                interactive={combat.phase === "select_player_actions" && currentActor?.key === unit.key && (!swapSelection && (!targeting || targeting.actorKey === unit.key))}
                 waiting={combat.phase === "select_player_actions" && unit.active && unit.hp > 0 && currentActor?.key !== unit.key && !actions[unit.key]}
                 menu={currentActor?.key === unit.key ? menu : "actions"}
                 setMenu={setMenu}
@@ -4886,8 +4906,13 @@ function CombatScreen({
                 onAction={setAction}
                 onBeginSwap={beginRegularSwap}
                 onChooseSkill={chooseSkill}
-                onBack={menu === "skills" ? () => { setTargeting(null); setMenu("actions"); } : backToPreviousActor}
-                showBack={menu === "skills" || (menu === "actions" && currentActorIndex > 0)}
+                onBack={targeting?.actorKey === unit.key
+                  ? () => { setTargeting(null); setMenu("skills"); }
+                  : menu === "skills"
+                    ? () => { setTargeting(null); setMenu("actions"); }
+                    : backToPreviousActor}
+                showBack={targeting?.actorKey === unit.key || menu === "skills" || (menu === "actions" && currentActorIndex > 0)}
+                targeting={targeting?.actorKey === unit.key}
                 onReselectAction={combat.phase === "select_player_actions" && actions[unit.key] && !isActorRecharging(battle, unit.key)
                   ? () => reselectAction(unit.key)
                   : undefined}
@@ -5033,6 +5058,8 @@ function CombatRollcasterPanel({
   mana,
   manaAssetPath,
   manaRefund,
+  manaReserved,
+  manaSubmitting,
   abilities,
   units,
   opponent,
@@ -5046,6 +5073,8 @@ function CombatRollcasterPanel({
   mana: number;
   manaAssetPath: string | null;
   manaRefund?: number;
+  manaReserved?: boolean;
+  manaSubmitting?: boolean;
   abilities: Array<RollcasterAbility | undefined>;
   units: CombatState["playerUnits"];
   opponent: boolean;
@@ -5060,7 +5089,13 @@ function CombatRollcasterPanel({
       </span>
       <h3>{name}</h3>
       <div className="combat-mana-total-wrap">
-        <strong className={`combat-mana-total ${manaRefund ? "mana-refund-counter" : ""}`}><AssetIcon path={manaAssetPath} alt={`${opponent ? "Enemy" : "Player"} Mana`} fallback={<Gem />} /> {mana}</strong>
+        <strong
+          className={`combat-mana-total ${manaRefund ? "mana-refund-counter" : ""} ${manaReserved && !manaSubmitting ? "mana-reserved" : ""} ${manaSubmitting ? "mana-submit-shake" : ""}`.trim()}
+          aria-label={`${opponent ? "Enemy" : "Player"} Mana: ${mana}${manaReserved ? " remaining" : ""}`}
+        >
+          <AssetIcon path={manaAssetPath} alt={`${opponent ? "Enemy" : "Player"} Mana`} fallback={<Gem />} />
+          <span className="combat-mana-value">{mana}</span>
+        </strong>
         {manaRefund && <span className="mana-refund-pop" aria-hidden="true">+{manaRefund}</span>}
       </div>
       <div className="combat-ability-list" aria-label={`${opponent ? "Enemy" : "User"} Rollcaster abilities`}>
@@ -5200,6 +5235,7 @@ function BattleUnit({
   onChooseSkill,
   onBack,
   showBack = false,
+  targeting = false,
   onReselectAction,
   opponent = false,
   availableMana = 0,
@@ -5227,6 +5263,7 @@ function BattleUnit({
   onChooseSkill?: (actorKey: string, skill: Skill) => void;
   onBack?: () => void;
   showBack?: boolean;
+  targeting?: boolean;
   onReselectAction?: () => void;
   opponent?: boolean;
   availableMana?: number;
@@ -5344,7 +5381,7 @@ function BattleUnit({
         {interactive && onAction && (
           <>
             {showBack && <button className="combat-back-row" data-combat-control="true" data-combat-focus-role="back" onClick={(event) => { event.stopPropagation(); onBack?.(); }}>
-              <ChevronLeft size={14} /> {menu === "actions" ? "Back to previous Critter" : "Back to Action Menu"}
+              <ChevronLeft size={14} /> {targeting ? "Back to Skill Menu" : menu === "actions" ? "Back to previous Critter" : "Back to Action Menu"}
             </button>}
             {menu === "actions" && <div className="combat-primary-actions">
               <button data-combat-control="true" data-combat-focus-role="action-primary" onClick={(event) => { event.stopPropagation(); setMenu?.("skills"); }}><Swords size={16} /> Skill</button>
@@ -5352,7 +5389,7 @@ function BattleUnit({
               <button data-combat-control="true" data-combat-focus-role="action-primary" disabled={regularSwapTargets.length === 0 || swapCost.final > availableMana} onClick={(event) => { event.stopPropagation(); onBeginSwap?.(unit.key); }}><RefreshCw size={16} /> Swap <ManaCost path={manaAssetPath} amount={swapCost.final} breakdown={swapCost} /></button>
               <button data-combat-control="true" data-combat-focus-role="action-primary" onClick={(event) => { event.stopPropagation(); onAction({ actorKey: unit.key, type: "skip", cost: 0 }); }}><ChevronRight size={16} /> Skip <ManaCost path={manaAssetPath} amount={0} /></button>
             </div>}
-            {menu === "skills" && <div className="combat-skill-actions">
+            {menu === "skills" && !targeting && <div className="combat-skill-actions">
               {[0, 1, 2, 3].map((slot) => {
                 const skill = unit.skills[slot];
                 const skillCost = skill ? calculateActionCostBreakdown(battle, { actorKey: unit.key, type: "skill", skillId: skill.id, cost: skill.mana_cost }) : undefined;

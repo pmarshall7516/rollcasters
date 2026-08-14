@@ -237,17 +237,17 @@ try {
       || (viewport.statColumns === 2 && viewport.statRows === 4)
       || (viewport.statColumns === 1 && viewport.statRows === 8);
     const statContentsAlign = viewport.statLayouts.every((entry) => entry.justifyContent === "space-between"
-      && entry.labelOffset >= 6
+      && entry.labelOffset >= 5
       && entry.labelOffset <= 11
-      && entry.valueOffset >= 6
+      && entry.valueOffset >= 5
       && entry.valueOffset <= 11
       && Math.abs(entry.labelOffset - entry.valueOffset) < .1
       && entry.fits);
     const compactStats = responsiveStatMatrix
       && statWidthsMatch
-      && viewport.statWidths[0] > 96
-      && viewport.firstStat.height >= 39
-      && Math.abs(viewport.statFontSize - 18) < .1
+      && viewport.statWidths[0] > 70
+      && viewport.firstStat.height >= 29
+      && viewport.statFontSize >= 14
       && statContentsAlign
       && Math.abs(viewport.statGrid.width - viewport.summary.width) < .1
       && Math.abs(viewport.statGrid.left - viewport.summary.left) < .1
@@ -318,6 +318,12 @@ try {
   const mobile = viewports.find((viewport) => viewport.name === "mobile");
   if (!responsiveSkillScale || wide.skillTitleSize < 12 || wide.skillIcon.width < 20 || wide.skillMetaSize < 9 || mobile.skillTitleSize >= wide.skillTitleSize || mobile.skillIcon.width >= wide.skillIcon.width || mobile.skillMetaSize >= wide.skillMetaSize || mobile.skill.height > wide.skill.height) {
     throw new Error(`Equipped Skill scaling failures:\n${JSON.stringify({ responsiveSkillScale, wide, mobile }, null, 2)}`);
+  }
+
+  const pcViewports = viewports.filter((viewport) => viewport.width >= 1024);
+  const compactPcStats = pcViewports.every((viewport) => viewport.statColumns === 4 && viewport.statRows === 2);
+  if (!compactPcStats) {
+    throw new Error(`PC Critter stat grids should stay in two rows:\n${JSON.stringify(pcViewports, null, 2)}`);
   }
 
   if (failures.length) throw new Error(`Home loadout layout failures:\n${JSON.stringify(failures, null, 2)}`);

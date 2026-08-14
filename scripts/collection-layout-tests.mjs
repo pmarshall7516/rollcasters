@@ -17,7 +17,8 @@ const card = (id, name) => {
       const firstBlockedIndex = challengeCount > 1 ? 2 : -1;
       const blocked = firstBlockedIndex >= 0 && index >= firstBlockedIndex;
       const boundary = index === firstBlockedIndex ? '<div class="challenge-gate-boundary"><span class="gate-blocked">Complete all above challenges first</span></div>' : "";
-      return `${boundary}<div class="challenge-row ${blocked ? "blocked" : ""}"><span class="challenge-row-description">Complete unlock challenge ${index + 1} with wrapping copy</span><strong>${index} / 10</strong>${blocked ? "" : `<button class="grid-challenge-track" aria-pressed="${index === 0}">${index === 0 ? "Untrack" : "Track"}</button>`}</div>`;
+      const goals = [30, 100, 500, 10, 10, 10, 10, 10];
+      return `${boundary}<div class="challenge-row ${blocked ? "blocked" : ""}"><span class="challenge-row-description">Complete unlock challenge ${index + 1} with wrapping copy</span><strong>${index} / ${goals[index]}</strong>${blocked ? "" : `<button class="grid-challenge-track" aria-pressed="${index === 0}">${index === 0 ? "Untrack" : "Track"}</button>`}</div>`;
     }).join("")}</div>`
     : '<p class="collection-status challenge-empty">Not currently unlockable</p>';
   const rollcasterDescription = name === "Rollcaster"
@@ -129,6 +130,12 @@ try {
           descriptionActionCenterOffset: action ? Math.abs((description.top + description.height / 2) - (action.top + action.height / 2)) : null,
           actionLeftOfProgress: !action || action.right <= progress.left,
         };
+      });
+      const challengeTrackColumns = [...document.querySelectorAll(".challenge-rows")].flatMap((group) => {
+        const actions = [...group.querySelectorAll(":scope > .challenge-row .grid-challenge-track")].map((entry) => entry.getBoundingClientRect());
+        return actions.length > 1
+          ? [{ aligned: actions.every((action) => Math.abs(action.left - actions[0].left) < 1 && Math.abs(action.width - actions[0].width) < 1) }]
+          : [];
       });
       const challengeBoundaries = [...document.querySelectorAll(".challenge-gate-boundary")].map((entry) => {
         const rect = entry.getBoundingClientRect();
@@ -321,6 +328,7 @@ try {
           fits: entry.getBoundingClientRect().right <= entry.closest(".collection-card-state").getBoundingClientRect().right + .5,
         })),
         challengeAlignments,
+        challengeTrackColumns,
         challengeBoundaries,
         stableScrollbarGutter: getComputedStyle(document.documentElement).scrollbarGutter.includes("stable"),
         statuses: statuses.map((entry) => ({
@@ -412,7 +420,9 @@ try {
     const challengePaneMatches = Boolean(stressedChallengePane && !stressedChallengePane.scrollable && stressedChallengePane.customScrollbarCount === 0 && stressedChallengePane.scrollHeight <= stressedChallengePane.clientHeight && stressedChallengePane.overflowX === "visible" && stressedChallengePane.overflowY === "visible" && viewport.challengeWheelScrollTop === 0 && nonScrollableChallengePanes.every((pane) => !pane.scrollable && pane.customScrollbarCount === 0));
     const lockedScrollbarMatches = viewport.lockedScrollbarStates.length > 0 && viewport.nonRelicOwnedScrollbarCount === 0 && viewport.lockedScrollbarStates.every((entry) => entry.scrollbarCount === 0 && !entry.scrollable);
     const cardActionsMatch = viewport.cardsAreArticles && viewport.nestedButtonCount === 0 && viewport.detailActions.length === viewport.cards.length && viewport.detailActions.every((entry) => entry.label?.startsWith("View ") && entry.width === 28 && entry.height === 28 && entry.fits) && viewport.trackActions.length >= 3 && viewport.trackActions.some((entry) => entry.text === "Track" && entry.pressed === "false" && entry.backgroundColor === "rgb(203, 183, 255)") && viewport.trackActions.some((entry) => entry.text === "Untrack" && entry.pressed === "true" && entry.backgroundColor === "rgb(218, 203, 255)") && viewport.trackActions.every((entry) => entry.width === 60 && entry.height === 20 && entry.labelFits && entry.whiteSpace === "nowrap" && entry.textColor === (entry.pressed === "true" ? "rgb(32, 21, 55)" : "rgb(37, 18, 63)") && Math.abs(entry.center - entry.descriptionCenter) < .5 && entry.right <= entry.progressLeft && entry.fits);
-    const challengeAlignmentMatches = viewport.challengeAlignments.length >= 8 && viewport.challengeAlignments.every((entry) => entry.descriptionProgressCenterOffset < .5 && (entry.descriptionActionCenterOffset === null || entry.descriptionActionCenterOffset < .5) && entry.actionLeftOfProgress);
+    const challengeAlignmentMatches = viewport.challengeAlignments.length >= 8
+      && viewport.challengeAlignments.every((entry) => entry.descriptionProgressCenterOffset < .5 && (entry.descriptionActionCenterOffset === null || entry.descriptionActionCenterOffset < .5) && entry.actionLeftOfProgress)
+      && viewport.challengeTrackColumns.every((entry) => entry.aligned);
     const challengeBoundaryMatches = viewport.challengeBoundaries.length === 1 && viewport.challengeBoundaries.every((entry) => entry.text === "Complete all above challenges first" && entry.previousIsChallenge && entry.nextIsBlockedChallenge && entry.followsPrevious && entry.precedesNext);
     const statusesMatch = viewport.statuses.every((entry) => entry.align === "center" && entry.transform === "uppercase" && entry.weight >= 700);
     const anchorsStable = JSON.stringify(viewport.beforeFilter) === JSON.stringify(viewport.anchors);
