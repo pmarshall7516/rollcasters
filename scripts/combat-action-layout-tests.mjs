@@ -95,7 +95,23 @@ try {
   );
   await page.screenshot({ path: path.join(outputDir, "skills.png"), animations: "disabled", fullPage: true });
 
-  process.stdout.write(`${JSON.stringify({ layout, skills })}\n`);
+  const swapSelection = await page.evaluate(() => {
+    const column = document.querySelector(".player-column");
+    column.style.gridTemplateRows = "178px 78px 78px";
+    const unit = document.querySelector(".battle-unit");
+    unit.style.setProperty("--combat-unit-height", "178px");
+    const space = document.querySelector(".combat-action-space");
+    space.innerHTML = '<button class="combat-back-row">‹ Back to Action Menu</button>';
+    const back = space.querySelector(".combat-back-row");
+    back.style.fontSize = "10px";
+    const rect = back.getBoundingClientRect();
+    return { text: back.textContent?.trim(), width: rect.width, height: rect.height, top: rect.top, bottom: rect.bottom };
+  });
+  check(swapSelection.text === "‹ Back to Action Menu", `Swap selection must expose the action-menu Back control: ${JSON.stringify(swapSelection)}`);
+  check(swapSelection.width > 0 && swapSelection.height > 0, `Swap selection Back control must be visible: ${JSON.stringify(swapSelection)}`);
+  await page.screenshot({ path: path.join(outputDir, "swap-selection.png"), animations: "disabled", fullPage: true });
+
+  process.stdout.write(`${JSON.stringify({ layout, skills, swapSelection })}\n`);
 } finally {
   await browser.close();
 }

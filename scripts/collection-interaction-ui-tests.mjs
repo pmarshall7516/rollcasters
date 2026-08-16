@@ -137,6 +137,7 @@ try {
   const relicEquipSource = appSource.match(/} else if \(target\.type === "relic"\) \{[\s\S]*?} else if \(target\.type === "ability"\)/)?.[0] ?? "";
   if (!relicEquipSource.includes("return <GameTooltip key={relic.id} label={details}")) throw new Error("Equip Relic candidates must use the shared hover/focus tooltip.");
   if (relicEquipSource.includes("relic-candidate-effects") || !relicEquipSource.includes("attachmentRows(effects, sourceCritter)")) throw new Error("Equip Relic cards must keep effects out of the card and render them in the colored tooltip.");
+  if (!relicEquipSource.includes("equippedRelicIdsForCritter(player.relicSlots, target.owned.id)") || !relicEquipSource.includes("available <= 0 || equippedByCritter.has(relic.id)")) throw new Error("Equip Relic candidates must grey out Relics already equipped to the target Critter.");
 
   const screenshot = path.join(outputDir, "skills-abilities-stats-modal.png");
   await page.screenshot({ path: screenshot, fullPage: true });

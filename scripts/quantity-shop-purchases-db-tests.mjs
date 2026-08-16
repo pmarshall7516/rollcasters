@@ -66,10 +66,51 @@ try {
   `, [userId, targetId, requestId]);
   check(state.rows[0].balance === "70" && state.rows[0].shards === "6" && state.rows[0].receipts === 1, "A quantity purchase must persist one atomic receipt and the matching balance/inventory changes.");
 
+  const rolledBackRequestId = crypto.randomUUID();
+  let rejectedAtomicBatch = false;
+  try {
+    await client.query("select public.purchase_shop_entries($1::jsonb)", [JSON.stringify([
+      { entry_id: entryId, request_id: rolledBackRequestId, quantity: 1 },
+      { entry_id: crypto.randomUUID(), request_id: crypto.randomUUID(), quantity: 1 },
+    ])]);
+  } catch (error) {
+    rejectedAtomicBatch = String(error?.message ?? error).includes("SHOP_ENTRY_UNAVAILABLE");
+  }
+  check(rejectedAtomicBatch, "An invalid line must reject the complete Shop session batch.");
+  const rolledBackState = await client.query(`
+    select
+      (select balance::text from public.user_currencies where user_id=$1 and currency_id='coins') as balance,
+      (select quantity::text from public.user_collectible_shards where user_id=$1 and collectible_type='critter' and collectible_id=$2) as shards,
+      (select count(*)::int from public.shop_purchase_receipts where user_id=$1 and request_id=$3) as receipts
+  `, [userId, targetId, rolledBackRequestId]);
+  check(
+    rolledBackState.rows[0].balance === "70" && rolledBackState.rows[0].shards === "6" && rolledBackState.rows[0].receipts === 0,
+    "A rejected Shop session must roll back every currency, item, and receipt mutation.",
+  );
+
+  const batchRequestIds = [crypto.randomUUID(), crypto.randomUUID()];
+  const batch = (await client.query("select public.purchase_shop_entries($1::jsonb) as result", [JSON.stringify([
+    { entry_id: entryId, request_id: batchRequestIds[0], quantity: 2 },
+    { entry_id: entryId, request_id: batchRequestIds[1], quantity: 1 },
+  ])])).rows[0].result;
+  check(batch.receipts.length === 2, "A Shop session batch must return one receipt for each local purchase intent.");
+  const batchState = await client.query(`
+    select
+      (select balance::text from public.user_currencies where user_id=$1 and currency_id='coins') as balance,
+      (select quantity::text from public.user_collectible_shards where user_id=$1 and collectible_type='critter' and collectible_id=$2) as shards,
+      (select count(*)::int from public.shop_purchase_receipts where user_id=$1 and request_id=any($3::uuid[])) as receipts
+  `, [userId, targetId, batchRequestIds]);
+  check(
+    batchState.rows[0].balance === "40" && batchState.rows[0].shards === "12" && batchState.rows[0].receipts === 2,
+    "The atomic Shop session must persist every currency debit and item grant together.",
+  );
+
   const privileges = await client.query(`
-    select has_function_privilege('authenticated','public.purchase_shop_entry(uuid,uuid,bigint)','execute') as quantity_rpc
+    select
+      has_function_privilege('authenticated','public.purchase_shop_entry(uuid,uuid,bigint)','execute') as quantity_rpc,
+      has_function_privilege('authenticated','public.purchase_shop_entries(jsonb)','execute') as batch_rpc
   `);
-  check(privileges.rows[0].quantity_rpc, "Authenticated clients must be allowed to call the quantity purchase RPC.");
+  check(privileges.rows[0].quantity_rpc && privileges.rows[0].batch_rpc, "Authenticated clients must be allowed to call both Shop purchase RPCs.");
 
   console.log(`Quantity shop purchase DB tests passed for Critter ${targetId}; all changes will be rolled back.`);
 } finally {

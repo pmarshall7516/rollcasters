@@ -126,6 +126,11 @@ function inferredGateEligibility(data: AppData, challenge: CollectibleUnlockChal
   return priorGateOrders.every((gateOrder) => allChallenges
     .filter((candidate) => candidate.gate_order === gateOrder)
     .every((candidate) => {
+      if (candidate.challenge_type === "collection_diversity"
+        || candidate.challenge_type === "shop_shards"
+        || candidate.challenge_type === "shop_relic") {
+        return derivedChallengeCurrent(data, candidate) >= challengeGoal(candidate);
+      }
       const stored = data.player?.collectibleSnapshot.progress.find((row) => row.challenge_id === candidate.id);
       // Missing authoritative progress is unsafe to treat as a completed gate.
       return stored !== undefined && safeBigInt(stored.current) >= challengeGoal(candidate);
@@ -139,13 +144,17 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
   const gateEligible = challenge ? inferredGateEligibility(data, challenge) : true;
   if (!progress) {
     const current = challenge ? derivedChallengeCurrent(data, challenge) : 0n;
+    const isDerived = challenge?.challenge_type === "collection_diversity"
+      || challenge?.challenge_type === "shop_shards"
+      || challenge?.challenge_type === "shop_relic";
+    const goalReached = authoredGoal > 0n && current >= authoredGoal;
     return {
       challenge_id: challengeId,
       current: String(authoredGoal > 0n && current > authoredGoal ? authoredGoal : current),
       goal: String(authoredGoal),
-      goal_reached: authoredGoal > 0n && current >= authoredGoal,
+      goal_reached: goalReached,
       eligible: gateEligible,
-      completed: false,
+      completed: Boolean(isDerived && gateEligible && goalReached),
       blocked_by_gate_order: null,
       // A missing authoritative state usually means the published definition
       // is older than the live server definition. Do not allow tracking a row
@@ -155,8 +164,10 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
   }
 
   const eligible = gateEligible && progress.eligible !== false;
-  const isCollectionDiversity = challenge?.challenge_type === "collection_diversity";
-  const current = isCollectionDiversity ? derivedChallengeCurrent(data, challenge) : safeBigInt(progress.current);
+  const isDerived = challenge?.challenge_type === "collection_diversity"
+    || challenge?.challenge_type === "shop_shards"
+    || challenge?.challenge_type === "shop_relic";
+  const current = isDerived ? derivedChallengeCurrent(data, challenge) : safeBigInt(progress.current);
   // The published challenge definition is the source of truth for derived
   // goals. A snapshot can outlive a catalog edit and still carry the old
   // compatibility-column goal.
@@ -165,14 +176,14 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
   // A snapshot can briefly carry the raw goal and the completion flag from
   // different revisions. Treat a reached goal as complete once the challenge
   // is eligible so stale rows cannot consume a tracking slot.
-  const completed = eligible && (isCollectionDiversity
+  const completed = eligible && (isDerived
     ? goalReached
     : (progress.completed || progress.goal_reached === true || goalReached));
   return {
     ...progress,
     current: String(current),
     goal: String(normalizedGoal),
-    goal_reached: isCollectionDiversity ? goalReached : progress.goal_reached ?? goalReached,
+    goal_reached: isDerived ? goalReached : progress.goal_reached ?? goalReached,
     eligible,
     completed,
     blocked_by_gate_order: progress.blocked_by_gate_order ?? null,
@@ -479,6 +490,16 @@ export function shopAvailability(data: AppData, entry: ShopEntry, purchaseQuanti
   if (current + itemQuantity > goal) return unavailable("RELIC_MAX_OWNED_REACHED", "Maximum owned", current, goal);
   if (balance < price) return unavailable("INSUFFICIENT_FUNDS", `Need ${formatAmount(price - balance)} more ${currency.name}`, current, goal);
   return { enabled: true, code: null, reason: null, current, goal };
+}
+
+export function shopPurchaseQuantityLimit(data: AppData, entry: ShopEntry, absoluteMax = 99): number {
+  const cap = Math.max(1, Math.min(99, Math.trunc(absoluteMax)));
+  if (entry.shop_type === "lootbox") return cap;
+  const status = shopAvailability(data, entry, 1);
+  const remaining = status.goal > status.current ? status.goal - status.current : 0n;
+  const bundleSize = safeBigInt(entry.quantity) > 0n ? safeBigInt(entry.quantity) : 1n;
+  const bundles = remaining > 0n ? (remaining + bundleSize - 1n) / bundleSize : 0n;
+  return Number(bundles > BigInt(cap) ? BigInt(cap) : bundles > 0n ? bundles : 1n);
 }
 
 export function shopErrorMessage(error: unknown): string {

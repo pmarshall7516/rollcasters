@@ -1,6 +1,23 @@
 # Rollcasters progress
 Original prompt: On the main page, show level-eligible Critter skills in skill-slot popups and allow unlocking them with skill points.
 
+## 2026-08-15 — Unified Shop cards and derived progress
+
+- Aligned Shard, Relic, and Lootbox cards around the same art/name/purchase/action rows; Shard names retain Critter element logos, price lines contain one item count and the saved currency asset, and Shard/Relic cards share progress bars.
+- Added touch-friendly decrement/input/increment controls and automatic quantity reset after an offer reaches its ownership cap.
+- Shop Shards and Shop Relic challenge displays and gate eligibility now derive from the same inventory state used by Shop progress, ignoring stale or missing generic challenge-progress counters.
+- Focused collectible/shop, quantity projection, and purchase-flow tests, typecheck, production build, and the required generic browser smoke pass. The authenticated Shop visual run remains blocked by DNS resolution for the configured Supabase database host.
+- Follow-up: all three Shop tabs now use identical art/name/price/filler/action grid rows, cyan 19px item names, matching card surfaces, reduced top padding, and bottom-pinned quantity/Purchase controls. Quantity is a read-only display changed only by −/+, capped at 99 for Lootboxes and at the bundle-aware remaining Shard/Relic ownership requirement.
+- Follow-up: live account audit found durable progress was already correct (`critter:001` 49/50 and Gambler's Rune 35/50). The false maxed Shop state came from the deprecated local deferred-purchase ledger, not database rows. Removed deferred/optimistic Shop sessions, clear old ledgers on load, await each selected-quantity purchase immediately, and block repeat clicks while it commits.
+- Applied the existing `20260814120000_quantity_shop_purchases` migration to live through the TLS-verified pooler and verified `purchase_shop_entry(uuid,uuid,bigint)` is exposed by PostgREST. No live inventory/challenge data was changed.
+- Shared quantity controls now use a purple/cyan/gold themed presentation in both cards and the Lootbox popup. Shard/Relic bars show a distinct gold projected segment for the selected quantity. Focused Shop suites, typecheck, build, diff check, live schema verification, and generic browser smoke pass. The full Lootbox browser fixture could not find its authored Common Lootbox, and the rollback DB fixture had no unowned Critter available.
+
+## 2026-08-14 — Combat Swap cancel affordance
+
+- Regular Swap now enters a dedicated swap menu on the acting Critter card, keeping its action-space Back row visible as `Back to Action Menu` while squad targets remain selectable.
+- Clicking that Back row, or using the combat Shift-back shortcut, clears only the pending swap selection and returns to the normal action menu.
+- Typecheck, Swap UI/presentation, action-layout regressions, production smoke capture, and screenshot inspection pass. Live authenticated combat interaction was not available in the smoke environment.
+
 ## 2026-08-14 — Quantity shop purchases
 
 - Current task: add integer quantity controls to every shop, multiply displayed prices, make rapid purchases optimistic and responsive, and reconcile durable currency/inventory safely without duplication.
@@ -11,6 +28,9 @@ Original prompt: On the main page, show level-eligible Critter skills in skill-s
 - Follow-up: purchase buttons now stay labeled `Purchase`; changing quantity updates only the adjacent `quantity × currency icon cost` display on Shop cards and Lootbox purchase popups.
 - Follow-up: multi-quantity purchases now detect an unavailable deployed quantity RPC and serialize deterministic, idempotent legacy unit calls instead of surfacing the generic purchase error. Partial legacy batches reconcile their committed receipt without rolling the local state back; stale refreshes are ignored while a purchase revision is newer, and pending batches flush on tab changes, Back, or Shop unmount.
 - Follow-up: Lootbox purchases retain every granted box in the Bag, opening consumes one fresh idempotent request at a time, and the result action becomes `Open Another (X left)` while local remainder is available. Focused purchase-flow, projection, collectible/shop, typecheck, build, and app smoke checks pass; live Supabase verification remains blocked by DNS resolution for the configured project host.
+- Follow-up: fixed the remaining spam-purchase snap-back. The missing quantity-RPC compatibility guard incorrectly threw for every coalesced quantity greater than one, which invoked optimistic rollback before the legacy fallback could run. The fallback decision now applies to any valid batch quantity, with regression coverage for `PGRST202` bulk fallback and optimistic-to-durable currency/inventory continuity.
+- Follow-up: Shop purchases now remain in an App-owned, localStorage-backed optimistic intent ledger for the full Shop visit. Purchase rewards and Lootbox acquisition controls appear immediately; changing Shop tabs stays local, while leaving Shop sends one `purchase_shop_entries(jsonb)` RPC that reprices and applies every currency debit and item grant in one server transaction. The ledger keeps stable request IDs for safe retry and Lootbox opening awaits any outstanding flush. Added the generated `20260814193615_atomic_shop_session_purchases.sql` migration and atomic rollback/success coverage; live DB execution remains blocked by the configured Supabase hostname DNS failure.
+- Follow-up: Lootbox results now show `Back` and `Open Another (X left)` side-by-side. `Back` closes the modal to its Shop or Bag origin; when no boxes remain, Back expands across the result action row. Typecheck, build, focused Shop tests, migration selection, browser smoke, and inspected mobile result geometry pass.
 
 ## 2026-08-14 — Combat opponent Critter sprite sizing
 
@@ -387,3 +407,20 @@ The working progress log is maintained in the shared Obsidian vault:
 - Found the exact disappearing-box cause: `CombatScreen` intentionally removed `.combat-narration` for `mana_refund` events. That changed the viewport-fit content height and let the remaining combat UI reflow/scale.
 - The narration control now stays mounted for every normal combat phase. Mana-refund playback uses a disabled `Mana restored.` placeholder while its automatic transition completes, so the footer height and fit-scale inputs remain stable.
 - Added `npm run test:combat-narration-layout`; it was red against the original conditional and passes after the fix. Result-loading, effect-runtime, typecheck, production build, focused Chromium layout/swap checks, and the browser smoke capture also pass.
+
+## 2026-08-15 — Final Ramber shard purchase and projection timing
+
+- Reproduced the 49/50 Ramber purchase failure in a rollback-only live transaction: the unlock evaluator recursively re-entered `collectible_challenge_states` through Own Collectible dependencies until PostgreSQL exhausted its stack.
+- Challenge-gated ownership now uses the durable unlock event written atomically by the evaluator as its non-recursive authority. A live audit found no event-less gated ownership row with historical challenge completion, and the migration was applied without changing player progress.
+- The exact final Ramber purchase now reaches 50/50 and materializes its unlock in a rollback-only regression, leaving the real account at 49/50 for the player to purchase normally.
+- Shard and Relic projected progress remains hidden at the default quantity of 1 and appears only after the quantity is increased. Focused source coverage, typecheck, and the production build pass.
+
+## 2026-08-15 — Lootbox Open Another transition
+
+- Fixed `Open Another` briefly resetting the Lootbox modal to the idle Possible rewards popup. The result modal now remains in the animation shell until the next opening response is loaded, then enters the existing shaking/reel sequence.
+- Added a focused source regression and an authenticated browser assertion for the no-idle transition. The source regression, typecheck, production build, and generic browser smoke pass; the live Lootbox flow remains blocked here by Supabase hostname DNS resolution.
+
+## 2026-08-15 — Critter-scoped Relic equip availability
+
+- Relic equip popups now grey out and disable every Relic already equipped to the target Critter, even when extra inventory copies exist; Relics equipped to other Critters remain eligible when available.
+- Added pure loadout coverage for target-Critter Relic detection and a focused source regression for the popup condition. Typecheck, collection UI tests, production build, focused Chromium UI regression, and generic web-game smoke pass; the smoke run reached the unauthenticated login screen.

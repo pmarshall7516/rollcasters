@@ -2,6 +2,7 @@ import {
   aggregateShopPurchaseReceipts,
   indexedShopPurchaseRequestId,
   partialShopPurchaseReceipt,
+  shopPurchaseRpcErrorDisposition,
 } from "../src/lib/shop.js";
 import type { ShopPurchaseReceipt } from "../src/lib/types.js";
 
@@ -36,5 +37,18 @@ check(indexedSecond === indexedShopPurchaseRequestId(first.request_id, 1), "Inde
 
 const partialError = Object.assign(new Error("INSUFFICIENT_FUNDS"), { partialReceipt: first });
 check(partialShopPurchaseReceipt(partialError)?.granted === "1", "Partial fallback failures must expose committed receipts for reconciliation.");
+
+check(
+  shopPurchaseRpcErrorDisposition({ code: "PGRST202", message: "Could not find the function public.purchase_shop_entry in the schema cache." }, 3) === "legacy",
+  "A missing quantity RPC must fall back for a spam-purchase batch instead of rolling back its optimistic state.",
+);
+check(
+  shopPurchaseRpcErrorDisposition(new Error("Could not find the function public.purchase_shop_entries(p_purchase) in the schema cache."), 1) === "legacy",
+  "The exact deployed batch-RPC schema-cache error must use the compatibility path even when thrown as an Error.",
+);
+check(
+  shopPurchaseRpcErrorDisposition({ code: "42501", message: "permission denied" }, 3) === "throw",
+  "Non-compatibility RPC errors must still reject the purchase batch.",
+);
 
 console.log("Shop purchase flow tests passed.");

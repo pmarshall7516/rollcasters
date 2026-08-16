@@ -143,6 +143,12 @@ export type ShopPurchaseReceipt = {
   created_at: string;
 };
 
+export type ShopPurchaseIntent = {
+  request_id: string;
+  entry_id: string;
+  quantity: number;
+};
+
 export type PromoCodeRewardType = "currency" | "shard" | "critter" | "rollcaster" | "relic";
 
 export type Lootbox = {

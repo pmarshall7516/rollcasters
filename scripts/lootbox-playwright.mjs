@@ -94,7 +94,10 @@ try {
   check(await purchaseModal.locator('.shop-quantity-input').count()===1 && await purchaseModal.getByRole('button',{name:'Purchase'}).count()===1,'The shop-grid Purchase button must open the purchase popup with its quantity control.')
   check(await purchaseModal.locator('.lootbox-modal-currencies .currency-pill').count()>0,'Lootbox purchase popup must keep currency balances visible.')
   const purchaseQuantity = 3
-  await purchaseModal.locator('.shop-quantity-input').fill(String(purchaseQuantity))
+  const increaseQuantity = purchaseModal.getByRole('button',{name:/Increase quantity of/i})
+  await increaseQuantity.click()
+  await increaseQuantity.click()
+  check((await purchaseModal.locator('.shop-quantity-input').textContent())?.trim()===String(purchaseQuantity),'Lootbox quantity must change only through the plus/minus controls.')
   const popupDisplayedPrice = Number((await purchaseModal.locator('.lootbox-modal-purchase-price .shop-price-cost').textContent()).replace(/[^0-9]/g,''))
   check(popupDisplayedPrice === displayedPrice * purchaseQuantity,`Lootbox popup price must scale with quantity: ${popupDisplayedPrice} vs ${displayedPrice * purchaseQuantity}.`)
   const shardShape = await purchaseModal.locator('.lootbox-pool-shard-art .shard-sprite-frame').first().evaluate((node) => ({
@@ -108,12 +111,13 @@ try {
   await purchaseModal.getByRole('button',{name:'Send to Bag'}).waitFor()
   await shopCard.getByRole('button',{name:'Open Now'}).waitFor()
   await shopCard.getByRole('button',{name:'Send to Bag'}).waitFor()
+  check(await page.evaluate(() => JSON.parse(window.render_game_to_text()).unsavedShopPurchases)===1,'Popup Purchase must enter the local Shop ledger immediately.')
   const purchasedInventory = await player.from('user_lootboxes').select('lootbox_id,quantity').eq('lootbox_id','001').gt('quantity',0).maybeSingle()
   if (purchasedInventory.error) throw purchasedInventory.error
-  check(Boolean(purchasedInventory.data) && String(purchasedInventory.data.quantity) === String(purchaseQuantity),'Popup Purchase must persist the full requested Lootbox quantity before a refresh.')
+  check(!purchasedInventory.data,'Popup Purchase must remain local until the player leaves Shop.')
   const chargedBalance = await player.from('user_currencies').select('balance').eq('user_id',userId).eq('currency_id','coins').single()
   if (chargedBalance.error) throw chargedBalance.error
-  check(String(chargedBalance.data.balance) === String(500 - popupDisplayedPrice),`Lootbox purchase must charge the quantity-scaled price ${popupDisplayedPrice}; balance was ${chargedBalance.data.balance}.`)
+  check(String(chargedBalance.data.balance) === '500',`The saved balance must remain unchanged while the Shop ledger is local; balance was ${chargedBalance.data.balance}.`)
 
   await purchaseModal.getByRole('button',{name:'Send to Bag'}).click()
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === 'shop', { timeout: 10000 })
@@ -121,6 +125,13 @@ try {
   check(await page.locator('.lootbox-shop-card').getByRole('button',{name:'Purchase'}).count()===1,'Sending a purchased Lootbox to the Bag must keep the user on the Lootbox Shop.')
 
   await page.getByRole('button',{name:'Back',exact:true}).click()
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).unsavedShopPurchases === 0, { timeout: 10000 })
+  const persistedInventory = await player.from('user_lootboxes').select('lootbox_id,quantity').eq('lootbox_id','001').gt('quantity',0).single()
+  if (persistedInventory.error) throw persistedInventory.error
+  check(String(persistedInventory.data.quantity) === String(purchaseQuantity),'Leaving Shop must atomically persist the full local Lootbox quantity.')
+  const persistedBalance = await player.from('user_currencies').select('balance').eq('user_id',userId).eq('currency_id','coins').single()
+  if (persistedBalance.error) throw persistedBalance.error
+  check(String(persistedBalance.data.balance) === String(500 - popupDisplayedPrice),'Leaving Shop must atomically persist the matching currency debit.')
   await page.getByRole('button',{name:'Bag',exact:true}).click()
   await page.getByRole('heading',{name:'Bag',exact:true}).waitFor()
   await page.getByRole('tab',{name:'Lootboxes'}).click()
@@ -213,7 +224,13 @@ try {
   }
   const firstOpenAnother = modal.getByRole('button',{name:`Open Another (${purchaseQuantity - 1} left)`})
   await firstOpenAnother.waitFor()
+  check(await modal.getByRole('button',{name:'Back'}).count()===1,'Lootbox results must show Back beside Open Another.')
   await firstOpenAnother.click()
+  const immediateOpenAnotherState = await page.evaluate(() => ({
+    phase: JSON.parse(window.render_game_to_text()).lootboxOpeningPhase,
+    showingIdlePopup: Boolean(document.querySelector('.lootbox-pool-preview')),
+  }))
+  check(immediateOpenAnotherState.phase !== 'idle' && !immediateOpenAnotherState.showingIdlePopup,`Open Another must enter the opening sequence without rendering the idle popup: ${JSON.stringify(immediateOpenAnotherState)}`)
   await page.waitForFunction(()=>JSON.parse(window.render_game_to_text()).lootboxOpeningPhase==='reel',{timeout:5000})
   await page.waitForFunction(()=>JSON.parse(window.render_game_to_text()).lootboxOpeningPhase==='result',{timeout:9000})
   const secondOpenAnother = modal.getByRole('button',{name:`Open Another (${purchaseQuantity - 2} left)`})
@@ -221,8 +238,9 @@ try {
   await secondOpenAnother.click()
   await page.waitForFunction(()=>JSON.parse(window.render_game_to_text()).lootboxOpeningPhase==='reel',{timeout:5000})
   await page.waitForFunction(()=>JSON.parse(window.render_game_to_text()).lootboxOpeningPhase==='result',{timeout:9000})
-  await modal.getByRole('button',{name:'Continue'}).waitFor()
-  const continueBounds = await modal.getByRole('button',{name:'Continue'}).evaluate((node) => {
+  await modal.getByRole('button',{name:'Back'}).waitFor()
+  check(await modal.getByRole('button',{name:/Open Another/}).count()===0,'The final Lootbox result must only show Back when no boxes remain.')
+  const continueBounds = await modal.getByRole('button',{name:'Back'}).evaluate((node) => {
     const button = node.getBoundingClientRect()
     const dialog = node.closest('.lootbox-modal')?.getBoundingClientRect()
     const resultSlot = node.closest('.lootbox-opening-result-slot')?.getBoundingClientRect()
@@ -244,7 +262,7 @@ try {
   const openingCount = await admin.from('lootbox_openings').select('id',{count:'exact',head:true}).eq('user_id',userId)
   check(openingCount.count===purchaseQuantity,'Opening animation must correspond to one persisted backend opening per consumed Lootbox.')
 
-  await modal.getByRole('button',{name:'Continue'}).click()
+  await modal.getByRole('button',{name:'Back'}).click()
   await page.getByRole('button',{name:'Back'}).click()
   await page.getByRole('button',{name:'Shop',exact:true}).click()
   await page.getByRole('tab',{name:'Lootbox Shop'}).click()

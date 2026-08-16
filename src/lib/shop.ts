@@ -15,6 +15,30 @@ function normalizedQuantity(quantity: number): bigint {
   return BigInt(quantity);
 }
 
+type ShopPurchaseRpcError = unknown;
+
+function shopPurchaseRpcErrorParts(error: ShopPurchaseRpcError): { code: string; message: string } {
+  if (error instanceof Error) return { code: "", message: error.message };
+  if (typeof error === "string") return { code: "", message: error };
+  if (!error || typeof error !== "object") return { code: "", message: "" };
+  const candidate = error as { code?: unknown; message?: unknown };
+  return {
+    code: typeof candidate.code === "string" ? candidate.code : "",
+    message: typeof candidate.message === "string" ? candidate.message : "",
+  };
+}
+
+export function shopPurchaseRpcErrorDisposition(error: ShopPurchaseRpcError, quantity: number): "none" | "legacy" | "throw" {
+  normalizedQuantity(quantity);
+  if (!error) return "none";
+  const { code, message } = shopPurchaseRpcErrorParts(error);
+  return code === "42883"
+    || code === "PGRST202"
+    || /could not find the function|function .* does not exist|schema cache/i.test(message)
+    ? "legacy"
+    : "throw";
+}
+
 export function aggregateShopPurchaseReceipts(receipts: ShopPurchaseReceipt[], requestId = receipts[0]?.request_id): ShopPurchaseReceipt {
   const first = receipts[0];
   const last = receipts[receipts.length - 1];
@@ -58,6 +82,49 @@ export function shopPurchasePrice(entry: ShopEntry, quantity: number): bigint {
 
 export function shopPurchaseItemQuantity(entry: ShopEntry, quantity: number): bigint {
   return asBigInt(entry.quantity) * normalizedQuantity(quantity);
+}
+
+function optimisticShopPurchaseGrant(data: AppData, entry: ShopEntry, quantity: number): { granted: bigint; discarded: bigint } {
+  const requested = shopPurchaseItemQuantity(entry, quantity);
+  if (entry.shop_type !== "shard") return { granted: requested, discarded: 0n };
+  const current = asBigInt(data.player?.collectibleSnapshot.shards.find((row) => (
+    row.collectible_type === entry.target_category && row.collectible_id === entry.target_id
+  ))?.quantity);
+  const challenge = data.catalog.collectibleUnlockChallenges.find((row) => (
+    row.collectible_type === entry.target_category
+    && row.collectible_id === entry.target_id
+    && row.challenge_type === "shop_shards"
+  ));
+  const remaining = asBigInt(challenge?.required_amount) - current;
+  const granted = remaining <= 0n ? 0n : requested < remaining ? requested : remaining;
+  return { granted, discarded: requested - granted };
+}
+
+export function createOptimisticShopPurchaseReceipt(
+  data: AppData,
+  entry: ShopEntry,
+  quantity: number,
+  requestId: string,
+): ShopPurchaseReceipt {
+  if (!data.player) throw new Error("AUTH_REQUIRED");
+  const price = shopPurchasePrice(entry, quantity);
+  const balance = asBigInt(data.player.collectibleSnapshot.currencies.find((row) => row.currency_id === entry.currency_id)?.balance);
+  if (balance < price) throw new Error("INSUFFICIENT_FUNDS");
+  const { granted, discarded } = optimisticShopPurchaseGrant(data, entry, quantity);
+  return {
+    request_id: requestId,
+    entry_id: entry.id,
+    shop_type: entry.shop_type,
+    target_category: entry.target_category,
+    target_id: entry.target_id,
+    currency_id: entry.currency_id,
+    price: price.toString(),
+    balance: (balance - price).toString(),
+    granted: granted.toString(),
+    discarded: discarded.toString(),
+    unlock_event_id: null,
+    created_at: new Date().toISOString(),
+  };
 }
 
 function updateCurrency(data: AppData, currencyId: string, balance: bigint): AppData {
@@ -124,10 +191,8 @@ function updateInventory(data: AppData, entry: ShopEntry, granted: bigint): AppD
  */
 export function applyOptimisticShopPurchase(data: AppData, entry: ShopEntry, quantity: number): AppData {
   if (!data.player) return data;
-  const price = shopPurchasePrice(entry, quantity);
-  const currentBalance = asBigInt(data.player.collectibleSnapshot.currencies.find((row) => row.currency_id === entry.currency_id)?.balance);
-  const projected = updateCurrency(data, entry.currency_id, currentBalance > price ? currentBalance - price : 0n);
-  return updateInventory(projected, entry, shopPurchaseItemQuantity(entry, quantity));
+  const receipt = createOptimisticShopPurchaseReceipt(data, entry, quantity, "00000000-0000-4000-8000-000000000000");
+  return applyShopPurchaseReceipt(data, entry, receipt);
 }
 
 /**

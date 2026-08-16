@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
+  AlertTriangle,
   ArrowUp,
   Check,
   ChevronLeft,
@@ -106,7 +107,7 @@ import {
   formatProbability,
   type EffectiveDungeon,
 } from "./lib/dungeons";
-import { calculateLoadoutStats, nextOpenSquadSlot, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
+import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
 import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
@@ -129,13 +130,13 @@ import {
   safeBigInt,
   shardProgress,
   shopAvailability,
+  shopPurchaseQuantityLimit,
   shopErrorMessage,
   sortByCollectibleId,
   trackedChallengesForDisplay,
   trackedSlotFor,
 } from "./lib/collectibles";
 import {
-  applyOptimisticShopPurchase,
   applyShopPurchaseReceipt,
   partialShopPurchaseReceipt,
   shopPurchaseItemQuantity,
@@ -179,6 +180,15 @@ import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type BagTab = "currency" | "shards" | "lootboxes";
 type ShopTab = "shard" | "relic" | "lootbox" | "promo";
+const SHOP_PURCHASE_LEDGER_PREFIX = "rollcasters:shop-purchases:";
+
+function clearLegacyShopPurchaseLedger(userId: string) {
+  try {
+    window.localStorage.removeItem(`${SHOP_PURCHASE_LEDGER_PREFIX}${userId}`);
+  } catch {
+    // A blocked storage API cannot contain a readable legacy Shop ledger.
+  }
+}
 type CollectionDetail = { type: "critter" | "rollcaster" | "relic"; id: string };
 type PromoRenderState = {
   historyStatus: "idle" | "loading" | "loaded" | "error";
@@ -215,9 +225,22 @@ type BannerNotification =
       id: string;
       kind: "promo-reward";
       redemption: PromoCodeRedemption;
+    }
+  | {
+      id: string;
+      kind: "shop-error";
+      message: string;
     };
 
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
+
+function createShopErrorNotification(error: unknown): BannerNotification {
+  return {
+    id: `shop-error:${createRequestId()}`,
+    kind: "shop-error",
+    message: shopErrorMessage(error),
+  };
+}
 
 function routeFromLocation(): { view: View; shopTab: ShopTab } {
   const params = new URLSearchParams(window.location.search);
@@ -251,7 +274,6 @@ export function App() {
   const [isAuthed, setIsAuthed] = useState(false);
   const [view, setView] = useState<View>("auth");
   const [data, setData] = useState<AppData | null>(null);
-  const [pendingShopPurchases, setPendingShopPurchases] = useState<Record<string, { entry: ShopEntry; quantity: number }>>({});
   const shopPurchaseRevisionRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -283,37 +305,34 @@ export function App() {
   const appKeyboardFocusProxyRef = useRef<HTMLElement | null>(null);
   const appInvalidFocusTimerRef = useRef<number | null>(null);
   const combatProgressQueue = useRef<Promise<void>>(Promise.resolve());
+  const clearedLegacyShopLedgerUserRef = useRef<string | null>(null);
 
-  const optimisticShopData = useMemo(() => {
-    if (!data) return null;
-    return Object.values(pendingShopPurchases).reduce(
-      (projected, pending) => applyOptimisticShopPurchase(projected, pending.entry, pending.quantity),
-      data,
-    );
-  }, [data, pendingShopPurchases]);
+  useEffect(() => {
+    const userId = data?.player?.profile.user_id;
+    if (!userId || clearedLegacyShopLedgerUserRef.current === userId) return;
+    clearLegacyShopPurchaseLedger(userId);
+    clearedLegacyShopLedgerUserRef.current = userId;
+  }, [data?.player?.profile.user_id]);
 
-  function queueOptimisticShopPurchase(token: string, entry: ShopEntry, quantity: number) {
+  async function purchaseShopItem(entry: ShopEntry, quantity: number): Promise<ShopPurchaseReceipt> {
+    const receipt = await purchaseShopEntry(entry.id, createRequestId(), quantity);
     shopPurchaseRevisionRef.current += 1;
-    setPendingShopPurchases((current) => ({ ...current, [token]: { entry, quantity } }));
-  }
-
-  function commitShopPurchase(tokens: string[], entry: ShopEntry, receipt: ShopPurchaseReceipt) {
-    shopPurchaseRevisionRef.current += 1;
-    setPendingShopPurchases((current) => {
-      const next = { ...current };
-      tokens.forEach((token) => delete next[token]);
-      return next;
-    });
     setData((current) => current ? applyShopPurchaseReceipt(current, entry, receipt) : current);
-  }
-
-  function failShopPurchase(tokens: string[]) {
-    shopPurchaseRevisionRef.current += 1;
-    setPendingShopPurchases((current) => {
-      const next = { ...current };
-      tokens.forEach((token) => delete next[token]);
-      return next;
+    if (receipt.shop_type !== "lootbox" && receipt.target_category !== "lootbox") {
+      enqueueNotification({
+        id: `shop:${receipt.request_id}`,
+        kind: "shop-reward",
+        targetCategory: receipt.target_category,
+        targetId: receipt.target_id,
+        shard: receipt.shop_type === "shard",
+        granted: receipt.granted,
+        discarded: receipt.discarded,
+      });
+    }
+    void refresh(undefined, { showLoading: false }).catch((refreshFailure) => {
+      console.error("Shop purchase succeeded but refresh failed.", refreshFailure);
     });
+    return receipt;
   }
 
   function enqueueNotification(notification: BannerNotification) {
@@ -345,9 +364,6 @@ export function App() {
   function commitLoadedData(loaded: AppData) {
     const previous = data;
     const userId = loaded.player?.profile.user_id;
-    if (previous?.player?.profile.user_id && previous.player.profile.user_id !== userId) {
-      setPendingShopPurchases({});
-    }
     const storage = localNotificationStorage();
     const previousForNotifications = previous?.player?.profile.user_id === userId ? previous : null;
     if (userId && seenChallengeCompletionUserId.current !== userId) {
@@ -652,7 +668,7 @@ export function App() {
       setIsAuthed(Boolean(session));
       if (!session) {
         setData(null);
-        setPendingShopPurchases({});
+        clearedLegacyShopLedgerUserRef.current = null;
         setView("auth");
       }
     });
@@ -678,6 +694,7 @@ export function App() {
     isAuthed,
     data?.player?.profile.starter_rollcaster_selected_at,
     data?.player?.profile.starter_selected_at,
+    view,
   ]);
 
   const pendingUnlockIds = data?.player?.collectibleSnapshot.unlock_events.map((event) => event.id).join("|") ?? "";
@@ -755,7 +772,7 @@ export function App() {
   }, [combat]);
 
   useEffect(() => {
-    const textData = optimisticShopData ?? data;
+    const textData = data;
     window.render_game_to_text = () =>
       JSON.stringify({
         view,
@@ -780,11 +797,13 @@ export function App() {
             : null,
         coins: data?.player?.profile.coins ?? 0,
         currencies: textData?.player?.collectibleSnapshot.currencies ?? [],
+        unsavedShopPurchases: 0,
         trackedChallenges: data?.player?.collectibleSnapshot.tracked ?? [],
         shop: view === "shop"
           ? {
               tab: shopTab,
               offers: textData?.catalog.shopEntries.filter((entry) => entry.shop_type === shopTab).length ?? 0,
+              unsavedPurchases: 0,
               promo: shopTab === "promo" ? promoState : null,
             }
           : null,
@@ -914,7 +933,7 @@ export function App() {
           : null,
       });
     window.advanceTime = () => undefined;
-  }, [view, shopTab, bagTab, loading, isAuthed, data, optimisticShopData, combat, notificationQueue, promoState]);
+  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, notificationQueue, promoState]);
 
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
@@ -930,8 +949,8 @@ export function App() {
           : ""
     }>
       <TopBar
-        data={optimisticShopData ?? data}
-        player={(optimisticShopData ?? data).player!}
+        data={data}
+        player={data.player!}
         refreshing={view !== "combat" && loading}
         onHome={() => navigate(requiredStarterView(data.player) ?? "home")}
         onSignOut={async () => {
@@ -996,24 +1015,23 @@ export function App() {
       )}
       {view === "bag" && (
         <BagScreen
-          data={optimisticShopData ?? data}
+          data={data}
           tab={bagTab}
           setTab={setBagTab}
           onRefresh={() => refresh("bag")}
+          onBeforeOpenLootbox={async () => undefined}
+          onPurchaseError={(purchaseFailure) => enqueueNotification(createShopErrorNotification(purchaseFailure))}
           onBack={() => navigate("home")}
         />
       )}
       {view === "shop" && (
         <ShopScreen
-          data={optimisticShopData ?? data}
+          data={data}
           tab={shopTab}
           setTab={(tab) => navigate("shop", tab)}
           onBack={() => navigate("home")}
           onRefresh={() => refresh("shop")}
-          onBackgroundRefresh={() => refresh(undefined, { showLoading: false })}
-          onOptimisticPurchase={queueOptimisticShopPurchase}
-          onPurchaseCommitted={commitShopPurchase}
-          onPurchaseFailed={failShopPurchase}
+          onPurchase={purchaseShopItem}
           onPromoStateChange={setPromoState}
           onNotify={enqueueNotification}
         />
@@ -2138,6 +2156,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     </div> : <p className="empty-state">No skills available</p>;
   } else if (target.type === "relic") {
     const current = player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id;
+    const equippedByCritter = equippedRelicIdsForCritter(player.relicSlots, target.owned.id);
     const eligible = sortByCollectibleId(data.catalog.relics)
       .filter((relic) => collectibleIsUnlocked(data, "relic", relic.id))
       .filter((relic) => !normalizedQuery || relic.name.toLowerCase().includes(normalizedQuery));
@@ -2146,7 +2165,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       const used = player.relicSlots.filter((row) => row.relic_id === relic.id).length;
       const selected = current === relic.id;
       const available = Math.max(0, owned - used);
-      const unavailable = available <= 0;
+      const unavailable = available <= 0 || equippedByCritter.has(relic.id);
       const effects = data.catalog.effectsByRelic[relic.id] ?? [];
       const sourceCritter = byId(data.catalog.critters, target.owned.critter_id);
       const details = `${relic.name}. ${relic.description} ${attachmentText(effects)}`.trim();
@@ -2298,12 +2317,16 @@ function BagScreen({
   setTab,
   onBack,
   onRefresh,
+  onBeforeOpenLootbox,
+  onPurchaseError,
 }: {
   data: AppData;
   tab: BagTab;
   setTab: (tab: BagTab) => void;
   onBack: () => void;
   onRefresh: () => Promise<void>;
+  onBeforeOpenLootbox: () => Promise<void>;
+  onPurchaseError: (error: unknown) => void;
 }) {
   const [selectedLootbox, setSelectedLootbox] = useState<string | null>(null);
   const currencies = orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite");
@@ -2396,7 +2419,7 @@ function BagScreen({
           {ownedLootboxes.length === 0 && <div className="shop-empty"><Gift /><h2>No Lootboxes yet</h2><p>Purchased and earned Lootboxes will appear here.</p></div>}
         </div>
       </div>}
-      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
+      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onBeforeOpen={onBeforeOpenLootbox} onPurchaseError={onPurchaseError} onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
     </section>
   );
 }
@@ -2408,14 +2431,16 @@ function shardUnlockProgress(data: AppData, type: CollectibleType, id: string, c
   return { current, goal };
 }
 
-function ShardProgressBar({ current, goal, showCompletion = false }: { current: bigint; goal: bigint; showCompletion?: boolean }) {
+function ShopProgressBar({ current, projected = current, goal, type, showCompletion = false }: { current: bigint; projected?: bigint; goal: bigint; type: "Shards" | "Relics"; showCompletion?: boolean }) {
   const complete = showCompletion && goal > 0n && current >= goal;
   const pct = goal > 0n ? Number((current * 100n) / goal) : 100;
   const clamped = Math.max(0, Math.min(100, pct));
+  const projectedPct = goal > 0n ? Number(((projected > goal ? goal : projected) * 100n) / goal) : 100;
+  const projectedClamped = Math.max(clamped, Math.min(100, projectedPct));
   return (
-    <div className={`shard-progress ${complete ? "complete" : ""}`.trim()} role="progressbar" aria-label="Shard unlock progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={clamped} aria-valuetext={`${formatAmount(current)} / ${formatAmount(goal)} shards${complete ? ", complete" : ""}`}>
-      <div className="xp-bar"><span style={{ width: `${clamped}%` }} /></div>
-      <p>{formatAmount(current)} / {formatAmount(goal)} Shards</p>
+    <div className={`shard-progress ${complete ? "complete" : ""}`.trim()} role="progressbar" aria-label={`${type} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={clamped} aria-valuetext={`${formatAmount(current)} / ${formatAmount(goal)} ${type.toLocaleLowerCase()}${projectedClamped > clamped ? `, ${formatAmount(projected)} projected` : ""}${complete ? ", complete" : ""}`}>
+      <div className="xp-bar"><i className="shop-progress-projected" style={{ left: `${clamped}%`, width: `${projectedClamped - clamped}%` }} /><span style={{ width: `${clamped}%` }} /></div>
+      <p>{formatAmount(current)} / {formatAmount(goal)} {type}</p>
     </div>
   );
 }
@@ -2431,23 +2456,10 @@ function BagShardCard({ data, type, id }: { data: AppData; type: CollectibleType
         <h3>{targetName}</h3>
         <p className="shop-target">{id}</p>
       </div>
-      <ShardProgressBar current={progress.current} goal={progress.goal} showCompletion={complete} />
+      <ShopProgressBar current={progress.current} goal={progress.goal} type="Shards" showCompletion={complete} />
     </article>
   );
 }
-
-type ShopPurchaseBatch = {
-  entry: ShopEntry;
-  requestId: string;
-  quantity: number;
-  tokens: string[];
-  deferreds: Array<{
-    resolve: (receipt: ShopPurchaseReceipt) => void;
-    reject: (error: unknown) => void;
-  }>;
-  timer: number | null;
-  sending: boolean;
-};
 
 function ShopScreen({
   data,
@@ -2455,10 +2467,7 @@ function ShopScreen({
   setTab,
   onBack,
   onRefresh,
-  onBackgroundRefresh,
-  onOptimisticPurchase,
-  onPurchaseCommitted,
-  onPurchaseFailed,
+  onPurchase,
   onPromoStateChange,
   onNotify,
 }: {
@@ -2467,24 +2476,17 @@ function ShopScreen({
   setTab: (tab: ShopTab) => void;
   onBack: () => void;
   onRefresh: () => Promise<void>;
-  onBackgroundRefresh: () => Promise<void>;
-  onOptimisticPurchase: (token: string, entry: ShopEntry, quantity: number) => void;
-  onPurchaseCommitted: (tokens: string[], entry: ShopEntry, receipt: ShopPurchaseReceipt) => void;
-  onPurchaseFailed: (tokens: string[]) => void;
+  onPurchase: (entry: ShopEntry, quantity: number) => Promise<ShopPurchaseReceipt>;
   onPromoStateChange: (state: PromoRenderState) => void;
   onNotify: (notification: BannerNotification) => void;
 }) {
   const [query, setQuery] = useState("");
   const [quantityByEntry, setQuantityByEntry] = useState<Record<string, number>>({});
-  const [pendingEntryIds, setPendingEntryIds] = useState<Set<string>>(() => new Set());
-  const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [purchasedLootboxEntries, setPurchasedLootboxEntries] = useState<Set<string>>(() => new Set());
   const [selectedLootboxEntry, setSelectedLootboxEntry] = useState<ShopEntry | null>(null);
   const [selectedLootboxQuantity, setSelectedLootboxQuantity] = useState(1);
-  const purchaseBatches = useRef<ShopPurchaseBatch[]>([]);
-  const purchaseRequestChain = useRef<Promise<void>>(Promise.resolve());
-  const reconcileTimer = useRef<number | null>(null);
-  const unmountedRef = useRef(false);
+  const [purchasingEntryIds, setPurchasingEntryIds] = useState<Set<string>>(() => new Set());
+  const purchasingEntryIdsRef = useRef(new Set<string>());
   const normalized = query.trim().toLocaleLowerCase();
   const authoredEntries = data.catalog.shopEntries.filter((entry): entry is Extract<ShopEntry,{ shop_type: "shard" | "relic" }> => (
     tab === "shard" || tab === "relic"
@@ -2502,18 +2504,6 @@ function ShopScreen({
     });
   }, [authoredEntries.map((entry) => entry.id).join("|"), validEntries.map((entry) => entry.id).join("|")]);
 
-  useEffect(() => () => {
-    unmountedRef.current = true;
-    if (reconcileTimer.current !== null) window.clearTimeout(reconcileTimer.current);
-    purchaseBatches.current.forEach((batch) => {
-      if (batch.timer !== null) {
-        window.clearTimeout(batch.timer);
-        batch.timer = null;
-      }
-      startBatch(batch);
-    });
-  }, []);
-
   function quantityFor(entryId: string): number {
     return quantityByEntry[entryId] ?? 1;
   }
@@ -2524,101 +2514,24 @@ function ShopScreen({
     setQuantityByEntry((current) => ({ ...current, [entryId]: quantity }));
   }
 
-  function scheduleReconcile() {
-    if (unmountedRef.current) return;
-    if (reconcileTimer.current !== null) window.clearTimeout(reconcileTimer.current);
-    reconcileTimer.current = window.setTimeout(() => {
-      reconcileTimer.current = null;
-      if (unmountedRef.current) return;
-      if (purchaseBatches.current.some((batch) => batch.sending || batch.timer !== null)) {
-        scheduleReconcile();
-        return;
-      }
-      void onBackgroundRefresh().catch((refreshFailure) => console.error("Shop background refresh failed.", refreshFailure));
-    }, 220);
-  }
-
-  async function flushBatch(batch: ShopPurchaseBatch) {
-    try {
-      const receipt = await purchaseShopEntry(batch.entry.id, batch.requestId, batch.quantity);
-      onPurchaseCommitted(batch.tokens, batch.entry, receipt);
-      if (receipt.shop_type !== "lootbox" && receipt.target_category !== "lootbox") {
-        onNotify({
-          id: `shop:${receipt.request_id}`,
-          kind: "shop-reward",
-          targetCategory: receipt.target_category,
-          targetId: receipt.target_id,
-          shard: receipt.shop_type === "shard",
-          granted: receipt.granted,
-          discarded: receipt.discarded,
-        });
-      }
-      batch.deferreds.forEach(({ resolve }) => resolve(receipt));
-    } catch (error) {
-      const partialReceipt = partialShopPurchaseReceipt(error);
-      if (partialReceipt) {
-        onPurchaseCommitted(batch.tokens, batch.entry, partialReceipt);
-        if (!unmountedRef.current) setPurchaseError("Some purchases could not be completed; completed purchases were saved.");
-      } else {
-        onPurchaseFailed(batch.tokens);
-        if (!unmountedRef.current) setPurchaseError(shopErrorMessage(error));
-      }
-      batch.deferreds.forEach(({ reject }) => reject(error));
-    } finally {
-      purchaseBatches.current = purchaseBatches.current.filter((candidate) => candidate !== batch);
-      if (!unmountedRef.current) {
-        setPendingEntryIds((current) => {
-          const next = new Set(current);
-          if (!purchaseBatches.current.some((candidate) => candidate.entry.id === batch.entry.id)) next.delete(batch.entry.id);
-          return next;
-        });
-      }
-      scheduleReconcile();
-    }
-  }
-
-  function startBatch(batch: ShopPurchaseBatch) {
-    if (batch.sending) return;
-    batch.sending = true;
-    const work = purchaseRequestChain.current.then(() => flushBatch(batch));
-    purchaseRequestChain.current = work.catch(() => undefined);
-  }
-
-  function queuePurchase(entry: ShopEntry, quantity: number): Promise<ShopPurchaseReceipt> {
+  async function queuePurchase(entry: ShopEntry, quantity: number): Promise<ShopPurchaseReceipt> {
     const safeQuantity = Math.max(1, Math.min(9999, Math.trunc(quantity)));
-    if (reconcileTimer.current !== null) {
-      window.clearTimeout(reconcileTimer.current);
-      reconcileTimer.current = null;
+    if (purchasingEntryIdsRef.current.has(entry.id)) throw new Error("PURCHASE_IN_PROGRESS");
+    purchasingEntryIdsRef.current.add(entry.id);
+    setPurchasingEntryIds((current) => new Set(current).add(entry.id));
+    try {
+      return await onPurchase(entry, safeQuantity);
+    } catch (error) {
+      onNotify(createShopErrorNotification(error));
+      throw error;
+    } finally {
+      purchasingEntryIdsRef.current.delete(entry.id);
+      setPurchasingEntryIds((current) => {
+        const next = new Set(current);
+        next.delete(entry.id);
+        return next;
+      });
     }
-    setPurchaseError(null);
-    const token = createRequestId();
-    onOptimisticPurchase(token, entry, safeQuantity);
-    setPendingEntryIds((current) => new Set(current).add(entry.id));
-    return new Promise<ShopPurchaseReceipt>((resolve, reject) => {
-      let batch = [...purchaseBatches.current].reverse().find((candidate) => candidate.entry.id === entry.id && !candidate.sending);
-      if (!batch) {
-        batch = { entry, requestId: createRequestId(), quantity: 0, tokens: [], deferreds: [], timer: null, sending: false };
-        purchaseBatches.current.push(batch);
-      }
-      batch.quantity += safeQuantity;
-      batch.tokens.push(token);
-      batch.deferreds.push({ resolve, reject });
-      if (batch.timer !== null) window.clearTimeout(batch.timer);
-      batch.timer = window.setTimeout(() => {
-        batch!.timer = null;
-        startBatch(batch!);
-      }, 180);
-    });
-  }
-
-  function flushPendingBatches() {
-    purchaseBatches.current.forEach((batch) => {
-      if (batch.timer !== null) {
-        window.clearTimeout(batch.timer);
-        batch.timer = null;
-      }
-      startBatch(batch);
-    });
   }
 
   const groups: Array<{ type: CollectibleType; label: string }> = [
@@ -2629,15 +2542,14 @@ function ShopScreen({
 
   return (
     <section className="screen-stack shop-screen">
-      <div className="screen-heading row"><div><p className="eyebrow">Camp Market</p><h1>Shop</h1><p>Find shards, Relics, and special rewards.</p></div><button className="secondary-button" onClick={() => { flushPendingBatches(); onBack(); }}>Back</button></div>
+      <div className="screen-heading row"><div><p className="eyebrow">Camp Market</p><h1>Shop</h1><p>Find shards, Relics, and special rewards.</p></div><button className="secondary-button" onClick={onBack}>Back</button></div>
       <div className="tabs shop-tabs" role="tablist" aria-label="Shop categories">
-        <button role="tab" aria-selected={tab === "shard"} className={tab === "shard" ? "active" : ""} onClick={() => { flushPendingBatches(); setTab("shard"); }}>Shard Shop</button>
-        <button role="tab" aria-selected={tab === "relic"} className={tab === "relic" ? "active" : ""} onClick={() => { flushPendingBatches(); setTab("relic"); }}>Relic Shop</button>
-        <button role="tab" aria-selected={tab === "lootbox"} className={tab === "lootbox" ? "active" : ""} onClick={() => { flushPendingBatches(); setTab("lootbox"); }}>Lootbox Shop</button>
-        <button role="tab" aria-selected={tab === "promo"} className={tab === "promo" ? "active" : ""} onClick={() => { flushPendingBatches(); setTab("promo"); }}><Ticket size={17} aria-hidden="true" /> Promo Codes</button>
+        <button role="tab" aria-selected={tab === "shard"} className={tab === "shard" ? "active" : ""} onClick={() => setTab("shard")}>Shard Shop</button>
+        <button role="tab" aria-selected={tab === "relic"} className={tab === "relic" ? "active" : ""} onClick={() => setTab("relic")}>Relic Shop</button>
+        <button role="tab" aria-selected={tab === "lootbox"} className={tab === "lootbox" ? "active" : ""} onClick={() => setTab("lootbox")}>Lootbox Shop</button>
+        <button role="tab" aria-selected={tab === "promo"} className={tab === "promo" ? "active" : ""} onClick={() => setTab("promo")}><Ticket size={17} aria-hidden="true" /> Promo Codes</button>
       </div>
       {(tab === "shard" || tab === "relic" || tab === "lootbox") && <label className="collection-search shop-search"><Search size={19} aria-hidden="true" /><span className="sr-only">Search shop entries by name or ID</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by offer, name, or ID" /></label>}
-      {(tab === "shard" || tab === "relic" || tab === "lootbox") && purchaseError && <p className="notice error" role="alert">{purchaseError}</p>}
       {tab === "promo" ? (
         <PromoCodesPanel
           data={data}
@@ -2651,9 +2563,8 @@ function ShopScreen({
         const lootbox = data.catalog.lootboxes.find((row) => row.id === entry.target_id)!;
         const currency = currencyFor(data, entry.currency_id);
         if (!currency) return null;
-        const quantity = quantityFor(entry.id);
+        const quantity = Math.min(99, quantityFor(entry.id));
         const availability = shopAvailability(data, entry, quantity);
-        const busy = pendingEntryIds.has(entry.id);
         const totalPrice = shopPurchasePrice(entry, quantity);
         // Bag ownership is durable inventory state, not an in-progress shop
         // decision. Every visit to the shop should start with Purchase; only
@@ -2692,15 +2603,15 @@ function ShopScreen({
             className="lootbox-card-sprite"
             aria-hidden="true"
           ><LootboxSprite lootbox={lootbox} variant="closed" /></span>
-          <strong className="lootbox-shop-name">{lootbox.name}</strong>
-          <b className="shop-price lootbox-shop-price"><span className="shop-purchase-quantity">{formatAmount(quantity)}×</span><span className="lootbox-price-icon" aria-hidden="true"><Coins /><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={null} /></span><span className="shop-price-cost">{formatAmount(totalPrice)}</span></b>
+          <strong className="shop-item-name lootbox-shop-name">{lootbox.name}</strong>
+          <b className="shop-price lootbox-shop-price"><span>{formatAmount(shopPurchaseItemQuantity(entry, quantity))} x Lootboxes</span><span className="lootbox-price-icon" aria-hidden="true"><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /></span><span className="shop-price-cost">{formatAmount(totalPrice)}</span></b>
+          <div className="shop-card-progress-slot" aria-hidden="true" />
           <div className="lootbox-shop-actions">
             {purchased ? <>
-              <button type="button" className="primary-button" disabled={busy} onClick={(event) => { event.stopPropagation(); openDetails(); }}>Open Now</button>
+              <button type="button" className="primary-button" onClick={(event) => { event.stopPropagation(); openDetails(); }}>Open Now</button>
               <button
                 type="button"
                 className="secondary-button"
-                disabled={busy}
                 onClick={(event) => {
                   event.stopPropagation();
                   setPurchasedLootboxEntries((current) => {
@@ -2716,17 +2627,7 @@ function ShopScreen({
                 }}
               >Send to Bag</button>
             </> : <div className="shop-purchase-row">
-              <input
-                className="shop-quantity-input"
-                aria-label={`Quantity of ${lootbox.name}`}
-                type="number"
-                min={1}
-                max={9999}
-                step={1}
-                value={quantity}
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => setQuantity(entry.id, event.target.value)}
-              />
+              <ShopQuantityControl label={`Quantity of ${lootbox.name}`} quantity={quantity} max={99} onChange={(next) => setQuantity(entry.id, next)} onClick={(event) => event.stopPropagation()} />
               <button
                 className="primary-button shop-purchase"
                 disabled={!availability.enabled}
@@ -2744,13 +2645,13 @@ function ShopScreen({
           {groups.map((group) => {
             const grouped = entries.filter((entry) => entry.target_category === group.type);
             if (!grouped.length) return null;
-            return <section className="shop-group shop-grid-section" key={group.type}><h2 className="shop-grid-heading-slot">{group.label}</h2><div className="shop-grid">{grouped.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} quantity={quantityFor(entry.id)} onQuantityChange={(value) => setQuantity(entry.id, value)} onPurchase={() => { void queuePurchase(entry, quantityFor(entry.id)).catch(() => undefined); }} />)}</div></section>;
+            return <section className="shop-group shop-grid-section" key={group.type}><h2 className="shop-grid-heading-slot">{group.label}</h2><div className="shop-grid">{grouped.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} quantity={quantityFor(entry.id)} busy={purchasingEntryIds.has(entry.id)} onQuantityChange={(value) => setQuantity(entry.id, value)} onPurchase={() => { void queuePurchase(entry, quantityFor(entry.id)).catch(() => undefined); }} />)}</div></section>;
           })}
           {entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}
         </div>
       ) : <div className="shop-grid-section shop-grid-headingless">
         <div className="shop-grid-heading-slot" aria-hidden="true" />
-        <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} quantity={quantityFor(entry.id)} onQuantityChange={(value) => setQuantity(entry.id, value)} onPurchase={() => { void queuePurchase(entry, quantityFor(entry.id)).catch(() => undefined); }} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>
+        <div className="shop-grid">{entries.map((entry) => <ShopEntryCard key={entry.id} data={data} entry={entry} quantity={quantityFor(entry.id)} busy={purchasingEntryIds.has(entry.id)} onQuantityChange={(value) => setQuantity(entry.id, value)} onPurchase={() => { void queuePurchase(entry, quantityFor(entry.id)).catch(() => undefined); }} />)}{entries.length === 0 && <ShopEmptyState hasAuthoredEntries={validEntries.length > 0} />}</div>
       </div>}
       {selectedLootboxEntry && <LootboxModal
         data={data}
@@ -2760,6 +2661,8 @@ function ShopScreen({
         shopEntry={selectedLootboxEntry}
         purchaseQuantity={selectedLootboxQuantity}
         onPurchaseRequested={(quantity) => queuePurchase(selectedLootboxEntry, quantity)}
+        onBeforeOpen={async () => undefined}
+        onPurchaseError={(purchaseFailure) => onNotify(createShopErrorNotification(purchaseFailure))}
         onRefresh={onRefresh}
         onPurchased={() => setPurchasedLootboxEntries((current) => new Set(current).add(selectedLootboxEntry.id))}
         onPurchaseFailed={() => setPurchasedLootboxEntries((current) => {
@@ -2920,7 +2823,7 @@ function LootboxRewardProgress({ data, progress, duplicateAmount, duplicateCurre
   </div>;
 }
 
-function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
+function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onBeforeOpen, onPurchaseError, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
   data: AppData;
   lootboxId: string;
   mode: "purchase" | "owned";
@@ -2928,6 +2831,8 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   shopEntry?: ShopEntry;
   purchaseQuantity?: number;
   onPurchaseRequested?: (quantity: number) => Promise<ShopPurchaseReceipt>;
+  onBeforeOpen?: () => Promise<void>;
+  onPurchaseError?: (error: unknown) => void;
   onRefresh: () => Promise<void>;
   onPurchased?: () => void;
   onPurchaseFailed?: () => void;
@@ -2968,28 +2873,24 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   async function purchaseBox() {
     if (!shopEntry || !onPurchaseRequested || busy || purchasePending) return;
     setError(null);
-    setPurchased(true);
     setPurchasePending(true);
-    onPurchased?.();
     try {
-      const purchase = onPurchaseRequested(selectedPurchaseQuantity);
-      setBusy(false);
-      const receipt = await purchase;
+      const receipt = await onPurchaseRequested(selectedPurchaseQuantity);
+      setPurchased(true);
       setAvailableToOpen(startingBagQuantityRef.current + safeBigInt(receipt.granted));
-      setPurchasePending(false);
+      onPurchased?.();
     } catch (purchaseFailure) {
       const partialReceipt = partialShopPurchaseReceipt(purchaseFailure);
       if (partialReceipt) {
         setPurchased(true);
         setAvailableToOpen(startingBagQuantityRef.current + safeBigInt(partialReceipt.granted));
-        setPurchasePending(false);
-        setError("Some purchases could not be completed; completed purchases were saved.");
+        onPurchased?.();
         return;
       }
       setPurchased(false);
-      setPurchasePending(false);
       onPurchaseFailed?.();
-      setError(shopErrorMessage(purchaseFailure));
+    } finally {
+      setPurchasePending(false);
     }
   }
 
@@ -2997,6 +2898,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
     if ((!force && !canOpen) || !lootbox || (availableToOpen !== null && availableToOpen <= 0n)) return;
     setBusy(true); setError(null);
     try {
+      try {
+        await onBeforeOpen?.();
+      } catch (purchaseFailure) {
+        onPurchaseError?.(purchaseFailure);
+        return;
+      }
       const opening = await openLootbox(lootbox.id, openingRequest.current);
       openingRequest.current = createRequestId();
       setAvailableToOpen((current) => current === null ? null : current > 0n ? current - 1n : 0n);
@@ -3017,37 +2924,25 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
       timers.current.push(window.setTimeout(() => setPhase("opened"),650));
       timers.current.push(window.setTimeout(() => setPhase("reel"),950));
     } catch (openingFailure) {
-      setError(errorMessage(openingFailure,"Unable to open this Lootbox."));
+      const openingErrorMessage = errorMessage(openingFailure, "Unable to open this Lootbox.");
+      if (/purchase_shop_entries|purchase_shop_entry|purchase could not be completed/i.test(openingErrorMessage)) {
+        onPurchaseError?.(openingFailure);
+        return;
+      }
+      setError(openingErrorMessage);
     } finally { setBusy(false); }
   }
 
   function openAnother() {
     if (busy || availableToOpen === null || availableToOpen <= 0n) return;
-    setReceipt(null);
-    setRewardProgress(null);
-    setReelTarget(null);
-    setPhase("idle");
     void openBox(true);
   }
 
-  async function sendToBag() {
+  function sendToBag() {
     if (busy) return;
-    setBusy(true);
+    // Purchase completion already persisted every acquired box in the Bag.
     onOpened?.();
-    try {
-      // Purchases are already written to the Bag by the purchase RPC. Awaiting
-      // the refresh here ensures the Bag screen sees that row before the modal
-      // closes, even when the user clicks this immediately after purchase.
-      await onRefresh();
-    } catch (refreshFailure) {
-      // The server-side purchase is still durable if a view refresh fails.
-      // Close the modal so the user can retry the Bag view without retrying a
-      // currency debit.
-      console.error("Lootbox Send to Bag refresh failed.", refreshFailure);
-    } finally {
-      setBusy(false);
-      onClose();
-    }
+    onClose();
   }
 
   useEffect(() => {
@@ -3164,7 +3059,10 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
               <strong>+{formatAmount(receipt.reward.convertedCurrencyAmount)}</strong>
               <small>{formatAmount(receipt.reward.discarded)} duplicate {receipt.reward.discarded === "1" ? "unit" : "units"} converted to {duplicateCurrency?.name ?? receipt.reward.dupeCurrencyId ?? "currency"}</small>
             </div>}
-            <button className="primary-button" onClick={availableToOpen !== null && availableToOpen > 0n ? openAnother : onClose}>{availableToOpen !== null && availableToOpen > 0n ? `Open Another (${formatAmount(availableToOpen)} left)` : "Continue"}</button>
+            <div className="lootbox-result-actions">
+              <button className="secondary-button" onClick={onClose}>Back</button>
+              {availableToOpen !== null && availableToOpen > 0n && <button className="primary-button" onClick={openAnother}>Open Another ({formatAmount(availableToOpen)} left)</button>}
+            </div>
           </div>}
         </div>
       </div> : <>
@@ -3173,21 +3071,9 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
         <footer>{!purchased&&shopEntry&&currency?<div className="lootbox-modal-purchase-stack">
           <div className="shop-price lootbox-modal-purchase-price" aria-live="polite"><span className="shop-purchase-quantity">{formatAmount(selectedPurchaseQuantity)}×</span><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt={currency.name} loading="eager" fallback={<Coins />} /><span className="shop-price-cost">{formatAmount(shopPurchasePrice(shopEntry, selectedPurchaseQuantity))}</span></div>
           <div className="shop-purchase-row lootbox-modal-purchase-row">
-          <input
-            className="shop-quantity-input"
-            aria-label={`Quantity of ${lootbox.name}`}
-            type="number"
-            min={1}
-            max={9999}
-            step={1}
-            value={selectedPurchaseQuantity}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              setSelectedPurchaseQuantity(Number.isSafeInteger(next) ? Math.max(1, Math.min(9999, next)) : 1);
-            }}
-          />
+          <ShopQuantityControl label={`Quantity of ${lootbox.name}`} quantity={selectedPurchaseQuantity} max={99} disabled={busy || purchasePending} onChange={setSelectedPurchaseQuantity} />
           <button className="primary-button lootbox-purchase-button" disabled={busy || purchasePending} onClick={() => void purchaseBox()}>Purchase</button>
-        </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={() => void sendToBag()}>Send to Bag</button>}</>}</footer>
+        </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={sendToBag}>Send to Bag</button>}</>}</footer>
         <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
       </>}
     </section>
@@ -3492,66 +3378,64 @@ function ShopEmptyState({ hasAuthoredEntries }: { hasAuthoredEntries: boolean })
   return <div className="shop-empty"><ShoppingBag size={34} /><h2>{hasAuthoredEntries ? "No shop entries match" : "No offers available yet"}</h2><p>{hasAuthoredEntries ? "Try a different name or collectible ID." : "Active offers authored in Content Studio will appear here."}</p></div>;
 }
 
-function ShopEntryCard({ data, entry, quantity, onQuantityChange, onPurchase }: { data: AppData; entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>; quantity: number; onQuantityChange: (quantity: number) => void; onPurchase: () => void }) {
+function ShopQuantityControl({ label, quantity, max, disabled = false, onChange, onClick }: { label: string; quantity: number; max: number; disabled?: boolean; onChange: (quantity: number) => void; onClick?: (event: React.MouseEvent) => void }) {
+  const safeMax = Math.max(1, Math.min(99, Math.trunc(max)));
+  return <div className="shop-quantity-control" onClick={onClick}>
+    <button type="button" aria-label={`Decrease ${label.toLocaleLowerCase()}`} disabled={disabled || quantity <= 1} onClick={() => onChange(Math.max(1, quantity - 1))}>−</button>
+    <output className="shop-quantity-input" aria-label={label} aria-live="polite">{quantity}</output>
+    <button type="button" aria-label={`Increase ${label.toLocaleLowerCase()}`} disabled={disabled || quantity >= safeMax} onClick={() => onChange(Math.min(safeMax, quantity + 1))}>+</button>
+  </div>;
+}
+
+function ShopEntryCard({ data, entry, quantity, busy, onQuantityChange, onPurchase }: { data: AppData; entry: Extract<ShopEntry,{ shop_type: "shard" | "relic" }>; quantity: number; busy: boolean; onQuantityChange: (quantity: number) => void; onPurchase: () => void }) {
   const availability = shopAvailability(data, entry, quantity);
   const statusAvailability = shopAvailability(data, entry, 1);
   const complete = entry.shop_type === "shard" && statusAvailability.goal > 0n && statusAvailability.current >= statusAvailability.goal;
   const alreadyUnlocked = entry.shop_type === "shard"
     && (statusAvailability.code === "COLLECTIBLE_ALREADY_UNLOCKED" || statusAvailability.code === "SHOP_SHARDS_CHALLENGE_COMPLETE");
   const maxOwned = entry.shop_type === "relic" && statusAvailability.code === "RELIC_MAX_OWNED_REACHED";
+  const maxQuantity = shopPurchaseQuantityLimit(data, entry);
+  const projected = quantity > 1
+    ? statusAvailability.current + shopPurchaseItemQuantity(entry, quantity)
+    : statusAvailability.current;
   const completedStatus = alreadyUnlocked ? "Already Unlocked!" : maxOwned ? "Max Owned!" : null;
   const currency = currencyFor(data, entry.currency_id)!;
   const targetName = collectibleName(data, entry.target_category, entry.target_id);
   const targetCritter = entry.target_category === "critter"
     ? byId(data.catalog.critters, entry.target_id)
     : undefined;
-  const description = entry.description?.trim();
-  const showDescription = Boolean(description && !/\bshop offer for\b/i.test(description));
-  const inventory = entry.target_category === "relic" ? data.player!.relicInventory.find((row) => row.relic_id === entry.target_id) : undefined;
-  const relicChallenge = entry.shop_type === "relic" ? challengesFor(data, "relic", entry.target_id).find((row) => row.challenge_type === "shop_relic") : undefined;
-  const ownershipLabel = collectibleIsUnlocked(data, "relic", entry.target_id)
-    ? `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(availability.goal)}`
-    : `Owned: ${formatAmount(inventory?.quantity ?? 0)} / ${formatAmount(relicChallenge?.required_amount ?? 0)} to unlock`;
+  useEffect(() => {
+    const capped = Math.max(1, Math.min(99, maxQuantity));
+    if ((alreadyUnlocked || maxOwned) && quantity !== 1) onQuantityChange(1);
+    else if (quantity > capped) onQuantityChange(capped);
+  }, [alreadyUnlocked, maxOwned, maxQuantity, quantity, onQuantityChange]);
+  const displayName = entry.shop_type === "shard" ? `${targetName} Shards` : targetName;
+  const lineType = entry.shop_type === "shard" ? "Shards" : "Relics";
   return (
     <article className={`shop-entry-card ${complete ? "complete" : ""} ${maxOwned ? "max-owned" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"} data-shard-status={entry.shop_type === "shard" ? (complete ? "complete" : "in-progress") : undefined}>
-      <CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="md" shard={entry.shop_type === "shard"} />
+      <div className="shop-card-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="md" shard={entry.shop_type === "shard"} /></div>
       <div className="shop-entry-copy">
-        <h3>{entry.name}</h3>
-        <p className="shop-target">
+        <h3 className="shop-item-name shop-target">
           {targetCritter
             ? (
                 <span className="shop-target-identity">
                   <CritterName data={data} critter={targetCritter} />
-                  <span className="shop-target-id">({entry.target_id})</span>
+                  {entry.shop_type === "shard" && <span>Shards</span>}
                 </span>
               )
-            : <>{targetName} ({entry.target_id})</>}
-        </p>
-        {showDescription && <p>{description}</p>}
+            : displayName}
+        </h3>
       </div>
       <div className="shop-entry-meta">
-        <strong>{formatAmount(shopPurchaseItemQuantity(entry, quantity))} × {entry.shop_type === "shard" ? "Shards" : targetName}</strong>
-        <span className="shop-price"><span className="shop-purchase-quantity">{formatAmount(quantity)}×</span><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} /><span className="shop-price-cost">{formatAmount(shopPurchasePrice(entry, quantity))}</span></span>
+        <strong>{formatAmount(shopPurchaseItemQuantity(entry, quantity))} x {lineType}</strong>
+        <span className="shop-price"><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} /><span className="shop-price-cost">{formatAmount(shopPurchasePrice(entry, quantity))}</span></span>
       </div>
-      {entry.shop_type === "shard" && <ShardProgressBar current={availability.current} goal={availability.goal} showCompletion={complete} />}
-      {entry.shop_type !== "shard" && <p className="shop-owned">{ownershipLabel}</p>}
+      <ShopProgressBar current={statusAvailability.current} projected={projected} goal={statusAvailability.goal} type={lineType} showCompletion={complete || maxOwned} />
       <div className="shop-entry-actions">
         {!availability.enabled && !completedStatus && <p className="shop-unavailable">{availability.reason}</p>}
         {completedStatus ? <p className="shop-complete-status">{completedStatus}</p> : <div className="shop-purchase-row">
-          <input
-            className="shop-quantity-input"
-            aria-label={`Quantity of ${entry.name}`}
-            type="number"
-            min={1}
-            max={9999}
-            step={1}
-            value={quantity}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              onQuantityChange(Number.isSafeInteger(next) ? Math.max(1, Math.min(9999, next)) : 1);
-            }}
-          />
-          <button className="primary-button shop-purchase" disabled={!availability.enabled} onClick={onPurchase}>Purchase</button>
+          <ShopQuantityControl label={`Quantity of ${entry.name}`} quantity={quantity} max={maxQuantity} disabled={busy} onChange={onQuantityChange} />
+          <button className="primary-button shop-purchase" disabled={!availability.enabled || busy} onClick={onPurchase}>{busy ? "Purchasing…" : "Purchase"}</button>
         </div>}
       </div>
     </article>
@@ -4704,6 +4588,11 @@ function CombatScreen({
 
   function keyboardBack() {
     if (combat.phase !== "select_player_actions") return;
+    if (swapSelection) {
+      setSwapSelection(null);
+      setMenu("actions");
+      return;
+    }
     if (targeting) {
       setTargeting(null);
       setMenu("skills");
@@ -4944,7 +4833,7 @@ function CombatScreen({
     }
     window.addEventListener("keydown", handleCombatKeyboard);
     return () => window.removeEventListener("keydown", handleCombatKeyboard);
-  }, [combat.phase, menu, targeting, currentActor?.key, currentActorIndex, actions, narrationAdvanceable, loadingNarration]);
+  }, [combat.phase, menu, targeting, swapSelection, currentActor?.key, currentActorIndex, actions, narrationAdvanceable, loadingNarration]);
 
   useLayoutEffect(() => {
     setSwapMotion(null);
@@ -4987,7 +4876,7 @@ function CombatScreen({
   function beginRegularSwap(actorKey: string) {
     setTargeting(null);
     setSwapSelection({ actorKey, mode: "regular" });
-    setMenu("actions");
+    setMenu("swap");
   }
 
   function selectSwapTarget(targetKey: string) {
@@ -5168,7 +5057,7 @@ function CombatScreen({
                 data={data}
                 allUnits={[...battle.playerUnits, ...battle.opponentUnits]}
                 action={actions[unit.key]}
-                interactive={combat.phase === "select_player_actions" && currentActor?.key === unit.key && (!swapSelection && (!targeting || targeting.actorKey === unit.key))}
+                interactive={combat.phase === "select_player_actions" && currentActor?.key === unit.key && (swapSelection?.actorKey === unit.key || (!swapSelection && (!targeting || targeting.actorKey === unit.key)))}
                 waiting={combat.phase === "select_player_actions" && unit.active && unit.hp > 0 && currentActor?.key !== unit.key && !actions[unit.key]}
                 menu={currentActor?.key === unit.key ? menu : "actions"}
                 setMenu={setMenu}
@@ -5178,10 +5067,12 @@ function CombatScreen({
                 onChooseSkill={chooseSkill}
                 onBack={targeting?.actorKey === unit.key
                   ? () => { setTargeting(null); setMenu("skills"); }
-                  : menu === "skills"
-                    ? () => { setTargeting(null); setMenu("actions"); }
-                    : backToPreviousActor}
-                showBack={targeting?.actorKey === unit.key || menu === "skills" || (menu === "actions" && currentActorIndex > 0)}
+                  : swapSelection?.actorKey === unit.key
+                    ? () => { setSwapSelection(null); setMenu("actions"); }
+                    : menu === "skills"
+                      ? () => { setTargeting(null); setMenu("actions"); }
+                      : backToPreviousActor}
+                showBack={targeting?.actorKey === unit.key || swapSelection?.actorKey === unit.key || menu === "skills" || (menu === "actions" && currentActorIndex > 0)}
                 targeting={targeting?.actorKey === unit.key}
                 onReselectAction={combat.phase === "select_player_actions" && actions[unit.key] && !isActorRecharging(battle, unit.key)
                   ? () => reselectAction(unit.key)
@@ -6377,6 +6268,18 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
           {notification.discarded !== "0" && (
             <p className="unlock-notification-detail">×{formatAmount(notification.discarded)} overflow discarded</p>
           )}
+        </div>
+      </aside>
+    );
+  }
+
+  if (notification.kind === "shop-error") {
+    return (
+      <aside className="unlock-notification error-notification" role="status" aria-live="polite" aria-atomic="true">
+        <span className="notification-banner-icon" aria-hidden="true"><AlertTriangle size={25} /></span>
+        <div className="unlock-notification-copy">
+          <span className="unlock-notification-label"><AlertTriangle size={14} aria-hidden="true" /> Purchase error</span>
+          <h2>{notification.message}</h2>
         </div>
       </aside>
     );

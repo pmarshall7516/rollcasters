@@ -28,13 +28,14 @@ import type {
   PromoCodeRedemption,
   PromoCodeReward,
   ShopPurchaseReceipt,
+  ShopPurchaseIntent,
   UserAbilitySlot,
   UserRelicSlot,
   UserSkillSlot,
 } from "./types";
 import { parseBattleFormat, sortDungeonsNaturally } from "./dungeons";
 import { createRequestId } from "./uuid";
-import { aggregateShopPurchaseReceipts, indexedShopPurchaseRequestId } from "./shop";
+import { aggregateShopPurchaseReceipts, indexedShopPurchaseRequestId, shopPurchaseRpcErrorDisposition } from "./shop";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
@@ -1044,13 +1045,9 @@ export async function purchaseShopEntry(entryId: string, requestId: string, quan
     p_request_id: requestId,
     p_quantity: quantity,
   });
-  const missingQuantityRpc = error && (
-    error.code === "42883"
-    || error.code === "PGRST202"
-    || /could not find the function|function .* does not exist/i.test(error.message ?? "")
-  );
-  if (error && (!missingQuantityRpc || quantity !== 1)) throw error;
-  if (missingQuantityRpc) {
+  const errorDisposition = shopPurchaseRpcErrorDisposition(error, quantity);
+  if (errorDisposition === "throw") throw error;
+  if (errorDisposition === "legacy") {
     const purchaseLegacyUnit = async (unitRequestId: string): Promise<ShopPurchaseReceipt> => {
       const legacy = await client.rpc("purchase_shop_entry", {
         p_entry_id: entryId,
@@ -1075,6 +1072,47 @@ export async function purchaseShopEntry(entryId: string, requestId: string, quan
     return aggregateShopPurchaseReceipts(receipts, requestId);
   }
   return data as ShopPurchaseReceipt;
+}
+
+export async function purchaseShopEntries(purchases: ShopPurchaseIntent[]): Promise<ShopPurchaseReceipt[]> {
+  if (purchases.length === 0) return [];
+  if (purchases.length > 512) throw new Error("A Shop session cannot contain more than 512 purchase lines.");
+  // A single bulk purchase does not need the session wrapper. Going straight
+  // to the idempotent quantity RPC keeps Open Now compatible with deployments
+  // that have the original Shop function but not purchase_shop_entries yet.
+  if (purchases.length === 1) {
+    const [purchase] = purchases;
+    return [await purchaseShopEntry(purchase.entry_id, purchase.request_id, purchase.quantity)];
+  }
+  const client = requireClient();
+  const { data, error } = await client.rpc("purchase_shop_entries", {
+    p_purchases: purchases,
+  });
+  const errorDisposition = shopPurchaseRpcErrorDisposition(error, 1);
+  if (errorDisposition === "throw") throw error;
+  if (errorDisposition === "legacy") {
+    // Older deployments do not have the session-batch RPC yet. Reuse the
+    // idempotent quantity entry point so a bulk Lootbox purchase can still be
+    // flushed before Open Now calls the opening RPC. The request IDs remain
+    // stable across retries, so a committed purchase is never charged twice.
+    const receipts: ShopPurchaseReceipt[] = [];
+    for (const purchase of purchases) {
+      try {
+        receipts.push(await purchaseShopEntry(purchase.entry_id, purchase.request_id, purchase.quantity));
+      } catch (legacyError) {
+        if (receipts.length === 0) throw legacyError;
+        const partialError = legacyError instanceof Error ? legacyError : new Error(String(legacyError));
+        Object.assign(partialError, { partialReceipts: receipts });
+        throw partialError;
+      }
+    }
+    return receipts;
+  }
+  const receipts = data && typeof data === "object" && "receipts" in data
+    ? (data as { receipts?: unknown }).receipts
+    : null;
+  if (!Array.isArray(receipts)) throw new Error("The Shop sync returned an invalid receipt list.");
+  return receipts as ShopPurchaseReceipt[];
 }
 
 export async function openLootbox(lootboxId: string, requestId: string): Promise<LootboxOpeningReceipt> {

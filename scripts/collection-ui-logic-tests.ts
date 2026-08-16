@@ -1,4 +1,4 @@
-import { calculateLoadoutStats, nextOpenSquadSlot } from "../src/lib/loadout.js";
+import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot } from "../src/lib/loadout.js";
 import { challengeDescription, collectibleIsUnlocked, completedTrackedChallengeIds, progressFor, trackedChallengesForDisplay, trackedSlotFor } from "../src/lib/collectibles.js";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion } from "../src/lib/notifications.js";
 import { relicSlotUnlocks, xpProgress } from "../src/lib/progression.js";
@@ -51,19 +51,19 @@ function effect(
 }
 
 const catalog = {
-  currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], lootboxes: [], lootboxPoolEntries: [],
+  currencies: [], collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], lootboxes: [], lootboxPoolEntries: [], tags: [],
   elements: [
     { id: "ember", name: "Ember", description: null, asset_path: null, sort_order: 1 },
     { id: "bloom", name: "Bloom", description: null, asset_path: null, sort_order: 2 },
   ],
   elementEffectiveness: [{ attacking_element_id: "ember", defending_element_id: "ember", multiplier: 1 }],
   skills: [
-    { id: "starter-skill", name: "Starter Skill", element_id: "ember", skill_type: "support", power: 0, mana_cost: 3, targeting: "self_only", description: "Starter Skill", sort_order: 0 },
-    { id: "bloom-attack", name: "Bloom Attack", element_id: "bloom", skill_type: "attack", power: 40, mana_cost: 4, targeting: "single_enemy", description: "Bloom Attack", sort_order: 1 },
+    { id: "starter-skill", name: "Starter Skill", element_id: "ember", skill_type: "support", power: 0, mana_cost: 3, targeting: "self_only", description: "Starter Skill", sort_order: 0, tag_ids: [] },
+    { id: "bloom-attack", name: "Bloom Attack", element_id: "bloom", skill_type: "attack", power: 40, mana_cost: 4, targeting: "single_enemy", description: "Bloom Attack", sort_order: 1, tag_ids: [] },
   ],
   critters: [
-    { id: "hero", name: "Hero", element_1_id: "ember", element_2_id: null, base_hp: 30, base_atk: 25, base_def: 20, base_spd: 15, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 1 },
-    { id: "ally", name: "Ally", element_1_id: "ember", element_2_id: null, base_hp: 20, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 2 },
+    { id: "hero", name: "Hero", element_1_id: "ember", element_2_id: null, base_hp: 30, base_atk: 25, base_def: 20, base_spd: 15, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 1, tag_ids: [] },
+    { id: "ally", name: "Ally", element_1_id: "ember", element_2_id: null, base_hp: 20, base_atk: 20, base_def: 20, base_spd: 20, base_dice_min: 1, base_dice_max: 6, base_block_cost: 2, base_swap_cost: 2, asset_path: null, description: null, sort_order: 2, tag_ids: [] },
   ],
   critterProgression: [
     { critter_id: "hero", level: 1, total_required_xp: 0, grant_skill_points: 0, hp_delta: 0, atk_delta: 0, def_delta: 0, spd_delta: 0, dice_min_delta: 0, dice_max_delta: 0, block_cost_delta: 0, swap_cost_delta: 0, total_unlocked_relic_slots: 1 },
@@ -131,6 +131,8 @@ check(calculated.skillCosts["starter-skill"]?.final === 2, "A Mana Talisman-styl
 check(calculated.skillCosts["starter-skill"]?.sources[0]?.amount === -1 && calculated.skillCosts["starter-skill"]?.sources[0]?.sourceName === "Guard Charm", "Skill cost breakdowns must retain the discount source.");
 check(calculated.skillCosts["bloom-attack"]?.final === 1, "Skill action-cost filters must match the Skill type and Element in loadout previews without filtering the receiving Critter by Skill Element.");
 check(calculated.breakdowns.def?.sources.map((source) => source.amount).join(",") === "3,-2", "The DEF tooltip must retain positive and negative source deltas in resolution order.");
+check([...equippedRelicIdsForCritter(player.relicSlots, "owned-hero")].join(",") === "guard", "The Relic equip popup must identify Relics already equipped to the target Critter.");
+check(equippedRelicIdsForCritter(player.relicSlots, "owned-hero").has("ally-aura") === false, "A Relic equipped to another Critter must remain eligible when an extra copy is available.");
 
 check(nextOpenSquadSlot([
   { slot_index: 1, user_critter_id: "owned-hero" },

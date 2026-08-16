@@ -1,5 +1,5 @@
 import { actionCostModifierApplies, applyActionCostModifiers, byId, critterElementIds, critterStats, normalizeManaDiceBounds, roundHalfUp, type ActionCostBreakdown, type ActionCostModifier, type StatBlock } from "./game.js";
-import type { AppData, ResolvedEffectRef, UserCritter } from "./types.js";
+import type { AppData, ResolvedEffectRef, UserCritter, UserRelicSlot } from "./types.js";
 
 export type LoadoutStatKey = keyof StatBlock;
 
@@ -19,6 +19,17 @@ export type CalculatedLoadoutStats = {
   breakdowns: Partial<Record<LoadoutStatKey, StatBreakdown>>;
   skillCosts: Record<string, ActionCostBreakdown>;
 };
+
+export function equippedRelicIdsForCritter(
+  relicSlots: readonly Pick<UserRelicSlot, "user_critter_id" | "relic_id">[],
+  userCritterId: string,
+): Set<string> {
+  return new Set(
+    relicSlots
+      .filter((slot): slot is Pick<UserRelicSlot, "user_critter_id" | "relic_id"> & { relic_id: string } => slot.user_critter_id === userCritterId && slot.relic_id !== null)
+      .map((slot) => slot.relic_id),
+  );
+}
 
 export function nextOpenSquadSlot(
   squadSlots: readonly { slot_index: number; user_critter_id: string | null }[],

@@ -5,12 +5,30 @@ import { chromium } from "playwright";
 const root = path.resolve(import.meta.dirname, "..");
 const outputDir = path.join(root, "output", "combat-swap-ui");
 const styles = fs.readFileSync(path.join(root, "src", "styles.css"), "utf8");
+const app = fs.readFileSync(path.join(root, "src", "App.tsx"), "utf8");
 
 fs.mkdirSync(outputDir, { recursive: true });
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+check(
+  app.includes('setSwapSelection({ actorKey, mode: "regular" });\n    setMenu("swap");'),
+  "Entering regular Swap must switch the active Critter card into the swap menu.",
+);
+check(
+  app.includes('swapSelection?.actorKey === unit.key || (!swapSelection && (!targeting || targeting.actorKey === unit.key))'),
+  "The acting Critter card must remain interactive while a regular Swap target is selected.",
+);
+check(
+  app.includes('showBack={targeting?.actorKey === unit.key || swapSelection?.actorKey === unit.key'),
+  "Regular Swap selection must expose the Back row on the acting Critter card.",
+);
+check(
+  app.includes('setSwapSelection(null); setMenu("actions");'),
+  "The regular Swap Back control must clear the pending selection and return to actions.",
+);
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });

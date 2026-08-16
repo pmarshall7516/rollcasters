@@ -87,6 +87,7 @@ try {
 
     const result = await client.query(`
       select
+        (select id from public.user_rollcasters where user_id=$1 and rollcaster_id=$2) as owned_id,
         (select count(*)::int from public.user_rollcasters where user_id=$1 and rollcaster_id=$2) as owned,
         (select quantity::text from public.user_collectible_shards where user_id=$1 and collectible_type='rollcaster' and collectible_id=$2) as shards,
         (select starter_rollcaster_selected_at is not null from public.profiles where user_id=$1) as selected,
@@ -102,13 +103,15 @@ try {
          from public.user_rollcaster_ability_slots slot
          join public.user_rollcasters owned on owned.id=slot.user_rollcaster_id
          where owned.user_id=$1 and owned.rollcaster_id=$2 and slot.slot_index=1 and slot.ability_id=$3) as ability_slotted,
+        exists(select 1 from public.user_collectible_unlock_events event where event.user_id=$1 and event.collectible_type='rollcaster' and event.collectible_id=$2) as unlock_event,
         public.collectible_challenge_current($1,$4)::text as current,
         public.collectible_challenge_goal($4)::text as goal
     `, [userId, starter.rollcaster_id, starter.ability_id, starter.challenge_id]);
     const state = result.rows[0];
-    check(state.owned === 1, `Starter Rollcaster ${starter.rollcaster_id} must be granted to the player.`);
+    check(state.owned_id && state.owned === 1, `Starter Rollcaster ${starter.rollcaster_id} must be granted to the player.`);
     check(state.shards === "20", `Starter Rollcaster ${starter.rollcaster_id} must grant exactly 20 shards.`);
     check(state.selected && state.active, `Starter Rollcaster ${starter.rollcaster_id} must finish selection and become active.`);
+    check(state.unlock_event, `Starter Rollcaster ${starter.rollcaster_id} must receive a durable unlock event.`);
     check(
       state.ability_unlocked === 1 && state.ability_slotted === 1,
       `Starter Rollcaster ${starter.rollcaster_id} must unlock and slot its authored starter Ability.`,
@@ -117,6 +120,7 @@ try {
       state.current === "20" && state.goal === "20",
       `Starter Rollcaster ${starter.rollcaster_id} must complete its 20-shard challenge.`,
     );
+    await client.query("select public.set_active_rollcaster($1)", [state.owned_id]);
 
     await client.query("select public.select_starter_rollcaster($1)", [starter.rollcaster_id]);
     const retry = await client.query(`
@@ -159,21 +163,26 @@ try {
 
     const result = await client.query(`
       select
+        (select id from public.user_critters where user_id=$1 and critter_id=$2) as owned_id,
         (select count(*)::int from public.user_critters where user_id=$1 and critter_id=$2) as owned,
         (select quantity::text from public.user_collectible_shards where user_id=$1 and collectible_type='critter' and collectible_id=$2) as shards,
         (select starter_selected_at is not null from public.profiles where user_id=$1) as selected,
         (select user_critter_id is not null from public.user_squad_slots where user_id=$1 and slot_index=1) as in_squad,
+        exists(select 1 from public.user_collectible_unlock_events event where event.user_id=$1 and event.collectible_type='critter' and event.collectible_id=$2) as unlock_event,
         public.collectible_challenge_current($1,$3)::text as current,
         public.collectible_challenge_goal($3)::text as goal
     `, [userId, starter.critter_id, starter.challenge_id]);
     const state = result.rows[0];
-    check(state.owned === 1, `Starter Critter ${starter.critter_id} must be granted to the player.`);
+    check(state.owned_id && state.owned === 1, `Starter Critter ${starter.critter_id} must be granted to the player.`);
     check(state.shards === "50", `Starter Critter ${starter.critter_id} must grant exactly 50 shards.`);
     check(state.selected && state.in_squad, `Starter Critter ${starter.critter_id} must finish selection and occupy squad slot 1.`);
+    check(state.unlock_event, `Starter Critter ${starter.critter_id} must receive a durable unlock event.`);
     check(
       state.current === "50" && state.goal === "50",
       `Starter Critter ${starter.critter_id} must complete its 50-shard challenge.`,
     );
+    await client.query("select public.set_critter_relic_slot($1,1,null)", [state.owned_id]);
+    await client.query("select public.set_squad_critter_slot($1,$2)", [1, state.owned_id]);
 
     await client.query("select public.select_starter_critter($1)", [starter.critter_id]);
     const retry = await client.query(`

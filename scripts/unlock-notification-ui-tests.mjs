@@ -28,6 +28,14 @@ check(
     && appSource.includes("Challenge completed"),
   "The production banner queue must expose a completion notification for tracked challenges.",
 );
+check(
+  appSource.includes('kind: "shop-error"')
+    && appSource.includes("error-notification")
+    && appSource.includes("Purchase error")
+    && css.includes(".error-notification")
+    && css.includes("var(--danger)"),
+  "Purchase failures must use the shared red transient notification style.",
+);
 
 const bannerMarkup = `
   <aside class="unlock-notification" role="status" aria-live="polite" aria-atomic="true">
@@ -55,6 +63,13 @@ const bannerMarkup = `
       <span class="unlock-notification-label">✓ Challenge completed</span>
       <h2>Damage Critters (Any Species)</h2>
       <p class="unlock-notification-detail">Ramber challenge completed</p>
+    </div>
+  </aside>
+  <aside class="unlock-notification error-notification" style="top:176px" role="status" aria-live="polite" aria-atomic="true">
+    <span class="notification-banner-icon" aria-hidden="true">!</span>
+    <div class="unlock-notification-copy">
+      <span class="unlock-notification-label">! Purchase error</span>
+      <h2>The purchase could not be completed.</h2>
     </div>
   </aside>
 `;
@@ -145,6 +160,9 @@ try {
     check(presentation.pointerEvents === "none" && presentation.interactiveDescendants === 0 && clickedThrough, `${viewport.name}: banner intercepted interaction.`);
     check(presentation.zIndex > 50 && presentation.animationName.includes("unlock-banner-in"), `${viewport.name}: banner does not animate above modal UI.`);
     check(presentation.role === "status" && presentation.live === "polite", `${viewport.name}: banner live-region semantics are missing.`);
+    const errorBanner = page.locator(".error-notification");
+    const errorBorderColor = await errorBanner.evaluate((node) => getComputedStyle(node).borderTopColor);
+    check(errorBorderColor === "rgba(255, 110, 134, 0.62)", `${viewport.name}: purchase error banner must use the danger color, got ${errorBorderColor}.`);
     check(browserErrors.length === 0, `${viewport.name}: browser errors detected: ${browserErrors.join(" | ")}`);
     results.push({ ...viewport, presentation, layoutUnchanged: true, clickedThrough, screenshot });
     await page.close();

@@ -6,8 +6,10 @@ import {
   formatAmount,
   isTrackableChallenge,
   orderedCurrencies,
+  progressFor,
   safeBigInt,
   shopAvailability,
+  shopPurchaseQuantityLimit,
   shopErrorMessage,
   sortByCollectibleId,
 } from "../src/lib/collectibles.js";
@@ -130,6 +132,29 @@ check(shardReady.enabled && shardReady.current === 4n && shardReady.goal === 10n
 check(shopAvailability(data({ balance: "1" }), shardEntry).code === "INSUFFICIENT_FUNDS", "Insufficient currency must disable the offer.");
 check(shopAvailability(data({ ownsCritter: true }), shardEntry).code === "COLLECTIBLE_ALREADY_UNLOCKED", "Owned collectibles must disable shard purchases.");
 check(shopAvailability(data({ shards: "10" }), shardEntry).code === "SHOP_SHARDS_CHALLENGE_COMPLETE", "Completed shard goals must disable further shard purchases.");
+check(shopPurchaseQuantityLimit(data({ shards: "4" }), shardEntry) === 3, "Shard quantity controls must account for bundle size and stop at the purchases needed to reach the goal.");
+check(shopPurchaseQuantityLimit(data({ relicQuantity: 1 }), relicEntry) === 1, "Relic quantity controls must stop at the remaining max-owned count.");
+const staleShardProgress = data({ shards: "10" });
+staleShardProgress.player!.collectibleSnapshot.progress = [{
+  challenge_id: shardChallenge.id,
+  current: "0",
+  goal: "10",
+  goal_reached: false,
+  eligible: true,
+  completed: false,
+  blocked_by_gate_order: null,
+  trackable: true,
+}];
+check(
+  progressFor(staleShardProgress, shardChallenge.id).current === "10"
+    && progressFor(staleShardProgress, shardChallenge.id).completed,
+  "Shop Shards challenge progress must derive from shard inventory even when its stored progress row is stale.",
+);
+const missingShardProgress = data({ shards: "10" });
+check(
+  progressFor(missingShardProgress, shardChallenge.id).completed,
+  "A completed derived Shop Shards challenge must not depend on a generic progress row existing.",
+);
 check(shopAvailability(data({ balance: "100", relicQuantity: 1 }), relicEntry).enabled, "A Relic below its ownership cap must be purchasable.");
 check(shopAvailability(data({ balance: "100", relicQuantity: 2 }), relicEntry).code === "RELIC_MAX_OWNED_REACHED", "Relic purchases must respect max_owned.");
 check(challengeDescription(data(), shardChallenge) === "Unlock Cragram shards", "Shard challenge copy must use the collectible name.");
