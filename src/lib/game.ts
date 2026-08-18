@@ -1168,7 +1168,11 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
       if (effect.execution === "child") continue;
       const sourceCritter = source.sourceKey ? findUnit(state, source.sourceKey)?.critter : undefined;
       if (!effectMatchesSourceCritter(effect, sourceCritter)) continue;
-      const targets = effectTargets(state, String(effect.parameters.target ?? ""), {
+      const target = String(effect.parameters.target ?? "");
+      // Conditional parents use condition_target/effect_target and install
+      // their child effects separately; they are not themselves unit effects.
+      if (!target) continue;
+      const targets = effectTargets(state, target, {
         sourceOwnerType: source.ownerType,
         sourceOwnerId: source.ownerId,
         sourceSide: source.side,
@@ -1216,7 +1220,9 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
     }
     for (const effect of instance.effects) {
       if (effect.execution === "child") continue;
-      const targets = effectTargets(state, String(effect.parameters.target ?? ""), {
+      const target = String(effect.parameters.target ?? "");
+      if (!target) continue;
+      const targets = effectTargets(state, target, {
         sourceOwnerType: "status",
         sourceOwnerId: instance.statusId,
         sourceCritterKey: instance.holderKey,
@@ -1231,7 +1237,8 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
   for (const instance of state.runtimeEffects) {
     const effect = effectForReference(state, instance.sourceOwnerType, instance.sourceOwnerId, instance.sourceEffectId);
     if (!effect) continue;
-    const applies = instance.targetCritterKey === unitKey || (!instance.targetCritterKey && effectTargets(state, String(effect.parameters.target ?? ""), {
+    const target = String(effect.parameters.target ?? "");
+    const applies = instance.targetCritterKey === unitKey || (!instance.targetCritterKey && Boolean(target) && effectTargets(state, target, {
       sourceOwnerType: instance.sourceOwnerType,
       sourceOwnerId: instance.sourceOwnerId,
       sourceSide: instance.sourceSide,
@@ -1395,27 +1402,51 @@ export function startTurn(state: CombatState): CombatState {
 }
 
 export function resolveTurn(state: CombatState, actions: CombatAction[]): CombatState {
-  const normalizedActions = actions.map((action): CombatAction => {
+  const enemyDecision = state.enemyPolicyKey === "random_action_v1" ? chooseEnemyActions(state) : chooseLegacyEnemyActions(state);
+  const enemyActions = enemyDecision.actions;
+  return resolveCombatActions(state, actions, enemyActions, enemyDecision.rngState);
+}
+
+function normalizeCombatActions(state: CombatState, actions: CombatAction[]): CombatAction[] {
+  return actions.map((action): CombatAction => {
     if (isActorRecharging(state, action.actorKey)) return { actorKey: action.actorKey, type: "skip", cost: 0 };
-    if (action.type === "skill" && action.skillId) {
-      const availability = skillAvailability(state, action.actorKey, action.skillId);
-      if (!availability.valid) return { actorKey: action.actorKey, type: "skip", cost: 0 };
+    if (action.type === "skill" && action.skillId && !skillAvailability(state, action.actorKey, action.skillId).valid) {
+      return { actorKey: action.actorKey, type: "skip", cost: 0 };
     }
     return { ...action, cost: calculateActionCost(state, action) };
   });
-  const cost = normalizedActions.reduce((sum, action) => sum + action.cost, 0);
-  if (cost > state.playerMana) return state;
+}
+
+/**
+ * Canonical turn resolver for clients that supply both sides' decisions.
+ * The game UI, visual simulator, batch simulator, Effects Lab, and AI trainer
+ * all route through this function so action staging and effect timing cannot drift.
+ */
+export function resolveCombatActions(
+  state: CombatState,
+  playerActions: CombatAction[],
+  opponentActions: CombatAction[],
+  rngState: number = state.rngState,
+): CombatState {
+  const turnStart = state;
+  const normalizedPlayer = normalizeCombatActions(state, playerActions);
+  const normalizedOpponent = normalizeCombatActions(state, opponentActions);
+  const playerCost = normalizedPlayer.reduce((sum, action) => sum + action.cost, 0);
+  const opponentCost = normalizedOpponent.reduce((sum, action) => sum + action.cost, 0);
+  if (playerCost > state.playerMana || opponentCost > state.opponentMana) return state;
 
   let next: CombatState = {
     ...state,
-    playerMana: state.playerMana - cost,
-    log: [`Submitted actions for ${cost} mana.`, ...state.log],
+    playerMana: state.playerMana - playerCost,
+    opponentMana: state.opponentMana - opponentCost,
+    rngState,
+    log: [`Submitted actions for ${playerCost} mana.`, ...state.log],
     presentationEvents: [],
     effectActivations: [],
     effectActivationKeys: [],
   };
 
-  for (const action of normalizedActions) {
+  for (const action of normalizedPlayer) {
     if (action.cost <= 0 || action.type === "skip") continue;
     const actor = findUnit(next, action.actorKey);
     if (!actor || actor.side !== "player") continue;
@@ -1436,43 +1467,59 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
     });
   }
 
-  const enemyDecision = next.enemyPolicyKey === "random_action_v1" ? chooseEnemyActions(next) : chooseLegacyEnemyActions(next);
-  const enemyActions = enemyDecision.actions;
-  const enemyCost = enemyActions.reduce((sum, action) => sum + action.cost, 0);
-  next = {
-    ...next,
-    opponentMana: Math.max(0, next.opponentMana - enemyCost),
-    rngState: enemyDecision.rngState,
-  };
-
-  const allActions = [...normalizedActions, ...enemyActions].map((action) => prepareActionTarget(next, action));
+  const allActions = [...normalizedPlayer, ...normalizedOpponent].map((action) => prepareActionTarget(next, action));
   next = resolveActionStage(next, allActions, "swap");
   next = resolveActionStage(next, allActions, "block");
   next = resolveActionStage(next, allActions, "skip");
   next = resolveActionStage(next, allActions, "skill");
   next = resolvePostTurn(next);
 
+  const orderedOutcome = combatOutcomeFromOrderedEvents(turnStart, next);
   const playerAlive = next.playerUnits.some((unit) => unit.hp > 0);
   const opponentsAlive = next.opponentUnits.some((unit) => unit.hp > 0);
   if (!playerAlive || !opponentsAlive) {
-    const outcome = playerAlive ? "won" : "lost";
-    const completed = playerAlive ? appendProgressEvent(next, {
+    const outcome = orderedOutcome ?? (playerAlive ? "won" : "lost");
+    const playerWon = outcome === "won";
+    const completed = playerWon ? appendProgressEvent(next, {
       event_type: "battle_completed",
       source_critter_id: null,
       target_critter_id: null,
       skill_id: null,
-      amount: playerAlive ? 1 : 0,
+      amount: playerWon ? 1 : 0,
       payload: {
-        won: playerAlive,
+        won: playerWon,
         enemy_rollcaster_type: next.enemyRollcasterType ?? null,
         squad: next.playerUnits.map((unit) => ({ critter_id: unit.critter.id, element_ids: critterElementIds(unit.critter), survived: unit.hp > 0 })),
         survivors_complete: next.playerUnits.filter((unit) => unit.active).every((unit) => unit.hp > 0),
       },
     }) : next;
-    return { ...completed, phase: outcome, log: [playerAlive ? "Dungeon cleared." : "Defeat.", ...completed.log] };
+    return { ...completed, phase: outcome, log: [playerWon ? "Dungeon cleared." : "Defeat.", ...completed.log] };
   }
 
   return { ...next, turn: next.turn + 1, phase: "ready" };
+}
+
+/**
+ * Resolve terminal precedence from the ordered combat event stream. Primary
+ * Skill damage is emitted before recoil, retaliation, and timed status damage,
+ * so the first event that eliminates a side decides the battle even if a later
+ * secondary event also knocks out the surviving side.
+ */
+export function combatOutcomeFromOrderedEvents(before: CombatState, after: CombatState): "won" | "lost" | null {
+  const hp = new Map([...before.playerUnits, ...before.opponentUnits].map((unit) => [unit.key, unit.hp]));
+  const side = new Map([...before.playerUnits, ...before.opponentUnits].map((unit) => [unit.key, unit.side]));
+  const alive = (targetSide: "player" | "opponent") => [...side].some(([key, value]) => value === targetSide && (hp.get(key) ?? 0) > 0);
+  for (const event of after.presentationEvents) {
+    for (const change of event.hpChanges) hp.set(change.unitKey, change.after);
+    const playerAlive = alive("player");
+    const opponentAlive = alive("opponent");
+    if (playerAlive && opponentAlive) continue;
+    if (playerAlive) return "won";
+    if (opponentAlive) return "lost";
+    const actorSide = event.actorKey ? side.get(event.actorKey) : undefined;
+    if (actorSide) return actorSide === "player" ? "won" : "lost";
+  }
+  return null;
 }
 
 /** Apply a starting Status through the same runtime path used by combat. */
@@ -1586,6 +1633,9 @@ function runtimeActionCostAppliesToActor(state: CombatState, instance: RuntimeEf
 }
 
 export function calculateActionCostBreakdown(state: CombatState, action: CombatAction): ActionCostBreakdown {
+  // Skip is the combat escape hatch: it must remain legal even when global
+  // action-cost surcharges exceed the side's available Mana.
+  if (action.type === "skip") return { base: 0, final: 0, sources: [] };
   const actor = findUnit(state, action.actorKey);
   if (!actor) return { base: Math.max(0, action.cost), final: Math.max(0, action.cost), sources: [] };
   const base = action.type === "skill" && action.skillId

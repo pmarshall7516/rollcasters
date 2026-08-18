@@ -1161,6 +1161,20 @@ const grouped = groupCombatEffectRows([
 check(grouped.skill.strike.map((item) => item.id).join(",") === "first,later", "combat_effects_v1 rows must group by owner and preserve ascending sort order.");
 check(grouped.relic.carrier[0].id === "first", "Inline effect IDs may be reused by different owners without becoming shared definitions.");
 check(Array.isArray(grouped.relic["002"][0].parameters.target_element_ids) && grouped.relic["002"][0].parameters.element_ids === undefined, "Legacy element filters must normalize to explicit target Critter filters.");
+const xpBoostRows = groupCombatEffectRows([
+  { owner_type: "ability", owner_id: "friendly-stat", id: "ability-xp", name: "Ability XP", description: "", sort_order: 0, template_id: "ability-critter-xp-modifier", runtime_kind: "critter_xp_modifier", runtime_version: 1, parameters: { target: "all_friendlies", distribution_mode: "shared_with_inactive", modifier_type: "percentage", modifier_value: 0.5, target_element_ids: ["bloom"], target_critter_tag_ids: [] } },
+  { owner_type: "relic", owner_id: "carrier", id: "relic-xp", name: "Relic XP", description: "", sort_order: 0, template_id: "relic-critter-xp-modifier", runtime_kind: "critter_xp_modifier", runtime_version: 1, parameters: { target: "equipped_critter_allies_without_equipped", distribution_mode: "shared_with_inactive", modifier_type: "percentage", modifier_value: 0.5, target_element_ids: [], target_critter_tag_ids: [] } },
+]);
+check(xpBoostRows.ability["friendly-stat"][0].runtimeKind === "critter_xp_modifier" && xpBoostRows.relic.carrier[0].runtimeKind === "critter_xp_modifier", "Critter XP Boosts must load for Ability and Relic owners.");
+let skillXpRejected = false;
+try {
+  groupCombatEffectRows([
+    { owner_type: "skill", owner_id: "strike", id: "skill-xp", name: "Skill XP", description: "", sort_order: 0, template_id: "skill-critter-xp-modifier", runtime_kind: "critter_xp_modifier", runtime_version: 1, parameters: { target: "self", distribution_mode: "active_only", modifier_type: "percentage", modifier_value: 0.5 } },
+  ]);
+} catch {
+  skillXpRejected = true;
+}
+check(skillXpRejected, "Critter XP Boosts must be rejected for Skill owners.");
 
 const composableElementCatalog = makeCatalog();
 composableElementCatalog.effectsByAbility = {

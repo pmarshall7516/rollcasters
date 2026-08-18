@@ -327,6 +327,11 @@ export type EffectTarget =
   | "equipped_critter_allies_without_equipped"
   | "equipped_critter_enemies";
 
+export type CritterXpDistributionMode =
+  | "active_only"
+  | "shared_with_inactive"
+  | "funnel_to_equipped";
+
 export type CombatEffectRow = {
   owner_type: EffectOwnerType;
   owner_id: string;

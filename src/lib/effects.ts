@@ -31,6 +31,7 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "skill_usage_restriction@1",
   "swap_after_attack@1",
   "weighted_child_selector@1",
+  "critter_xp_modifier@1",
 ]);
 
 const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
@@ -51,6 +52,12 @@ const CONDITIONAL_CONDITION_TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySe
   ...CONDITIONAL_EFFECT_TARGETS_BY_OWNER,
   relic: new Set([...CONDITIONAL_EFFECT_TARGETS_BY_OWNER.relic, "skill_targets"]),
 };
+
+const CRITTER_XP_RELIC_TARGETS = new Set<EffectTarget>([
+  "equipped_critter",
+  "equipped_critter_allies_with_equipped",
+  "equipped_critter_allies_without_equipped",
+]);
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -234,6 +241,31 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   // the owner-scoped Critter target vocabulary.
   const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1", "skill_usage_restriction@1", "weighted_child_selector@1"]);
   const target = parameters.target;
+  if (runtimeKey === "critter_xp_modifier@1") {
+    if (effect.ownerType === "skill" || effect.ownerType === "status") {
+      throw new Error(`Effect ${effect.id} can only be owned by an Ability or Relic.`);
+    }
+    if (effect.ownerType === "ability" && target !== "all_friendlies") {
+      throw new Error(`Effect ${effect.id} Ability XP Boosts must target all_friendlies.`);
+    }
+    if (effect.ownerType === "relic" && (!target || !CRITTER_XP_RELIC_TARGETS.has(target as EffectTarget))) {
+      throw new Error(`Effect ${effect.id} Relic XP Boosts must target an equipped Critter friendly scope.`);
+    }
+    requireChoice(parameters.distribution_mode, ["active_only", "shared_with_inactive", "funnel_to_equipped"], `Effect ${effect.id} distribution_mode`);
+    if (parameters.distribution_mode === "funnel_to_equipped" && (effect.ownerType !== "relic" || target !== "equipped_critter")) {
+      throw new Error(`Effect ${effect.id} funnel_to_equipped requires a Relic targeting equipped_critter.`);
+    }
+    const modifierType = requireChoice(parameters.modifier_type, ["percentage", "flat"], `Effect ${effect.id} modifier_type`);
+    const modifierValue = requireFinite(parameters.modifier_value, `Effect ${effect.id} modifier_value`);
+    if (modifierValue < 0) throw new Error(`Effect ${effect.id} modifier_value must be nonnegative.`);
+    if (modifierType === "flat" && !Number.isInteger(modifierValue)) throw new Error(`Effect ${effect.id} flat modifier_value must be an integer.`);
+    if (parameters.source_element_ids !== undefined && stringIds(parameters.source_element_ids).length) {
+      throw new Error(`Effect ${effect.id} XP Boosts use target filters, not source Element filters.`);
+    }
+    if (parameters.source_critter_tag_ids !== undefined && stringIds(parameters.source_critter_tag_ids).length) {
+      throw new Error(`Effect ${effect.id} XP Boosts use target filters, not source Critter Tag filters.`);
+    }
+  }
   if (runtimeKey === "conditional_effect@1") {
     const explicitConditionalTargets = parameters.effect_target !== undefined || parameters.condition_target !== undefined;
     const allowedEffectTargets = explicitConditionalTargets ? CONDITIONAL_EFFECT_TARGETS_BY_OWNER[effect.ownerType] : TARGETS_BY_OWNER[effect.ownerType];
@@ -251,7 +283,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     if (!allowedEffectTargets.has(effectTarget) || !allowedConditionTargets.has(conditionTarget)) {
       throw new Error(`Effect ${effect.id} has an unsupported conditional target.`);
     }
-  } else if (!targetlessRuntimes.has(runtimeKey) || parameters.target !== undefined) {
+  } else if (runtimeKey !== "critter_xp_modifier@1" && (!targetlessRuntimes.has(runtimeKey) || parameters.target !== undefined)) {
     const validatedTarget = requireChoice(
       target,
       [...TARGETS_BY_OWNER[effect.ownerType]],
@@ -328,6 +360,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     "skill_usage_restriction@1",
     "swap_after_attack@1",
     "weighted_child_selector@1",
+    "critter_xp_modifier@1",
   ]);
   if (expandedKey.has(runtimeKey)) {
     if (runtimeKey === "stat_modifier@2" && effect.classification === undefined && effect.execution === undefined) {
