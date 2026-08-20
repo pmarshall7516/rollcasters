@@ -51,7 +51,7 @@ const useSkillEvent: ChallengeEvent = {
   sourceCritterTagIds: ["first-stage"],
   skillId: "pulse-skill",
   skillTagIds: ["pulse", "contact"],
-  payload: { skill_element_id: "bloom" },
+  payload: { skill_element_id: "bloom", skill_type: "attack" },
   amount: 1,
 };
 const pulseChallenge = challenge("use_skill", {
@@ -69,6 +69,9 @@ const specificPulseChallenge = challenge("use_skill", {
 });
 check(challengeEventIncrement(specificPulseChallenge, useSkillEvent) === 1, "Use Skill must combine optional specific Skill, Element, and Tag filters.");
 check(challengeEventIncrement(specificPulseChallenge, { ...useSkillEvent, skillId: "other-skill" }) === 0, "Use Skill must reject a non-selected specific Skill.");
+const attackOnlyChallenge = challenge("use_skill", { required_amount: 1, skill_type: "attack" });
+check(challengeEventIncrement(attackOnlyChallenge, useSkillEvent) === 1, "Use Skill must match the selected Attack Skill Type.");
+check(challengeEventIncrement(attackOnlyChallenge, { ...useSkillEvent, skillType: "support", payload: { ...useSkillEvent.payload, skill_type: "support" } }) === 0, "Use Skill must reject the opposite Skill Type.");
 
 const healEvent: ChallengeEvent = {
   eventId: "heal-1",

@@ -380,6 +380,8 @@ export type Skill = {
   skill_type: "attack" | "support";
   power: number;
   mana_cost: number;
+  /** Higher values resolve before lower values; legacy releases default to 0. */
+  priority?: number;
   targeting: SkillTargeting;
   description: string;
   sort_order: number;

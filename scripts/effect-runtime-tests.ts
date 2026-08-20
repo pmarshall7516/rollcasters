@@ -756,6 +756,126 @@ const incomingDamageIndex = reactiveResult.presentationEvents.findIndex((event) 
 check(thornsDamageIndex >= 0 && incomingDamageIndex >= 0 && thornsDamageIndex > incomingDamageIndex, "Spiky Shield retaliation must present after the incoming damage event.");
 check(reactiveResult.presentationEvents[thornsDamageIndex]?.message === "The enemy Opponent One took 5 damage from thorns.", "Spiky Shield must name the attacker, actual damage, and Effect source.");
 
+const skillTypeReactiveCatalog = makeCatalog();
+skillTypeReactiveCatalog.rollcasterAbilities.push({ id: "quick-link", name: "Quick Link", description: "Spiritbond Skill reaction.", sort_order: 10 });
+skillTypeReactiveCatalog.effectsByAbility["quick-link"] = [
+  effect("ability", "quick-link", "attack-trigger", "reactive_trigger", {
+    target: "all_friendlies",
+    trigger_event: "owner_uses_attack_skill",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "battle",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["attack-speed"],
+  }),
+  { ...effect("ability", "quick-link", "attack-speed", "stat_modifier", {
+    target: "attacker",
+    stat: "spd",
+    value_mode: "percentage",
+    amount: 0.1,
+  }), execution: "child" },
+  effect("ability", "quick-link", "support-trigger", "reactive_trigger", {
+    target: "all_friendlies",
+    trigger_event: "owner_uses_support_skill",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "battle",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["support-speed"],
+  }, 2),
+  { ...effect("ability", "quick-link", "support-speed", "stat_modifier", {
+    target: "attacker",
+    stat: "spd",
+    value_mode: "percentage",
+    amount: 0.2,
+  }, 3), execution: "child" },
+];
+const skillTypeReactivePlayer = makePlayer();
+skillTypeReactivePlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "quick-link" }];
+let skillTypeReactiveBattle = battle(skillTypeReactiveCatalog, skillTypeReactivePlayer, "quick-link-skill-types");
+skillTypeReactiveBattle = { ...skillTypeReactiveBattle, playerMana: 5, opponentMana: 0 };
+const attackReaction = resolveTurn(skillTypeReactiveBattle, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }]);
+check(attackReaction.playerUnits[0].stats.spd === 33, "An attack-only Reactive Trigger must raise the attacking Critter's SPD after an attack Skill.");
+check(attackReaction.playerUnits[0].stats.spd === 33, "A support-only Reactive Trigger must not run after an attack Skill.");
+const supportReaction = resolveTurn({ ...attackReaction, playerMana: 0, opponentMana: 0 }, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(supportReaction.playerUnits[0].stats.spd === 39, "A support-only Reactive Trigger must raise the Critter's SPD after a support Skill.");
+
+const toxicologyCatalog = makeCatalog();
+toxicologyCatalog.elements.push({ id: "vile", name: "Vile", description: null, asset_path: null, sort_order: 3 });
+toxicologyCatalog.statuses.push({ id: "toxic", name: "Toxic", description: "Toxic.", asset_path: null, sort_order: 3, version: 1 });
+toxicologyCatalog.critters = toxicologyCatalog.critters.map((critter) => critter.id === "p1" ? { ...critter, element_1_id: "vile" } : critter);
+toxicologyCatalog.rollcasterAbilities.push(
+  { id: "toxicology-2", name: "Toxicology II", description: "High Potency.", sort_order: 11 },
+  { id: "toxicology-5", name: "Toxicology V", description: "Venomous.", sort_order: 12 },
+);
+toxicologyCatalog.effectsByAbility["toxicology-2"] = [effect("ability", "toxicology-2", "high-potency", "status_duration_modifier", {
+  target: "all_critters",
+  status_id: "toxic",
+  duration_bonus: 2,
+  fresh_only: true,
+  target_element_ids: [],
+})];
+const highPotencyPlayer = makePlayer();
+highPotencyPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "toxicology-2" }];
+const highPotencyBattle = battle(toxicologyCatalog, highPotencyPlayer, "toxicology-high-potency");
+const highPotencyFresh = simApplyStatus(highPotencyBattle, "toxic", "o1", 2);
+check(highPotencyFresh.statuses.find((status) => status.holderKey === "o1")?.duration === 4, "High Potency must add two turns to a fresh Toxic affliction on any active Critter.");
+const highPotencyRefresh = simApplyStatus(highPotencyFresh, "toxic", "o1", 2);
+check(highPotencyRefresh.statuses.find((status) => status.holderKey === "o1")?.duration === 2, "High Potency must not add turns when Toxic is refreshed on an already afflicted Critter.");
+const highPotencyInactive = simApplyStatus(highPotencyBattle, "toxic", "p3", 2);
+check(highPotencyInactive.statuses.find((status) => status.holderKey === "p3")?.duration === 2, "High Potency must target active Critters only.");
+
+const venomousSkill = { ...toxicologyCatalog.skills[0], id: "venomous-strike", name: "Venomous Strike", mana_cost: 0, skill_type: "attack" as const, power: 1, targeting: "single_enemy" as const };
+toxicologyCatalog.skills = [...toxicologyCatalog.skills, venomousSkill];
+toxicologyCatalog.effectsByAbility["toxicology-5"] = [
+  effect("ability", "toxicology-5", "venomous", "reactive_trigger", {
+    target: "all_friendlies",
+    target_element_ids: ["vile"],
+    trigger_event: "owner_uses_attack_skill",
+    trigger_source: "self",
+    activation_chance: 0.3,
+    activation_limit: null,
+    activation_limit_scope: "battle",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["venomous-toxic"],
+  }),
+  { ...effect("ability", "toxicology-5", "venomous-toxic", "apply_status", {
+    target: "defender",
+    status_id: "toxic",
+    chance: 1,
+    indefinite: false,
+    turns: 2,
+    target_element_ids: [],
+  }), execution: "child" },
+];
+const venomousPlayer = makePlayer();
+venomousPlayer.skillSlots = venomousPlayer.skillSlots.map((slot) => slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: venomousSkill.id } : slot);
+venomousPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "toxicology-5" }];
+let venomousApplied = false;
+let venomousMissed = false;
+for (let seed = 1; seed <= 100 && (!venomousApplied || !venomousMissed); seed += 1) {
+  const result = takeTurn({ ...battle(toxicologyCatalog, venomousPlayer, `toxicology-venomous-${seed}`), rngState: seed, opponentMana: 0 }, [{ actorKey: "p1", type: "skill", skillId: venomousSkill.id, targetKey: "o1", cost: 0 }], 0);
+  const toxic = result.statuses.find((status) => status.holderKey === "o1" && status.statusId === "toxic");
+  venomousApplied ||= toxic?.duration === 1 && toxic.turnsElapsed === 1;
+  venomousMissed ||= !toxic;
+}
+check(venomousApplied && venomousMissed, "Venomous must afflict Toxic for two authored turns when its chance succeeds and do nothing when it misses.");
+const nonVileCatalog = structuredClone(toxicologyCatalog);
+nonVileCatalog.critters = nonVileCatalog.critters.map((critter) => critter.id === "p1" ? { ...critter, element_1_id: "basic" } : critter);
+const nonVileResult = takeTurn({ ...battle(nonVileCatalog, venomousPlayer, "toxicology-non-vile"), opponentMana: 0 }, [{ actorKey: "p1", type: "skill", skillId: venomousSkill.id, targetKey: "o1", cost: 0 }], 0);
+check(!nonVileResult.statuses.some((status) => status.holderKey === "o1" && status.statusId === "toxic"), "Venomous must not trigger for a non-Vile Skill user.");
+
 let lowManaReactive = battle(reactiveCatalog, reactivePlayer, "reactive-relics");
 lowManaReactive = { ...lowManaReactive, playerMana: 1, opponentMana: 10 };
 const lowManaReactiveResult = resolveTurn(lowManaReactive, [
@@ -2380,6 +2500,13 @@ check(calculateActionCost(statusStatState, { actorKey: "p1", type: "skill", skil
 statusStatState = takeTurn(statusStatState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
 check(statusStatState.playerUnits[0].stats.atk === 25 && statusStatState.statuses.length === 0, "Status Stat Modifiers must be removed when their finite Status expires.");
 
+const manaDiceStatusCatalog = makeCatalog();
+manaDiceStatusCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "mana-bounds", "stat_modifier", { stat: "mana_dice", minimum_amount: -1, maximum_amount: 2, value_mode: "flat", chance: 1, application_mode: "single_application", removal_behavior: "expire_on_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
+let manaDiceStatusState = simApplyStatus(battle(manaDiceStatusCatalog, makePlayer(), "status-mana-dice"), "aura", "p1", 1);
+check(manaDiceStatusState.playerUnits[0].stats.diceMin === 1 && manaDiceStatusState.playerUnits[0].stats.diceMax === 6, "A unified Status Mana Dice modifier must apply independent minimum and maximum deltas from one Effect.");
+manaDiceStatusState = takeTurn(manaDiceStatusState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+check(manaDiceStatusState.playerUnits[0].stats.diceMin === 2 && manaDiceStatusState.playerUnits[0].stats.diceMax === 4, "A unified Status Mana Dice modifier must expire both bound changes with the Status.");
+
 let swappedStatusState = simApplyStatus(battle(statusStatCatalog, makePlayer(), "status-swap"), "aura", "p1", null);
 swappedStatusState = takeTurn(swappedStatusState, [{ actorKey: "p1", type: "swap", swapToId: "up3", cost: 4 }], 10);
 swappedStatusState = takeTurn(swappedStatusState, [{ actorKey: "p3", type: "swap", swapToId: "up1", cost: 4 }], 10);
@@ -2429,6 +2556,17 @@ retainedIncrementalCatalog.effectsByStatus.aura = [{ ...effect("status", "aura",
 let retainedIncrementalState = simApplyStatus(battle(retainedIncrementalCatalog, makePlayer(), "status-retained"), "aura", "p1", 1);
 retainedIncrementalState = takeTurn(retainedIncrementalState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
 check(retainedIncrementalState.statuses.length === 0 && retainedIncrementalState.playerUnits[0].stats.atk === 27, "Keep after Effect Removal must preserve accumulated incremental modifiers when the Status expires.");
+const retainedSingleCatalog = makeCatalog();
+retainedSingleCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "retained-single-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 5, chance: 1, application_mode: "single_application", removal_behavior: "keep_after_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
+retainedSingleCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "cleanse-status", "effect_removal", {
+  target: "self", removal_category: "statuses", maximum_effects_removed: null, selection_method: "oldest", specific_effect_id: "", prevent_reapplication: false,
+})];
+let retainedSingleState = simApplyStatus(battle(retainedSingleCatalog, makePlayer(), "status-retained-single-expiry"), "aura", "p1", 1);
+retainedSingleState = takeTurn(retainedSingleState, [{ actorKey: "p1", type: "skip", cost: 0 }], 10);
+check(retainedSingleState.statuses.length === 0 && retainedSingleState.playerUnits[0].stats.atk === 30, "Keep after Effect Removal must preserve a Single Application modifier when the Status expires.");
+retainedSingleState = simApplyStatus(battle(retainedSingleCatalog, makePlayer(), "status-retained-single-cleanse"), "aura", "p1", null);
+retainedSingleState = takeTurn(retainedSingleState, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
+check(retainedSingleState.statuses.length === 0 && retainedSingleState.playerUnits[0].stats.atk === 30, "Keep after Effect Removal must preserve a Single Application modifier when the Status is cleansed.");
 const expiredIncrementalCatalog = makeCatalog();
 expiredIncrementalCatalog.effectsByStatus.aura = [{ ...effect("status", "aura", "expired-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 2, chance: 1, application_mode: "incremental", timing: "end_of_turn", spacing: 1, removal_behavior: "expire_on_removal", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" }];
 let expiredIncrementalState = simApplyStatus(battle(expiredIncrementalCatalog, makePlayer(), "status-expired"), "aura", "p1", 1);
@@ -2614,5 +2752,53 @@ check(!startTurnOne.presentationEvents.some((event) => event.message.includes("1
 const startTurnTwo = { ...startTurnOne, phase: "ready" as const };
 const startTurnTwoStarted = startTurn(startTurnTwo);
 check(startTurnTwoStarted.presentationEvents.some((event) => event.message.includes("1/3 turns")), "A start-of-turn delayed timer must tick when the next turn starts.");
+
+const priorityCatalog = makeCatalog();
+priorityCatalog.skills = priorityCatalog.skills.map((skill) => skill.id === "mark" ? { ...skill, priority: 6 } : skill);
+const priorityState = battle(priorityCatalog, makePlayer(), "priority-order");
+const priorityResult = takeTurn(priorityState, [
+  { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 },
+  { actorKey: "p2", type: "skill", skillId: "mark", targetKey: "p1", cost: 0 },
+], 10);
+const prioritySkillEvents = priorityResult.presentationEvents.filter((event) => event.kind === "skill");
+check(prioritySkillEvents[0]?.actorKey === "p2", "A higher-priority Skill must resolve before a lower-priority Skill regardless of Speed.");
+
+const stunCatalog = makeCatalog();
+stunCatalog.skills = stunCatalog.skills.map((skill) => skill.id === "mark" ? { ...skill, priority: 6 } : skill);
+stunCatalog.effectsBySkill.mark = [effect("skill", "mark", "mark-stun", "stun_chance", { target: "targets", chance: 1 })];
+const stunResult = takeTurn(battle(stunCatalog, makePlayer(), "stun-chance"), [
+  { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 },
+  { actorKey: "p2", type: "skill", skillId: "mark", targetKey: "p1", cost: 0 },
+], 10);
+check(stunResult.presentationEvents.some((event) => event.message === "Your Player One was Stunned and couldn't act!" && event.effectPolarity === "negative"), "A guaranteed Stun must replace an unacted Critter's Skill with the negative Stunned narration.");
+check(!stunResult.presentationEvents.some((event) => event.kind === "skill" && event.actorKey === "p1"), "A Stunned Critter must not also narrate its normal Skill.");
+
+const restrictionCatalog = makeCatalog();
+restrictionCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "ritual-turn-one", "turn_restriction", {
+  main_restriction: "skill_use", turn_restriction: "specific_active_turn", specific_turn: 1, minimum_turn: 1, maximum_turn: 1,
+})];
+const restrictionTurnOne = startTurn({ ...battle(restrictionCatalog, makePlayer(), "turn-restriction"), phase: "ready" });
+const restrictionUsed = takeTurn(restrictionTurnOne, [{ actorKey: "p1", type: "skill", skillId: "ritual", targetKey: "p1", cost: 0 }], 10);
+check(restrictionUsed.activeTurnCounts?.p1 === 1 && restrictionUsed.presentationEvents.some((event) => event.kind === "skill" && event.skillId === "ritual"), "A Specific Active Turn restriction must allow its configured turn.");
+const restrictionTurnTwo = startTurn({ ...restrictionUsed, phase: "ready" });
+const restrictionFizzled = takeTurn(restrictionTurnTwo, [{ actorKey: "p1", type: "skill", skillId: "ritual", targetKey: "p1", cost: 0 }], 10);
+check(restrictionFizzled.activeTurnCounts?.p1 === 2 && restrictionFizzled.presentationEvents.some((event) => event.message.includes("fizzled")), "A Skill Use Turn Restriction must fizzle after its active-turn window and spend the reserved Mana.");
+const swapped = takeTurn(restrictionTurnTwo, [{ actorKey: "p1", type: "swap", swapInKey: "p3", cost: 0 }], 10);
+check(swapped.activeTurnCounts?.p1 === 0 && swapped.activeTurnCounts?.p3 === 0, "Swapping out must reset both outgoing and incoming active-turn counters.");
+const swappedBackIn = startTurn({ ...swapped, phase: "ready" });
+check(swappedBackIn.activeTurnCounts?.p3 === 1, "A swapped-in Critter must begin a fresh active-turn sequence on the next turn.");
+
+const childRestrictionCatalog = makeCatalog();
+const childStun = { ...effect("skill", "ritual", "ritual-child-stun", "stun_chance", { target: "all_enemies", chance: 1 }), execution: "child" as const, classification: "negative" as const };
+const childRestriction = effect("skill", "ritual", "ritual-child-window", "turn_restriction", {
+  main_restriction: "child_effect_trigger", turn_restriction: "specific_active_turn", specific_turn: 2, minimum_turn: 1, maximum_turn: 2, child_effect_ids: [childStun.id],
+});
+childRestrictionCatalog.effectsBySkill.ritual = [childRestriction, childStun];
+const childRestrictionTurnOne = startTurn({ ...battle(childRestrictionCatalog, makePlayer(), "child-turn-restriction"), phase: "ready" });
+const childRestrictionMiss = takeTurn(childRestrictionTurnOne, [{ actorKey: "p1", type: "skill", skillId: "ritual", targetKey: "p1", cost: 0 }], 10);
+check(!(childRestrictionMiss.stunnedSkillKeys ?? []).includes("o1"), "Child Effect Trigger mode must suppress its child Effect outside the active-turn window.");
+const childRestrictionTurnTwo = startTurn({ ...childRestrictionMiss, phase: "ready" });
+const childRestrictionHit = takeTurn(childRestrictionTurnTwo, [{ actorKey: "p1", type: "skill", skillId: "ritual", targetKey: "p1", cost: 0 }], 10);
+check((childRestrictionHit.stunnedSkillKeys ?? []).includes("o1"), "Child Effect Trigger mode must resolve its child Effect inside the active-turn window while the Skill still resolves.");
 
 console.log("Inline effect combat runtime tests passed.");

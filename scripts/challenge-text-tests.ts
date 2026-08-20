@@ -32,6 +32,7 @@ const data = {
       { id: "002", name: "Creek Clash" },
     ],
     currencies: [{ id: "coins", name: "Coins" }],
+    tags: [{ id: "final-stage", name: "Final Stage" }],
   },
 } as unknown as AppData;
 
@@ -73,6 +74,7 @@ check(challengeDescription(data, { ...diversity, display_text: "  " }) === "Own 
 
 const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("own_collectible", { collectible_category: "critter", collectible_ids: ["001"], required_amount: 1, require_unique_collectibles: true }), "Own Ramber."],
+  [challenge("own_collectible", { collectible_category: "critter", collectible_ids: [], critter_tag_ids: ["final-stage"], required_amount: 1, require_unique_collectibles: true }), "Own 1 different Critter tagged Final Stage."],
   [challenge("level_up_critter", { critter_id: "001", required_level: 20 }), "Unlock level 20 for Ramber (001)"],
   [challenge("knock_out_critters", { target_mode: "species", target_ids: ["001"], required_amount: 10 }), "Knock out Critters (Ramber)"],
   [challenge("deal_damage", { target_mode: "element", target_ids: ["vile"], required_amount: 1250 }), "Damage Critters (Vile)"],

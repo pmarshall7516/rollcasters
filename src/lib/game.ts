@@ -132,11 +132,17 @@ export type CombatModifier = {
   sourceOwnerId: string;
   sourceCritterKey?: string;
   statusInstanceId?: string;
-  /** An incremental Status modifier that intentionally survives Status removal. */
+  /** A Status stat modifier that intentionally survives Status removal. */
   retainedAfterStatusRemoval?: boolean;
   conditionalParentInstanceId?: string;
   effect: ResolvedEffectRef;
 };
+
+function statusModifierKeepsAfterRemoval(modifier: CombatModifier): boolean {
+  return Boolean(modifier.statusInstanceId)
+    && modifier.effect.runtimeKind === "stat_modifier"
+    && modifier.effect.parameters.removal_behavior === "keep_after_removal";
+}
 
 export type CombatEffectSummary = {
   id: string;
@@ -276,6 +282,12 @@ export type CombatState = {
     dungeon: Record<string, number>;
   };
   rechargeUntilTurn: Record<string, number>;
+  /** Number of turns each Critter has been active since its most recent swap-in. */
+  activeTurnCounts?: Record<string, number>;
+  /** Skill actions that have actually begun this turn. */
+  actedSkillKeys?: string[];
+  /** Critters that have been flinched and will lose their pending Skill action. */
+  stunnedSkillKeys?: string[];
 };
 
 export function effectActivationKey(
@@ -622,6 +634,9 @@ export function createInitialCombatState(
     effectSequence: 0,
     skillUsage: { encounter: {}, dungeon: {} },
     rechargeUntilTurn: {},
+    activeTurnCounts: {},
+    actedSkillKeys: [],
+    stunnedSkillKeys: [],
   };
   initialState = recomputeCombatStats(initialState);
   initialState = installRootEffects(initialState);
@@ -689,7 +704,7 @@ function validateRunEffects(registry: RunEffectRegistry, statuses: Record<string
         if (effect.ownerId !== ownerId) {
           throw new Error(`Inline effect ${effect.id} belongs to ${effect.ownerType} ${effect.ownerId}, not ${ownerId}.`);
         }
-        if (effect.runtimeKind === "apply_status" && !statuses[String(effect.parameters.status_id)]) {
+        if (["apply_status", "status_duration_modifier"].includes(effect.runtimeKind) && !statuses[String(effect.parameters.status_id)]) {
           throw new Error(`Effect ${effect.id} references missing or inactive status ${String(effect.parameters.status_id)}.`);
         }
       }
@@ -1019,7 +1034,7 @@ function installRootEffects(state: CombatState, options: SetupRuntimeRefreshOpti
       else if (effect.runtimeKind === "delayed_effect") {
         next = resolveEffect(next, effect, context);
       }
-      else if (["reactive_trigger", "retaliation", "repeating_effect", "conditional_effect", "effect_duration", "effect_immunity", "damage_modifier", "damage_prevention", "action_cost_modifier"].includes(effect.runtimeKind)) {
+      else if (["reactive_trigger", "retaliation", "repeating_effect", "conditional_effect", "effect_duration", "effect_immunity", "damage_modifier", "damage_prevention", "action_cost_modifier", "status_duration_modifier"].includes(effect.runtimeKind)) {
         next = addRuntimeEffect(next, effect, context, { sourceOrder: source.sourceOrder, parameters: structuredClone(effect.parameters) });
       }
     }
@@ -1281,10 +1296,14 @@ function combatEffectAmountLabel(effect: ResolvedEffectRef, unit: CombatUnit, be
     return `${value} SKILL COST`;
   }
   if (before && after && (effect.runtimeKind === "stat_modifier" || effect.runtimeKind === "stat_modifier_v2" || effect.runtimeKind === "mana_dice_modifier")) {
-    const statLabels: Array<[keyof StatBlock, string]> = effect.runtimeKind === "mana_dice_modifier"
+    const rawStat = String(effect.parameters.stat);
+    const statLabels: Array<[keyof StatBlock, string]> = effect.runtimeKind === "mana_dice_modifier" || ["mana_dice", "mana_dice_min", "mana_dice_max"].includes(rawStat)
       ? [["diceMin", "MIN MANA"], ["diceMax", "MAX MANA"]]
-      : [[({ block_cost: "blockCost", swap_cost: "swapCost", relic_slots: "relicSlots", mana_dice_min: "diceMin", mana_dice_max: "diceMax" } as Record<string, keyof StatBlock>)[String(effect.parameters.stat)] ?? String(effect.parameters.stat) as keyof StatBlock, String(effect.parameters.stat).replace(/_/g, " ").toUpperCase()]];
-    const labels = statLabels
+      : [[({ block_cost: "blockCost", swap_cost: "swapCost", relic_slots: "relicSlots" } as Record<string, keyof StatBlock>)[rawStat] ?? rawStat as keyof StatBlock, rawStat.replace(/_/g, " ").toUpperCase()]];
+    const scopedStatLabels = ["mana_dice_min", "mana_dice_max"].includes(rawStat)
+      ? statLabels.filter(([key]) => key === (rawStat === "mana_dice_min" ? "diceMin" : "diceMax"))
+      : statLabels;
+    const labels = scopedStatLabels
       .map(([key, label]) => ({ delta: after[key] - before[key], label }))
       .filter((item) => item.delta !== 0)
       .map((item) => `${signedAmount(item.delta)} ${item.label}`);
@@ -1310,11 +1329,34 @@ function statusClassification(effects: ResolvedEffectRef[]): "positive" | "negat
   return classifications.size === 1 ? [...classifications][0]! : "mixed";
 }
 
+function effectMagnitude(effect: ResolvedEffectRef): number {
+  return Math.max(
+    Math.abs(Number(effect.parameters.amount ?? effect.parameters.value ?? 0)),
+    Math.abs(Number(effect.parameters.minimum_amount ?? 0)),
+    Math.abs(Number(effect.parameters.maximum_amount ?? 0)),
+    Math.abs(Number(effect.parameters.shield_value ?? 0)),
+  );
+}
+
 function applyStatEffects(base: StatBlock, effects: ResolvedEffectRef[], percentageBase: StatBlock = base): StatBlock {
   const next = { ...base };
   for (const effect of effects) {
     if (effect.runtimeKind === "stat_modifier" || effect.runtimeKind === "stat_modifier_v2") {
-      const stat = ({ block_cost: "blockCost", swap_cost: "swapCost", relic_slots: "relicSlots", mana_dice_min: "diceMin", mana_dice_max: "diceMax" } as Record<string, keyof StatBlock>)[String(effect.parameters.stat)] ?? String(effect.parameters.stat) as keyof StatBlock;
+      const rawStat = String(effect.parameters.stat);
+      if (["mana_dice", "mana_dice_min", "mana_dice_max"].includes(rawStat)) {
+        const minimumAmount = rawStat === "mana_dice_min" ? Number(effect.parameters.amount ?? 0) : Number(effect.parameters.minimum_amount ?? 0);
+        const maximumAmount = rawStat === "mana_dice_max" ? Number(effect.parameters.amount ?? 0) : Number(effect.parameters.maximum_amount ?? 0);
+        const minimumDelta = effect.parameters.value_mode === "percentage"
+          ? roundHalfUp(percentageBase.diceMin * minimumAmount) || (minimumAmount === 0 ? 0 : Math.sign(minimumAmount))
+          : minimumAmount;
+        const maximumDelta = effect.parameters.value_mode === "percentage"
+          ? roundHalfUp(percentageBase.diceMax * maximumAmount) || (maximumAmount === 0 ? 0 : Math.sign(maximumAmount))
+          : maximumAmount;
+        next.diceMin += minimumDelta;
+        next.diceMax += maximumDelta;
+        continue;
+      }
+      const stat = ({ block_cost: "blockCost", swap_cost: "swapCost", relic_slots: "relicSlots" } as Record<string, keyof StatBlock>)[rawStat] ?? rawStat as keyof StatBlock;
       if (!(stat in next)) continue;
       const amount = Number(effect.parameters.amount ?? 0);
       const roundedPercentage = roundHalfUp(percentageBase[stat] * amount);
@@ -1355,7 +1397,18 @@ export function startTurn(state: CombatState): CombatState {
   // Dice resolve first. Start-of-turn effects are then staged as presentation
   // events so both combat UIs can play their text and reactions before action
   // selection begins.
-  const turnState = { ...state, turnEvents: [], presentationEvents: [] };
+  const activeTurnCounts = { ...(state.activeTurnCounts ?? {}) };
+  for (const unit of [...state.playerUnits, ...state.opponentUnits]) {
+    if (unit.active && unit.hp > 0) activeTurnCounts[unit.key] = (activeTurnCounts[unit.key] ?? 0) + 1;
+  }
+  const turnState = {
+    ...state,
+    turnEvents: [],
+    presentationEvents: [],
+    activeTurnCounts,
+    actedSkillKeys: [],
+    stunnedSkillKeys: [],
+  };
   let rngState = turnState.rngState;
   const playerUnits = turnState.playerUnits.map((unit) =>
     unit.active && unit.hp > 0
@@ -1743,7 +1796,10 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
       return { action, tieBreaker: tieRoll.value };
     })
     .sort((left, right) =>
-      speedFor(state, right.action.actorKey) - speedFor(state, left.action.actorKey)
+      (stage === "skill"
+        ? skillPriorityFor(state, right.action) - skillPriorityFor(state, left.action)
+        : 0)
+      || speedFor(state, right.action.actorKey) - speedFor(state, left.action.actorKey)
       || right.tieBreaker - left.tieBreaker,
     )
     .map(({ action }) => action);
@@ -1844,7 +1900,7 @@ function conditionStatKeys(parameters: Record<string, unknown>): string[] {
 
 function statModifierCategory(stat: string): string | undefined {
   if (["atk", "def", "spd"].includes(stat)) return stat;
-  if (["mana_dice_min", "mana_dice_max"].includes(stat)) return "mana_dice";
+  if (["mana_dice", "mana_dice_min", "mana_dice_max"].includes(stat)) return "mana_dice";
   if (["block_cost", "swap_cost", "skill_cost"].includes(stat)) return stat;
   return undefined;
 }
@@ -1862,7 +1918,13 @@ function effectHasStatPolarity(effect: ResolvedEffectRef, selected: Set<string>,
     category && (selected.has("any") || selected.has(category)) && modifierPolarity(category, amount) === desired,
   );
   if (effect.runtimeKind === "stat_modifier" || effect.runtimeKind === "stat_modifier_v2") {
-    return matches(statModifierCategory(String(effect.parameters.stat ?? "")), Number(effect.parameters.amount ?? 0));
+    const stat = String(effect.parameters.stat ?? "");
+    if (["mana_dice", "mana_dice_min", "mana_dice_max"].includes(stat)) {
+      const minimumAmount = stat === "mana_dice_min" ? Number(effect.parameters.amount ?? 0) : Number(effect.parameters.minimum_amount ?? 0);
+      const maximumAmount = stat === "mana_dice_max" ? Number(effect.parameters.amount ?? 0) : Number(effect.parameters.maximum_amount ?? 0);
+      return matches("mana_dice", minimumAmount) || matches("mana_dice", maximumAmount);
+    }
+    return matches(statModifierCategory(stat), Number(effect.parameters.amount ?? 0));
   }
   if (effect.runtimeKind === "mana_dice_modifier") {
     return matches("mana_dice", Number(effect.parameters.minimum_delta ?? 0))
@@ -2074,6 +2136,31 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
     }
   }
 
+  if (action.type === "skill") {
+    const actedSkillKeys = [...(state.actedSkillKeys ?? []), actor.key];
+    const stunnedSkillKeys = state.stunnedSkillKeys ?? [];
+    state = {
+      ...state,
+      actedSkillKeys: [...new Set(actedSkillKeys)],
+      stunnedSkillKeys: stunnedSkillKeys.filter((key) => key !== actor.key),
+    };
+    if (stunnedSkillKeys.includes(actor.key)) {
+      const message = `${combatantName(actor)} was Stunned and couldn't act!`;
+      return appendPresentationEvent(
+        { ...state, log: [message, ...state.log] },
+        {
+          kind: "status",
+          effectPolarity: "negative",
+          message,
+          actorKey: actor.key,
+          targetKeys: [actor.key],
+          skillId: action.skillId,
+          hpChanges: [],
+        },
+      );
+    }
+  }
+
   if (action.type === "skip") {
     const message = isActorRecharging(state, actor.key)
       ? `${combatantName(actor)} must recharge and cannot act.`
@@ -2142,6 +2229,18 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
   if (action.type === "skill" && action.skillId) {
     const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
     if (!skill) return state;
+    const failedTurnRestriction = (state.runEffects.skill[skill.id] ?? [])
+      .find((effect) => effect.runtimeKind === "turn_restriction"
+        && effect.execution !== "child"
+        && effect.parameters.main_restriction === "skill_use"
+        && !turnRestrictionMatches(state, actor.key, effect));
+    if (failedTurnRestriction) {
+      const message = `${combatantPossessive(actor)} ${skill.name} fizzled; its Turn Restriction was not met.`;
+      return appendPresentationEvent(
+        { ...state, log: [message, ...state.log] },
+        { kind: "other", message, actorKey: actor.key, targetKeys: [], skillId: skill.id, hpChanges: [] },
+      );
+    }
     const targetSlot = action.targetSlotSide !== undefined && action.targetSlotIndex !== undefined
       ? { side: action.targetSlotSide, index: action.targetSlotIndex }
       : undefined;
@@ -2283,6 +2382,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
           target_critter_tag_ids: [...new Set(targets.flatMap((target) => critterTagIds(target.critter)))],
           skill_tag_ids: skill.tag_ids,
           skill_element_id: skill.element_id,
+          skill_type: skill.skill_type,
         },
       });
     }
@@ -2310,6 +2410,20 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         ...actionContext,
       });
     }
+    // Resolve Skill-use subscriptions after the Skill itself. A Quick
+    // Link-style stat change therefore cannot modify the Skill that caused it
+    // and is ready before the next queued action begins.
+    next = resolveReactiveEffects(
+      next,
+      skill.skill_type === "attack" ? "owner_uses_attack_skill" : "owner_uses_support_skill",
+      actor,
+      actor,
+      0,
+      0,
+      0,
+      skill.skill_type,
+      targets.map((target) => target.key),
+    );
     return recordSkillUseAndRestrictions(expireCurrentActionEffects(next, actor.key), actor.key, skill.id, effects);
   }
 
@@ -3001,6 +3115,18 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
   if (conditionalMatched) {
     next = recordEffectActivation(next, effect, context.sourceCritterKey);
   }
+  if (effect.runtimeKind === "stun_chance") {
+    const actedSkillKeys = new Set(next.actedSkillKeys ?? []);
+    const stunnedSkillKeys = new Set(next.stunnedSkillKeys ?? []);
+    for (const target of targets) {
+      if (!actedSkillKeys.has(target.key)) stunnedSkillKeys.add(target.key);
+    }
+    return { ...next, stunnedSkillKeys: [...stunnedSkillKeys] };
+  }
+  if (effect.runtimeKind === "turn_restriction") {
+    if (!context.sourceCritterKey || !turnRestrictionMatches(next, context.sourceCritterKey, effect)) return next;
+    return resolveChildEffects(next, effect, targetContext, effect.parameters.child_effect_ids);
+  }
   if (effect.runtimeKind === "critter_revival") {
     let current = next;
     for (const target of targets) {
@@ -3275,7 +3401,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
         kind: "modifier",
         id: modifier.instanceId,
         sequence: index,
-        strength: Math.abs(Number(modifier.effect.parameters.amount ?? modifier.effect.parameters.value ?? 0)),
+        strength: effectMagnitude(modifier.effect),
       });
     }
     for (const instance of next.runtimeEffects) {
@@ -3300,7 +3426,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
         kind: "status",
         id: instance.instanceId,
         sequence: index,
-        strength: Math.max(0, ...instance.effects.map((candidate) => Math.abs(Number(candidate.parameters.amount ?? candidate.parameters.value ?? 0)))),
+        strength: Math.max(0, ...instance.effects.map(effectMagnitude)),
       });
     }
     const selection = String(effect.parameters.selection_method ?? "oldest");
@@ -3327,7 +3453,13 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     let removedState: CombatState = {
       ...next,
       statuses: next.statuses.filter((instance) => !removedStatusIds.has(instance.instanceId)),
-      modifiers: next.modifiers.filter((modifier) => !remove.has(`modifier:${modifier.instanceId}`) && (!modifier.statusInstanceId || !removedStatusIds.has(modifier.statusInstanceId))),
+      modifiers: next.modifiers.flatMap((modifier) => {
+        if (remove.has(`modifier:${modifier.instanceId}`)) return [];
+        if (!modifier.statusInstanceId || !removedStatusIds.has(modifier.statusInstanceId)) return [modifier];
+        return statusModifierKeepsAfterRemoval(modifier)
+          ? [{ ...modifier, statusInstanceId: undefined, retainedAfterStatusRemoval: true }]
+          : [];
+      }),
       runtimeEffects: next.runtimeEffects.filter((instance) => (
         !remove.has(`runtime:${instance.instanceId}`)
         && !(instance.sourceOwnerType === "status" && removedStatusIds.has(`${instance.sourceOwnerId}:${instance.sourceCritterKey}`))
@@ -3407,17 +3539,28 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       current = recomputeCombatStats({ ...current, modifiers: [...current.modifiers, modifier] });
       const after = findUnit(current, original.key)!;
       const rawStat = String(effect.parameters.stat);
-      const stat = ({ block_cost: "blockCost", swap_cost: "swapCost", relic_slots: "relicSlots", mana_dice_min: "diceMin", mana_dice_max: "diceMax" } as Record<string, keyof StatBlock>)[rawStat]
+      const isManaDice = ["mana_dice", "mana_dice_min", "mana_dice_max"].includes(rawStat);
+      const stat = ({ block_cost: "blockCost", swap_cost: "swapCost", relic_slots: "relicSlots" } as Record<string, keyof StatBlock>)[rawStat]
         ?? (rawStat in before.stats ? rawStat as keyof StatBlock : undefined);
-      const delta = stat ? after.stats[stat] - before.stats[stat] : Number(effect.parameters.amount ?? 0);
-      const statName = String(effect.parameters.stat).replace(/_/g, " ").toUpperCase();
-      const changeLabel = stat
-        ? String(delta)
-        : effect.parameters.value_mode === "percentage"
-          ? `${Number(effect.parameters.amount ?? 0) * 100}%`
-          : String(delta);
+      const manaDeltas = isManaDice
+        ? [
+            { label: "MIN MANA", delta: after.stats.diceMin - before.stats.diceMin },
+            { label: "MAX MANA", delta: after.stats.diceMax - before.stats.diceMax },
+          ].filter((item) => item.delta !== 0)
+        : [];
+      const delta = stat ? after.stats[stat] - before.stats[stat] : manaDeltas.reduce((total, item) => total + item.delta, 0);
+      const statName = isManaDice ? "MANA DICE" : String(effect.parameters.stat).replace(/_/g, " ").toUpperCase();
+      const changeLabel = isManaDice
+        ? manaDeltas.map((item) => `${signedAmount(item.delta)} ${item.label}`).join(" and ") || "0"
+        : stat
+          ? String(delta)
+          : effect.parameters.value_mode === "percentage"
+            ? `${Number(effect.parameters.amount ?? 0) * 100}%`
+            : String(delta);
       const sourceName = effectSourceName(current, context.sourceOwnerType, context.sourceOwnerId, effect.name);
-      const message = delta > 0
+      const message = isManaDice
+        ? `${combatantName(after)}'s ${statName} changed by ${changeLabel} from ${sourceName}.`
+        : delta > 0
         ? `${combatantName(after)} gained +${changeLabel} ${statName} from ${sourceName}.`
         : delta < 0
           ? `${combatantName(after)} lost −${changeLabel.replace(/^-/, "")} ${statName} from ${sourceName}.`
@@ -3440,6 +3583,8 @@ function resolveReactiveEffects(
   attempted: number,
   hpDamage: number,
   shieldDamage: number,
+  eventSkillType?: Skill["skill_type"],
+  eventTargetKeys?: string[],
 ): CombatState {
   let next = state;
   for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "reactive_trigger" || candidate.runtimeKind === "retaliation" || candidate.runtimeKind === "direct_health_modifier")) {
@@ -3451,6 +3596,10 @@ function resolveReactiveEffects(
     if (isAttackRetaliation && instance.sourceCritterKey !== defender.key) continue;
     const trigger = instance.runtimeKind === "retaliation" ? String(p.trigger_condition ?? "hit") : String(p.trigger_event ?? "owner_hp_damaged");
     const isDefeatTrigger = trigger === "owner_defeats_enemy";
+    const isSkillUseEvent = eventSkillType !== undefined && ["owner_uses_skill", "owner_uses_attack_skill", "owner_uses_support_skill"].includes(eventType);
+    const watchedKey = isAttackRetaliation || isDefeatTrigger || isSkillUseEvent ? attacker.key : defender.key;
+    const watchedUnit = findUnit(next, watchedKey);
+    if (!watchedUnit || (instance.runtimeKind === "reactive_trigger" && !reactiveTriggerSourceMatches(next, instance, String(p.trigger_source ?? "self"), watchedUnit))) continue;
     if (isDefeatTrigger) {
       const source = instance.sourceCritterKey ? findUnit(next, instance.sourceCritterKey) : undefined;
       const ownerSide = source?.side ?? (instance.sourceOwnerType === "ability" ? "player" : attacker.side);
@@ -3461,16 +3610,22 @@ function resolveReactiveEffects(
         sourceOwnerId: instance.sourceOwnerId,
         sourceSide: instance.sourceSide,
         sourceCritterKey: instance.sourceCritterKey,
-        skillTargetKeys: [defender.key],
+        skillTargetKeys: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys : [defender.key],
         attackerKey: attacker.key,
-        defenderKey: defender.key,
+        defenderKey: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys[0] : defender.key,
         elementIds: targetElementIds(parent),
         tagIds: targetCritterTagIds(parent),
       });
-      const watchedKey = isAttackRetaliation ? attacker.key : defender.key;
       if (!watched.some((unit) => unit.key === watchedKey)) continue;
     }
-    if (p.activation_limit !== undefined && p.activation_limit !== null && instance.activationCount >= Number(p.activation_limit)) continue;
+    const limitScope = String(p.activation_limit_scope ?? "battle");
+    const activationCountsBefore = (instance.state.activationCountsByTarget ?? {}) as Record<string, number>;
+    const activationKey = limitScope === "per_target_battle" ? watchedKey : "__global__";
+    const currentActivationCount = limitScope === "per_target_battle"
+      ? Number(activationCountsBefore[activationKey] ?? 0)
+      : instance.activationCount;
+    if (p.activation_limit !== undefined && p.activation_limit !== null && currentActivationCount >= Number(p.activation_limit)) continue;
+    if (Number(instance.state.cooldownRemaining ?? 0) > 0) continue;
     const currentDefender = findUnit(next, defender.key) ?? defender;
     const matches = isAttackRetaliation
       ? eventType === "owner_attacked"
@@ -3486,18 +3641,32 @@ function resolveReactiveEffects(
               ? shieldDamage > 0
               : trigger === "owner_shield_breaks"
                 ? currentDefender.shield <= 0 && shieldDamage > 0
-                : trigger === eventType;
+            : trigger === eventType || (trigger === "owner_uses_skill" && ["owner_uses_attack_skill", "owner_uses_support_skill"].includes(eventType));
+    if (eventSkillType !== undefined && trigger === "owner_uses_attack_skill" && eventSkillType !== "attack") continue;
+    if (eventSkillType !== undefined && trigger === "owner_uses_support_skill" && eventSkillType !== "support") continue;
     if (!matches) continue;
     if (p.requires_hp_damage === true && hpDamage <= 0) continue;
     if (p.requires_shield_damage === true && shieldDamage <= 0) continue;
-    if (Number(p.minimum_damage ?? 0) > Math.max(hpDamage, shieldDamage)) continue;
+    if (Number(p.minimum_damage ?? 0) > hpDamage + shieldDamage) continue;
     const chance = rollChance(next, p.activation_chance === undefined || p.activation_chance === null ? 1 : Number(p.activation_chance));
     next = chance.state;
     if (!chance.activated) continue;
+    const activationCounts = {
+      ...((instance.state.activationCountsByTarget ?? {}) as Record<string, number>),
+    };
+    activationCounts[activationKey] = Number(activationCounts[activationKey] ?? 0) + 1;
     next = {
       ...next,
       runtimeEffects: next.runtimeEffects.map((candidate) => candidate.instanceId === instance.instanceId
-        ? { ...candidate, activationCount: candidate.activationCount + 1 }
+        ? {
+            ...candidate,
+            activationCount: candidate.activationCount + 1,
+            state: {
+              ...candidate.state,
+              activationCountsByTarget: activationCounts,
+              cooldownRemaining: Math.max(0, Number(p.cooldown_turns ?? 0)),
+            },
+          }
         : candidate),
     };
     if (isAttackRetaliation) {
@@ -3518,7 +3687,9 @@ function resolveReactiveEffects(
       });
       continue;
     }
-    const targetKeys = instance.runtimeKind === "retaliation" ? [attacker.key] : [defender.key];
+    const targetKeys = instance.runtimeKind === "retaliation"
+      ? [attacker.key]
+      : isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys : [defender.key];
     const childIds = p.child_effect_ids;
     next = resolveChildEffects(next, parent, {
       sourceOwnerType: instance.sourceOwnerType,
@@ -3527,7 +3698,7 @@ function resolveReactiveEffects(
       sourceCritterKey: instance.sourceCritterKey,
       skillTargetKeys: targetKeys,
       attackerKey: attacker.key,
-      defenderKey: defender.key,
+      defenderKey: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys[0] : defender.key,
       damageAttempted: attempted,
       hpDamage,
       shieldDamage,
@@ -3536,6 +3707,23 @@ function resolveReactiveEffects(
     }, childIds);
   }
   return next;
+}
+
+function reactiveTriggerSourceMatches(
+  state: CombatState,
+  instance: RuntimeEffectInstance,
+  source: string,
+  watched: CombatUnit,
+): boolean {
+  if (source === "any_critter") return true;
+  if (source === "active_critter") return watched.active && watched.hp > 0;
+  const owner = instance.sourceCritterKey ? findUnit(state, instance.sourceCritterKey) : undefined;
+  const ownerSide = owner?.side ?? instance.sourceSide ?? (instance.sourceOwnerType === "ability" ? "player" : "opponent");
+  if (source === "enemy") return watched.side !== ownerSide;
+  if (source === "ally") return watched.side === ownerSide && (!owner || watched.key !== owner.key);
+  // Ability Effects have no single Critter owner. For those Effects, Self
+  // means the owning side, which lets an Ability watch all friendly Critters.
+  return owner ? watched.key === owner.key : watched.side === ownerSide;
 }
 
 function rollChance(state: CombatState, chance: number): { state: CombatState; activated: boolean } {
@@ -3558,12 +3746,15 @@ function applyStatus(
   // later application, while an existing different Status blocks it.
   if (holderStatusIndex >= 0 && state.statuses[holderStatusIndex].statusId !== statusId) return state;
   const existingIndex = holderStatusIndex;
+  const adjustedDuration = existingIndex < 0 && duration !== null
+    ? duration + statusDurationBonus(state, statusId, holderKey)
+    : duration;
   let statuses = [...state.statuses];
   const instanceId = existingIndex >= 0 ? statuses[existingIndex].instanceId : `${statusId}:${holderKey}`;
   if (existingIndex >= 0) {
     statuses[existingIndex] = {
       ...statuses[existingIndex],
-      duration,
+      duration: adjustedDuration,
       turnsElapsed: 0,
       sourceOwnerType: context.sourceOwnerType,
       sourceOwnerId: context.sourceOwnerId,
@@ -3574,7 +3765,7 @@ function applyStatus(
       instanceId: `${statusId}:${holderKey}`,
       statusId,
       holderKey,
-      duration,
+      duration: adjustedDuration,
       turnsElapsed: 0,
       sourceOwnerType: context.sourceOwnerType,
       sourceOwnerId: context.sourceOwnerId,
@@ -3637,6 +3828,25 @@ function applyStatus(
     else next = resolveEffect(next, effect, statusContext);
   }
   return next;
+}
+
+function statusDurationBonus(state: CombatState, statusId: string, holderKey: string): number {
+  return state.runtimeEffects
+    .filter((instance) => instance.runtimeKind === "status_duration_modifier")
+    .reduce((total, instance) => {
+      const effect = effectForReference(state, instance.sourceOwnerType, instance.sourceOwnerId, instance.sourceEffectId);
+      if (!effect || String(effect.parameters.status_id) !== statusId) return total;
+      if (effect.parameters.fresh_only !== true) return total;
+      const target = effectTargets(state, String(effect.parameters.target ?? ""), {
+        sourceOwnerType: instance.sourceOwnerType,
+        sourceOwnerId: instance.sourceOwnerId,
+        sourceSide: instance.sourceSide,
+        sourceCritterKey: instance.sourceCritterKey,
+        elementIds: targetElementIds(effect),
+        tagIds: targetCritterTagIds(effect),
+      }).some((unit) => unit.key === holderKey);
+      return target ? total + Number(effect.parameters.duration_bonus ?? 0) : total;
+    }, 0);
 }
 
 function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_of_turn"): CombatState {
@@ -3777,6 +3987,24 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
         })
         .filter((instance) => instance.remaining === undefined || instance.remaining > 0),
     };
+    next = {
+      ...next,
+      runtimeEffects: next.runtimeEffects.map((instance) => {
+        if (instance.runtimeKind !== "reactive_trigger") return instance;
+        const parameters = instance.state.parameters as Record<string, unknown> | undefined;
+        const scope = String(parameters?.activation_limit_scope ?? "battle");
+        const resetLimit = scope === "turn" || scope === "round";
+        return {
+          ...instance,
+          activationCount: resetLimit ? 0 : instance.activationCount,
+          state: {
+            ...instance.state,
+            ...(resetLimit ? { activationCountsByTarget: {} } : {}),
+            cooldownRemaining: Math.max(0, Number(instance.state.cooldownRemaining ?? 0) - 1),
+          },
+        };
+      }),
+    };
   }
   if (timing === "end_of_turn") {
     const expiredStatusIds = new Set(
@@ -3793,10 +4021,7 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
         .filter((item) => item.duration === null || item.duration > 0),
       modifiers: next.modifiers.flatMap((modifier) => {
         if (!modifier.statusInstanceId || !expiredStatusIds.has(modifier.statusInstanceId)) return [modifier];
-        const persists = modifier.effect.runtimeKind === "stat_modifier"
-          && modifier.effect.parameters.application_mode === "incremental"
-          && modifier.effect.parameters.removal_behavior === "keep_after_removal";
-        return persists
+        return statusModifierKeepsAfterRemoval(modifier)
           ? [{ ...modifier, statusInstanceId: undefined, retainedAfterStatusRemoval: true }]
           : [];
       }),
@@ -3848,6 +4073,10 @@ function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey
     return unit;
   });
 
+  const resetKeys = new Set([actorKey, swapTargetKey]);
+  const activeTurnCounts = { ...(state.activeTurnCounts ?? {}) };
+  for (const key of resetKeys) activeTurnCounts[key] = 0;
+
   const message = actor.side === "player"
     ? `You sent in ${sideUnits[benchIndex].name}.`
     : `The enemy sent out ${sideUnits[benchIndex].name}.`;
@@ -3856,6 +4085,9 @@ function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey
     playerUnits: actor.side === "player" ? units : state.playerUnits,
     opponentUnits: actor.side === "opponent" ? units : state.opponentUnits,
     log: [message, ...state.log],
+    activeTurnCounts,
+    actedSkillKeys: (state.actedSkillKeys ?? []).filter((key) => !resetKeys.has(key)),
+    stunnedSkillKeys: (state.stunnedSkillKeys ?? []).filter((key) => !resetKeys.has(key)),
   };
   next = recomputeCombatStats(next);
   // Formation changes immediately change which equipped Relic/Ability roots
@@ -4120,6 +4352,25 @@ function effectSourceName(state: CombatState, ownerType: EffectOwnerType, ownerI
 
 function speedFor(state: CombatState, key: string): number {
   return findUnit(state, key)?.stats.spd ?? 0;
+}
+
+function skillPriorityFor(state: CombatState, action: CombatAction): number {
+  if (action.type !== "skill") return 0;
+  const unit = findUnit(state, action.actorKey);
+  return Number(unit?.skills.find((skill) => skill.id === action.skillId)?.priority ?? 0);
+}
+
+function turnRestrictionMatches(state: CombatState, actorKey: string, effect: ResolvedEffectRef): boolean {
+  const activeTurn = state.activeTurnCounts?.[actorKey] ?? 0;
+  if (effect.parameters.turn_restriction === "specific_active_turn") {
+    return activeTurn === Number(effect.parameters.specific_turn ?? 1);
+  }
+  if (effect.parameters.turn_restriction === "within_active_turns") {
+    const minimum = Number(effect.parameters.minimum_turn ?? 1);
+    const maximum = Number(effect.parameters.maximum_turn ?? minimum);
+    return activeTurn >= minimum && activeTurn <= maximum;
+  }
+  return false;
 }
 
 export function rollManaDie(min: number, max: number, random: () => number = Math.random): number {

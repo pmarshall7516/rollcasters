@@ -29,9 +29,12 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "skip_action_chance@1",
   "critter_revival@1",
   "skill_usage_restriction@1",
+  "stun_chance@1",
+  "turn_restriction@1",
   "swap_after_attack@1",
   "weighted_child_selector@1",
   "critter_xp_modifier@1",
+  "status_duration_modifier@1",
 ]);
 
 const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
@@ -239,7 +242,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   // resolution context rather than directly selecting a Critter. Their
   // schemas intentionally do not include `target`; do not force them through
   // the owner-scoped Critter target vocabulary.
-  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1", "skill_usage_restriction@1", "weighted_child_selector@1"]);
+  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1", "skill_usage_restriction@1", "turn_restriction@1", "weighted_child_selector@1"]);
   const target = parameters.target;
   if (runtimeKey === "critter_xp_modifier@1") {
     if (effect.ownerType === "skill" || effect.ownerType === "status") {
@@ -358,9 +361,12 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     "resource_conversion@1", "effect_scaling@1", "repeating_effect@1",
     "effect_immunity@1", "effect_amplification@1", "critter_revival@1",
     "skill_usage_restriction@1",
+    "stun_chance@1",
+    "turn_restriction@1",
     "swap_after_attack@1",
     "weighted_child_selector@1",
     "critter_xp_modifier@1",
+    "status_duration_modifier@1",
   ]);
   if (expandedKey.has(runtimeKey)) {
     if (runtimeKey === "stat_modifier@2" && effect.classification === undefined && effect.execution === undefined) {
@@ -435,23 +441,33 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     }
     if (runtimeKey === "stat_modifier@2") {
       const allowedStats = effect.ownerType === "status"
-        ? ["atk", "def", "spd", "block_cost", "swap_cost", "mana_dice_min", "mana_dice_max", "skill_cost"]
+        ? ["atk", "def", "spd", "block_cost", "swap_cost", "mana_dice", "mana_dice_min", "mana_dice_max", "skill_cost"]
         : ["hp", "atk", "def", "spd", "block_cost", "swap_cost", "relic_slots"];
       requireChoice(parameters.stat, allowedStats, `Effect ${effect.id} stat`);
       requireChoice(parameters.value_mode, ["flat", "percentage"], `Effect ${effect.id} value_mode`);
       if (parameters.stat === "relic_slots" && parameters.value_mode !== "flat") throw new Error(`Effect ${effect.id} relic_slots is flat only.`);
-      const amount = requireFinite(parameters.amount, `Effect ${effect.id} amount`);
       if (effect.ownerType === "status") {
-        if (parameters.value_mode === "flat" && !Number.isInteger(amount)) throw new Error(`Effect ${effect.id} flat amount must be an integer.`);
+        const isManaDice = parameters.stat === "mana_dice";
+        if (isManaDice) {
+          const minimumAmount = requireFinite(parameters.minimum_amount, `Effect ${effect.id} minimum_amount`);
+          const maximumAmount = requireFinite(parameters.maximum_amount, `Effect ${effect.id} maximum_amount`);
+          if (parameters.value_mode === "flat" && (!Number.isInteger(minimumAmount) || !Number.isInteger(maximumAmount))) throw new Error(`Effect ${effect.id} flat Mana Dice amounts must be integers.`);
+          if (minimumAmount === 0 && maximumAmount === 0) throw new Error(`Effect ${effect.id} must change at least one Mana Dice bound.`);
+          if (parameters.amount !== undefined) throw new Error(`Effect ${effect.id} Mana Dice uses minimum_amount and maximum_amount instead of amount.`);
+        } else {
+          const amount = requireFinite(parameters.amount, `Effect ${effect.id} amount`);
+          if (parameters.value_mode === "flat" && !Number.isInteger(amount)) throw new Error(`Effect ${effect.id} flat amount must be an integer.`);
+          if (parameters.minimum_amount !== undefined || parameters.maximum_amount !== undefined) throw new Error(`Effect ${effect.id} minimum_amount and maximum_amount require the mana_dice stat.`);
+        }
         validateChance(parameters.chance === undefined ? 1 : parameters.chance, `Effect ${effect.id} chance`);
         requireChoice(parameters.application_mode, ["single_application", "incremental"], `Effect ${effect.id} application_mode`);
         if (parameters.application_mode === "incremental") {
           requireChoice(parameters.timing, ["start_of_turn", "end_of_turn"], `Effect ${effect.id} timing`);
           const spacing = requireFinite(parameters.spacing === undefined ? 1 : parameters.spacing, `Effect ${effect.id} spacing`);
           if (!Number.isInteger(spacing) || spacing < 1) throw new Error(`Effect ${effect.id} spacing must be a positive integer.`);
+        }
+        if (parameters.removal_behavior !== undefined) {
           requireChoice(parameters.removal_behavior, ["expire_on_removal", "keep_after_removal"], `Effect ${effect.id} removal_behavior`);
-        } else if (parameters.removal_behavior !== undefined) {
-          throw new Error(`Effect ${effect.id} removal_behavior requires incremental application_mode.`);
         }
         if (parameters.stat === "skill_cost") {
           requireChoice(parameters.skill_scope, ["all", "attack", "support"], `Effect ${effect.id} skill_scope`);
@@ -468,6 +484,36 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
         if (value < 0 || !Number.isInteger(value)) throw new Error(`Effect ${effect.id} shield_value must be a nonnegative integer.`);
       }
       if (parameters.can_stack === true && parameters.replace_existing_shield === true) throw new Error(`Effect ${effect.id} cannot stack and replace a Shield.`);
+    }
+    if (runtimeKey === "reactive_trigger@1") {
+      requireChoice(parameters.trigger_event, [
+        "owner_attacked", "owner_hp_damaged", "owner_shield_hit", "owner_shield_breaks",
+        "owner_blocks", "owner_swaps", "owner_uses_skill", "owner_uses_attack_skill", "owner_uses_support_skill",
+        "owner_spends_mana", "owner_healed", "owner_receives_positive", "owner_receives_negative",
+        "owner_applies_status", "owner_receives_status", "owner_defeats_enemy", "ally_attacked", "ally_defeated",
+        "enemy_swaps", "turn_start", "turn_end", "round_start", "round_end", "battle_start", "battle_end",
+      ], `Effect ${effect.id} trigger_event`);
+      if (parameters.trigger_source !== undefined) {
+        requireChoice(parameters.trigger_source, ["self", "ally", "enemy", "active_critter", "any_critter"], `Effect ${effect.id} trigger_source`);
+      }
+      validateChance(parameters.activation_chance === undefined ? 1 : parameters.activation_chance, `Effect ${effect.id} activation_chance`);
+      const cooldown = requireFinite(parameters.cooldown_turns === undefined ? 0 : parameters.cooldown_turns, `Effect ${effect.id} cooldown_turns`);
+      if (!Number.isInteger(cooldown) || cooldown < 0) throw new Error(`Effect ${effect.id} cooldown_turns must be a nonnegative integer.`);
+      for (const key of ["requires_hp_damage", "requires_shield_damage"] as const) {
+        if (parameters[key] !== undefined && typeof parameters[key] !== "boolean") throw new Error(`Effect ${effect.id} ${key} must be boolean.`);
+      }
+      if (parameters.minimum_damage !== undefined && parameters.minimum_damage !== null) {
+        const minimum = requireFinite(parameters.minimum_damage, `Effect ${effect.id} minimum_damage`);
+        if (!Number.isInteger(minimum) || minimum < 0) throw new Error(`Effect ${effect.id} minimum_damage must be a nonnegative integer.`);
+      }
+    }
+    if (runtimeKey === "status_duration_modifier@1") {
+      if (effect.ownerType !== "ability") throw new Error(`Effect ${effect.id} can only be owned by an Ability.`);
+      rejectUnknownKeys(parameters, ["target", "status_id", "duration_bonus", "fresh_only", "target_element_ids", "target_critter_tag_ids"], `Effect ${effect.id}`);
+      if (typeof parameters.status_id !== "string" || !parameters.status_id.trim()) throw new Error(`Effect ${effect.id} status_id must be a non-empty Status ID.`);
+      const durationBonus = requireFinite(parameters.duration_bonus, `Effect ${effect.id} duration_bonus`);
+      if (!Number.isInteger(durationBonus) || durationBonus < 1) throw new Error(`Effect ${effect.id} duration_bonus must be a positive integer.`);
+      if (typeof parameters.fresh_only !== "boolean") throw new Error(`Effect ${effect.id} fresh_only must be boolean.`);
     }
     if (runtimeKey === "direct_health_modifier@1") {
       requireChoice(parameters.operation, ["heal", "lose_hp", "set_hp", "drain"], `Effect ${effect.id} operation`);
@@ -544,6 +590,24 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
         throw new Error(`Effect ${effect.id} must enable recharge or a usage limit.`);
       }
     }
+    if (runtimeKey === "stun_chance@1") {
+      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
+      requireChoice(parameters.target, ["targets", "all_others", "all_enemies", "all_allies"], `Effect ${effect.id} target`);
+      validateChance(parameters.chance, `Effect ${effect.id} chance`);
+      rejectUnknownKeys(parameters, ["target", "chance", "target_element_ids", "source_element_ids"], `Effect ${effect.id}`);
+    }
+    if (runtimeKey === "turn_restriction@1") {
+      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
+      if (effect.execution === "child") throw new Error(`Effect ${effect.id} must use root execution.`);
+      requireChoice(parameters.main_restriction, ["skill_use", "child_effect_trigger"], `Effect ${effect.id} main_restriction`);
+      requireChoice(parameters.turn_restriction, ["specific_active_turn", "within_active_turns"], `Effect ${effect.id} turn_restriction`);
+      const specificTurn = requireFinite(parameters.specific_turn, `Effect ${effect.id} specific_turn`);
+      if (parameters.turn_restriction === "specific_active_turn" && (!Number.isInteger(specificTurn) || specificTurn < 1)) throw new Error(`Effect ${effect.id} specific_turn must be a positive integer.`);
+      const minimumTurn = requireFinite(parameters.minimum_turn, `Effect ${effect.id} minimum_turn`);
+      const maximumTurn = requireFinite(parameters.maximum_turn, `Effect ${effect.id} maximum_turn`);
+      if (parameters.turn_restriction === "within_active_turns" && (!Number.isInteger(minimumTurn) || minimumTurn < 1 || !Number.isInteger(maximumTurn) || maximumTurn < minimumTurn)) throw new Error(`Effect ${effect.id} active turn range must use positive integers with minimum no greater than maximum.`);
+      rejectUnknownKeys(parameters, ["main_restriction", "turn_restriction", "specific_turn", "minimum_turn", "maximum_turn", "child_effect_ids", "source_element_ids"], `Effect ${effect.id}`);
+    }
     if (runtimeKey === "swap_after_attack@1") {
       if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
       requireChoice(parameters.target, ["selected_healthy_ally"], `Effect ${effect.id} target`);
@@ -584,7 +648,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   }
 
   if (runtimeKey === "apply_status@1") {
-    if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
+    if (effect.ownerType !== "skill" && effect.ownerType !== "ability") throw new Error(`Effect ${effect.id} can only be owned by a skill or Ability.`);
     rejectUnknownKeys(parameters, ["status_id", "chance", "target", "target_element_ids", "source_element_ids", "indefinite", "turns"], `Effect ${effect.id}`);
     if (typeof parameters.status_id !== "string" || !parameters.status_id) {
       throw new Error(`Effect ${effect.id} status_id must be a non-empty string.`);

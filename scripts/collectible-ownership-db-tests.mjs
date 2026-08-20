@@ -32,6 +32,11 @@ try {
       select relic.id
       from public.relics relic
       where relic.is_active and not relic.is_archived
+        and not exists (
+          select 1
+          from public.user_relic_inventory owned
+          where owned.user_id=player.id and owned.relic_id=relic.id and owned.quantity>0
+        )
       order by relic.sort_order,relic.id
       limit 1
     ) dependency on true
@@ -47,8 +52,8 @@ try {
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
 
   for (const [type, id] of [["critter", targetCritterId], ["relic", dependencyRelicId]]) {
-    await client.query("delete from public.user_tracked_collectible_challenges tracked using public.collectible_unlock_challenges challenge where tracked.user_id=$1 and tracked.challenge_id=challenge.id and challenge.collectible_type=$2 and challenge.collectible_id=$3", [userId, type, id]);
-    await client.query("delete from public.user_collectible_challenge_progress progress using public.collectible_unlock_challenges challenge where progress.user_id=$1 and progress.challenge_id=challenge.id and challenge.collectible_type=$2 and challenge.collectible_id=$3", [userId, type, id]);
+    await client.query("delete from public.user_tracked_collectible_challenges tracked using public.collectible_unlock_challenges challenge where tracked.challenge_id=challenge.id and challenge.collectible_type=$1 and challenge.collectible_id=$2", [type, id]);
+    await client.query("delete from public.user_collectible_challenge_progress progress using public.collectible_unlock_challenges challenge where progress.challenge_id=challenge.id and challenge.collectible_type=$1 and challenge.collectible_id=$2", [type, id]);
     await client.query("delete from public.collectible_unlock_requirements where collectible_type=$1 and collectible_id=$2", [type, id]);
     await client.query("delete from public.collectible_unlock_challenges where collectible_type=$1 and collectible_id=$2", [type, id]);
   }
@@ -83,7 +88,42 @@ try {
   check(!(await client.query("select public.collectible_is_unlocked($1,'critter',$2) as unlocked", [userId, targetCritterId])).rows[0].unlocked, "Evaluating unlocks must not grant a Critter through a locked Relic dependency.");
   check((await client.query("select count(*)::int as count from public.user_critters where user_id=$1 and critter_id=$2", [userId, targetCritterId])).rows[0].count === 0, "A locked Relic dependency must not grant the dependent Critter.");
 
-  console.log(`Collectible ownership dependency tests passed for user ${userId}; all fixture changes will be rolled back.`);
+  const taggedFixture = await client.query(`
+    select owned.critter_id as tagged_critter_id, tag.id as tag_id, candidate.id as second_critter_id
+    from public.user_critters owned
+    join lateral (
+      select id from public.content_tags where tag_type='critter' and is_active and not is_archived order by sort_order,id limit 1
+    ) tag on true
+    join lateral (
+      select id from public.critters candidate
+      where candidate.is_active and not candidate.is_archived
+        and candidate.id<>owned.critter_id
+        and not exists (select 1 from public.user_critters existing where existing.user_id=owned.user_id and existing.critter_id=candidate.id)
+      order by candidate.sort_order,candidate.id limit 1
+    ) candidate on true
+    where owned.user_id=$1
+    order by owned.critter_id
+    limit 1
+  `, [userId]);
+  check(taggedFixture.rowCount === 1, "The development database needs an owned Critter, a Critter Tag, and another Critter for the tagged ownership projection test.");
+  const { tagged_critter_id: taggedCritterId, tag_id: tagId, second_critter_id: secondCritterId } = taggedFixture.rows[0];
+  const taggedChallengeId = crypto.randomUUID();
+  await client.query("insert into public.user_critters(user_id,critter_id) values($1,$2)", [userId, secondCritterId]);
+  await client.query("delete from public.critter_tag_assignments where critter_id in (select critter_id from public.user_critters where user_id=$1)", [userId]);
+  await client.query("insert into public.critter_tag_assignments(critter_id,tag_id) values($1,$2) on conflict do nothing", [taggedCritterId, tagId]);
+  await client.query(`
+    insert into public.collectible_unlock_challenges(
+      id,collectible_type,collectible_id,challenge_type,parameters,required_amount,sort_order
+    ) values($1,'critter',$2,'own_collectible',$3::jsonb,1,1)
+  `, [taggedChallengeId, targetCritterId, JSON.stringify({ collectible_category: "critter", collectible_ids: [], critter_tag_ids: [tagId], required_amount: 1, require_unique_collectibles: true, retroactive: true })]);
+  const taggedCurrent = (await client.query("select public.collectible_challenge_current($1,$2) as current", [userId, taggedChallengeId])).rows[0].current;
+  check(taggedCurrent === "1", `Tagged ownership projection must count only the owned Critter matching the selected tag; got ${taggedCurrent}.`);
+  await client.query("update public.collectible_unlock_challenges set parameters=$2::jsonb where id=$1", [taggedChallengeId, JSON.stringify({ collectible_category: "critter", collectible_ids: [], critter_tag_ids: [], required_amount: 1, require_unique_collectibles: true, retroactive: true })]);
+  const allOwnedCount = (await client.query("select count(*)::text as count from public.user_critters where user_id=$1 and public.collectible_is_unlocked($1,'critter',critter_id)", [userId])).rows[0].count;
+  const unfilteredCurrent = (await client.query("select public.collectible_challenge_current($1,$2) as current", [userId, taggedChallengeId])).rows[0].current;
+  check(unfilteredCurrent === allOwnedCount, `Removing the ownership tag filter must restore all owned Critters to the projection; got ${unfilteredCurrent}, expected ${allOwnedCount}.`);
+
+  console.log(`Collectible ownership dependency and Critter-tag projection tests passed for user ${userId}; all fixture changes will be rolled back.`);
 } finally {
   if (began) await client.query("rollback").catch(() => undefined);
   await client.end().catch(() => undefined);

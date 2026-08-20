@@ -76,7 +76,7 @@ const LIVE_CATALOG_COLUMNS: Record<string, string> = {
   critter_tag_assignments: "critter_id,tag_id",
   skill_tag_assignments: "skill_id,tag_id",
   element_effectiveness: "attacking_element_id,defending_element_id,multiplier",
-  skills: "id,name,element_id,skill_type,power,mana_cost,targeting,description,sort_order",
+  skills: "id,name,element_id,skill_type,power,mana_cost,targeting,description,sort_order,priority",
   critters: "id,name,element_1_id,element_2_id,base_hp,base_atk,base_def,base_spd,base_dice_min,base_dice_max,base_block_cost,base_swap_cost,asset_path,description,sort_order,is_active,is_archived",
   critter_level_progression: "critter_id,level,total_required_xp,grant_skill_points,hp_delta,atk_delta,def_delta,spd_delta,dice_min_delta,dice_max_delta,block_cost_delta,swap_cost_delta,total_unlocked_relic_slots",
   critter_skill_unlocks: "critter_id,skill_id,unlock_level,unlock_cost,is_default,sort_order",
@@ -483,7 +483,7 @@ async function fetchLiveCatalog(): Promise<Catalog> {
   const critterTags = groupBy(critterTagAssignments, (row) => row.critter_id);
   const skillTags = groupBy(skillTagAssignments, (row) => row.skill_id);
   const critters = rawCritters.map((row) => ({ ...normalizeCritter(row), tag_ids: (critterTags.get(String(row.id)) ?? []).map((item) => String(item.tag_id)) }));
-  const normalizedSkills = (skills as Array<Record<string, unknown>>).map((skill) => ({ ...skill, tag_ids: (skillTags.get(String(skill.id)) ?? []).map((item) => String(item.tag_id)) }));
+  const normalizedSkills = (skills as Array<Record<string, unknown>>).map((skill) => ({ ...skill, priority: Number(skill.priority ?? 0), tag_ids: (skillTags.get(String(skill.id)) ?? []).map((item) => String(item.tag_id)) }));
   const skillsByOpponent = groupBy(dungeonOpponentSkills, (row) => row.opponent_id);
   const relicsByOpponent = groupBy(dungeonOpponentRelics, (row) => row.opponent_id);
   const overridesByOpponent = groupBy(dungeonOpponentStatOverrides, (row) => row.opponent_id);

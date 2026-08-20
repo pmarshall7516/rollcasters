@@ -313,8 +313,13 @@ function derivedChallengeCurrent(data: AppData, challenge: CollectibleUnlockChal
   if (challenge.challenge_type === "own_collectible") {
     const type = String(parameters.collectible_category ?? challenge.target_category ?? "critter");
     const ids = new Set(Array.isArray(parameters.collectible_ids) ? parameters.collectible_ids.filter((id): id is string => typeof id === "string") : []);
+    const tagIds = new Set(Array.isArray(parameters.critter_tag_ids) ? parameters.critter_tag_ids.filter((id): id is string => typeof id === "string") : []);
     const allowed = (id: string) => ids.size === 0 || ids.has(id);
-    if (type === "critter") return BigInt(player.critters.filter((row) => collectibleIsUnlocked(data, "critter", row.critter_id) && allowed(row.critter_id)).length);
+    if (type === "critter") return BigInt(player.critters.filter((row) => {
+      if (!collectibleIsUnlocked(data, "critter", row.critter_id) || !allowed(row.critter_id)) return false;
+      const critter = data.catalog.critters.find((candidate) => candidate.id === row.critter_id);
+      return tagIds.size === 0 || Boolean(critter && Array.isArray(critter.tag_ids) && critter.tag_ids.some((tagId) => tagIds.has(tagId)));
+    }).length);
     if (type === "rollcaster") return BigInt(player.rollcasters.filter((row) => collectibleIsUnlocked(data, "rollcaster", row.rollcaster_id) && allowed(row.rollcaster_id)).length);
     const relics = player.relicInventory.filter((row) => collectibleIsUnlocked(data, "relic", row.relic_id) && row.discovered_at !== null && row.quantity > 0 && allowed(row.relic_id));
     return parameters.require_unique_collectibles === false
@@ -346,11 +351,13 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
       const type = (parameters.collectible_category as CollectibleType | undefined) ?? challenge.target_category ?? "critter";
       const ids = stringParameters(parameters, "collectible_ids");
       const names = namesFor(data, type, ids);
+      const tagNames = stringParameters(parameters, "critter_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
       const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
-      if (names.length === 1 && goal === 1) return `Own ${names[0]}.`;
-      if (names.length) return `Own ${goal} of: ${names.join(", ")}.`;
+      const tagDescription = tagNames.length ? ` tagged ${tagNames.join(" or ")}` : "";
+      if (names.length === 1 && goal === 1 && !tagDescription) return `Own ${names[0]}.`;
+      if (names.length) return `Own ${goal} of: ${names.join(", ")}${tagDescription}.`;
       const label = type === "critter" ? "Critter" : type === "rollcaster" ? "Rollcaster" : "Relic";
-      return `Own ${goal} ${parameters.require_unique_collectibles === true ? "different " : ""}${label}${goal === 1 ? "" : "s"}.`;
+      return `Own ${goal} ${parameters.require_unique_collectibles === true ? "different " : ""}${label}${goal === 1 ? "" : "s"}${tagDescription}.`;
     }
     case "collection_diversity": {
       if (parameters.diversity_mode === "amount_of_type") return `Own ${parameters.required_per_type} different ${namesFor(data, "element", stringParameters(parameters, "element_ids"))[0] ?? "Element"} Critters.`;
@@ -394,7 +401,10 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
     case "knock_out_critters": return `Knock out Critters (${targetNames(data, challenge)})`;
     case "deal_damage": return `Damage Critters (${targetNames(data, challenge)})`;
     case "take_damage": return `Receive Damage (${targetNames(data, challenge)})`;
-    case "use_skill": return `Use Skill (${targetNames(data, challenge)})`;
+    case "use_skill": {
+      const skillType = parameters.skill_type === "attack" ? "Attack Skills" : parameters.skill_type === "support" ? "Support Skills" : "Skill";
+      return `Use ${skillType} (${targetNames(data, challenge)})`;
+    }
     case "shop_shards": return `Unlock ${ownerName} shards`;
     case "shop_relic": return `Own ${ownerName}`;
   }

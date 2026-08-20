@@ -1921,7 +1921,7 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
   const displayedManaCost = skill ? manaCost ?? skill.mana_cost : null;
   const attachments = skill ? data.catalog.effectsBySkill[skill.id] ?? [] : [];
   const effectText = skill ? attachmentText(attachments) : "";
-  const targetText = skill ? targetingDescription(skill) : "";
+  const targetText = skill ? `${targetingDescription(skill)} Priority: ${skill.priority ?? 0}` : "";
   const costSummary = skill && manaCostBreakdown ? costBreakdownText("Mana cost", manaCostBreakdown) : "";
   const label = skill ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}, ${displayedManaCost} Mana. ${skill.description} ${effectText} ${targetText} ${costSummary}` : "Choose a skill.";
   const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{manaCostBreakdown && manaCostBreakdown.sources.length > 0 && <CostBreakdownLine label="Mana cost" breakdown={manaCostBreakdown} />}{attachmentRows(attachments, sourceCritter)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;

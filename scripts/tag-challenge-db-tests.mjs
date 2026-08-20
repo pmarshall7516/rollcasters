@@ -39,6 +39,11 @@ try {
 
   check(await increment(byName.get("Solanta"),"skill_resolved","001",null,"slipstream",1,{ skill_element_id: "air" }) === 1, "Solanta must match Slipstream.");
   check(await increment(byName.get("Solanta"),"skill_resolved","001",null,"peck",1,{ skill_element_id: "air" }) === 0, "Solanta must reject a different Skill.");
+  const solantaSkillTypeParameters = { ...byName.get("Solanta").parameters, skill_type: "attack" };
+  await client.query("update public.collectible_unlock_challenges set parameters=$2::jsonb where id=$1", [byName.get("Solanta").id,JSON.stringify(solantaSkillTypeParameters)]);
+  byName.get("Solanta").parameters = solantaSkillTypeParameters;
+  check(await increment(byName.get("Solanta"),"skill_resolved","001",null,"slipstream",1,{ skill_element_id: "air", skill_type: "attack" }) === 1, "Use Skill must match the selected Attack Skill Type.");
+  check(await increment(byName.get("Solanta"),"skill_resolved","001",null,"slipstream",1,{ skill_element_id: "air", skill_type: "support" }) === 0, "Use Skill must reject the opposite Skill Type.");
   check(await increment(byName.get("Strixen"),"skill_resolved","001",null,"peck",1,{ skill_element_id: "air" }) === 1, "Strixen must match Peck.");
   check(await increment(byName.get("Forttera"),"hp_damage_taken","001","020",null,77) === 77, "Take Damage must track enemy-to-user damage without authored side fields.");
   check(await increment(byName.get("Shattera"),"hp_damage_dealt","020","001",null,83) === 83, "Deal Damage must track user-to-enemy damage without authored side fields.");

@@ -99,6 +99,7 @@ export function validateCatalog(catalog) {
   const lootboxIds = ids(catalog.lootboxes);
   const currencyIds = ids(catalog.currencies);
   const dungeonIds = ids(catalog.dungeons);
+  const critterTagIds = new Set((catalog.tags ?? []).filter((tag) => tag.tag_type === "critter").map((tag) => String(tag.id)));
   const challengeTemplateIds = ids(catalog.unlockChallengeTemplates ?? []);
   if (challengeTemplateIds.size !== 15) throw new Error(`Expected exactly 15 active Challenge Templates; found ${challengeTemplateIds.size}.`);
   requireUnique(catalog.unlockChallengeTemplates ?? [], "Challenge Template");
@@ -136,6 +137,12 @@ export function validateCatalog(catalog) {
       if (parameters.require_unique_collectibles === true && selected.length > 0 && Number(parameters.required_amount) > selected.length) {
         throw new Error(`Challenge ${challenge.id} requires more unique collectibles than its selected IDs provide.`);
       }
+      if (parameters.collectible_category !== "critter" && Array.isArray(parameters.critter_tag_ids) && parameters.critter_tag_ids.length > 0) {
+        throw new Error(`Challenge ${challenge.id} can only use Critter Tags in Critter mode.`);
+      }
+      for (const tagId of Array.isArray(parameters.critter_tag_ids) ? parameters.critter_tag_ids : []) {
+        if (!critterTagIds.has(String(tagId))) throw new Error(`Challenge ${challenge.id} references missing Critter Tag ${tagId}.`);
+      }
     }
   }
   requireReferences(catalog.skills, "element_id", elementIds, "Skill");
@@ -171,7 +178,7 @@ export function validateCatalog(catalog) {
         "delayed_effect@1", "effect_duration@1", "effect_removal@1", "effect_copy@1", "effect_transfer@1",
         "damage_prevention@1", "action_cost_modifier@1", "resource_gain_loss@1", "resource_conversion@1",
         "effect_scaling@1", "repeating_effect@1", "effect_immunity@1", "effect_amplification@1",
-        "critter_revival@1", "skill_usage_restriction@1",
+        "critter_revival@1", "skill_usage_restriction@1", "status_duration_modifier@1",
       ]);
       if (!supported.has(`${effect.runtimeKind}@${effect.runtimeVersion}`)) throw new Error(`Unsupported ${ownerType} effect runtime ${effect.runtimeKind}@${effect.runtimeVersion}.`);
       if (!["positive", "negative", "mixed"].includes(effect.classification)) throw new Error(`Effect ${effect.id} has invalid classification.`);

@@ -312,6 +312,24 @@ const ownershipProgress = progressFor(ownershipData, ownershipChallenge.id);
 check(ownershipProgress.current === "2" && ownershipProgress.goal === "7", "A missing snapshot row must derive ownership progress instead of rendering 0 / 0.");
 check(ownershipProgress.trackable === false, "A catalog row missing from the authoritative snapshot must not be trackable.");
 
+const taggedOwnershipChallenge = {
+  ...ownershipChallenge,
+  id: "ownership-tagged",
+  parameters: { ...ownershipChallenge.parameters, required_amount: 1, collectible_ids: [], critter_tag_ids: ["final-stage"] },
+  required_amount: "1",
+} satisfies CollectibleUnlockChallenge;
+const taggedOwnershipData = {
+  catalog: {
+    ...ownershipData.catalog,
+    tags: [{ id: "final-stage", name: "Final Stage", description: null, tag_type: "critter", sort_order: 1 }],
+    critters: ownershipData.catalog.critters.map((critter, index) => ({ ...critter, tag_ids: index === 0 ? ["final-stage"] : [] })),
+    collectibleUnlockChallenges: [taggedOwnershipChallenge],
+  },
+  player: ownershipData.player,
+} as AppData;
+check(progressFor(taggedOwnershipData, taggedOwnershipChallenge.id).current === "1", "Tagged ownership progress must count an owned Critter with the selected tag.");
+check(challengeDescription(taggedOwnershipData, taggedOwnershipChallenge) === "Own 1 different Critter tagged Final Stage.", "Tagged ownership text must identify the selected Critter Tag.");
+
 const quantityRelicChallenge = {
   ...ownershipChallenge,
   id: "relic-copies",

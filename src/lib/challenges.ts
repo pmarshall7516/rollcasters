@@ -40,6 +40,7 @@ export type ChallengeEvent = {
   sourceCritterTagIds?: string[];
   targetCritterTagIds?: string[];
   skillTagIds?: string[];
+  skillType?: "attack" | "support";
   skillId?: string;
   abilityId?: string;
   rollcasterId?: string;
@@ -95,6 +96,7 @@ function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: Chal
   const sourceTags = eventArray(event, "sourceCritterTagIds", "source_critter_tag_ids");
   const targetTags = eventArray(event, "targetCritterTagIds", "target_critter_tag_ids");
   const skillTags = eventArray(event, "skillTagIds", "skill_tag_ids");
+  const skillType = event.skillType ?? (typeof payload.skill_type === "string" ? payload.skill_type : undefined);
   if (!matchesAnyFilter(p.source_critter_ids, event.sourceCritterId)) return false;
   if (!matchesAnyFilter(p.source_element_ids, sourceElements)) return false;
   if (!matchesAnyFilter(p.source_critter_tag_ids, sourceTags)) return false;
@@ -103,6 +105,8 @@ function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: Chal
   if (!matchesAnyFilter(p.target_element_ids, targetElements)) return false;
   if (!matchesAnyFilter(p.target_critter_tag_ids, targetTags)) return false;
   if (challenge.challenge_type === "use_skill") {
+    const selectedSkillType = String(p.skill_type ?? "any");
+    if (selectedSkillType !== "any" && selectedSkillType !== skillType) return false;
     if (!matchesAnyFilter(p.skill_tag_ids, skillTags)) return false;
     if (!matchesAnyFilter(p.skill_ids, event.skillId)) return false;
     if (!matchesAnyFilter(p.element_ids, [String(event.payload?.skill_element_id ?? "")])) return false;
@@ -170,7 +174,7 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   }
 
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(type)) {
-    const hasExpandedFilters = Object.keys(p).some((key) => key.endsWith("_tag_ids") || ["source_critter_ids", "source_element_ids", "target_critter_ids", "target_element_ids", "skill_ids", "element_ids", "tracking_scope"].includes(key));
+    const hasExpandedFilters = Object.keys(p).some((key) => key.endsWith("_tag_ids") || ["source_critter_ids", "source_element_ids", "target_critter_ids", "target_element_ids", "skill_ids", "element_ids", "skill_type", "tracking_scope"].includes(key));
     if (hasExpandedFilters ? !matchesCombatFilters(challenge, event) : !matchesLegacyTarget(challenge, event)) return 0;
     return type === "knock_out_critters" || type === "use_skill" ? 1 : Math.max(0, Math.floor(event.amount ?? 0));
   }
