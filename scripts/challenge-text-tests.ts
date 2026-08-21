@@ -223,6 +223,15 @@ check(challengeEventIncrement(freshFrostbite, {
   payload: { status_ids: ["frostbite"], target_side: "player", fresh: true },
 }) === 0, "Afflict Status must reject events on the wrong target side.");
 
+const enemyStuns = challenge("stun_activation", { target_side: "enemies", required_amount: 10 });
+const friendlyStuns = challenge("stun_activation", { target_side: "friendlies", required_amount: 10 });
+const anyStuns = challenge("stun_activation", { target_side: "any", required_amount: 3 });
+check(challengeGoal(enemyStuns) === 10n && challengeDescription(data, enemyStuns) === "Stun enemy Critters 10 times.", "Stun Activation must expose its authored amount and enemy-facing text.");
+check(challengeEventIncrement(enemyStuns, { eventId: "stun:enemy", type: "stun_activated", amount: 1, targetCritterId: "002", payload: { stun_activated: true, target_side: "opponent" } }) === 1, "Enemy Stun Activation must count an enemy target.");
+check(challengeEventIncrement(enemyStuns, { eventId: "stun:friendly", type: "stun_activated", amount: 1, targetCritterId: "001", payload: { stun_activated: true, target_side: "player" } }) === 0, "Enemy Stun Activation must reject a friendly target.");
+check(challengeEventIncrement(friendlyStuns, { eventId: "stun:friendly", type: "stun_activated", amount: 1, targetCritterId: "001", payload: { stun_activated: true, target_side: "player" } }) === 1, "Friendly Stun Activation must count an enemy-caused Stun on the user's Critter.");
+check(challengeEventIncrement(anyStuns, { eventId: "stun:any", type: "stun_activated", amount: 1, targetCritterId: "002", payload: { stun_activated: true, target_side: "opponent" } }) === 1, "Any Stun Activation must accept either target side.");
+
 const frostTeraDiversity = challenge("collection_diversity", {
   diversity_mode: "specific_types",
   required_per_type: 1,

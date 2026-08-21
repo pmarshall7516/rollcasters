@@ -3119,7 +3119,29 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     const actedSkillKeys = new Set(next.actedSkillKeys ?? []);
     const stunnedSkillKeys = new Set(next.stunnedSkillKeys ?? []);
     for (const target of targets) {
-      if (!actedSkillKeys.has(target.key)) stunnedSkillKeys.add(target.key);
+      if (actedSkillKeys.has(target.key)) continue;
+      stunnedSkillKeys.add(target.key);
+      const source = context.sourceCritterKey ? findUnit(next, context.sourceCritterKey) : undefined;
+      const sourceSkill = context.sourceOwnerType === "skill"
+        ? next.catalog.skills.find((skill) => skill.id === context.sourceOwnerId)
+        : undefined;
+      next = appendProgressEvent(next, {
+        event_type: "stun_activated",
+        source_critter_id: source?.critter.id ?? null,
+        target_critter_id: target.critter.id,
+        skill_id: context.sourceOwnerType === "skill" ? context.sourceOwnerId : null,
+        amount: 1,
+        payload: {
+          stun_activated: true,
+          source_side: source?.side ?? context.sourceSide ?? null,
+          target_side: target.side,
+          source_element_ids: source ? critterElementIds(source.critter) : [],
+          target_element_ids: critterElementIds(target.critter),
+          source_critter_tag_ids: source ? critterTagIds(source.critter) : [],
+          target_critter_tag_ids: critterTagIds(target.critter),
+          skill_tag_ids: sourceSkill?.tag_ids ?? [],
+        },
+      });
     }
     return { ...next, stunnedSkillKeys: [...stunnedSkillKeys] };
   }

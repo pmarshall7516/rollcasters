@@ -32,6 +32,7 @@ export const TRACKED_CHALLENGE_TYPES = new Set([
   "heal_hp",
   "defeat_rollcaster_type",
   "afflict_status",
+  "stun_activation",
 ]);
 
 export function safeBigInt(value: string | number | bigint | null | undefined): bigint {
@@ -393,6 +394,11 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
       const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
       if (parameters.affliction_mode === "afflicted_turns") return `Keep ${statusLabel} on ${target} for ${goal} afflicted turn${goal === 1 ? "" : "s"}.`;
       return `Afflict ${statusLabel} on ${target} ${goal} time${goal === 1 ? "" : "s"} from a fresh Status.`;
+    }
+    case "stun_activation": {
+      const target = parameters.target_side === "enemies" ? "enemy Critters" : parameters.target_side === "friendlies" ? "friendly Critters" : "any Critters";
+      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
+      return `Stun ${target} ${goal} time${goal === 1 ? "" : "s"}.`;
     }
     case "level_up_critter": {
       const id = String(challenge.target_id ?? parameters.critter_id ?? "");

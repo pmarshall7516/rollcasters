@@ -19,6 +19,7 @@ import {
   roundHalfUp,
   rollDamagePercent,
   rollManaDie,
+  resolveCombatActions,
   MULTI_TARGET_DAMAGE_MULTIPLIER,
   skillTargets,
   skillAvailability,
@@ -227,6 +228,34 @@ check(statusResult.turnEvents.some((event) => event.event_type === "status_turn_
 const reappliedStatusResult = takeTurn(startTurn(statusResult), [{ actorKey: statusBattle.playerUnits[0].key, type: "skill", skillId: "mark", targetKey: statusTarget.key, cost: 1 }]);
 check(!reappliedStatusResult.turnEvents.some((event) => event.event_type === "status_afflicted"), "Reapplying an existing Status must not count as a fresh affliction.");
 check(reappliedStatusResult.turnEvents.some((event) => event.event_type === "status_turn_completed" && Array.isArray(event.payload?.status_ids) && event.payload.status_ids.includes("finite")), "Reapplying an existing Status must continue to count its completed afflicted turn.");
+
+const stunEventCatalog = makeCatalog();
+stunEventCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "mark-stun",
+  "stun_chance",
+  { target: "targets", chance: 1 },
+)];
+const playerStunBattle = { ...battle(stunEventCatalog, makePlayer(), "player-stun-progress-events"), opponentMana: 0 };
+const playerStunTarget = playerStunBattle.opponentUnits[0];
+const playerStunResult = takeTurn(playerStunBattle, [{ actorKey: playerStunBattle.playerUnits[0].key, type: "skill", skillId: "mark", targetKey: playerStunTarget.key, cost: 2 }]);
+check(
+  playerStunResult.turnEvents.some((event) => event.event_type === "stun_activated" && event.source_critter_id === "p1" && event.target_critter_id === "o1" && event.payload?.target_side === "opponent" && event.payload?.stun_activated === true),
+  "A player Stun Chance activation must emit a server-matchable enemy-target Stun event.",
+);
+const enemyStunBase = battle(stunEventCatalog, makePlayer(), "enemy-stun-progress-events");
+const enemyStunActor = enemyStunBase.opponentUnits[0];
+const enemyStunTarget = enemyStunBase.playerUnits[0];
+const enemyStunResult = resolveCombatActions(
+  { ...enemyStunBase, playerMana: 0, opponentMana: 50, opponentUnits: enemyStunBase.opponentUnits.map((unit) => unit.key === enemyStunActor.key ? { ...unit, skills: [stunEventCatalog.skills.find((skill) => skill.id === "mark")!] } : unit) },
+  [{ actorKey: enemyStunTarget.key, type: "skip", cost: 0 }],
+  [{ actorKey: enemyStunActor.key, type: "skill", skillId: "mark", targetKey: enemyStunTarget.key, cost: 2 }],
+);
+check(
+  enemyStunResult.turnEvents.some((event) => event.event_type === "stun_activated" && event.source_critter_id === "o1" && event.target_critter_id === "p1" && event.payload?.target_side === "player"),
+  "An enemy Stun Chance activation must emit a friendly-target Stun event.",
+);
 
 const cycloneBaseCatalog = makeCatalog();
 const cyclone = { ...cycloneBaseCatalog.skills[0], id: "cyclone", name: "Cyclone", element_id: "basic", power: 100, mana_cost: 0, targeting: "single_enemy" as const };

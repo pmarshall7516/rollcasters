@@ -23,6 +23,7 @@ export type ChallengeEventType =
   | "hp_healed"
   | "status_afflicted"
   | "status_turn_completed"
+  | "stun_activated"
   | "skill_resolved";
 
 export type ChallengeEvent = {
@@ -54,7 +55,7 @@ const trackedTypes = new Set([
   "knock_out_critters", "deal_damage", "take_damage", "use_skill",
   "squad_composition", "dungeon_clear", "resource_spending",
   "swap_action", "block_action", "dice_roll",
-  "heal_hp", "afflict_status",
+  "heal_hp", "afflict_status", "stun_activation",
 ]);
 
 function parametersOf(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
@@ -128,6 +129,7 @@ function eventTypeFor(challengeType: string): ChallengeEventType | null {
     dice_roll: "dice_resolved",
     heal_hp: "hp_healed",
     afflict_status: "status_afflicted",
+    stun_activation: "stun_activated",
   }[challengeType] as ChallengeEventType | undefined ?? null;
 }
 
@@ -207,6 +209,14 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
     const eventStatuses = stringArray(payload.status_ids).concat(typeof payload.status_id === "string" ? [payload.status_id] : []);
     if (selectedStatuses.length && !selectedStatuses.some((statusId) => eventStatuses.includes(statusId))) return 0;
     if (mode === "fresh_afflictions" && payload.fresh !== true) return 0;
+    return 1;
+  }
+
+  if (type === "stun_activation") {
+    const targetSide = String(p.target_side ?? "any");
+    const eventTargetSide = String(event.payload?.target_side ?? "");
+    if (targetSide === "enemies" && eventTargetSide !== "opponent") return 0;
+    if (targetSide === "friendlies" && eventTargetSide !== "player") return 0;
     return 1;
   }
 

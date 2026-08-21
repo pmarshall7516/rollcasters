@@ -17,6 +17,7 @@ export type CollectibleChallengeType =
   | "dice_roll"
   | "heal_hp"
   | "afflict_status"
+  | "stun_activation"
   | "defeat_rollcaster_type"
   | "shop_shards"
   | "shop_relic";
@@ -245,7 +246,8 @@ export type CombatProgressEvent = {
     | "resource_spent"
     | "hp_healed"
     | "status_afflicted"
-    | "status_turn_completed";
+    | "status_turn_completed"
+    | "stun_activated";
   source_critter_id: string | null;
   target_critter_id: string | null;
   skill_id: string | null;
