@@ -30,6 +30,7 @@ import {
   continueAfterRoll,
   continueDungeonDialogue,
   createDungeonRunState,
+  applyDungeonBattleResult,
   currentDungeonDialogue,
   outcomePhaseForBattle,
   currentDungeonEvent,
@@ -183,6 +184,26 @@ function takeTurn(state: ReturnType<typeof battle>, actions: CombatAction[], man
   return resolveTurn({ ...state, phase: "selecting", playerMana: mana }, actions);
 }
 
+function runPlayerSkill(
+  catalog: Catalog,
+  player: PlayerState,
+  runId: string,
+  skillId: string,
+  rngState: number,
+  targetKey = "o1",
+) {
+  const ready = startTurn({ ...battle(catalog, player, runId), phase: "ready" });
+  return resolveCombatActions(
+    { ...ready, phase: "selecting", playerMana: 50, opponentMana: 0, rngState },
+    [{ actorKey: "p1", type: "skill", skillId, targetKey, cost: 0 }],
+    [],
+  );
+}
+
+function stunEvents(state: ReturnType<typeof battle>) {
+  return state.turnEvents.filter((event) => event.event_type === "stun_activated");
+}
+
 const randomPolicyBase = battle(makeCatalog(), makePlayer(), "random-policy");
 const randomPolicyState = {
   ...randomPolicyBase,
@@ -217,7 +238,7 @@ const eventTarget = eventBattle.opponentUnits[0];
 const eventResult = takeTurn(eventBattle, [{ actorKey: eventBattle.playerUnits[0].key, type: "skill", skillId: "strike", targetKey: eventTarget.key, cost: 1 }]);
 check(eventResult.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "strike" && event.source_critter_id === "p1"), "A successful player skill must emit one normalized skill_resolved progress event.");
 check(eventResult.turnEvents.some((event) => event.event_type === "resource_spent" && event.amount === 5 && event.payload?.spending_context === "combat" && event.payload?.resource_type === "mana" && event.source_critter_id === "p1"), "A successful player action must emit its actual Mana spend for Resource Spending challenges.");
-check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0), "Player damage must emit one normalized hp_damage_dealt progress event.");
+check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0 && event.payload?.hp_damage === event.amount && event.payload?.shield_damage === 0), "Unshielded player damage must emit HP-only normalized damage components.");
 check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
 const statusBattle = battle(eventCatalog, makePlayer(), "status-progress-events");
@@ -858,7 +879,7 @@ const highPotencyBattle = battle(toxicologyCatalog, highPotencyPlayer, "toxicolo
 const highPotencyFresh = simApplyStatus(highPotencyBattle, "toxic", "o1", 2);
 check(highPotencyFresh.statuses.find((status) => status.holderKey === "o1")?.duration === 4, "High Potency must add two turns to a fresh Toxic affliction on any active Critter.");
 const highPotencyRefresh = simApplyStatus(highPotencyFresh, "toxic", "o1", 2);
-check(highPotencyRefresh.statuses.find((status) => status.holderKey === "o1")?.duration === 2, "High Potency must not add turns when Toxic is refreshed on an already afflicted Critter.");
+check(highPotencyRefresh.statuses.find((status) => status.holderKey === "o1")?.duration === 4, "High Potency must not change the counter when a duplicate Toxic application is rejected.");
 const highPotencyInactive = simApplyStatus(highPotencyBattle, "toxic", "p3", 2);
 check(highPotencyInactive.statuses.find((status) => status.holderKey === "p3")?.duration === 2, "High Potency must target active Critters only.");
 
@@ -977,6 +998,14 @@ check(
   shieldHitEvent?.message === `Your Player One's Shield absorbed ${10 - shieldRemainingAfterHit} damage.`,
   "Shield damage must narrate the absorbed amount instead of reporting 0 HP damage.",
 );
+const shieldProgressEvent = shieldHitResult.turnEvents.find((event) => event.event_type === "hp_damage_taken" && event.target_critter_id === "p1" && event.payload?.shield_damage === event.amount);
+check(
+  shieldProgressEvent?.amount === 10 - shieldRemainingAfterHit
+    && shieldProgressEvent.payload?.hp_damage === 0
+    && shieldProgressEvent.payload?.shield_damage === shieldProgressEvent.amount,
+  "Shield-only combat damage must emit a normalized HP/Shield progress event for Take Damage challenges.",
+);
+check(!shieldHitResult.turnEvents.some((event) => event.event_type === "shield_shattered"), "Partial Shield damage must not emit a Shields Shattered progress event.");
 check(!shieldHitResult.presentationEvents.some((event) => event.message.includes("took 0 damage")), "Shield-only damage must not produce a 0-damage HP narration.");
 let shieldBreakResult = shieldHitResult;
 for (let hit = 0; hit < 4 && shieldBreakResult.playerUnits[0].shield > 0; hit += 1) {
@@ -988,6 +1017,14 @@ for (let hit = 0; hit < 4 && shieldBreakResult.playerUnits[0].shield > 0; hit +=
 check(shieldBreakResult.playerUnits[0].shield === 0, "A second hit must break the remaining Shield.");
 const shieldBreakEvent = shieldBreakResult.presentationEvents.find((event) => event.message === "Your Player One's Shield broke.");
 check(shieldBreakEvent?.kind === "status" && shieldBreakEvent.effectPolarity === "negative", "Shield break must get its own negative status presentation event.");
+const shieldShatteredEvent = shieldBreakResult.turnEvents.find((event) => event.event_type === "shield_shattered");
+check(
+  shieldShatteredEvent?.amount === 1
+    && shieldShatteredEvent.payload?.shield_shattered === true
+    && shieldShatteredEvent.payload?.target_side === "player"
+    && shieldShatteredEvent.target_critter_id === "p1",
+  "A completed Shield break must emit one side-classified Shields Shattered progress event.",
+);
 
 const selectedLeadBattle = battle(reactiveCatalog, reactivePlayer, "selected-lead-runtime");
 const activatedLeadBattle = refreshSetupRuntimeEffects({
@@ -1675,6 +1712,60 @@ const confirmedMechDungeon = confirmDungeonLeads({ ...mechDungeonState, selected
 check(confirmedMechDungeon.battle.playerUnits[0].shield === 10 && confirmedMechDungeon.battle.playerUnits[1].shield === 0, "Dungeon encounter start must apply Mech Core only to the selected Mechanical lead.");
 check(confirmedMechDungeon.phase === "entry_dialogue" && currentDungeonDialogue(confirmedMechDungeon)?.line === "Face the Order.", "Entry dialogue must gate the first Mana roll after lead selection.");
 check(continueDungeonDialogue(confirmedMechDungeon).phase === "await_roll", "Clicking through a fully displayed Entry line must start the encounter.");
+
+const carryCatalog = structuredClone(mechCoreCatalog);
+carryCatalog.effectsByStatus.aura = [{
+  ...effect(
+    "status",
+    "aura",
+    "carry-atk",
+    "stat_modifier",
+    { stat: "atk", value_mode: "flat", amount: 5, chance: 1, application_mode: "single_application", target: "status_holder" },
+  ),
+  runtimeVersion: 2,
+  execution: "root",
+}];
+const carryRun = {
+  ...mechRun,
+  id: "carry-run",
+  battleCount: 2,
+  selectedOpponents: mechRun.selectedOpponents.map((opponent) => ({ ...opponent, battleIndex: 0 })),
+};
+const carryRunState = createDungeonRunState(carryCatalog, mechCorePlayer, carryCatalog.dungeons[0], carryRun);
+const confirmedCarryRun = confirmDungeonLeads({ ...carryRunState, selectedLeadIds: ["up1", "up2"] });
+const carryBattle = simApplyStatus(
+  simApplyStatus(
+    { ...confirmedCarryRun.battle, playerUnits: confirmedCarryRun.battle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 77 } : unit) },
+    "finite",
+    "p1",
+    3,
+  ),
+  "aura",
+  "p1",
+  null,
+);
+const nextCarryRun = {
+  ...carryRun,
+  battleIndex: 1,
+  selectedOpponents: carryRun.selectedOpponents.map((opponent) => ({ ...opponent, battleIndex: 1 })),
+};
+const carriedDungeon = applyDungeonBattleResult(
+  { ...confirmedCarryRun, run: carryRun, battle: carryBattle },
+  {
+    run: nextCarryRun,
+    battleRewards: { entries: [], defeatedOpponentInstanceIds: [], critterXp: {}, rollcasterXp: 0 },
+  },
+  carryCatalog,
+  mechCorePlayer,
+);
+check(
+  carriedDungeon.phase === "encounter_rewards"
+    && carriedDungeon.battle.playerUnits.find((unit) => unit.key === "p1")?.hp === 77
+    && carriedDungeon.battle.statuses.some((status) => status.holderKey === "p1" && status.statusId === "finite" && status.duration === 3)
+    && carriedDungeon.battle.statuses.some((status) => status.holderKey === "p1" && status.statusId === "aura" && status.duration === null)
+    && carriedDungeon.battle.playerUnits.find((unit) => unit.key === "p1")?.stats.atk === 33,
+  "Dungeon encounters must carry surviving finite and indefinite Statuses, their current HP, and their attached modifiers into the next encounter.",
+);
 const enemyDefeatedDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "defeat" as const };
 check(currentDungeonDialogue(enemyDefeatedDialogue)?.line === "This is not over." && continueDungeonDialogue(enemyDefeatedDialogue).phase === "battle_result", "A user victory must show the enemy Defeat line before encounter results.");
 const enemyVictoryDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "victory" as const };
@@ -2260,7 +2351,7 @@ let finite = takeTurn(battle(statusCatalog, makePlayer(), "finite-status"), [{ a
 check(finite.statuses.length === 1 && finite.statuses[0].duration === 2, "Finite Status duration must come from its application and decrement after the application turn.");
 const instanceId = finite.statuses[0].instanceId;
 finite = takeTurn(finite, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
-check(finite.statuses[0].instanceId === instanceId && finite.statuses[0].duration === 2, "Reapplying a Status must refresh the existing icon-bearing instance without duplicating it.");
+check(finite.statuses[0].instanceId === instanceId && finite.statuses[0].duration === 1, "Reapplying a Status must reject the duplicate without duplicating or refreshing the icon-bearing instance.");
 
 const indefiniteCatalog = makeCatalog();
 indefiniteCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "indefinite", "apply_status", { status_id: "finite", chance: 1, target: "self", indefinite: true })];
@@ -2272,25 +2363,28 @@ selectedCatalog.effectsBySkill.wave = [effect("skill", "wave", "target-status", 
 const selected = takeTurn(battle(selectedCatalog, makePlayer(), "target-enemies"), [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }]);
 check(selected.statuses.length === 2 && selected.statuses.every((item) => item.holderKey.startsWith("o")), "target_enemies must use every active enemy slot selected by the Skill.");
 
-const exclusiveStatusCatalog = makeCatalog();
-let exclusiveStatusState = simApplyStatus(battle(exclusiveStatusCatalog, makePlayer(), "exclusive-status"), "finite", "p1", 2);
-exclusiveStatusState = simApplyStatus(exclusiveStatusState, "aura", "p1", 3);
+const multiStatusCatalog = makeCatalog();
+let multiStatusState = simApplyStatus(battle(multiStatusCatalog, makePlayer(), "multi-status"), "finite", "p1", 2);
+multiStatusState = simApplyStatus(multiStatusState, "aura", "p1", 3);
 check(
-  exclusiveStatusState.statuses.length === 1 && exclusiveStatusState.statuses[0].statusId === "finite",
-  "A Critter with an active Status must reject every different Status application.",
+  multiStatusState.statuses.length === 2
+    && multiStatusState.statuses.some((status) => status.statusId === "finite" && status.holderKey === "p1")
+    && multiStatusState.statuses.some((status) => status.statusId === "aura" && status.holderKey === "p1"),
+  "A Critter may carry multiple different Statuses at the same time.",
 );
-exclusiveStatusState = simApplyStatus(exclusiveStatusState, "finite", "p1", 4);
+multiStatusState = simApplyStatus(multiStatusState, "finite", "p1", 4);
 check(
-  exclusiveStatusState.statuses.length === 1 && exclusiveStatusState.statuses[0].duration === 4,
-  "Reapplying the same active Status must refresh that one Status instance.",
+  multiStatusState.statuses.length === 2
+    && multiStatusState.statuses.find((status) => status.statusId === "finite")?.duration === 2,
+  "A duplicate Status application must not create or refresh a second instance.",
 );
-exclusiveStatusCatalog.effectsBySkill.ritual = [
+multiStatusCatalog.effectsBySkill.ritual = [
   effect("skill", "ritual", "cure-current-status", "effect_removal", {
     target: "self", removal_category: "statuses", maximum_effects_removed: 1, selection_method: "oldest", specific_effect_id: "", prevent_reapplication: false,
   }, 0),
   effect("skill", "ritual", "apply-after-cure", "apply_status", { status_id: "aura", chance: 1, target: "self", indefinite: false, turns: 3 }, 1),
 ];
-let curedThenAfflicted = simApplyStatus(battle(exclusiveStatusCatalog, makePlayer(), "cure-then-afflict"), "finite", "p1", 3);
+let curedThenAfflicted = simApplyStatus(battle(multiStatusCatalog, makePlayer(), "cure-then-afflict"), "finite", "p1", 3);
 curedThenAfflicted = takeTurn(curedThenAfflicted, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
 check(
   curedThenAfflicted.statuses.length === 1 && curedThenAfflicted.statuses[0].statusId === "aura",
@@ -2300,6 +2394,47 @@ check(
   curedThenAfflicted.presentationEvents.some((event) => event.message === "Your Player One was cured of Finite.")
     && curedThenAfflicted.presentationEvents.some((event) => event.message.includes("Aura from Ritual")),
   "Status cures and later same-turn applications must each receive ordered narration.",
+);
+
+const duplicateSkillCatalog = makeCatalog();
+duplicateSkillCatalog.effectsBySkill.strike = [effect(
+  "skill",
+  "strike",
+  "duplicate-finite",
+  "apply_status",
+  { status_id: "finite", chance: 1, target: "targets", indefinite: false, turns: 3 },
+)];
+let duplicateSkillState = takeTurn(
+  battle(duplicateSkillCatalog, makePlayer(), "duplicate-status-skill"),
+  [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 }],
+  50,
+);
+const duplicateTargetHp = duplicateSkillState.opponentUnits[0].hp;
+const duplicateDuration = duplicateSkillState.statuses.find((status) => status.statusId === "finite")?.duration;
+duplicateSkillState = takeTurn(startTurn(duplicateSkillState), [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 }], 50);
+check(
+    duplicateSkillState.opponentUnits[0].hp === duplicateTargetHp
+    && duplicateSkillState.statuses.length === 1
+    && duplicateSkillState.statuses[0].duration === Number(duplicateDuration) - 1
+    && duplicateSkillState.presentationEvents.some((event) => event.message.includes("already afflicted with Finite") && event.message.includes("Strike failed"))
+    && !duplicateSkillState.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "strike"),
+  "A Skill that cannot apply its duplicate Status must fail atomically without dealing damage or refreshing the Status.",
+);
+
+const freshDifferentStatusCatalog = makeCatalog();
+freshDifferentStatusCatalog.effectsBySkill.ritual = [
+  effect("skill", "ritual", "apply-finite", "apply_status", { status_id: "finite", chance: 1, target: "self", indefinite: false, turns: 3 }),
+  effect("skill", "ritual", "apply-aura", "apply_status", { status_id: "aura", chance: 1, target: "self", indefinite: true, turns: 0 }, 1),
+];
+const freshDifferentStatus = takeTurn(
+  battle(freshDifferentStatusCatalog, makePlayer(), "fresh-different-status"),
+  [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }],
+  50,
+);
+check(
+  freshDifferentStatus.statuses.length === 2
+    && freshDifferentStatus.turnEvents.filter((event) => event.event_type === "status_afflicted" && event.payload?.fresh === true).length === 2,
+  "A Critter with one Status must receive a fresh affliction event when a different Status is added.",
 );
 
 const selectedSideCatalog = makeCatalog();
@@ -2461,6 +2596,53 @@ check(medicResult.playerUnits[0].hp === 55 && medicResult.playerUnits[1].hp === 
 const medicEvent = medicResult.presentationEvents.find((event) => event.kind === "heal" && event.message.includes("Battle Medic I"));
 check(Boolean(medicEvent) && medicEvent!.targetKeys.length === 2 && medicEvent!.hpChanges.length === 2, "Battle Medic I must animate all healed friendlies in one staged presentation event.");
 check(medicEvent?.message === "Your Player One healed 5 HP and your Player Two healed 4 HP from Battle Medic I.", "Battle Medic I must narrate every Critter's actual healed HP in one message.");
+
+const battleMedicVCatalog = makeCatalog();
+battleMedicVCatalog.statuses.push(
+  { id: "mana-boost", name: "Mana Boost", description: "Mana Boost.", asset_path: null, sort_order: 10, version: 1, classification: "positive" },
+  { id: "toxic", name: "Toxic", description: "Toxic.", asset_path: null, sort_order: 11, version: 1, classification: "negative" },
+);
+battleMedicVCatalog.rollcasterAbilities.push({ id: "battle-medic-5", name: "Battle Medic V", description: "Cure Negative Statuses.", sort_order: 14 });
+battleMedicVCatalog.effectsByAbility["battle-medic-5"] = [
+  { ...effect("ability", "battle-medic-5", "cure-negative-statuses", "effect_removal", {
+    target: "all_friendlies",
+    removal_category: "statuses",
+    maximum_effects_removed_mode: "all",
+    selection_method: "oldest",
+    status_classification: "negative",
+    specific_effect_id: "",
+    prevent_reapplication: false,
+  }), execution: "child" },
+  effect("ability", "battle-medic-5", "battle-medic-v-trigger", "reactive_trigger", {
+    target: "all_friendlies",
+    trigger_event: "turn_start",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "turn",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["cure-negative-statuses"],
+  }, 1),
+];
+const battleMedicVPlayer = makePlayer();
+battleMedicVPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "battle-medic-5" }];
+let battleMedicVBattle = battle(battleMedicVCatalog, battleMedicVPlayer, "battle-medic-v");
+battleMedicVBattle = simApplyStatus(battleMedicVBattle, "toxic", "p1", null);
+battleMedicVBattle = simApplyStatus(battleMedicVBattle, "mana-boost", "p1", null);
+battleMedicVBattle = simApplyStatus(battleMedicVBattle, "toxic", "p2", null);
+battleMedicVBattle = simApplyStatus(battleMedicVBattle, "toxic", "o1", null);
+const battleMedicVStarted = startTurn(battleMedicVBattle);
+check(
+  battleMedicVStarted.statuses.some((status) => status.statusId === "mana-boost" && status.holderKey === "p1")
+    && !battleMedicVStarted.statuses.some((status) => status.statusId === "toxic" && ["p1", "p2"].includes(status.holderKey))
+    && battleMedicVStarted.statuses.some((status) => status.statusId === "toxic" && status.holderKey === "o1"),
+  "Battle Medic V must remove every Negative Status from friendly Critters at turn start while leaving Positive and enemy Statuses untouched.",
+);
+const battleMedicVNext = startTurn(simApplyStatus(battleMedicVStarted, "toxic", "p1", null));
+check(!battleMedicVNext.statuses.some((status) => status.statusId === "toxic" && status.holderKey === "p1"), "Battle Medic V must repeat its Negative Status cleanse at the start of each later turn.");
 
 let smallMedicBattle = battle(medicCatalog, medicPlayer, "battle-medic-small-heal");
 smallMedicBattle = {
@@ -2801,6 +2983,182 @@ const stunResult = takeTurn(battle(stunCatalog, makePlayer(), "stun-chance"), [
 ], 10);
 check(stunResult.presentationEvents.some((event) => event.message === "Your Player One was Stunned and couldn't act!" && event.effectPolarity === "negative"), "A guaranteed Stun must replace an unacted Critter's Skill with the negative Stunned narration.");
 check(!stunResult.presentationEvents.some((event) => event.kind === "skill" && event.actorKey === "p1"), "A Stunned Critter must not also narrate its normal Skill.");
+
+const skillChanceCatalog = makeCatalog();
+skillChanceCatalog.effectsBySkill.strike = [effect(
+  "skill",
+  "strike",
+  "skill-seven-percent-stun",
+  "stun_chance",
+  { target: "targets", chance: 0.07 },
+)];
+const skillChanceHit = runPlayerSkill(skillChanceCatalog, makePlayer(), "skill-seven-percent-hit", "strike", 21);
+const skillChanceHitEvent = stunEvents(skillChanceHit)[0];
+check(skillChanceHitEvent?.payload.combined_chance === 0.07, "A direct Skill Stun Chance must preserve its authored 7% contribution.");
+check(skillChanceHitEvent?.payload.contributing_effect_ids?.[0] === "skill-seven-percent-stun", "A direct Skill Stun activation must identify its contributing Skill Effect.");
+const skillChanceMiss = runPlayerSkill(skillChanceCatalog, makePlayer(), "skill-seven-percent-miss", "strike", 1);
+check(stunEvents(skillChanceMiss).length === 0, "A direct Skill Stun Chance must be able to miss its deterministic roll.");
+
+const relicChanceCatalog = makeCatalog();
+relicChanceCatalog.relics.push({ id: "daze-token", name: "Daze Token", description: "Daze Token.", max_owned: 1, asset_path: null, sort_order: 20 });
+relicChanceCatalog.effectsByRelic["daze-token"] = [
+  effect("relic", "daze-token", "daze-token-trigger", "reactive_trigger", {
+    target: "equipped_critter",
+    trigger_event: "owner_uses_attack_skill",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "battle",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["daze-token-stun"],
+  }),
+  {
+    ...effect("relic", "daze-token", "daze-token-stun", "stun_chance", { target: "defender", chance: 0.07 }),
+    execution: "child",
+    classification: "negative",
+  },
+];
+const relicChancePlayer = makePlayer();
+relicChancePlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "daze-token" }];
+const relicChanceHit = runPlayerSkill(relicChanceCatalog, relicChancePlayer, "relic-seven-percent-hit", "strike", 21);
+const relicChanceHitEvent = stunEvents(relicChanceHit)[0];
+check(relicChanceHitEvent?.payload.combined_chance === 0.07, "A Relic Reactive Trigger with 100% activation and a 7% Stun child must contribute exactly 7%.");
+check(relicChanceHitEvent?.payload.contributing_effect_ids?.[0] === "daze-token-stun", "A Relic Stun activation must identify the child Stun Effect rather than the Reactive parent.");
+check(relicChanceHit.rngState === skillChanceHit.rngState, "A Relic Reactive Stun child must consume one combined Stun roll, not separate parent and child rolls.");
+const relicChanceMiss = runPlayerSkill(relicChanceCatalog, relicChancePlayer, "relic-seven-percent-miss", "strike", 1);
+check(stunEvents(relicChanceMiss).length === 0, "A Relic Reactive Stun child must be able to miss its deterministic 7% roll.");
+const relicSupportSkill = runPlayerSkill(relicChanceCatalog, relicChancePlayer, "relic-support-filter", "mark", 1);
+check(stunEvents(relicSupportSkill).length === 0, "A Relic watching owner_uses_attack_skill must not Stun after a support Skill.");
+const legacyRelicChanceCatalog = structuredClone(relicChanceCatalog);
+legacyRelicChanceCatalog.effectsByRelic["daze-token"][0].parameters.activation_chance = 0.07;
+legacyRelicChanceCatalog.effectsByRelic["daze-token"][1].parameters.chance = 1;
+const legacyRelicChanceHit = runPlayerSkill(legacyRelicChanceCatalog, relicChancePlayer, "legacy-relic-seven-percent-hit", "strike", 21);
+check(stunEvents(legacyRelicChanceHit)[0]?.payload.combined_chance === 0.07, "Legacy Relic Reactive Stun rows with a 7% parent and 100% child must remain readable and equivalent.");
+check(legacyRelicChanceHit.rngState === relicChanceHit.rngState, "Legacy Relic parent-chance Stun rows must also consume one combined Stun roll.");
+
+const abilityChanceCatalog = makeCatalog();
+abilityChanceCatalog.rollcasterAbilities.push({ id: "attack-daze", name: "Attack Daze", description: "Attack Daze.", sort_order: 20 });
+abilityChanceCatalog.effectsByAbility["attack-daze"] = [
+  effect("ability", "attack-daze", "attack-daze-trigger", "reactive_trigger", {
+    target: "all_friendlies",
+    trigger_event: "owner_uses_attack_skill",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "battle",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["attack-daze-stun"],
+  }),
+  {
+    ...effect("ability", "attack-daze", "attack-daze-stun", "stun_chance", { target: "defender", chance: 0.5 }),
+    execution: "child",
+    classification: "negative",
+  },
+];
+const abilityChancePlayer = makePlayer();
+abilityChancePlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "attack-daze" }];
+const abilityChanceHit = runPlayerSkill(abilityChanceCatalog, abilityChancePlayer, "ability-fifty-percent-hit", "strike", 2);
+const abilityChanceHitEvent = stunEvents(abilityChanceHit)[0];
+check(abilityChanceHitEvent?.payload.combined_chance === 0.5, "An Ability Reactive Trigger with a 50% Stun child must contribute exactly 50%.");
+check(abilityChanceHitEvent?.payload.contributing_effect_ids?.[0] === "attack-daze-stun", "An Ability Stun activation must identify the child Stun Effect rather than the Reactive parent.");
+const abilitySupportSkill = runPlayerSkill(abilityChanceCatalog, abilityChancePlayer, "ability-support-filter", "mark", 2);
+check(stunEvents(abilitySupportSkill).length === 0, "An Ability watching owner_uses_attack_skill must not Stun after a support Skill.");
+const legacyAbilityChanceCatalog = structuredClone(abilityChanceCatalog);
+legacyAbilityChanceCatalog.effectsByAbility["attack-daze"][0].parameters.activation_chance = 0.5;
+legacyAbilityChanceCatalog.effectsByAbility["attack-daze"][1].parameters.chance = 1;
+const legacyAbilityChanceHit = runPlayerSkill(legacyAbilityChanceCatalog, abilityChancePlayer, "legacy-ability-fifty-percent-hit", "strike", 2);
+check(stunEvents(legacyAbilityChanceHit)[0]?.payload.combined_chance === 0.5, "Legacy Ability Reactive Stun rows with a 50% parent and 100% child must remain readable and equivalent.");
+check(legacyAbilityChanceHit.rngState === abilityChanceHit.rngState, "Legacy Ability parent-chance Stun rows must also consume one combined Stun roll.");
+
+const combinedStunCatalog = makeCatalog();
+combinedStunCatalog.rollcasterAbilities.push({ id: "first-turn-daze", name: "First Turn Daze", description: "First Turn Daze.", sort_order: 20 });
+combinedStunCatalog.relics.push({ id: "daze-token", name: "Daze Token", description: "Daze Token.", max_owned: 1, asset_path: null, sort_order: 20 });
+combinedStunCatalog.effectsBySkill.strike = [
+  effect("skill", "strike", "strike-base-stun", "stun_chance", { target: "targets", chance: 0.1 }),
+];
+combinedStunCatalog.effectsByAbility["first-turn-daze"] = [
+  effect("ability", "first-turn-daze", "first-turn-trigger", "reactive_trigger", {
+    target: "all_friendlies",
+    trigger_event: "owner_uses_attack_skill",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "battle",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["first-turn-window"],
+  }),
+  {
+    ...effect("ability", "first-turn-daze", "first-turn-window", "turn_restriction", {
+      main_restriction: "child_effect_trigger",
+      turn_restriction: "specific_active_turn",
+      specific_turn: 1,
+      minimum_turn: 1,
+      maximum_turn: 1,
+      child_effect_ids: ["first-turn-stun"],
+    }),
+    execution: "child",
+  },
+  {
+    ...effect("ability", "first-turn-daze", "first-turn-stun", "stun_chance", { target: "defender", chance: 0.5 }),
+    execution: "child",
+    classification: "negative",
+  },
+];
+combinedStunCatalog.effectsByRelic["daze-token"] = [
+  effect("relic", "daze-token", "daze-trigger", "reactive_trigger", {
+    target: "equipped_critter",
+    trigger_event: "owner_uses_attack_skill",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "battle",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["daze-stun"],
+  }),
+  {
+    ...effect("relic", "daze-token", "daze-stun", "stun_chance", { target: "defender", chance: 0.07 }),
+    execution: "child",
+    classification: "negative",
+  },
+];
+const combinedStunPlayer = makePlayer();
+combinedStunPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "first-turn-daze" }];
+combinedStunPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "daze-token" }];
+const combinedStunAction = [{ actorKey: "p1", type: "skill" as const, skillId: "strike", targetKey: "o1", cost: 0 }];
+const combinedStunTurnOne = takeTurn(
+  { ...startTurn({ ...battle(combinedStunCatalog, combinedStunPlayer, "combined-stun"), phase: "ready" }), rngState: 2 },
+  combinedStunAction,
+  50,
+);
+const combinedStunEvent = combinedStunTurnOne.turnEvents.find((event) => event.event_type === "stun_activated");
+check(combinedStunEvent?.payload.combined_chance === 0.67, "Skill, Ability, and Relic Stun Chance contributions must combine additively into the expected 67% roll.");
+const combinedContributors = new Set(combinedStunEvent?.payload.contributing_effect_ids as string[] | undefined);
+check(combinedContributors.size === 3 && combinedContributors.has("strike-base-stun") && combinedContributors.has("first-turn-stun") && combinedContributors.has("daze-stun"), "A combined Stun activation must record the Skill, Ability, and Relic contributions together.");
+const combinedStunTurnTwo = takeTurn(
+  { ...startTurn({ ...combinedStunTurnOne, phase: "ready" }), rngState: 2 },
+  combinedStunAction,
+  50,
+);
+check(!combinedStunTurnTwo.turnEvents.some((event) => event.event_type === "stun_activated"), "After the first active turn, the Ability Turn Restriction must leave only the 17% Skill-plus-Relic contribution, which misses this deterministic roll.");
+
+const multiTargetStunCatalog = makeCatalog();
+multiTargetStunCatalog.effectsBySkill.wave = [effect("skill", "wave", "wave-guaranteed-stun", "stun_chance", { target: "targets", chance: 1 })];
+const multiTargetStun = runPlayerSkill(multiTargetStunCatalog, makePlayer(), "multi-target-stun", "wave", 1);
+const multiTargetEvents = stunEvents(multiTargetStun);
+check(multiTargetEvents.length === 2 && new Set(multiTargetEvents.map((event) => event.target_critter_id)).size === 2, "A multi-target Skill must resolve one guaranteed Stun roll per legal target without target leakage.");
+check(multiTargetEvents.every((event) => event.payload.combined_chance === 1 && (event.payload.contributing_effect_ids as string[] | undefined)?.length === 1), "Each multi-target Stun activation must preserve its per-target combined chance and contributor list.");
 
 const restrictionCatalog = makeCatalog();
 restrictionCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "ritual-turn-one", "turn_restriction", {

@@ -77,8 +77,8 @@ const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("own_collectible", { collectible_category: "critter", collectible_ids: [], critter_tag_ids: ["final-stage"], required_amount: 1, require_unique_collectibles: true }), "Own 1 different Critter tagged Final Stage."],
   [challenge("level_up_critter", { critter_id: "001", required_level: 20 }), "Unlock level 20 for Ramber (001)"],
   [challenge("knock_out_critters", { target_mode: "species", target_ids: ["001"], required_amount: 10 }), "Knock out Critters (Ramber)"],
-  [challenge("deal_damage", { target_mode: "element", target_ids: ["vile"], required_amount: 1250 }), "Damage Critters (Vile)"],
-  [challenge("take_damage", { target_mode: "species", any_target: true, target_ids: [], required_amount: 3000 }), "Receive Damage (Any Species)"],
+  [challenge("deal_damage", { target_mode: "element", target_ids: ["vile"], damage_mode: "any", required_amount: 1250 }), "Deal damage to Vile"],
+  [challenge("take_damage", { target_mode: "species", any_target: true, target_ids: [], damage_mode: "any", required_amount: 3000 }), "Take damage as Any Species"],
   [challenge("use_skill", { target_mode: "skill", target_ids: ["vile-injection"], required_amount: 10 }), "Use Skill (Vile Injection)"],
   [challenge("squad_composition", { completion_event: "battle_win", required_completions: 2, required_critter_ids: ["001"], required_element_ids: ["vile"], require_survival: true }), "Win 2 battles with the configured squad."],
   [challenge("dungeon_clear", { dungeon_selection: "specific_dungeon", dungeon_ids: ["002"], required_clears: 1, has_relic_requirements: true, required_relic_ids: ["004"], require_relic_activation: true }), "Clear Creek Clash 1 time."],
@@ -89,11 +89,55 @@ const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("heal_hp", { required_amount: 200, recipient_side: "any", target_mode: "any", target_ids: [], tracking_scope: "lifetime" }), "Heal 200 HP on Critters."],
   [challenge("defeat_rollcaster_type", { rollcaster_types: ["adept"], required_amount: 10 }), "Defeat 10 Adept-rank Rollcasters."],
   [challenge("afflict_status", { status_ids: ["frostbite"], target_side: "enemies", affliction_mode: "fresh_afflictions", required_amount: 10 }), "Afflict Frostbite on enemies 10 times from a fresh Status."],
+  [challenge("shields_shattered", { shield_side: "friendlies", required_amount: 10 }), "Shatter 10 Friendly Shields."],
   [challenge("shop_shards", { required_amount: 20 }), "Unlock Cragram shards"],
   [challenge("shop_relic", { required_amount: 1 }), "Own Cragram"],
 ];
 
 for (const [row, expected] of cases) check(challengeDescription(data, row) === expected, `${row.challenge_type} text differs from the dev default: ${challengeDescription(data, row)}`);
+
+check(challengeDescription(data, challenge("deal_damage", { target_mode: "species", target_ids: ["001"], damage_mode: "hp_only", required_amount: 100 })) === "Deal HP damage to Ramber", "Deal Damage HP-only text must identify the HP filter.");
+check(challengeDescription(data, challenge("take_damage", { target_mode: "species", target_ids: ["002"], damage_mode: "shield_only", required_amount: 100 })) === "Take Shield damage as Cragram", "Take Damage Shield-only text must identify the Shield filter.");
+
+for (const [mode, payload, expected] of [
+  ["any", { hp_damage: 4, shield_damage: 6 }, 10],
+  ["hp_only", { hp_damage: 4, shield_damage: 6 }, 4],
+  ["shield_only", { hp_damage: 4, shield_damage: 6 }, 6],
+] as const) {
+  const damageChallenge = challenge("deal_damage", { target_mode: "species", target_ids: ["001"], damage_mode: mode, required_amount: 100 });
+  check(challengeEventIncrement(damageChallenge, {
+    eventId: `damage:${mode}`,
+    type: "hp_damage_dealt",
+    targetCritterId: "001",
+    amount: 10,
+    payload,
+  }) === expected, `Deal Damage ${mode} must select the correct normalized damage component.`);
+}
+const legacyDamage = challenge("deal_damage", { target_mode: "species", target_ids: ["001"], required_amount: 100 });
+check(challengeEventIncrement(legacyDamage, { eventId: "damage:legacy", type: "hp_damage_dealt", targetCritterId: "001", amount: 7, payload: {} }) === 7, "Legacy damage events without components must remain HP-compatible and count as Any damage.");
+check(challengeEventIncrement(challenge("deal_damage", { target_mode: "species", target_ids: ["001"], damage_mode: "shield_only", required_amount: 100 }), { eventId: "damage:none", type: "hp_damage_dealt", targetCritterId: "001", amount: 7, payload: {} }) === 0, "Legacy damage events must not be interpreted as Shield damage.");
+
+for (const [side, targetSide, expected] of [
+  ["any", "player", 1],
+  ["friendlies", "player", 1],
+  ["friendlies", "opponent", 0],
+  ["enemies", "opponent", 1],
+  ["enemies", "player", 0],
+] as const) {
+  const shieldChallenge = challenge("shields_shattered", { shield_side: side, required_amount: 10 });
+  check(challengeEventIncrement(shieldChallenge, {
+    eventId: `shield:${side}:${targetSide}`,
+    type: "shield_shattered",
+    amount: 1,
+    payload: { shield_shattered: true, target_side: targetSide },
+  }) === expected, `Shields Shattered ${side} must apply its recipient-side filter.`);
+}
+check(challengeEventIncrement(challenge("shields_shattered", { shield_side: "any", required_amount: 10 }), {
+  eventId: "shield:partial",
+  type: "shield_shattered",
+  amount: 1,
+  payload: { shield_shattered: false, target_side: "player" },
+}) === 0, "Shields Shattered must reject events that do not claim a completed Shield break.");
 
 const friendlyVileHealing = challenge("heal_hp", {
   required_amount: 200,

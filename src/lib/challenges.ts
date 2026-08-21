@@ -24,6 +24,7 @@ export type ChallengeEventType =
   | "status_afflicted"
   | "status_turn_completed"
   | "stun_activated"
+  | "shield_shattered"
   | "skill_resolved";
 
 export type ChallengeEvent = {
@@ -56,6 +57,7 @@ const trackedTypes = new Set([
   "squad_composition", "dungeon_clear", "resource_spending",
   "swap_action", "block_action", "dice_roll",
   "heal_hp", "afflict_status", "stun_activation",
+  "shields_shattered",
 ]);
 
 function parametersOf(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
@@ -130,6 +132,7 @@ function eventTypeFor(challengeType: string): ChallengeEventType | null {
     heal_hp: "hp_healed",
     afflict_status: "status_afflicted",
     stun_activation: "stun_activated",
+    shields_shattered: "shield_shattered",
   }[challengeType] as ChallengeEventType | undefined ?? null;
 }
 
@@ -148,6 +151,23 @@ function matchesLegacyTarget(challenge: CollectibleUnlockChallenge, event: Chall
     return ids.some((id) => targetElements.includes(id));
   }
   return false;
+}
+
+function damageAmountFor(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): number {
+  const mode = String(parametersOf(challenge).damage_mode ?? "any");
+  if (!["any", "hp_only", "shield_only"].includes(mode)) return 0;
+  const payload = event.payload ?? {};
+  const hasHpComponent = typeof payload.hp_damage === "number";
+  const hasShieldComponent = typeof payload.shield_damage === "number";
+  if (hasHpComponent !== hasShieldComponent) return 0;
+  const hasComponents = hasHpComponent && hasShieldComponent;
+  const eventAmount = Math.max(0, Math.floor(event.amount ?? 0));
+  const hpDamage = typeof payload.hp_damage === "number" ? Math.max(0, Math.floor(payload.hp_damage)) : hasComponents ? 0 : eventAmount;
+  const shieldDamage = typeof payload.shield_damage === "number" ? Math.max(0, Math.floor(payload.shield_damage)) : 0;
+  const total = hasComponents ? hpDamage + shieldDamage : eventAmount;
+  if (mode === "hp_only") return hpDamage;
+  if (mode === "shield_only") return shieldDamage;
+  return total;
 }
 
 function compare(value: number, operator: string, target: number): boolean {
@@ -176,9 +196,9 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   }
 
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(type)) {
-    const hasExpandedFilters = Object.keys(p).some((key) => key.endsWith("_tag_ids") || ["source_critter_ids", "source_element_ids", "target_critter_ids", "target_element_ids", "skill_ids", "element_ids", "skill_type", "tracking_scope"].includes(key));
+    const hasExpandedFilters = Object.keys(p).some((key) => key.endsWith("_tag_ids") || ["source_critter_ids", "source_element_ids", "target_critter_ids", "target_element_ids", "skill_ids", "element_ids", "skill_type", "tracking_scope", "damage_mode"].includes(key));
     if (hasExpandedFilters ? !matchesCombatFilters(challenge, event) : !matchesLegacyTarget(challenge, event)) return 0;
-    return type === "knock_out_critters" || type === "use_skill" ? 1 : Math.max(0, Math.floor(event.amount ?? 0));
+    return type === "knock_out_critters" || type === "use_skill" ? 1 : damageAmountFor(challenge, event);
   }
 
   if (type === "heal_hp") {
@@ -217,6 +237,15 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
     const eventTargetSide = String(event.payload?.target_side ?? "");
     if (targetSide === "enemies" && eventTargetSide !== "opponent") return 0;
     if (targetSide === "friendlies" && eventTargetSide !== "player") return 0;
+    return 1;
+  }
+
+  if (type === "shields_shattered") {
+    if (event.type !== "shield_shattered" || event.amount !== 1 || event.payload?.shield_shattered !== true) return 0;
+    const shieldSide = String(p.shield_side ?? "any");
+    const targetSide = String(event.payload.target_side ?? "");
+    if (shieldSide === "friendlies" && targetSide !== "player") return 0;
+    if (shieldSide === "enemies" && targetSide !== "opponent") return 0;
     return 1;
   }
 

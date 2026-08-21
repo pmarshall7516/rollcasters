@@ -18,6 +18,7 @@ export type CollectibleChallengeType =
   | "heal_hp"
   | "afflict_status"
   | "stun_activation"
+  | "shields_shattered"
   | "defeat_rollcaster_type"
   | "shop_shards"
   | "shop_relic";
@@ -247,7 +248,8 @@ export type CombatProgressEvent = {
     | "hp_healed"
     | "status_afflicted"
     | "status_turn_completed"
-    | "stun_activated";
+    | "stun_activated"
+    | "shield_shattered";
   source_critter_id: string | null;
   target_critter_id: string | null;
   skill_id: string | null;
@@ -368,6 +370,8 @@ export type Status = {
   id: string;
   name: string;
   description: string;
+  /** Polarity of the named Status; legacy releases may omit this field. */
+  classification?: "positive" | "negative" | "mixed";
   asset_path?: string | null;
   sort_order?: number;
   is_active?: boolean;

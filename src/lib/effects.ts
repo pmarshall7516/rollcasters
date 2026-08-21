@@ -591,15 +591,25 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       }
     }
     if (runtimeKey === "stun_chance@1") {
-      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
-      requireChoice(parameters.target, ["targets", "all_others", "all_enemies", "all_allies"], `Effect ${effect.id} target`);
+      if (!(effect.ownerType === "skill" || effect.ownerType === "ability" || effect.ownerType === "relic")) {
+        throw new Error(`Effect ${effect.id} can only be owned by a skill, ability, or relic.`);
+      }
+      if (!TARGETS_BY_OWNER[effect.ownerType].has(parameters.target as EffectTarget)) {
+        throw new Error(`Effect ${effect.id} target is not valid for its ${effect.ownerType} owner.`);
+      }
       validateChance(parameters.chance, `Effect ${effect.id} chance`);
       rejectUnknownKeys(parameters, ["target", "chance", "target_element_ids", "source_element_ids"], `Effect ${effect.id}`);
     }
     if (runtimeKey === "turn_restriction@1") {
-      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
-      if (effect.execution === "child") throw new Error(`Effect ${effect.id} must use root execution.`);
+      if (!(effect.ownerType === "skill" || effect.ownerType === "ability" || effect.ownerType === "relic")) {
+        throw new Error(`Effect ${effect.id} can only be owned by a skill, ability, or relic.`);
+      }
+      if (effect.ownerType === "skill" && effect.execution === "child") throw new Error(`Effect ${effect.id} must use root execution.`);
+      if (effect.ownerType !== "skill" && effect.execution !== "child") throw new Error(`Effect ${effect.id} must use child execution.`);
       requireChoice(parameters.main_restriction, ["skill_use", "child_effect_trigger"], `Effect ${effect.id} main_restriction`);
+      if (effect.ownerType !== "skill" && parameters.main_restriction !== "child_effect_trigger") {
+        throw new Error(`Effect ${effect.id} must use child_effect_trigger for an ability or relic.`);
+      }
       requireChoice(parameters.turn_restriction, ["specific_active_turn", "within_active_turns"], `Effect ${effect.id} turn_restriction`);
       const specificTurn = requireFinite(parameters.specific_turn, `Effect ${effect.id} specific_turn`);
       if (parameters.turn_restriction === "specific_active_turn" && (!Number.isInteger(specificTurn) || specificTurn < 1)) throw new Error(`Effect ${effect.id} specific_turn must be a positive integer.`);
@@ -631,6 +641,44 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     if (valueMode === "flat" && !Number.isInteger(amount)) throw new Error(`Effect ${effect.id} flat amount must be an integer.`);
     if (effect.ownerType === "skill") validateChance(parameters.chance, `Effect ${effect.id} chance`);
     if (target === "all_element_friendlies" || target === "all_element_enemies") validateElementIds(parameters.target_element_ids, `Effect ${effect.id} target_element_ids`);
+    return;
+  }
+
+  if (runtimeKey === "effect_removal@1") {
+    if (!['skill', 'ability', 'relic'].includes(effect.ownerType)) {
+      throw new Error(`Effect ${effect.id} can only be owned by a Skill, Ability, or Relic.`);
+    }
+    rejectUnknownKeys(
+      parameters,
+      [
+        "target", "removal_category", "maximum_effects_removed_mode", "maximum_effects_removed",
+        "selection_method", "status_classification", "specific_effect_id", "prevent_reapplication",
+        "duration_type", "duration_value", "duration_clock", "target_element_ids",
+      ],
+      `Effect ${effect.id}`,
+    );
+    requireChoice(parameters.removal_category, ["positive", "negative", "stat_modifiers", "statuses", "shields", "delayed", "reactive", "all_removable"], `Effect ${effect.id} removal_category`);
+    requireChoice(parameters.selection_method, ["oldest", "newest", "strongest", "weakest", "random", "player_selected"], `Effect ${effect.id} selection_method`);
+    const rawLimit = parameters.maximum_effects_removed;
+    const mode = parameters.maximum_effects_removed_mode ?? (rawLimit == null ? "all" : "limited");
+    requireChoice(mode, ["limited", "all"], `Effect ${effect.id} maximum_effects_removed_mode`);
+    if (mode === "limited") {
+      const maximum = requireFinite(rawLimit, `Effect ${effect.id} maximum_effects_removed`);
+      if (!Number.isInteger(maximum) || maximum < 1) throw new Error(`Effect ${effect.id} maximum_effects_removed must be a positive integer.`);
+    } else if (rawLimit != null) {
+      throw new Error(`Effect ${effect.id} cannot set maximum_effects_removed when its mode is all.`);
+    }
+    if (parameters.removal_category === "statuses") {
+      requireChoice(parameters.status_classification ?? "any", ["any", "positive", "negative"], `Effect ${effect.id} status_classification`);
+    } else if (parameters.status_classification !== undefined) {
+      throw new Error(`Effect ${effect.id} status_classification is only valid for Status Effect Removal.`);
+    }
+    if (parameters.specific_effect_id !== undefined && typeof parameters.specific_effect_id !== "string") {
+      throw new Error(`Effect ${effect.id} specific_effect_id must be text.`);
+    }
+    if (parameters.prevent_reapplication !== undefined && typeof parameters.prevent_reapplication !== "boolean") {
+      throw new Error(`Effect ${effect.id} prevent_reapplication must be boolean.`);
+    }
     return;
   }
 

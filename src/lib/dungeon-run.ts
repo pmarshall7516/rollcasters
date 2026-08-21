@@ -4,8 +4,11 @@ import {
   refreshSetupRuntimeEffects,
   resolveTurn,
   startTurn,
+  type CombatModifier,
   type CombatPresentationState,
+  type CombatStatus,
   type CombatState,
+  type RuntimeEffectInstance,
 } from "./game.js";
 import { battlefieldSlotsForCount, enemyEncounterForBattle, opponentsForBattle, parseBattleFormat } from "./dungeons.js";
 import type {
@@ -101,6 +104,7 @@ function createEncounterBattle(
   run: DungeonRunSnapshot,
   persistentHp?: Record<string, number>,
   dungeonSkillUsage: Record<string, number> = {},
+  previousBattle?: CombatState,
 ): CombatState {
   const battle = createInitialCombatState(
     catalog,
@@ -112,7 +116,7 @@ function createEncounterBattle(
     enemyEncounterForBattle(run)?.enemyRollcaster,
   );
   const opponentSlots = battlefieldSlotsForCount(parseBattleFormat(run.battleFormat).opponentActiveCount);
-  return {
+  const encounterBattle: CombatState = {
     ...battle,
     playerUnits: battle.playerUnits.map((unit) => ({
       ...unit,
@@ -134,6 +138,113 @@ function createEncounterBattle(
     skillUsage: { encounter: {}, dungeon: { ...dungeonSkillUsage } },
     rechargeUntilTurn: {},
   };
+  return previousBattle ? carryPlayerStatuses(encounterBattle, previousBattle) : encounterBattle;
+}
+
+/**
+ * Preserve live player Status instances between Dungeon encounters. Statuses
+ * keep their current duration and attached runtime state, while references to
+ * the prior encounter's opponents are intentionally discarded.
+ */
+function carryPlayerStatuses(nextBattle: CombatState, previousBattle: CombatState): CombatState {
+  const nextPlayerKeyByUserCritterId = new Map(
+    nextBattle.playerUnits
+      .filter((unit) => unit.userCritter)
+      .map((unit) => [unit.userCritter!.id, unit.key] as const),
+  );
+  const keyMap = new Map<string, string>();
+  for (const previousUnit of previousBattle.playerUnits) {
+    const userCritterId = previousUnit.userCritter?.id;
+    const nextKey = userCritterId ? nextPlayerKeyByUserCritterId.get(userCritterId) : undefined;
+    if (nextKey) keyMap.set(previousUnit.key, nextKey);
+  }
+
+  const carriedStatusEntries = previousBattle.statuses
+    .filter((status) => (status.duration === null || Number(status.duration) > 0) && keyMap.has(status.holderKey))
+    .map((status) => ({
+      previous: status,
+      current: {
+        ...status,
+        holderKey: keyMap.get(status.holderKey)!,
+        sourceCritterKey: status.sourceCritterKey ? keyMap.get(status.sourceCritterKey) : undefined,
+        effects: structuredClone(status.effects),
+      },
+    }));
+  if (carriedStatusEntries.length === 0) return nextBattle;
+
+  const statusInstanceIdMap = new Map(
+    carriedStatusEntries.map(({ previous, current }) => [previous.instanceId, current.instanceId] as const),
+  );
+  const carriedStatusIds = new Set(carriedStatusEntries.map(({ current }) => current.instanceId));
+  const mapSourceKey = (key: string | undefined) => key ? keyMap.get(key) : undefined;
+
+  const carriedModifiers: CombatModifier[] = previousBattle.modifiers.flatMap((modifier) => {
+    if (!modifier.statusInstanceId || !statusInstanceIdMap.has(modifier.statusInstanceId)) return [];
+      const holderKey = keyMap.get(modifier.holderKey);
+      const statusInstanceId = modifier.statusInstanceId ? statusInstanceIdMap.get(modifier.statusInstanceId) : undefined;
+      return holderKey && statusInstanceId
+        ? [{
+            ...modifier,
+            holderKey,
+            sourceCritterKey: mapSourceKey(modifier.sourceCritterKey),
+            statusInstanceId,
+          }]
+        : [];
+  });
+
+  const carriedRuntimeCandidates = previousBattle.runtimeEffects.filter((instance) => {
+    if (instance.sourceOwnerType !== "status" || !instance.sourceCritterKey) return false;
+    const status = previousBattle.statuses.find((candidate) => (
+      candidate.statusId === instance.sourceOwnerId && candidate.holderKey === instance.sourceCritterKey
+    ));
+    if (!status || !carriedStatusIds.has(statusInstanceIdMap.get(status.instanceId) ?? "")) return false;
+    return !instance.targetCritterKey || keyMap.has(instance.targetCritterKey);
+  });
+  let effectSequence = nextBattle.effectSequence;
+  const runtimeIdMap = new Map<string, string>();
+  for (const instance of carriedRuntimeCandidates) {
+    effectSequence += 1;
+    runtimeIdMap.set(instance.instanceId, `runtime:${effectSequence}:carry:${instance.sourceEffectId}`);
+  }
+  const carriedRuntimeEffects: RuntimeEffectInstance[] = carriedRuntimeCandidates.map((instance) => {
+    const effect = nextBattle.runEffects.status[instance.sourceOwnerId]?.find((candidate) => candidate.id === instance.sourceEffectId);
+    const activationScope = String(effect?.parameters.activation_limit_scope ?? "battle");
+    const resetActivation = activationScope === "battle" || activationScope === "per_target_battle";
+    const sourceCritterKey = mapSourceKey(instance.sourceCritterKey);
+    const targetCritterKey = mapSourceKey(instance.targetCritterKey);
+    return {
+      ...instance,
+      instanceId: runtimeIdMap.get(instance.instanceId)!,
+      sourceCritterKey,
+      targetCritterKey,
+      appliedAtSequence: Number(runtimeIdMap.get(instance.instanceId)?.split(":")[1] ?? effectSequence),
+      activationCount: resetActivation ? 0 : instance.activationCount,
+      conditionalParentInstanceId: instance.conditionalParentInstanceId
+        ? runtimeIdMap.get(instance.conditionalParentInstanceId)
+        : undefined,
+      state: {
+        ...structuredClone(instance.state),
+        ...(resetActivation ? { activationCountsByTarget: {} } : {}),
+        cooldownRemaining: 0,
+      },
+    };
+  });
+
+  return recomputeCombatStats({
+    ...nextBattle,
+    statuses: carriedStatusEntries.map(({ current }) => current as CombatStatus),
+    modifiers: [
+      ...nextBattle.modifiers,
+      ...carriedModifiers.map((modifier) => ({
+        ...modifier,
+        conditionalParentInstanceId: modifier.conditionalParentInstanceId
+          ? runtimeIdMap.get(modifier.conditionalParentInstanceId)
+          : undefined,
+      })),
+    ],
+    runtimeEffects: [...nextBattle.runtimeEffects, ...carriedRuntimeEffects],
+    effectSequence,
+  });
 }
 
 function leadRequirement(battle: CombatState, run: DungeonRunSnapshot): number {
@@ -734,6 +845,7 @@ export function applyDungeonBattleResult(
     result.run,
     persistentHp,
     state.battle.skillUsage?.dungeon ?? {},
+    state.battle,
   );
   const requiredLeadCount = leadRequirement(battle, result.run);
   const healthyCount = battle.playerUnits.filter((unit) => unit.hp > 0).length;

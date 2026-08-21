@@ -33,6 +33,7 @@ export const TRACKED_CHALLENGE_TYPES = new Set([
   "defeat_rollcaster_type",
   "afflict_status",
   "stun_activation",
+  "shields_shattered",
 ]);
 
 export function safeBigInt(value: string | number | bigint | null | undefined): bigint {
@@ -400,13 +401,24 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
       const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
       return `Stun ${target} ${goal} time${goal === 1 ? "" : "s"}.`;
     }
+    case "shields_shattered": {
+      const side = parameters.shield_side === "enemies" ? "Enemy Shields" : parameters.shield_side === "friendlies" ? "Friendly Shields" : "Shields";
+      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
+      return `Shatter ${goal} ${side}.`;
+    }
     case "level_up_critter": {
       const id = String(challenge.target_id ?? parameters.critter_id ?? "");
       return `Unlock level ${challenge.required_level ?? parameters.required_level ?? 0} for ${collectibleName(data, "critter", id)} (${id || "—"})`;
     }
     case "knock_out_critters": return `Knock out Critters (${targetNames(data, challenge)})`;
-    case "deal_damage": return `Damage Critters (${targetNames(data, challenge)})`;
-    case "take_damage": return `Receive Damage (${targetNames(data, challenge)})`;
+    case "deal_damage": {
+      const damageMode = parameters.damage_mode === "hp_only" ? "HP damage" : parameters.damage_mode === "shield_only" ? "Shield damage" : "damage";
+      return `Deal ${damageMode} to ${targetNames(data, challenge)}`;
+    }
+    case "take_damage": {
+      const damageMode = parameters.damage_mode === "hp_only" ? "HP damage" : parameters.damage_mode === "shield_only" ? "Shield damage" : "damage";
+      return `Take ${damageMode} as ${targetNames(data, challenge)}`;
+    }
     case "use_skill": {
       const skillType = parameters.skill_type === "attack" ? "Attack Skills" : parameters.skill_type === "support" ? "Support Skills" : "Skill";
       return `Use ${skillType} (${targetNames(data, challenge)})`;

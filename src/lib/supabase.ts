@@ -103,7 +103,7 @@ const LIVE_CATALOG_COLUMNS: Record<string, string> = {
   starter_rollcaster_options: "rollcaster_id,sort_order,is_active",
   starter_options: "critter_id,sort_order,is_active",
   game_assets: "id,bucket_id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,metadata,is_active,sort_order,updated_at",
-  statuses: "id,name,description,asset_path,sort_order,is_active,is_archived,version",
+  statuses: "id,name,description,classification,asset_path,sort_order,is_active,is_archived,version",
 };
 
 async function selectAll<T>(table: string, order = "sort_order"): Promise<T[]> {

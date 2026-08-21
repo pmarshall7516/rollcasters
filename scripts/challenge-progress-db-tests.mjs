@@ -95,7 +95,61 @@ try {
   check(state?.raw_progress === "7" && state.eligible === true && state.complete === false && state.trackable === true,
     "A tracked challenge with no prior progress must project zero before the event and remain eligible after it.");
 
-  console.log(`Challenge progress regression passed for ${challengeId}; all fixture changes will be rolled back.`);
+  const progressValue = async () => (await client.query(
+    "select coalesce(progress,0)::text as progress from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2",
+    [userId, challengeId],
+  )).rows[0]?.progress ?? "0";
+  const setDamageMode = async (mode) => {
+    await client.query(
+      "update public.collectible_unlock_challenges set parameters=jsonb_set(parameters,'{damage_mode}',to_jsonb($1::text),true) where id=$2",
+      [mode, challengeId],
+    );
+  };
+  const submit = async (eventKey, eventType, sourceId, targetId, amount, payload) => client.query(
+    "select public.submit_collectible_combat_events($1,1,$2::jsonb) as snapshot",
+    [runId, JSON.stringify([{ event_key: eventKey, event_type: eventType, source_critter_id: sourceId, target_critter_id: targetId, skill_id: null, amount, payload }])],
+  );
+
+  await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, challengeId]);
+  await setDamageMode("hp_only");
+  await submit("take-shield-hp-only", "hp_damage_taken", opponentId, targetCritterId, 7, { hp_damage: 0, shield_damage: 7 });
+  check(await progressValue() === "0", "HP-only Take Damage must ignore Shield damage.");
+
+  await setDamageMode("shield_only");
+  await submit("take-shield-shield-only", "hp_damage_taken", opponentId, targetCritterId, 7, { hp_damage: 0, shield_damage: 7 });
+  check(await progressValue() === "7", "Shield-only Take Damage must count actual Shield damage.");
+
+  await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, challengeId]);
+  await setDamageMode("hp_only");
+  await submit("take-hp-hp-only", "hp_damage_taken", opponentId, targetCritterId, 7, { hp_damage: 7, shield_damage: 0 });
+  check(await progressValue() === "7", "HP-only Take Damage must count actual HP damage.");
+
+  await client.query("savepoint malformed_damage");
+  let malformedRejected = false;
+  try {
+    await submit("take-malformed-components", "hp_damage_taken", opponentId, targetCritterId, 7, { hp_damage: 3, shield_damage: 3 });
+  } catch {
+    malformedRejected = true;
+    await client.query("rollback to savepoint malformed_damage");
+  }
+  check(malformedRejected, "Damage receipts must reject component totals that do not equal amount.");
+
+  await client.query(
+    "update public.collectible_unlock_challenges set challenge_type='deal_damage', parameters=$1::jsonb where id=$2",
+    [JSON.stringify({ source_critter_ids: [], source_element_ids: [], source_critter_tag_ids: [], source_skill_tag_ids: [], target_critter_ids: [], target_element_ids: [], target_critter_tag_ids: [], damage_mode: "shield_only", required_amount: 10, tracking_scope: "lifetime", tracking_required: true }), challengeId],
+  );
+  await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, challengeId]);
+  await submit("deal-shield-shield-only", "hp_damage_dealt", targetCritterId, opponentId, 6, { hp_damage: 0, shield_damage: 6 });
+  check(await progressValue() === "6", "Shield-only Deal Damage must count actual enemy Shield damage.");
+
+  await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, challengeId]);
+  await client.query("update public.collectible_unlock_challenges set parameters=jsonb_set(parameters,'{damage_mode}',to_jsonb('hp_only'::text),true) where id=$1", [challengeId]);
+  await submit("deal-hp-hp-only", "hp_damage_dealt", targetCritterId, opponentId, 6, { hp_damage: 6, shield_damage: 0 });
+  check(await progressValue() === "6", "HP-only Deal Damage must count actual enemy HP damage.");
+  await submit("deal-hp-hp-only", "hp_damage_dealt", targetCritterId, opponentId, 6, { hp_damage: 6, shield_damage: 0 });
+  check(await progressValue() === "6", "Duplicate damage event receipts must not double-count progress.");
+
+  console.log(`Damage Mode challenge progress regression passed for ${challengeId}; all fixture changes will be rolled back.`);
 } finally {
   if (began) await client.query("rollback").catch(() => undefined);
   await client.end().catch(() => undefined);

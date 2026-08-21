@@ -288,6 +288,11 @@ export type CombatState = {
   actedSkillKeys?: string[];
   /** Critters that have been flinched and will lose their pending Skill action. */
   stunnedSkillKeys?: string[];
+  /** Set only while resolving a Skill that attempted a duplicate Status application. */
+  statusApplicationFailure?: {
+    statusId: string;
+    holderKey: string;
+  };
 };
 
 export function effectActivationKey(
@@ -1227,7 +1232,7 @@ export function combatEffectSummaries(state: CombatState, unitKey: string): Comb
         name: status.name,
         description: status.description,
         amountLabel: null,
-        classification: statusClassification(instance.effects),
+        classification: statusClassification(status, instance.effects),
         sourceOwnerType: instance.sourceOwnerType,
         sourceOwnerId: instance.sourceOwnerId,
         duration: instance.duration,
@@ -1324,7 +1329,8 @@ function signedAmount(value: number): string {
   return value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : "0";
 }
 
-function statusClassification(effects: ResolvedEffectRef[]): "positive" | "negative" | "mixed" {
+function statusClassification(status: Pick<Status, "classification"> | undefined, effects: ResolvedEffectRef[]): "positive" | "negative" | "mixed" {
+  if (status?.classification && ["positive", "negative", "mixed"].includes(status.classification)) return status.classification;
   const classifications = new Set(effects.map((effect) => effect.classification).filter(Boolean));
   return classifications.size === 1 ? [...classifications][0]! : "mixed";
 }
@@ -1439,7 +1445,16 @@ export function startTurn(state: CombatState): CombatState {
       ...turnState.log,
     ],
   };
-  let withDice = resolveTimedEffects(rolledState, "start_of_turn");
+  // Turn-start subscriptions resolve after Mana dice are visible but before
+  // Status-owned start-of-turn damage or countdowns. A single event is emitted
+  // for each side; owner-bound Relics still use their own source Critter as
+  // the watched unit inside resolveReactiveEffects.
+  let withDice = rolledState;
+  for (const sideUnits of [playerUnits, opponentUnits]) {
+    const sideAnchor = sideUnits.find((unit) => unit.active && unit.hp > 0);
+    if (sideAnchor) withDice = resolveReactiveEffects(withDice, "turn_start", sideAnchor, sideAnchor, 0, 0, 0, undefined, undefined, undefined, true);
+  }
+  withDice = resolveTimedEffects(withDice, "start_of_turn");
   for (const unit of playerUnits.filter((candidate) => candidate.active && candidate.hp > 0)) {
     withDice = appendProgressEvent(withDice, {
       event_type: "dice_resolved",
@@ -1497,6 +1512,7 @@ export function resolveCombatActions(
     presentationEvents: [],
     effectActivations: [],
     effectActivationKeys: [],
+    statusApplicationFailure: undefined,
   };
 
   for (const action of normalizedPlayer) {
@@ -2229,6 +2245,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
   if (action.type === "skill" && action.skillId) {
     const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
     if (!skill) return state;
+    const skillStartState = state;
     const failedTurnRestriction = (state.runEffects.skill[skill.id] ?? [])
       .find((effect) => effect.runtimeKind === "turn_restriction"
         && effect.execution !== "child"
@@ -2280,6 +2297,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
           .map((effect) => effect.id)
         : [],
     );
+    const stunAggregation: StunAggregationContext = { contributions: [] };
     let preDamageState = actionState;
     for (const effect of effects.filter((candidate) => preDamageEffectIds.has(candidate.id))) {
       preDamageState = resolveEffect(preDamageState, effect, {
@@ -2288,6 +2306,8 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         sourceCritterKey: actor.key,
         skillTargetKeys: targets.map((target) => target.key),
         attackerKey: actor.key,
+        failOnDuplicateStatus: true,
+        stunAggregation,
         ...actionContext,
       });
     }
@@ -2347,7 +2367,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
             },
           );
         }
-        let progress = appendDamageProgressEvents(withPresentation, actor, target, actualDamage, afterHp <= 0, skill);
+        let progress = appendDamageProgressEvents(withPresentation, actor, target, damage.hpDamage, damage.shieldDamage, afterHp <= 0, skill);
         if (damage.blockPrevented > 0 && target.side === "player") {
           progress = appendProgressEvent(progress, {
             event_type: "block_completed",
@@ -2361,9 +2381,9 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         // The incoming damage must be visible before any equipment/status
         // reaction it causes. The reaction is still resolved synchronously,
         // so it is available before the next queued action is processed.
-        const reacted = resolveReactiveEffects(progress, "owner_attacked", actor, target, damage.finalDamage, actualDamage, damage.shieldDamage);
+        const reacted = resolveReactiveEffects(progress, "owner_attacked", actor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true);
         return afterHp <= 0
-          ? resolveReactiveEffects(reacted, "owner_defeats_enemy", actor, target, damage.finalDamage, actualDamage, damage.shieldDamage)
+          ? resolveReactiveEffects(reacted, "owner_defeats_enemy", actor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true)
           : reacted;
       }
       return { ...current, log: [`${combatantName(actor)} used ${skill.name} on ${combatantName(target, false)}.`, ...current.log] };
@@ -2396,6 +2416,8 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         attackerKey: actor.key,
         swapTargetKey: action.swapTargetKey,
         damageDone,
+        failOnDuplicateStatus: true,
+        stunAggregation,
         ...actionContext,
       });
     }
@@ -2407,9 +2429,38 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         skillTargetKeys: targets.map((target) => target.key),
         attackerKey: actor.key,
         damageDone,
+        failOnDuplicateStatus: true,
+        stunAggregation,
         ...actionContext,
       });
     }
+    const duplicateStatusFailure = (failedState: CombatState): CombatState | null => {
+      const failure = failedState.statusApplicationFailure;
+      if (!failure) return null;
+      const failedStatus = failedState.statusRegistry[failure.statusId];
+      const failedTarget = findUnit(skillStartState, failure.holderKey);
+      const message = failedTarget && failedStatus
+        ? `${combatantName(failedTarget)} is already afflicted with ${failedStatus.name}; ${skill.name} failed.`
+        : `${skill.name} failed because it could not apply a duplicate Status.`;
+      return appendPresentationEvent(
+        {
+          ...skillStartState,
+          statusApplicationFailure: undefined,
+          log: [message, ...skillStartState.log],
+        },
+        {
+          kind: "other",
+          effectPolarity: "negative",
+          message,
+          actorKey: actor.key,
+          targetKeys: failedTarget ? [failedTarget.key] : targets.map((target) => target.key),
+          skillId: skill.id,
+          hpChanges: [],
+        },
+      );
+    };
+    const failedBeforeSkillUseReactions = duplicateStatusFailure(next);
+    if (failedBeforeSkillUseReactions) return failedBeforeSkillUseReactions;
     // Resolve Skill-use subscriptions after the Skill itself. A Quick
     // Link-style stat change therefore cannot modify the Skill that caused it
     // and is ready before the next queued action begins.
@@ -2423,7 +2474,12 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       0,
       skill.skill_type,
       targets.map((target) => target.key),
+      stunAggregation,
+      true,
     );
+    next = resolveCombinedStunChance(next, stunAggregation);
+    const failedAfterSkillUseReactions = duplicateStatusFailure(next);
+    if (failedAfterSkillUseReactions) return failedAfterSkillUseReactions;
     return recordSkillUseAndRestrictions(expireCurrentActionEffects(next, actor.key), actor.key, skill.id, effects);
   }
 
@@ -2606,6 +2662,20 @@ type RuntimeContext = {
   damageSource?: "attack" | "skill" | "status" | "retaliation" | "direct_damage";
   conditionalParentInstanceId?: string;
   swapTargetKey?: string;
+  failOnDuplicateStatus?: boolean;
+  stunAggregation?: StunAggregationContext;
+  stunChanceMultiplier?: number;
+};
+
+type StunChanceContribution = {
+  effect: ResolvedEffectRef;
+  context: RuntimeContext;
+  targetKey: string;
+  chance: number;
+};
+
+type StunAggregationContext = {
+  contributions: StunChanceContribution[];
 };
 
 function effectTargets(state: CombatState, target: string, context: RuntimeContext): CombatUnit[] {
@@ -3076,6 +3146,16 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       : [];
   if (hasTarget && !targets.length) return state;
   let next = state;
+  if (effect.runtimeKind === "stun_chance" && context.stunAggregation) {
+    const multiplier = context.stunChanceMultiplier ?? 1;
+    const chance = Math.max(0, Number(effect.parameters.chance ?? 0) * multiplier);
+    if (chance > 0) {
+      for (const target of targets) {
+        context.stunAggregation.contributions.push({ effect, context, targetKey: target.key, chance });
+      }
+    }
+    return next;
+  }
   const chanceParameter = effect.runtimeKind === "resource_gain_loss" || effect.runtimeKind === "delayed_effect" || effect.runtimeKind === "direct_health_modifier"
     ? "activation_chance"
     : "chance";
@@ -3146,7 +3226,10 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     return { ...next, stunnedSkillKeys: [...stunnedSkillKeys] };
   }
   if (effect.runtimeKind === "turn_restriction") {
-    if (!context.sourceCritterKey || !turnRestrictionMatches(next, context.sourceCritterKey, effect)) return next;
+    const restrictionActorKey = effect.ownerType === "skill"
+      ? context.sourceCritterKey
+      : context.attackerKey ?? context.sourceCritterKey;
+    if (!restrictionActorKey || !turnRestrictionMatches(next, restrictionActorKey, effect)) return next;
     return resolveChildEffects(next, effect, targetContext, effect.parameters.child_effect_ids);
   }
   if (effect.runtimeKind === "critter_revival") {
@@ -3255,6 +3338,10 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
             change.before,
             change.before,
             0,
+            undefined,
+            undefined,
+            undefined,
+            context.failOnDuplicateStatus,
           );
         }
       }
@@ -3439,10 +3526,12 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     }
     for (const [index, instance] of next.statuses.entries()) {
       if (!targetKeys.has(instance.holderKey)) continue;
-      const classification = statusClassification(instance.effects);
+      const status = next.statusRegistry[instance.statusId];
+      const classification = statusClassification(status, instance.effects);
+      const statusFilter = String(effect.parameters.status_classification ?? "any");
       const matchesStatusCategory = category === "statuses"
-        || category === "all_removable"
-        || category === classification;
+        ? statusFilter === "any" || statusFilter === classification
+        : category === "all_removable" || category === classification;
       if (!matchesStatusCategory) continue;
       candidates.push({
         kind: "status",
@@ -3465,7 +3554,8 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       }
     }
     const rawLimit = effect.parameters.maximum_effects_removed;
-    const limit = rawLimit === null || rawLimit === undefined ? ordered.length : Math.max(0, Number(rawLimit));
+    const maximumMode = String(effect.parameters.maximum_effects_removed_mode ?? (rawLimit === null || rawLimit === undefined ? "all" : "limited"));
+    const limit = maximumMode === "all" ? ordered.length : rawLimit === null || rawLimit === undefined ? ordered.length : Math.max(0, Number(rawLimit));
     const remove = new Set(ordered.slice(0, limit).map((candidate) => `${candidate.kind}:${candidate.id}`));
     const removedStatusIds = new Set(
       next.statuses
@@ -3607,6 +3697,8 @@ function resolveReactiveEffects(
   shieldDamage: number,
   eventSkillType?: Skill["skill_type"],
   eventTargetKeys?: string[],
+  stunAggregation?: StunAggregationContext,
+  failOnDuplicateStatus = false,
 ): CombatState {
   let next = state;
   for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "reactive_trigger" || candidate.runtimeKind === "retaliation" || candidate.runtimeKind === "direct_health_modifier")) {
@@ -3619,7 +3711,12 @@ function resolveReactiveEffects(
     const trigger = instance.runtimeKind === "retaliation" ? String(p.trigger_condition ?? "hit") : String(p.trigger_event ?? "owner_hp_damaged");
     const isDefeatTrigger = trigger === "owner_defeats_enemy";
     const isSkillUseEvent = eventSkillType !== undefined && ["owner_uses_skill", "owner_uses_attack_skill", "owner_uses_support_skill"].includes(eventType);
-    const watchedKey = isAttackRetaliation || isDefeatTrigger || isSkillUseEvent ? attacker.key : defender.key;
+    const isTurnStartEvent = eventType === "turn_start";
+    const watchedKey = isTurnStartEvent && instance.sourceCritterKey
+      ? instance.sourceCritterKey
+      : isAttackRetaliation || isDefeatTrigger || isSkillUseEvent
+        ? attacker.key
+        : defender.key;
     const watchedUnit = findUnit(next, watchedKey);
     if (!watchedUnit || (instance.runtimeKind === "reactive_trigger" && !reactiveTriggerSourceMatches(next, instance, String(p.trigger_source ?? "self"), watchedUnit))) continue;
     if (isDefeatTrigger) {
@@ -3670,7 +3767,63 @@ function resolveReactiveEffects(
     if (p.requires_hp_damage === true && hpDamage <= 0) continue;
     if (p.requires_shield_damage === true && shieldDamage <= 0) continue;
     if (Number(p.minimum_damage ?? 0) > hpDamage + shieldDamage) continue;
-    const chance = rollChance(next, p.activation_chance === undefined || p.activation_chance === null ? 1 : Number(p.activation_chance));
+    const activationChance = p.activation_chance === undefined || p.activation_chance === null ? 1 : Number(p.activation_chance);
+    const childIds = p.child_effect_ids;
+    const stunChildIds = isSkillUseEvent && stunAggregation
+      ? childEffectIdsContainingRuntime(next, parent, childIds, "stun_chance")
+      : [];
+    const otherChildIds = stunChildIds.length > 0 && Array.isArray(childIds)
+      ? childIds.filter((id): id is string => typeof id === "string" && !stunChildIds.includes(id))
+      : [];
+    if (stunChildIds.length > 0) {
+      // A Reactive Trigger's activation chance is the contribution supplied by
+      // the parent. Stun children are collected so all qualifying sources can
+      // be added together and resolved by one target roll at the end of the
+      // Skill action.
+      if (activationChance > 0) {
+        next = recordReactiveActivation(next, instance, activationKey, p);
+        next = resolveChildEffects(next, parent, {
+          sourceOwnerType: instance.sourceOwnerType,
+          sourceOwnerId: instance.sourceOwnerId,
+          sourceSide: instance.sourceSide,
+          sourceCritterKey: instance.sourceCritterKey,
+          skillTargetKeys: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys : [defender.key],
+          attackerKey: attacker.key,
+          defenderKey: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys[0] : defender.key,
+          damageAttempted: attempted,
+          hpDamage,
+          shieldDamage,
+          eventType,
+          resolutionDepth: 1,
+          stunAggregation,
+          stunChanceMultiplier: activationChance,
+          failOnDuplicateStatus,
+        }, stunChildIds);
+      }
+      if (otherChildIds.length > 0) {
+        const chance = rollChance(next, activationChance);
+        next = chance.state;
+        if (chance.activated) {
+          next = resolveChildEffects(next, parent, {
+            sourceOwnerType: instance.sourceOwnerType,
+            sourceOwnerId: instance.sourceOwnerId,
+            sourceSide: instance.sourceSide,
+            sourceCritterKey: instance.sourceCritterKey,
+            skillTargetKeys: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys : [defender.key],
+            attackerKey: attacker.key,
+            defenderKey: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys[0] : defender.key,
+            damageAttempted: attempted,
+            hpDamage,
+            shieldDamage,
+            eventType,
+            resolutionDepth: 1,
+            failOnDuplicateStatus,
+          }, otherChildIds);
+        }
+      }
+      continue;
+    }
+    const chance = rollChance(next, activationChance);
     next = chance.state;
     if (!chance.activated) continue;
     const activationCounts = {
@@ -3706,13 +3859,13 @@ function resolveReactiveEffects(
         eventType,
         resolutionDepth: 1,
         activationAlreadyRolled: true,
+        failOnDuplicateStatus,
       });
       continue;
     }
     const targetKeys = instance.runtimeKind === "retaliation"
       ? [attacker.key]
       : isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys : [defender.key];
-    const childIds = p.child_effect_ids;
     next = resolveChildEffects(next, parent, {
       sourceOwnerType: instance.sourceOwnerType,
       sourceOwnerId: instance.sourceOwnerId,
@@ -3726,9 +3879,114 @@ function resolveReactiveEffects(
       shieldDamage,
       eventType,
       resolutionDepth: 1,
+      failOnDuplicateStatus,
     }, childIds);
   }
   return next;
+}
+
+function childEffectIdsContainingRuntime(
+  state: CombatState,
+  parent: ResolvedEffectRef,
+  ids: unknown,
+  runtimeKind: string,
+): string[] {
+  const childIds = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+  return childIds.filter((childId) => effectGraphContainsRuntime(state, parent, childId, runtimeKind));
+}
+
+function effectGraphContainsRuntime(
+  state: CombatState,
+  parent: ResolvedEffectRef,
+  effectId: string,
+  runtimeKind: string,
+  visited = new Set<string>(),
+): boolean {
+  if (visited.has(effectId)) return false;
+  visited.add(effectId);
+  const child = effectForReference(state, parent.ownerType, parent.ownerId, effectId);
+  if (!child) return false;
+  if (child.runtimeKind === runtimeKind) return true;
+  for (const key of ["child_effect_ids", "true_effect_ids", "false_effect_ids", "output_effect_ids", "overheal_effect_ids"]) {
+    const nested = child.parameters[key];
+    const nestedIds = Array.isArray(nested) ? nested.filter((id): id is string => typeof id === "string") : [];
+    if (nestedIds.some((nestedId) => effectGraphContainsRuntime(state, parent, nestedId, runtimeKind, visited))) return true;
+  }
+  return false;
+}
+
+function recordReactiveActivation(
+  state: CombatState,
+  instance: RuntimeEffectInstance,
+  activationKey: string,
+  parameters: Record<string, unknown>,
+): CombatState {
+  const activationCounts = { ...((instance.state.activationCountsByTarget ?? {}) as Record<string, number>) };
+  activationCounts[activationKey] = Number(activationCounts[activationKey] ?? 0) + 1;
+  return {
+    ...state,
+    runtimeEffects: state.runtimeEffects.map((candidate) => candidate.instanceId === instance.instanceId
+      ? {
+          ...candidate,
+          activationCount: candidate.activationCount + 1,
+          state: {
+            ...candidate.state,
+            activationCountsByTarget: activationCounts,
+            cooldownRemaining: Math.max(0, Number(parameters.cooldown_turns ?? 0)),
+          },
+        }
+      : candidate),
+  };
+}
+
+function resolveCombinedStunChance(state: CombatState, aggregation: StunAggregationContext): CombatState {
+  if (aggregation.contributions.length === 0) return state;
+  const byTarget = new Map<string, StunChanceContribution[]>();
+  for (const contribution of aggregation.contributions) {
+    const existing = byTarget.get(contribution.targetKey) ?? [];
+    existing.push(contribution);
+    byTarget.set(contribution.targetKey, existing);
+  }
+  let next = state;
+  const stunnedSkillKeys = new Set(next.stunnedSkillKeys ?? []);
+  const actedSkillKeys = new Set(next.actedSkillKeys ?? []);
+  for (const [targetKey, contributions] of byTarget) {
+    const target = findUnit(next, targetKey);
+    if (!target || target.hp <= 0 || actedSkillKeys.has(targetKey) || stunnedSkillKeys.has(targetKey)) continue;
+    const combinedChance = Math.min(1, contributions.reduce((total, contribution) => total + contribution.chance, 0));
+    const roll = rollChance(next, combinedChance);
+    next = roll.state;
+    if (!roll.activated) continue;
+    for (const contribution of contributions) {
+      next = recordEffectActivation(next, contribution.effect, contribution.context.sourceCritterKey);
+    }
+    stunnedSkillKeys.add(targetKey);
+    const first = contributions[0];
+    const source = first.context.sourceCritterKey ? findUnit(next, first.context.sourceCritterKey) : undefined;
+    const sourceSkill = first.context.sourceOwnerType === "skill"
+      ? next.catalog.skills.find((skill) => skill.id === first.context.sourceOwnerId)
+      : undefined;
+    next = appendProgressEvent(next, {
+      event_type: "stun_activated",
+      source_critter_id: source?.critter.id ?? null,
+      target_critter_id: target.critter.id,
+      skill_id: first.context.sourceOwnerType === "skill" ? first.context.sourceOwnerId : null,
+      amount: 1,
+      payload: {
+        stun_activated: true,
+        combined_chance: combinedChance,
+        contributing_effect_ids: contributions.map((contribution) => contribution.effect.id),
+        source_side: source?.side ?? first.context.sourceSide ?? null,
+        target_side: target.side,
+        source_element_ids: source ? critterElementIds(source.critter) : [],
+        target_element_ids: critterElementIds(target.critter),
+        source_critter_tag_ids: source ? critterTagIds(source.critter) : [],
+        target_critter_tag_ids: critterTagIds(target.critter),
+        skill_tag_ids: sourceSkill?.tag_ids ?? [],
+      },
+    });
+  }
+  return { ...next, stunnedSkillKeys: [...stunnedSkillKeys] };
 }
 
 function reactiveTriggerSourceMatches(
@@ -3762,44 +4020,36 @@ function applyStatus(
 ): CombatState {
   const status = state.statusRegistry[statusId];
   if (!status) throw new Error(`Unknown status: ${statusId}`);
-  const holderStatusIndex = state.statuses.findIndex((item) => item.holderKey === holderKey);
-  // Status exclusivity is evaluated at the instant the application resolves.
-  // A cure earlier in the same action sequence therefore opens the slot for a
-  // later application, while an existing different Status blocks it.
-  if (holderStatusIndex >= 0 && state.statuses[holderStatusIndex].statusId !== statusId) return state;
-  const existingIndex = holderStatusIndex;
-  const adjustedDuration = existingIndex < 0 && duration !== null
+  const existingIndex = state.statuses.findIndex((item) => item.holderKey === holderKey && item.statusId === statusId);
+  if (existingIndex >= 0) {
+    // Statuses do not stack or refresh. A duplicate application is a failed
+    // Status attempt; Skill-owned attempts are surfaced to the enclosing Skill
+    // resolver so the entire Skill can be rolled back atomically.
+    return context.failOnDuplicateStatus
+      ? { ...state, statusApplicationFailure: { statusId, holderKey } }
+      : state;
+  }
+  const adjustedDuration = duration !== null
     ? duration + statusDurationBonus(state, statusId, holderKey)
     : duration;
   let statuses = [...state.statuses];
-  const instanceId = existingIndex >= 0 ? statuses[existingIndex].instanceId : `${statusId}:${holderKey}`;
-  if (existingIndex >= 0) {
-    statuses[existingIndex] = {
-      ...statuses[existingIndex],
-      duration: adjustedDuration,
-      turnsElapsed: 0,
-      sourceOwnerType: context.sourceOwnerType,
-      sourceOwnerId: context.sourceOwnerId,
-      sourceCritterKey: context.sourceCritterKey,
-    };
-  } else {
-    statuses.push({
-      instanceId: `${statusId}:${holderKey}`,
-      statusId,
-      holderKey,
-      duration: adjustedDuration,
-      turnsElapsed: 0,
-      sourceOwnerType: context.sourceOwnerType,
-      sourceOwnerId: context.sourceOwnerId,
-      sourceCritterKey: context.sourceCritterKey,
-      effects: state.runEffects.status[statusId] ?? [],
-    });
-  }
+  const instanceId = `${statusId}:${holderKey}`;
+  statuses.push({
+    instanceId,
+    statusId,
+    holderKey,
+    duration: adjustedDuration,
+    turnsElapsed: 0,
+    sourceOwnerType: context.sourceOwnerType,
+    sourceOwnerId: context.sourceOwnerId,
+    sourceCritterKey: context.sourceCritterKey,
+    effects: state.runEffects.status[statusId] ?? [],
+  });
   const holder = findUnit(state, holderKey);
   const source = context.sourceCritterKey ? findUnit(state, context.sourceCritterKey) : undefined;
   const sourceSide = source?.side ?? context.sourceSide ?? (context.sourceOwnerType === "ability" ? "player" : "opponent");
   const sourceName = effectSourceName(state, context.sourceOwnerType, context.sourceOwnerId, status.name);
-  const classification = statusClassification(state.runEffects.status[statusId] ?? []);
+  const classification = statusClassification(status, state.runEffects.status[statusId] ?? []);
   const holderName = holder ? combatantName(holder) : holderKey;
   const message = classification === "negative"
     ? `${holderName} was afflicted with ${status.name} from ${sourceName}.`
@@ -3831,7 +4081,7 @@ function applyStatus(
       amount: 1,
       payload: {
         fresh: true,
-        status_ids: [statusId],
+      status_ids: [statusId],
         target_side: holder.side,
         source_side: sourceSide,
         source_critter_tag_ids: source ? critterTagIds(source.critter) : [],
@@ -3882,7 +4132,7 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
       if (holder?.active && holder.hp > 0 && status) {
         const remaining = Math.max(0, Number(instance.duration));
         const message = `${combatantName(holder)} is affected by ${status.name}; ${remaining} turn${remaining === 1 ? "" : "s"} remain.`;
-        const classification = statusClassification(instance.effects);
+        const classification = statusClassification(status, instance.effects);
         next = appendPresentationEvent(
           { ...next, log: [message, ...next.log] },
           {
@@ -3929,7 +4179,7 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
           },
         );
         const source = instance.sourceCritterKey ? findUnit(next, instance.sourceCritterKey) : undefined;
-        if (source) next = appendDamageProgressEvents(next, source, target, actualDamage, target.hp - actualDamage <= 0);
+        if (source) next = appendDamageProgressEvents(next, source, target, actualDamage, 0, target.hp - actualDamage <= 0);
       }
     }
     const turnsElapsed = Number(instance.turnsElapsed ?? 0);
@@ -4312,12 +4562,33 @@ function appendDamageProgressEvents(
   state: CombatState,
   source: CombatUnit,
   target: CombatUnit,
-  actualDamage: number,
+  hpDamage: number,
+  shieldDamage: number,
   knockedOut: boolean,
   skill?: Skill,
 ): CombatState {
+  const actualDamage = Math.max(0, hpDamage) + Math.max(0, shieldDamage);
   if (actualDamage <= 0 || source.side === target.side) return state;
   let next = state;
+  const shieldShattered = target.shield > 0 && shieldDamage >= target.shield;
+  if (shieldShattered) {
+    next = appendProgressEvent(next, {
+      event_type: "shield_shattered",
+      source_critter_id: source.critter.id,
+      target_critter_id: target.critter.id,
+      skill_id: skill?.id ?? null,
+      amount: 1,
+      payload: {
+        shield_shattered: true,
+        target_side: target.side,
+        source_element_ids: critterElementIds(source.critter),
+        target_element_ids: critterElementIds(target.critter),
+        source_critter_tag_ids: critterTagIds(source.critter),
+        target_critter_tag_ids: critterTagIds(target.critter),
+        skill_tag_ids: skill?.tag_ids ?? [],
+      },
+    });
+  }
   if (source.side === "player" && target.side === "opponent") {
     next = appendProgressEvent(next, {
       event_type: "hp_damage_dealt",
@@ -4325,7 +4596,7 @@ function appendDamageProgressEvents(
       target_critter_id: target.critter.id,
       skill_id: skill?.id ?? null,
       amount: actualDamage,
-      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter), source_critter_tag_ids: critterTagIds(source.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
+      payload: { hp_damage: Math.max(0, hpDamage), shield_damage: Math.max(0, shieldDamage), source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter), source_critter_tag_ids: critterTagIds(source.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
     });
     if (knockedOut) {
       next = appendProgressEvent(next, {
@@ -4344,7 +4615,7 @@ function appendDamageProgressEvents(
       target_critter_id: target.critter.id,
       skill_id: skill?.id ?? null,
       amount: actualDamage,
-      payload: { source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter), source_critter_tag_ids: critterTagIds(source.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
+      payload: { hp_damage: Math.max(0, hpDamage), shield_damage: Math.max(0, shieldDamage), source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter), source_critter_tag_ids: critterTagIds(source.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
     });
   }
   return next;
