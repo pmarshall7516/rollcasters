@@ -3164,7 +3164,10 @@ const restrictionCatalog = makeCatalog();
 restrictionCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "ritual-turn-one", "turn_restriction", {
   main_restriction: "skill_use", turn_restriction: "specific_active_turn", specific_turn: 1, minimum_turn: 1, maximum_turn: 1,
 })];
-const restrictionTurnOne = startTurn({ ...battle(restrictionCatalog, makePlayer(), "turn-restriction"), phase: "ready" });
+const restrictionBeforeTurn = battle(restrictionCatalog, makePlayer(), "turn-restriction-before-start");
+check(!skillAvailability(restrictionBeforeTurn, "p1", "ritual").valid, "A Skill Use Turn Restriction must hide a restricted Skill before its active-turn window begins.");
+const restrictionTurnOne = startTurn({ ...restrictionBeforeTurn, phase: "ready" });
+check(skillAvailability(restrictionTurnOne, "p1", "ritual").valid, "A Skill Use Turn Restriction must expose its Skill during the configured active turn.");
 const restrictionUsed = takeTurn(restrictionTurnOne, [{ actorKey: "p1", type: "skill", skillId: "ritual", targetKey: "p1", cost: 0 }], 10);
 check(restrictionUsed.activeTurnCounts?.p1 === 1 && restrictionUsed.presentationEvents.some((event) => event.kind === "skill" && event.skillId === "ritual"), "A Specific Active Turn restriction must allow its configured turn.");
 const restrictionTurnTwo = startTurn({ ...restrictionUsed, phase: "ready" });

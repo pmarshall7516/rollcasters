@@ -1478,8 +1478,14 @@ export function resolveTurn(state: CombatState, actions: CombatAction[]): Combat
 function normalizeCombatActions(state: CombatState, actions: CombatAction[]): CombatAction[] {
   return actions.map((action): CombatAction => {
     if (isActorRecharging(state, action.actorKey)) return { actorKey: action.actorKey, type: "skip", cost: 0 };
-    if (action.type === "skill" && action.skillId && !skillAvailability(state, action.actorKey, action.skillId).valid) {
-      return { actorKey: action.actorKey, type: "skip", cost: 0 };
+    if (action.type === "skill" && action.skillId) {
+      const availability = skillAvailability(state, action.actorKey, action.skillId);
+      // Selection surfaces and legal-intent enumerators hide a Skill after
+      // its Turn Restriction window. A directly submitted action still
+      // resolves as the documented reserved-Mana fizzle.
+      if (!availability.valid && availability.reason !== TURN_RESTRICTION_FAILURE_REASON) {
+        return { actorKey: action.actorKey, type: "skip", cost: 0 };
+      }
     }
     return { ...action, cost: calculateActionCost(state, action) };
   });
@@ -2246,11 +2252,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
     const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
     if (!skill) return state;
     const skillStartState = state;
-    const failedTurnRestriction = (state.runEffects.skill[skill.id] ?? [])
-      .find((effect) => effect.runtimeKind === "turn_restriction"
-        && effect.execution !== "child"
-        && effect.parameters.main_restriction === "skill_use"
-        && !turnRestrictionMatches(state, actor.key, effect));
+    const failedTurnRestriction = failedSkillTurnRestriction(state, actor.key, skill.id);
     if (failedTurnRestriction) {
       const message = `${combatantPossessive(actor)} ${skill.name} fizzled; its Turn Restriction was not met.`;
       return appendPresentationEvent(
@@ -2554,6 +2556,24 @@ function skillRestrictionEffects(state: CombatState, skillId: string, actorKey?:
     .filter((effect) => effectMatchesSourceSkill(effect, skill));
 }
 
+function skillTurnRestrictionEffects(state: CombatState, skillId: string, actorKey: string): ResolvedEffectRef[] {
+  const sourceCritter = findUnit(state, actorKey)?.critter;
+  const skill = state.catalog.skills.find((candidate) => candidate.id === skillId);
+  return (state.runEffects.skill[skillId] ?? [])
+    .filter((effect) => effect.runtimeKind === "turn_restriction"
+      && effect.execution !== "child"
+      && effect.parameters.main_restriction === "skill_use")
+    .filter((effect) => effectMatchesSourceCritter(effect, sourceCritter))
+    .filter((effect) => effectMatchesSourceSkill(effect, skill));
+}
+
+function failedSkillTurnRestriction(state: CombatState, actorKey: string, skillId: string): ResolvedEffectRef | undefined {
+  return skillTurnRestrictionEffects(state, skillId, actorKey)
+    .find((effect) => !turnRestrictionMatches(state, actorKey, effect));
+}
+
+const TURN_RESTRICTION_FAILURE_REASON = "This Skill's Turn Restriction is not met.";
+
 export function isActorRecharging(state: CombatState, actorKey: string): boolean {
   return Number(state.rechargeUntilTurn?.[actorKey] ?? 0) >= state.turn;
 }
@@ -2586,7 +2606,11 @@ export function skillAvailability(state: CombatState, actorKey: string, skillId:
       };
     }
   }
-  return tightest ?? { valid: true };
+  if (tightest) return tightest;
+  if (failedSkillTurnRestriction(state, actorKey, skillId)) {
+    return { valid: false, reason: TURN_RESTRICTION_FAILURE_REASON };
+  }
+  return { valid: true };
 }
 
 function recordSkillUseAndRestrictions(
