@@ -61,7 +61,7 @@ const bannerMarkup = `
     <span class="sprite-frame sprite-frame-xs"><span class="asset-icon" role="img" aria-label="Ramber"><svg class="asset-icon__image sprite-box__image" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="#6f4432" stroke="#ffd06c" stroke-width="3"/></svg></span></span>
     <div class="unlock-notification-copy">
       <span class="unlock-notification-label">✓ Challenge completed</span>
-      <h2>Damage Critters (Any Species)</h2>
+      <h2>Deal damage to any enemy Critter.</h2>
       <p class="unlock-notification-detail">Ramber challenge completed</p>
     </div>
   </aside>

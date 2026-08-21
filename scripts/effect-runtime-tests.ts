@@ -547,6 +547,41 @@ const thresholdMightyFuryResult = takeTurn(thresholdMightyFury, mightyFuryAction
 const thresholdMightyFuryBaselineResult = takeTurn(thresholdMightyFuryBaselineState, mightyFuryAction(thresholdMightyFuryBaselineState), 0);
 check(100 - thresholdMightyFuryResult.opponentUnits[0].hp === 100 - thresholdMightyFuryBaselineResult.opponentUnits[0].hp, `Mighty Fury's below-25% condition must not activate at exactly 25% HP (got ${100 - thresholdMightyFuryResult.opponentUnits[0].hp} vs ${100 - thresholdMightyFuryBaselineResult.opponentUnits[0].hp}; actor ${thresholdMightyFury.playerUnits[0].hp}/${thresholdMightyFury.playerUnits[0].maxHp}).`);
 
+const counterPunchCatalog = makeCatalog();
+counterPunchCatalog.tags.push({ id: "punch", name: "Punch", description: "Punch Skills.", tag_type: "skill", sort_order: 40 });
+const counterPunch = { ...counterPunchCatalog.skills[0], id: "counter-punch", name: "Counter Punch", power: 55, mana_cost: 0, targeting: "single_enemy" as const, tag_ids: ["contact", "punch"] };
+counterPunchCatalog.skills = [...counterPunchCatalog.skills, counterPunch];
+counterPunchCatalog.relics = [...counterPunchCatalog.relics, { id: "knucklebusters", name: "Knucklebusters", description: "Punch damage.", max_owned: 1, asset_path: null, sort_order: 4 }];
+const counterPunchPlayer = makePlayer();
+counterPunchPlayer.skillSlots = counterPunchPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: counterPunch.id } : slot
+));
+counterPunchPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "knucklebusters" }];
+counterPunchCatalog.effectsBySkill[counterPunch.id] = [effect("skill", counterPunch.id, "harder-hit", "damage_modifier", {
+  target: "self", direction: "dealt", modifier_type: "percentage", modifier_value: 0.5,
+  applicable_source: "skill", applicable_target: "any", condition: "source_below_half_hp", duration_type: "current_action", duration_clock: "target_turn",
+})];
+counterPunchCatalog.effectsByRelic.knucklebusters = [effect("relic", "knucklebusters", "punch-out", "damage_modifier", {
+  target: "equipped_critter", direction: "dealt", modifier_type: "percentage", modifier_value: 0.5,
+  applicable_source: "skill", applicable_target: "any", condition: "none", source_skill_tag_ids: ["punch"], duration_type: "current_action", duration_clock: "owner_turn",
+})];
+const counterPunchBaselineCatalog = structuredClone(counterPunchCatalog);
+counterPunchBaselineCatalog.effectsBySkill[counterPunch.id] = [];
+counterPunchBaselineCatalog.effectsByRelic.knucklebusters = [];
+const setActorHp = (state: ReturnType<typeof battle>, hp: number) => ({
+  ...state,
+  playerUnits: state.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp } : unit),
+});
+const counterPunchAction = [{ actorKey: "p1", type: "skill" as const, skillId: counterPunch.id, targetKey: "o1", cost: 0 }];
+const counterPunchBaseResult = takeTurn(setActorHp(battle(counterPunchBaselineCatalog, counterPunchPlayer, "counter-punch-stack"), 100), counterPunchAction, 0);
+const counterPunchBelowHalfResult = takeTurn(setActorHp(battle(counterPunchCatalog, { ...counterPunchPlayer, relicSlots: [] }, "counter-punch-stack"), 49), counterPunchAction, 0);
+const counterPunchStackedResult = takeTurn(setActorHp(battle(counterPunchCatalog, counterPunchPlayer, "counter-punch-stack"), 49), counterPunchAction, 0);
+const counterPunchBaseDamage = 100 - counterPunchBaseResult.opponentUnits[0].hp;
+const counterPunchBelowHalfDamage = 100 - counterPunchBelowHalfResult.opponentUnits[0].hp;
+const counterPunchStackedDamage = 100 - counterPunchStackedResult.opponentUnits[0].hp;
+check(counterPunchBelowHalfDamage > counterPunchBaseDamage * 1.4, `Counter Punch must gain its below-half-HP 50% modifier (got ${counterPunchBaseDamage} vs ${counterPunchBelowHalfDamage}).`);
+check(counterPunchStackedDamage > counterPunchBelowHalfDamage * 1.4, `Knucklebusters must add a second 50% Punch Skill modifier (got ${counterPunchBelowHalfDamage} vs ${counterPunchStackedDamage}).`);
+
 const manaForceCatalog = makeCatalog();
 const manaForce = { ...manaForceCatalog.skills[0], id: "mana-force", name: "Mana Force", skill_type: "support" as const, power: 0, mana_cost: 0, targeting: "single_enemy" as const };
 manaForceCatalog.skills = [...manaForceCatalog.skills, manaForce];
@@ -3165,14 +3200,27 @@ restrictionCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "ritual-tu
   main_restriction: "skill_use", turn_restriction: "specific_active_turn", specific_turn: 1, minimum_turn: 1, maximum_turn: 1,
 })];
 const restrictionBeforeTurn = battle(restrictionCatalog, makePlayer(), "turn-restriction-before-start");
-check(!skillAvailability(restrictionBeforeTurn, "p1", "ritual").valid, "A Skill Use Turn Restriction must hide a restricted Skill before its active-turn window begins.");
+check(
+  !skillAvailability(restrictionBeforeTurn, "p1", "ritual").valid
+    && skillAvailability(restrictionBeforeTurn, "p1", "ritual").selectable,
+  "A Skill Use Turn Restriction must leave a restricted Skill selectable before its active-turn window begins.",
+);
 const restrictionTurnOne = startTurn({ ...restrictionBeforeTurn, phase: "ready" });
 check(skillAvailability(restrictionTurnOne, "p1", "ritual").valid, "A Skill Use Turn Restriction must expose its Skill during the configured active turn.");
 const restrictionUsed = takeTurn(restrictionTurnOne, [{ actorKey: "p1", type: "skill", skillId: "ritual", targetKey: "p1", cost: 0 }], 10);
 check(restrictionUsed.activeTurnCounts?.p1 === 1 && restrictionUsed.presentationEvents.some((event) => event.kind === "skill" && event.skillId === "ritual"), "A Specific Active Turn restriction must allow its configured turn.");
 const restrictionTurnTwo = startTurn({ ...restrictionUsed, phase: "ready" });
+check(
+  !skillAvailability(restrictionTurnTwo, "p1", "ritual").valid
+    && skillAvailability(restrictionTurnTwo, "p1", "ritual").selectable,
+  "A Skill Use Turn Restriction must remain selectable after its active-turn window closes.",
+);
 const restrictionFizzled = takeTurn(restrictionTurnTwo, [{ actorKey: "p1", type: "skill", skillId: "ritual", targetKey: "p1", cost: 0 }], 10);
-check(restrictionFizzled.activeTurnCounts?.p1 === 2 && restrictionFizzled.presentationEvents.some((event) => event.message.includes("fizzled")), "A Skill Use Turn Restriction must fizzle after its active-turn window and spend the reserved Mana.");
+check(
+  restrictionFizzled.activeTurnCounts?.p1 === 2
+    && restrictionFizzled.presentationEvents.some((event) => event.message.includes("fizzled") && event.effectPolarity === "negative" && event.targetKeys.includes("p1")),
+  "A Skill Use Turn Restriction must fizzle after its active-turn window, identify the failure, and spend the reserved Mana.",
+);
 const swapped = takeTurn(restrictionTurnTwo, [{ actorKey: "p1", type: "swap", swapInKey: "p3", cost: 0 }], 10);
 check(swapped.activeTurnCounts?.p1 === 0 && swapped.activeTurnCounts?.p3 === 0, "Swapping out must reset both outgoing and incoming active-turn counters.");
 const swappedBackIn = startTurn({ ...swapped, phase: "ready" });

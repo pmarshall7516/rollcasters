@@ -263,41 +263,51 @@ function namesFor(data: AppData, type: CollectibleType | "element" | "skill" | "
   return ids.map((id) => rows.find((row) => row.id === id)?.name ?? id);
 }
 
-function targetNames(data: AppData, challenge: CollectibleUnlockChallenge): string {
-  const parameters = challengeParameters(challenge);
-  const mode = String(challenge.target_mode ?? parameters.target_mode ?? "species");
-  const label = mode === "species" ? "Species" : mode === "element" ? "Element" : "Skill";
-  const anyTarget = challenge.any_target || parameters.any_target === true;
-  if (anyTarget) return `Any ${label}`;
-  const ids = challenge.target_ids.length ? challenge.target_ids : stringParameters(parameters, "target_ids");
-  return namesFor(data, mode === "species" ? "critter" : mode === "element" ? "element" : "skill", ids).join(", ") || `Choose ${label.toLowerCase()} targets`;
-}
-
 function humanize(value: string): string {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter: string) => letter.toUpperCase());
 }
 
-function rollcasterTypeNames(parameters: Record<string, unknown>): string {
-  const ids = stringParameters(parameters, "rollcaster_types");
-  return ids.length ? ids.map(humanize).join(" or ") : "selected";
-}
-
 function challengeParameters(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
-  if (challenge.parameters && typeof challenge.parameters === "object") return challenge.parameters;
-  return {
-    target_category: challenge.target_category,
-    target_id: challenge.target_id,
-    target_mode: challenge.target_mode,
-    any_target: challenge.any_target,
-    target_ids: challenge.target_ids,
-    required_amount: challenge.required_amount == null ? undefined : Number(challenge.required_amount),
-    required_level: challenge.required_level,
-  };
+  const current = challenge.parameters && typeof challenge.parameters === "object"
+    ? challenge.parameters
+    : {
+      target_category: challenge.target_category,
+      target_id: challenge.target_id,
+      target_mode: challenge.target_mode,
+      any_target: challenge.any_target,
+      target_ids: challenge.target_ids,
+      required_amount: challenge.required_amount == null ? undefined : Number(challenge.required_amount),
+      required_level: challenge.required_level,
+    };
+  const normalized = { ...current };
+  if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(challenge.challenge_type)) {
+    const legacyMode = String(current.target_mode ?? current.mode ?? (challenge.challenge_type === "use_skill" ? "skill" : "species"));
+    const legacyIds = stringParameters(current, "target_ids");
+    const legacyAny = current.any_target === true || current.any === true;
+    if (!legacyAny && legacyIds.length) {
+      if (challenge.challenge_type === "use_skill") {
+        if (legacyMode === "element" && stringParameters(current, "element_ids").length === 0) normalized.element_ids = legacyIds;
+        if (legacyMode !== "element" && stringParameters(current, "skill_ids").length === 0) normalized.skill_ids = legacyIds;
+      } else {
+        if (legacyMode === "element" && stringParameters(current, "target_element_ids").length === 0) normalized.target_element_ids = legacyIds;
+        if (legacyMode !== "element" && stringParameters(current, "target_critter_ids").length === 0) normalized.target_critter_ids = legacyIds;
+      }
+    }
+  }
+  if (challenge.challenge_type === "heal_hp") {
+    const legacyIds = stringParameters(current, "target_ids");
+    if (legacyIds.length && current.target_mode === "species" && stringParameters(current, "target_critter_ids").length === 0) normalized.target_critter_ids = legacyIds;
+    if (legacyIds.length && current.target_mode === "element" && stringParameters(current, "target_element_ids").length === 0) normalized.target_element_ids = legacyIds;
+  }
+  return normalized;
 }
 
 export function challengeGoal(challenge: CollectibleUnlockChallenge): bigint {
   const parameters = challengeParameters(challenge);
   switch (challenge.challenge_type) {
+    case "own_collectible":
+      if (parameters.specific_collectible_mode === "all" && stringParameters(parameters, "collectible_ids").length > 0) return BigInt(new Set(stringParameters(parameters, "collectible_ids")).size);
+      return safeUnknownBigInt(parameters.required_amount ?? challenge.required_amount);
     case "level_up_critter": return safeUnknownBigInt(parameters.required_level ?? challenge.required_level);
     case "collection_diversity": return collectionDiversityGoal(parameters);
     case "squad_composition": return safeUnknownBigInt(parameters.required_completions);
@@ -324,9 +334,10 @@ function derivedChallengeCurrent(data: AppData, challenge: CollectibleUnlockChal
     }).length);
     if (type === "rollcaster") return BigInt(player.rollcasters.filter((row) => collectibleIsUnlocked(data, "rollcaster", row.rollcaster_id) && allowed(row.rollcaster_id)).length);
     const relics = player.relicInventory.filter((row) => collectibleIsUnlocked(data, "relic", row.relic_id) && row.discovered_at !== null && row.quantity > 0 && allowed(row.relic_id));
-    return parameters.require_unique_collectibles === false
-      ? BigInt(relics.reduce((sum, row) => sum + row.quantity, 0))
-      : BigInt(relics.length);
+    const specificMode = String(parameters.specific_collectible_mode ?? "");
+    return (ids.size > 0 && ["all", "count"].includes(specificMode)) || parameters.require_unique_collectibles !== false
+      ? BigInt(relics.length)
+      : BigInt(relics.reduce((sum, row) => sum + row.quantity, 0));
   }
   if (challenge.challenge_type === "level_up_critter") {
     const id = String(parameters.critter_id ?? challenge.target_id ?? "");
@@ -348,84 +359,124 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
   if (challenge.display_text?.trim()) return challenge.display_text.trim();
   const ownerName = collectibleName(data, challenge.collectible_type, challenge.collectible_id);
   const parameters = challengeParameters(challenge);
-  switch (challenge.challenge_type) {
-    case "own_collectible": {
-      const type = (parameters.collectible_category as CollectibleType | undefined) ?? challenge.target_category ?? "critter";
-      const ids = stringParameters(parameters, "collectible_ids");
-      const names = namesFor(data, type, ids);
-      const tagNames = stringParameters(parameters, "critter_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
-      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
-      const tagDescription = tagNames.length ? ` tagged ${tagNames.join(" or ")}` : "";
-      if (names.length === 1 && goal === 1 && !tagDescription) return `Own ${names[0]}.`;
-      if (names.length) return `Own ${goal} of: ${names.join(", ")}${tagDescription}.`;
-      const label = type === "critter" ? "Critter" : type === "rollcaster" ? "Rollcaster" : "Relic";
-      return `Own ${goal} ${parameters.require_unique_collectibles === true ? "different " : ""}${label}${goal === 1 ? "" : "s"}${tagDescription}.`;
-    }
-    case "collection_diversity": {
-      if (parameters.diversity_mode === "amount_of_type") return `Own ${parameters.required_per_type} different ${namesFor(data, "element", stringParameters(parameters, "element_ids"))[0] ?? "Element"} Critters.`;
-      if (parameters.diversity_mode === "different_types") return `Own Critters from ${parameters.required_distinct_types} different Element types.`;
-      return `Own ${parameters.required_per_type} Critter${Number(parameters.required_per_type) === 1 ? "" : "s"} from each of: ${namesFor(data, "element", stringParameters(parameters, "required_element_ids")).join(", ") || "selected Elements"}.`;
-    }
-    case "squad_composition": return `${parameters.completion_event === "battle_win" ? "Win" : "Clear"} ${parameters.required_completions} ${parameters.completion_event === "battle_win" ? "battle" : "Dungeon"}${Number(parameters.required_completions) === 1 ? "" : "s"} with the configured squad.`;
-    case "dungeon_clear": return `Clear ${parameters.dungeon_selection === "any_dungeon" ? "any Dungeon" : parameters.dungeon_selection === "specific_dungeon" ? namesFor(data, "dungeon", stringParameters(parameters, "dungeon_ids"))[0] ?? "the selected Dungeon" : `Dungeons ${stringParameters(parameters, "minimum_dungeon_ids")[0] ?? "—"}–${stringParameters(parameters, "maximum_dungeon_ids")[0] ?? "—"}`} ${parameters.required_clears} time${Number(parameters.required_clears) === 1 ? "" : "s"}.`;
-    case "resource_spending": return `Spend ${parameters.required_amount} ${humanize(String(parameters.resource_type))} ${parameters.tracking_scope === "lifetime" ? "in total" : humanize(String(parameters.tracking_scope))}.`;
-    case "swap_action": return `${humanize(String(parameters.tracked_action))} ${parameters.required_amount} time${Number(parameters.required_amount) === 1 ? "" : "s"}.`;
-    case "block_action": return `${humanize(String(parameters.tracked_action))}: ${parameters.required_amount}.`;
-    case "dice_roll": return `${humanize(String(parameters.tracked_result))} ${humanize(String(parameters.comparison))} ${parameters.target_value}, ${parameters.required_occurrences} time${Number(parameters.required_occurrences) === 1 ? "" : "s"}.`;
-    case "heal_hp": {
-      const recipient = parameters.recipient_side === "friendly" ? "friendly" : parameters.recipient_side === "enemy" ? "enemy" : "";
-      const ids = stringParameters(parameters, "target_ids");
-      const targetMode = String(parameters.target_mode ?? "any");
-      const names = targetMode === "species"
-        ? namesFor(data, "critter", ids)
-        : targetMode === "element"
-          ? namesFor(data, "element", ids)
-          : [];
-      const qualifier = names.length ? ` ${names.join(", ")}` : "";
-      return `Heal ${parameters.required_amount} HP on ${recipient ? `${recipient} ` : ""}${targetMode === "species" ? "Critters" : targetMode === "element" ? "Elements" : "Critters"}${qualifier}.`;
-    }
-    case "defeat_rollcaster_type": {
-      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
-      return `Defeat ${goal} ${rollcasterTypeNames(parameters)}-rank Rollcaster${goal === 1 ? "" : "s"}.`;
-    }
-    case "afflict_status": {
-      const statuses = namesFor(data, "status", stringParameters(parameters, "status_ids"));
-      const statusLabel = statuses.length ? statuses.join(" or ") : "any Status";
-      const target = parameters.target_side === "enemies" ? "enemies" : parameters.target_side === "friendlies" ? "friendlies" : "any Critter";
-      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
-      if (parameters.affliction_mode === "afflicted_turns") return `Keep ${statusLabel} on ${target} for ${goal} afflicted turn${goal === 1 ? "" : "s"}.`;
-      return `Afflict ${statusLabel} on ${target} ${goal} time${goal === 1 ? "" : "s"} from a fresh Status.`;
-    }
-    case "stun_activation": {
-      const target = parameters.target_side === "enemies" ? "enemy Critters" : parameters.target_side === "friendlies" ? "friendly Critters" : "any Critters";
-      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
-      return `Stun ${target} ${goal} time${goal === 1 ? "" : "s"}.`;
-    }
-    case "shields_shattered": {
-      const side = parameters.shield_side === "enemies" ? "Enemy Shields" : parameters.shield_side === "friendlies" ? "Friendly Shields" : "Shields";
-      const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
-      return `Shatter ${goal} ${side}.`;
-    }
-    case "level_up_critter": {
-      const id = String(challenge.target_id ?? parameters.critter_id ?? "");
-      return `Unlock level ${challenge.required_level ?? parameters.required_level ?? 0} for ${collectibleName(data, "critter", id)} (${id || "—"})`;
-    }
-    case "knock_out_critters": return `Knock out Critters (${targetNames(data, challenge)})`;
-    case "deal_damage": {
-      const damageMode = parameters.damage_mode === "hp_only" ? "HP damage" : parameters.damage_mode === "shield_only" ? "Shield damage" : "damage";
-      return `Deal ${damageMode} to ${targetNames(data, challenge)}`;
-    }
-    case "take_damage": {
-      const damageMode = parameters.damage_mode === "hp_only" ? "HP damage" : parameters.damage_mode === "shield_only" ? "Shield damage" : "damage";
-      return `Take ${damageMode} as ${targetNames(data, challenge)}`;
-    }
-    case "use_skill": {
-      const skillType = parameters.skill_type === "attack" ? "Attack Skills" : parameters.skill_type === "support" ? "Support Skills" : "Skill";
-      return `Use ${skillType} (${targetNames(data, challenge)})`;
-    }
-    case "shop_shards": return `Unlock ${ownerName} shards`;
-    case "shop_relic": return `Own ${ownerName}`;
+  if (challenge.challenge_type === "own_collectible") {
+    const type = String(parameters.collectible_category ?? challenge.target_category ?? "critter") as CollectibleType;
+    const ids = stringParameters(parameters, "collectible_ids");
+    const names = namesFor(data, type, ids);
+    const tagNames = stringParameters(parameters, "critter_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    const goal = Number(parameters.required_amount ?? challenge.required_amount ?? 1);
+    const tagDescription = tagNames.length ? ` tagged ${tagNames.join(" or ")}` : "";
+    if (names.length && parameters.specific_collectible_mode === "all" && !tagDescription) return `Own ${names.join(" and ")}.`;
+    if (names.length === 1 && goal === 1 && !tagDescription) return `Own ${names[0]}.`;
+    if (names.length) return `Own ${goal} of: ${names.join(", ")}${tagDescription}.`;
+    const label = type === "critter" ? "Critter" : type === "rollcaster" ? "Rollcaster" : "Relic";
+    return `Own ${goal} ${parameters.require_unique_collectibles === true ? "different " : ""}${label}${goal === 1 ? "" : "s"}${tagDescription}.`;
   }
+  const p = parameters;
+  if (challenge.challenge_type === "collection_diversity") {
+    if (p.diversity_mode === "amount_of_type") return `Own ${p.required_per_type} different ${namesFor(data, "element", stringParameters(p, "element_ids"))[0] ?? "Element"} Critters.`;
+    if (p.diversity_mode === "different_types") return `Own Critters from ${p.required_distinct_types} different Element types.`;
+    return `Own ${p.required_per_type} Critter${Number(p.required_per_type) === 1 ? "" : "s"} from each of: ${namesFor(data, "element", stringParameters(p, "required_element_ids")).join(", ") || "selected Elements"}.`;
+  }
+  if (challenge.challenge_type === "squad_composition") {
+    const elementNames = namesFor(data, "element", stringParameters(p, "required_element_ids"));
+    const uniqueCount = Number(p.required_matching_critters ?? 0);
+    const composition = elementNames.length ? ` covering ${elementNames.join(" and ")}` : "";
+    const unique = uniqueCount > 0 ? ` with ${uniqueCount} unique matching Critter${uniqueCount === 1 ? "" : "s"}` : "";
+    return `${p.completion_event === "battle_win" ? "Win" : "Clear"} ${p.required_completions} ${p.completion_event === "battle_win" ? "battle" : "Dungeon"}${Number(p.required_completions) === 1 ? "" : "s"}${unique}${composition}.`;
+  }
+  if (challenge.challenge_type === "dungeon_clear") return `Clear ${p.dungeon_selection === "any_dungeon" ? "any Dungeon" : p.dungeon_selection === "specific_dungeon" ? namesFor(data, "dungeon", stringParameters(p, "dungeon_ids"))[0] ?? "the selected Dungeon" : `Dungeons ${stringParameters(p, "minimum_dungeon_ids")[0] ?? "—"}–${stringParameters(p, "maximum_dungeon_ids")[0] ?? "—"}`} ${p.required_clears} time${Number(p.required_clears) === 1 ? "" : "s"}.`;
+  if (challenge.challenge_type === "resource_spending") return `Spend ${p.required_amount} ${humanize(String(p.resource_type))} ${p.tracking_scope === "lifetime" ? "in total" : humanize(String(p.tracking_scope))}.`;
+  if (challenge.challenge_type === "swap_action") return `${humanize(String(p.tracked_action))} ${p.required_amount} time${Number(p.required_amount) === 1 ? "" : "s"}.`;
+  if (challenge.challenge_type === "block_action") return `${humanize(String(p.tracked_action))}: ${p.required_amount}.`;
+  if (challenge.challenge_type === "dice_roll") return `${humanize(String(p.tracked_result))} ${humanize(String(p.comparison))} ${p.target_value}, ${p.required_occurrences} time${Number(p.required_occurrences) === 1 ? "" : "s"}.`;
+  if (challenge.challenge_type === "heal_hp") {
+    const recipient = p.recipient_side === "friendly" ? "friendly" : p.recipient_side === "enemy" ? "enemy" : "";
+    const critters = namesFor(data, "critter", stringParameters(p, "target_critter_ids"));
+    const elements = namesFor(data, "element", stringParameters(p, "target_element_ids"));
+    const tags = stringParameters(p, "target_critter_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    const filters = [
+      ...(critters.length ? [`species ${critters.join(" or ")}`] : []),
+      ...(elements.length ? [`${elements.join(" or ")} Element`] : []),
+      ...(tags.length ? [`${tags.join(" or ")} tagged`] : []),
+    ];
+    return `Heal ${p.required_amount} HP on ${recipient ? `${recipient} ` : ""}${filters.length ? filters.join(" and ") : "Critters"}.`;
+  }
+  if (challenge.challenge_type === "defeat_rollcaster_type") {
+    const types = stringParameters(p, "rollcaster_types").map(humanize);
+    const ranks = types.length ? types.join(" or ") : "selected";
+    const goal = Number(p.required_amount ?? challenge.required_amount ?? 0);
+    return `Defeat ${goal} ${ranks}-rank Rollcaster${goal === 1 ? "" : "s"}.`;
+  }
+  if (challenge.challenge_type === "afflict_status") {
+    const statuses = namesFor(data, "status", stringParameters(p, "status_ids"));
+    const statusLabel = statuses.length ? statuses.join(" or ") : "any Status";
+    const target = p.target_side === "enemies" ? "enemies" : p.target_side === "friendlies" ? "friendlies" : "any Critter";
+    const goal = Number(p.required_amount ?? challenge.required_amount ?? 0);
+    if (p.affliction_mode === "afflicted_turns") return `Keep ${statusLabel} on ${target} for ${goal} afflicted turn${goal === 1 ? "" : "s"}.`;
+    return `Afflict ${statusLabel} on ${target} ${goal} time${goal === 1 ? "" : "s"} from a fresh Status.`;
+  }
+  if (challenge.challenge_type === "stun_activation") {
+    const target = p.target_side === "enemies" ? "enemy Critters" : p.target_side === "friendlies" ? "friendly Critters" : "any Critters";
+    const goal = Number(p.required_amount ?? challenge.required_amount ?? 0);
+    return `Stun ${target} ${goal} time${goal === 1 ? "" : "s"}.`;
+  }
+  if (challenge.challenge_type === "shields_shattered") {
+    const side = p.shield_side === "enemies" ? "Enemy Shields" : p.shield_side === "friendlies" ? "Friendly Shields" : "Shields";
+    const goal = Number(p.required_amount ?? challenge.required_amount ?? 0);
+    return `Shatter ${goal} ${side}.`;
+  }
+  if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(challenge.challenge_type)) {
+    const sourceCritters = namesFor(data, "critter", stringParameters(p, "source_critter_ids"));
+    const sourceElements = namesFor(data, "element", stringParameters(p, "source_element_ids"));
+    const sourceTags = stringParameters(p, "source_critter_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    const targetCritters = namesFor(data, "critter", stringParameters(p, "target_critter_ids"));
+    const targetElements = namesFor(data, "element", stringParameters(p, "target_element_ids"));
+    const targetTags = stringParameters(p, "target_critter_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    const authoredSkillTagIds = p.skill_tag_ids ?? p.source_skill_tag_ids;
+    const skillTags = (Array.isArray(authoredSkillTagIds) ? authoredSkillTagIds : [])
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+      .map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    if (challenge.challenge_type === "use_skill") {
+      const skills = namesFor(data, "skill", stringParameters(p, "skill_ids"));
+      const skillElements = namesFor(data, "element", stringParameters(p, "element_ids"));
+      const skillFilters = [
+        skills.length ? skills.join(" or ") : "",
+        skillElements.length ? `${skillElements.join(" or ")} Element Skills` : "",
+        skillTags.length ? `${skillTags.join(" or ")} tagged Skills` : "",
+      ].filter(Boolean);
+      const userFilters = [
+        sourceCritters.length ? sourceCritters.join(" or ") : "",
+        sourceElements.length ? `${sourceElements.join(" or ")} Element Critters` : "",
+        sourceTags.length ? `${sourceTags.join(" or ")} tagged Critters` : "",
+      ].filter(Boolean);
+      return `Use ${skillFilters.length ? skillFilters.join(" and ") : "any Skill"}${userFilters.length ? ` with ${userFilters.join(" and ")}` : ""}.`;
+    }
+    const sourceFilters = [
+      sourceCritters.length ? sourceCritters.join(" or ") : "",
+      sourceElements.length ? `${sourceElements.join(" or ")} Element Critters` : "",
+      sourceTags.length ? `${sourceTags.join(" or ")} tagged Critters` : "",
+      skillTags.length ? `${skillTags.join(" or ")} tagged Skills` : "",
+    ].filter(Boolean);
+    const targetFilters = [
+      targetCritters.length ? targetCritters.join(" or ") : "",
+      targetElements.length ? `${targetElements.join(" or ")} Element Critters` : "",
+      targetTags.length ? `${targetTags.join(" or ")} tagged Critters` : "",
+    ].filter(Boolean);
+    const damageMode = p.damage_mode === "hp_only" ? "HP " : p.damage_mode === "shield_only" ? "Shield " : "";
+    if (challenge.challenge_type === "take_damage") {
+      return `Take ${damageMode}damage as ${targetFilters.length ? targetFilters.join(" and ") : "any user Critter"}${sourceFilters.length ? ` from ${sourceFilters.join(" and ")}` : " from any enemy Critter"}.`;
+    }
+    const verb = challenge.challenge_type === "knock_out_critters" ? "Knock out" : "Deal damage to";
+    return `${challenge.challenge_type === "deal_damage" ? `Deal ${damageMode}damage to` : verb} ${targetFilters.length ? targetFilters.join(" and ") : "any enemy Critter"}${sourceFilters.length ? ` using ${sourceFilters.join(" and ")}` : ""}.`;
+  }
+  if (challenge.challenge_type === "level_up_critter") {
+    const id = String(challenge.target_id ?? p.critter_id ?? "");
+    return `Unlock level ${challenge.required_level ?? p.required_level ?? 0} for ${collectibleName(data, "critter", id)} (${id || "—"})`;
+  }
+  if (challenge.challenge_type === "shop_shards") return `Unlock ${ownerName} shards`;
+  if (challenge.challenge_type === "shop_relic") return `Own ${ownerName}`;
+  return "";
 }
 
 export function isTrackableChallenge(challenge: CollectibleUnlockChallenge): boolean {

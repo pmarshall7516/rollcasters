@@ -43,9 +43,11 @@ const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
 const configuredGameAssetBaseUrl = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 const gameCatalogBaseUrl = (import.meta.env.VITE_GAME_CATALOG_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 const gameVersion = (import.meta.env.VITE_GAME_VERSION as string | undefined) ?? "0.1.0";
-const gameCatalogMode = (import.meta.env.VITE_GAME_CATALOG_MODE as string | undefined) === "release" ? "release" : "live";
+// A player build is release-backed unless development explicitly opts into the
+// live authoring catalog. This prevents an omitted env var from weakening the
+// immutable-release boundary.
+const gameCatalogMode = (import.meta.env.VITE_GAME_CATALOG_MODE as string | undefined) === "live" ? "live" : "release";
 const playerBootstrapMode = (import.meta.env.VITE_GAME_PLAYER_BOOTSTRAP_MODE as string | undefined) === "v1" ? "v1" : "legacy";
-const allowLiveCatalogFallback = import.meta.env.VITE_ALLOW_LIVE_CATALOG_FALLBACK === "true";
 const allowLegacyPlayerBootstrap = import.meta.env.VITE_ALLOW_LEGACY_PLAYER_BOOTSTRAP === "true";
 let activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
 const liveAssetVersions = new Map<string, string>();
@@ -624,18 +626,13 @@ export function loadCatalog({ force = false }: { force?: boolean } = {}): Promis
         if (!gameCatalogBaseUrl) {
           throw new Error("VITE_GAME_CATALOG_BASE_URL is required when VITE_GAME_CATALOG_MODE=release.");
         }
-        try {
-          const published = await loadPublishedCatalog(gameCatalogBaseUrl, gameVersion);
-          currentCatalogRelease = published.release;
-          activeGameAssetBaseUrl = configuredGameAssetBaseUrl ?? published.release.assetBaseUrl ?? undefined;
-          return published.catalog;
-        } catch (error) {
-          if (!allowLiveCatalogFallback) throw error;
-          console.warn("Published catalog unavailable; using the explicitly enabled live Supabase fallback.", error);
-        }
+        const published = await loadPublishedCatalog(gameCatalogBaseUrl, gameVersion);
+        currentCatalogRelease = published.release;
+        activeGameAssetBaseUrl = configuredGameAssetBaseUrl ?? published.release.assetBaseUrl ?? undefined;
+        return published.catalog;
       }
-      // Live catalog rows contain source-master paths. Never combine them with
-      // the hashed release-art root when release mode is disabled or falls back.
+      // Live catalog rows contain source-master paths. This branch is reserved
+      // for an explicitly configured development build.
       activeGameAssetBaseUrl = undefined;
       const catalog = await fetchLiveCatalog();
       currentCatalogRelease = {

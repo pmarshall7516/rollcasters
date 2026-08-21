@@ -103,7 +103,13 @@ try {
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "combat");
 
   const initial = await gameState(page);
-  check(initial.combat?.phase === "await_roll", "Combat did not initialize in the await-roll phase.");
+  if (initial.combat?.phase === "entry_dialogue") {
+    const narration = page.locator(".combat-narration:not(:disabled)");
+    await narration.waitFor({ state: "visible" });
+    await narration.click();
+    await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).combat?.phase === "await_roll");
+  }
+  check((await gameState(page)).combat?.phase === "await_roll", "Combat did not advance from entry dialogue to the await-roll phase.");
   check(initial.combat.player.some((unit) => unit.active && unit.stats.def >= 1), "Resolved combat stats were not exposed for the active player.");
 
   const run = await admin
@@ -170,18 +176,33 @@ try {
 
     if (phase === "select_player_actions") {
       const submit = page.getByRole("button", { name: "Submit Actions" });
-      if (await submit.isEnabled()) {
+      if (await submit.count() && await submit.isEnabled()) {
         await submit.click();
         continue;
       }
 
-      const skillMenu = page.locator(".combat-primary-actions button").filter({ hasText: /^\s*Skill\s*$/ }).first();
+      const actionMenu = page.locator(".battle-unit.combat-unit-interactive .combat-primary-actions:visible").first();
+      if (!await actionMenu.count()) {
+        await page.waitForFunction(() => {
+          const state = JSON.parse(window.render_game_to_text());
+          return state.combat?.phase !== "select_player_actions"
+            || Boolean(document.querySelector(".battle-unit.combat-unit-interactive .combat-primary-actions"));
+        });
+        continue;
+      }
+      await actionMenu.waitFor({ state: "visible" });
+      const skillMenu = actionMenu.getByRole("button", { name: /^Skill$/ });
       if (await skillMenu.count()) {
         await skillMenu.click();
-        const usableSkill = page.locator(".combat-skill-actions .skill-tile:not([disabled])").first();
+        const usableSkill = page.locator(".battle-unit.combat-unit-interactive .combat-skill-actions:visible .skill-tile:not([disabled])").first();
         if (await usableSkill.count()) {
           if (!capturedSkillLayout) {
-            check(/^Choose your .+'s action\.$/.test((await page.locator(".combat-narration").textContent())?.trim() ?? ""), "The game action narration did not include the player owner before the Critter name.");
+            await page.waitForFunction(() => {
+              const text = document.querySelector(".combat-narration-copy")?.textContent?.trim() ?? "";
+              return text.startsWith("Choose your ") && text.includes("'s action.");
+            });
+            const actionNarration = (await page.locator(".combat-narration:visible").textContent())?.trim() ?? "";
+            check(actionNarration.startsWith("Choose your ") && actionNarration.includes("'s action."), "The game action narration did not include the player owner before the Critter name.");
             const power = usableSkill.locator(".skill-power");
             const mana = usableSkill.locator(".skill-mana");
             if (await power.count()) {
@@ -196,10 +217,12 @@ try {
           if (await target.count()) await target.click();
           continue;
         }
-        await page.locator(".combat-back-row").filter({ hasText: "Back to Action Menu" }).click();
+        await page.locator(".battle-unit.combat-unit-interactive .combat-back-row:visible").filter({ hasText: "Back to Action Menu" }).click();
       }
 
-      const skip = page.locator(".combat-primary-actions button").filter({ hasText: /^\s*Skip/ }).first();
+      const refreshedActionMenu = page.locator(".battle-unit.combat-unit-interactive .combat-primary-actions:visible").first();
+      await refreshedActionMenu.waitFor({ state: "visible" });
+      const skip = refreshedActionMenu.getByRole("button", { name: /^Skip/ });
       check(await skip.count(), "No usable Skill or Skip action was available for the current Critter.");
       await skip.click();
       continue;

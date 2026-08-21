@@ -125,6 +125,7 @@ export function validateCatalog(catalog) {
     if (!challenge.parameters || typeof challenge.parameters !== "object" || Array.isArray(challenge.parameters)) throw new Error(`Challenge ${challenge.id} has invalid parameters.`);
     const parameters = challenge.parameters;
     const goal = challenge.challenge_type === "level_up_critter" ? parameters.required_level
+      : challenge.challenge_type === "own_collectible" && parameters.specific_collectible_mode === "all" ? new Set(Array.isArray(parameters.collectible_ids) ? parameters.collectible_ids : []).size
       : challenge.challenge_type === "collection_diversity" && parameters.diversity_mode === "specific_types" ? (parameters.required_element_ids?.length ?? 0) * (parameters.required_per_type ?? 1)
         : challenge.challenge_type === "collection_diversity" ? parameters.required_distinct_types ?? parameters.required_per_type
           : challenge.challenge_type === "squad_composition" ? parameters.required_completions
@@ -134,7 +135,14 @@ export function validateCatalog(catalog) {
     if (!Number.isInteger(Number(goal)) || Number(goal) < 1) throw new Error(`Challenge ${challenge.id} has an invalid goal.`);
     if (challenge.challenge_type === "own_collectible") {
       const selected = Array.isArray(parameters.collectible_ids) ? parameters.collectible_ids : [];
-      if (parameters.require_unique_collectibles === true && selected.length > 0 && Number(parameters.required_amount) > selected.length) {
+      const distinctSelected = new Set(selected).size;
+      if (parameters.specific_collectible_mode === "all" && selected.length > 0 && Number(parameters.required_amount) !== distinctSelected) {
+        throw new Error(`Challenge ${challenge.id} requiring all selected collectibles must project required_amount to the distinct selection count.`);
+      }
+      if (parameters.specific_collectible_mode === "count" && selected.length > 0 && Number(parameters.required_amount) > distinctSelected) {
+        throw new Error(`Challenge ${challenge.id} requires more unique collectibles than its selected IDs provide.`);
+      }
+      if (!parameters.specific_collectible_mode && parameters.require_unique_collectibles === true && selected.length > 0 && Number(parameters.required_amount) > distinctSelected) {
         throw new Error(`Challenge ${challenge.id} requires more unique collectibles than its selected IDs provide.`);
       }
       if (parameters.collectible_category !== "critter" && Array.isArray(parameters.critter_tag_ids) && parameters.critter_tag_ids.length > 0) {

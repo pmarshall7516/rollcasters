@@ -123,6 +123,44 @@ try {
   const unfilteredCurrent = (await client.query("select public.collectible_challenge_current($1,$2) as current", [userId, taggedChallengeId])).rows[0].current;
   check(unfilteredCurrent === allOwnedCount, `Removing the ownership tag filter must restore all owned Critters to the projection; got ${unfilteredCurrent}, expected ${allOwnedCount}.`);
 
+  const specificFixture = await client.query(`
+    select array_agg(id order by id) as relic_ids
+    from (
+      select relic.id
+      from public.relics relic
+      where relic.is_active and not relic.is_archived
+        and public.collectible_is_unlocked($1,'relic',relic.id)
+      order by relic.sort_order,relic.id
+      limit 2
+    ) selected
+  `, [userId]);
+  check(specificFixture.rows[0].relic_ids?.length === 2, "The development database needs two unlocked Relics for the specific ownership projection test.");
+  const [specificRelicOne, specificRelicTwo] = specificFixture.rows[0].relic_ids;
+  const specificChallengeId = crypto.randomUUID();
+  await client.query(`
+    insert into public.collectible_unlock_challenges(
+      id,collectible_type,collectible_id,challenge_type,parameters,required_amount,sort_order
+    ) values($1,'critter',$2,'own_collectible',$3::jsonb,1,2)
+  `, [specificChallengeId, targetCritterId, JSON.stringify({
+    collectible_category: "relic",
+    collectible_ids: [specificRelicOne, specificRelicTwo],
+    specific_collectible_mode: "all",
+    required_amount: 1,
+    require_unique_collectibles: false,
+    retroactive: true,
+  })]);
+  await client.query(`
+    insert into public.user_relic_inventory(user_id,relic_id,quantity,discovered_at)
+    values($1,$2,1,now()),($1,$3,0,now())
+    on conflict(user_id,relic_id) do update set quantity=excluded.quantity,discovered_at=excluded.discovered_at
+  `, [userId, specificRelicOne, specificRelicTwo]);
+  const specificRow = (await client.query("select parameters,required_amount from public.collectible_unlock_challenges where id=$1", [specificChallengeId])).rows[0];
+  check(specificRow.required_amount === "2" && specificRow.parameters.require_unique_collectibles === true, "Require all must canonicalize its goal and distinct-ID ownership semantics.");
+  check((await client.query("select public.collectible_challenge_goal($1) as goal, public.collectible_challenge_current($2,$1) as current", [specificChallengeId, userId])).rows[0].goal === "2", "Require all must expose a 2-item server goal.");
+  check((await client.query("select public.collectible_challenge_current($1,$2) as current", [userId, specificChallengeId])).rows[0].current === "1", "Require all must report one of two selected Relics as 1/2.");
+  await client.query("update public.user_relic_inventory set quantity=1 where user_id=$1 and relic_id=$2", [userId, specificRelicTwo]);
+  check((await client.query("select public.collectible_challenge_current($1,$2) as current", [userId, specificChallengeId])).rows[0].current === "2", "Require all must complete only after both selected Relics are owned.");
+
   console.log(`Collectible ownership dependency and Critter-tag projection tests passed for user ${userId}; all fixture changes will be rolled back.`);
 } finally {
   if (began) await client.query("rollback").catch(() => undefined);

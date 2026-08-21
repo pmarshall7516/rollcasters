@@ -424,3 +424,10 @@ The working progress log is maintained in the shared Obsidian vault:
 
 - Relic equip popups now grey out and disable every Relic already equipped to the target Critter, even when extra inventory copies exist; Relics equipped to other Critters remain eligible when available.
 - Added pure loadout coverage for target-Critter Relic detection and a focused source regression for the popup condition. Typecheck, collection UI tests, production build, focused Chromium UI regression, and generic web-game smoke pass; the smoke run reached the unauthenticated login screen.
+
+## 2026-08-21 — Selectable Turn-Restricted Skills
+
+- Turn-Restricted Skill roots such as Pounce remain selectable before targeting even when their active-turn window is not met.
+- Added `SkillAvailability.selectable` so turn-restricted Skills can be submitted and fizzle after reserving Mana, while exhausted usage caps and recharge remain disabled.
+- Fizzle presentations are negative and actor-targeted so the combat narration and reaction styling explain the failed Skill.
+- `npm run typecheck` and `npm run test:effect-runtime` pass.

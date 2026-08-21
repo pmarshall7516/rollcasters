@@ -5555,7 +5555,7 @@ function BattleUnit({
                 const skill = unit.skills[slot];
                 const skillCost = skill ? calculateActionCostBreakdown(battle, { actorKey: unit.key, type: "skill", skillId: skill.id, cost: skill.mana_cost }) : undefined;
                 const availability = skill ? skillAvailability(battle, unit.key, skill.id) : undefined;
-                const disabledReason = !availability?.valid
+                const disabledReason = !availability?.selectable
                   ? availability?.reason
                   : skillCost!.final > availableMana ? "Insufficient Mana." : undefined;
                 return skill

@@ -76,11 +76,11 @@ const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("own_collectible", { collectible_category: "critter", collectible_ids: ["001"], required_amount: 1, require_unique_collectibles: true }), "Own Ramber."],
   [challenge("own_collectible", { collectible_category: "critter", collectible_ids: [], critter_tag_ids: ["final-stage"], required_amount: 1, require_unique_collectibles: true }), "Own 1 different Critter tagged Final Stage."],
   [challenge("level_up_critter", { critter_id: "001", required_level: 20 }), "Unlock level 20 for Ramber (001)"],
-  [challenge("knock_out_critters", { target_mode: "species", target_ids: ["001"], required_amount: 10 }), "Knock out Critters (Ramber)"],
-  [challenge("deal_damage", { target_mode: "element", target_ids: ["vile"], damage_mode: "any", required_amount: 1250 }), "Deal damage to Vile"],
-  [challenge("take_damage", { target_mode: "species", any_target: true, target_ids: [], damage_mode: "any", required_amount: 3000 }), "Take damage as Any Species"],
-  [challenge("use_skill", { target_mode: "skill", target_ids: ["vile-injection"], required_amount: 10 }), "Use Skill (Vile Injection)"],
-  [challenge("squad_composition", { completion_event: "battle_win", required_completions: 2, required_critter_ids: ["001"], required_element_ids: ["vile"], require_survival: true }), "Win 2 battles with the configured squad."],
+  [challenge("knock_out_critters", { source_critter_ids: ["001"], target_critter_ids: ["002"], required_amount: 10 }), "Knock out Cragram using Ramber."],
+  [challenge("deal_damage", { source_critter_ids: ["001"], target_element_ids: ["vile"], damage_mode: "any", required_amount: 1250 }), "Deal damage to Vile Element Critters using Ramber."],
+  [challenge("take_damage", { source_element_ids: ["vile"], target_critter_ids: ["002"], damage_mode: "any", required_amount: 3000 }), "Take damage as Cragram from Vile Element Critters."],
+  [challenge("use_skill", { skill_type: "attack", skill_ids: ["vile-injection"], source_critter_ids: ["001"], required_amount: 10 }), "Use Vile Injection with Ramber."],
+  [challenge("squad_composition", { completion_event: "battle_win", required_completions: 2, required_critter_ids: ["001"], required_element_ids: ["vile"], required_matching_critters: 1, require_survival: true }), "Win 2 battles with 1 unique matching Critter covering Vile."],
   [challenge("dungeon_clear", { dungeon_selection: "specific_dungeon", dungeon_ids: ["002"], required_clears: 1, has_relic_requirements: true, required_relic_ids: ["004"], require_relic_activation: true }), "Clear Creek Clash 1 time."],
   [challenge("resource_spending", { spending_context: "combat", resource_type: "currency", required_amount: 5, tracking_scope: "lifetime" }), "Spend 5 Currency in total."],
   [challenge("swap_action", { tracked_action: "unique_critters_swapped_in", required_amount: 2 }), "Unique Critters Swapped In 2 times."],
@@ -96,8 +96,45 @@ const cases: Array<[CollectibleUnlockChallenge, string]> = [
 
 for (const [row, expected] of cases) check(challengeDescription(data, row) === expected, `${row.challenge_type} text differs from the dev default: ${challengeDescription(data, row)}`);
 
-check(challengeDescription(data, challenge("deal_damage", { target_mode: "species", target_ids: ["001"], damage_mode: "hp_only", required_amount: 100 })) === "Deal HP damage to Ramber", "Deal Damage HP-only text must identify the HP filter.");
-check(challengeDescription(data, challenge("take_damage", { target_mode: "species", target_ids: ["002"], damage_mode: "shield_only", required_amount: 100 })) === "Take Shield damage as Cragram", "Take Damage Shield-only text must identify the Shield filter.");
+const specificOwnership = challenge("own_collectible", {
+  collectible_category: "relic",
+  collectible_ids: ["001", "005"],
+  specific_collectible_mode: "all",
+  required_amount: 1,
+  require_unique_collectibles: false,
+});
+const specificOwnershipData = {
+  ...data,
+  catalog: {
+    ...data.catalog,
+    collectibleUnlockRequirements: [],
+    collectibleUnlockChallenges: [],
+    relics: [
+      { id: "001", name: "Copper Shield" },
+      { id: "005", name: "Spiky Shield" },
+    ],
+  },
+  player: {
+    relicInventory: [
+      { user_id: "user", relic_id: "001", quantity: 1, discovered_at: "now" },
+      { user_id: "user", relic_id: "005", quantity: 0, discovered_at: "now" },
+    ],
+    collectibleSnapshot: { progress: [], shards: [], lootboxes: [], tracked: [], unlocked_collectibles: [] },
+  },
+} as unknown as AppData;
+check(challengeDescription(specificOwnershipData, specificOwnership) === "Own Copper Shield and Spiky Shield.", "Require all ownership text must name every selected collectible.");
+check(challengeGoal(specificOwnership) === 2n, "Require all ownership goal must equal the number of selected IDs, not stale required_amount.");
+check(derivedChallengeProgress(specificOwnershipData, specificOwnership) === 1n, "Require all ownership progress must report one of two selected Relics as 1/2.");
+check(derivedChallengeProgress({
+  ...specificOwnershipData,
+  player: {
+    ...specificOwnershipData.player!,
+    relicInventory: specificOwnershipData.player!.relicInventory.map((row) => ({ ...row, quantity: 1 })),
+  },
+}, specificOwnership) === 2n, "Require all ownership must complete only after every selected Relic is owned.");
+
+check(challengeDescription(data, challenge("deal_damage", { target_mode: "species", target_ids: ["001"], damage_mode: "hp_only", required_amount: 100 })) === "Deal HP damage to Ramber.", "Deal Damage HP-only text must identify the HP filter.");
+check(challengeDescription(data, challenge("take_damage", { target_mode: "species", target_ids: ["002"], damage_mode: "shield_only", required_amount: 100 })) === "Take Shield damage as Cragram from any enemy Critter.", "Take Damage Shield-only text must identify the Shield filter.");
 
 for (const [mode, payload, expected] of [
   ["any", { hp_damage: 4, shield_damage: 6 }, 10],

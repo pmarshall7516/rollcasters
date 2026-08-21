@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { createDbClient, readMigration } from "./db-utils.mjs";
+import { createDbClient } from "./db-utils.mjs";
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -18,7 +18,6 @@ async function expectError(client, savepoint, expected, action) {
   check(matched, `Expected database error ${expected}.`);
 }
 
-const migration = readMigration("017_dungeon_game_runtime.sql");
 const client = createDbClient();
 let began = false;
 
@@ -26,7 +25,6 @@ try {
   await client.connect();
   await client.query("begin");
   began = true;
-  await client.query(migration);
 
   const userId = crypto.randomUUID();
   await client.query(`
@@ -206,8 +204,8 @@ try {
   check(loss.run.status === "lost", "A failed encounter must fail the run without clearing the Dungeon.");
   check(
     loss.battleRewards.defeatedOpponentInstanceIds.length === lossOpponents.length
-      && loss.battleRewards.entries.some((entry) => entry.kind === "critter_xp"),
-    "Defeated-opponent XP and drops must remain committed when the player's squad is also defeated.",
+      && !loss.battleRewards.entries.some((entry) => entry.kind === "critter_xp"),
+    "Defeated-opponent drops must remain committed while Critter XP is withheld when the entire squad is knocked out.",
   );
 
   const emptyLossRun = (await client.query(

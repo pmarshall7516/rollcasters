@@ -316,6 +316,8 @@ function recordEffectActivation(
 
 export type SkillAvailability = {
   valid: boolean;
+  /** Whether the Skill may still be submitted as an action for resolution. */
+  selectable: boolean;
   reason?: string;
   remainingUses?: number;
   scope?: "encounter" | "dungeon";
@@ -1480,10 +1482,10 @@ function normalizeCombatActions(state: CombatState, actions: CombatAction[]): Co
     if (isActorRecharging(state, action.actorKey)) return { actorKey: action.actorKey, type: "skip", cost: 0 };
     if (action.type === "skill" && action.skillId) {
       const availability = skillAvailability(state, action.actorKey, action.skillId);
-      // Selection surfaces and legal-intent enumerators hide a Skill after
-      // its Turn Restriction window. A directly submitted action still
-      // resolves as the documented reserved-Mana fizzle.
-      if (!availability.valid && availability.reason !== TURN_RESTRICTION_FAILURE_REASON) {
+      // A Skill outside its Turn Restriction window remains selectable so the
+      // player or simulator can submit it and receive the authored fizzle
+      // presentation. Other unavailable Skills are normalized to a free wait.
+      if (!availability.valid && !availability.selectable) {
         return { actorKey: action.actorKey, type: "skip", cost: 0 };
       }
     }
@@ -1758,7 +1760,7 @@ function chooseLegacyEnemyActions(state: CombatState): { actions: CombatAction[]
     .map((unit) => {
       const skill = unit.skills.find((candidate) => {
         const action = { actorKey: unit.key, type: "skill" as const, skillId: candidate.id, cost: candidate.mana_cost };
-        return skillAvailability(state, unit.key, candidate.id).valid && skillTargets(state, unit.key, candidate).length > 0 && calculateActionCost(state, action) <= mana;
+        return skillAvailability(state, unit.key, candidate.id).selectable && skillTargets(state, unit.key, candidate).length > 0 && calculateActionCost(state, action) <= mana;
       });
       if (!skill) {
         const block = { actorKey: unit.key, type: "block" as const, cost: unit.stats.blockCost };
@@ -1783,7 +1785,7 @@ function chooseEnemyActions(state: CombatState): { actions: CombatAction[]; rngS
     .map((unit) => {
       if (isActorRecharging(state, unit.key)) return { actorKey: unit.key, type: "skip" as const, cost: 0 };
       const candidates: CombatAction[] = [];
-      for (const skill of unit.skills.filter((candidate) => skillAvailability(state, unit.key, candidate.id).valid)) {
+      for (const skill of unit.skills.filter((candidate) => skillAvailability(state, unit.key, candidate.id).selectable)) {
         const targets = skillTargets(state, unit.key, skill);
         if (!targets.length) continue;
         const base = { actorKey: unit.key, type: "skill" as const, skillId: skill.id, cost: skill.mana_cost };
@@ -2257,7 +2259,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       const message = `${combatantPossessive(actor)} ${skill.name} fizzled; its Turn Restriction was not met.`;
       return appendPresentationEvent(
         { ...state, log: [message, ...state.log] },
-        { kind: "other", message, actorKey: actor.key, targetKeys: [], skillId: skill.id, hpChanges: [] },
+        { kind: "other", effectPolarity: "negative", message, actorKey: actor.key, targetKeys: [actor.key], skillId: skill.id, hpChanges: [] },
       );
     }
     const targetSlot = action.targetSlotSide !== undefined && action.targetSlotIndex !== undefined
@@ -2581,10 +2583,10 @@ export function isActorRecharging(state: CombatState, actorKey: string): boolean
 export function skillAvailability(state: CombatState, actorKey: string, skillId: string): SkillAvailability {
   const actor = findUnit(state, actorKey);
   if (!actor || !actor.active || actor.hp <= 0 || !actor.skills.some((skill) => skill.id === skillId)) {
-    return { valid: false, reason: "This Skill is not available to this Critter." };
+    return { valid: false, selectable: false, reason: "This Skill is not available to this Critter." };
   }
   if (isActorRecharging(state, actorKey)) {
-    return { valid: false, reason: `${actor.name} must recharge this turn.` };
+    return { valid: false, selectable: false, reason: `${actor.name} must recharge this turn.` };
   }
   const key = skillUsageKey(actorKey, skillId);
   let tightest: SkillAvailability | null = null;
@@ -2598,6 +2600,7 @@ export function skillAvailability(state: CombatState, actorKey: string, skillId:
     if (!tightest || remaining < (tightest.remainingUses ?? Number.MAX_SAFE_INTEGER)) {
       tightest = {
         valid: remaining > 0,
+        selectable: remaining > 0,
         remainingUses: remaining,
         scope,
         reason: remaining > 0
@@ -2606,11 +2609,11 @@ export function skillAvailability(state: CombatState, actorKey: string, skillId:
       };
     }
   }
-  if (tightest) return tightest;
+  if (tightest && !tightest.valid) return tightest;
   if (failedSkillTurnRestriction(state, actorKey, skillId)) {
-    return { valid: false, reason: TURN_RESTRICTION_FAILURE_REASON };
+    return { valid: false, selectable: true, reason: TURN_RESTRICTION_FAILURE_REASON };
   }
-  return { valid: true };
+  return tightest ?? { valid: true, selectable: true };
 }
 
 function recordSkillUseAndRestrictions(

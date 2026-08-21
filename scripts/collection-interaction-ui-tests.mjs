@@ -19,9 +19,9 @@ try {
         <section class="collectible-challenge-panel ui-test-challenges">
           <div class="challenge-panel-heading"><div><p class="eyebrow">Collect</p><h3>Complete 1 of 3 challenges</h3></div><strong>0 complete</strong></div>
           <div class="challenge-detail-rows">
-            <article class="challenge-detail-row"><span>Damage Critters (Any Species)</span><strong>0 / 5</strong><button class="secondary-button">Untrack · Slot 1</button></article>
+            <article class="challenge-detail-row"><span>Deal damage to any enemy Critter.</span><strong>0 / 5</strong><button class="secondary-button">Untrack · Slot 1</button></article>
             <article class="challenge-detail-row"><span>Unlock Ramber shards</span><strong>0 / 30</strong><button class="primary-button">Track</button></article>
-            <article class="challenge-detail-row"><span>Use Air Skills</span><strong>0 / 500</strong><button class="primary-button">Track</button></article>
+            <article class="challenge-detail-row"><span>Use Air Element Skills.</span><strong>0 / 500</strong><button class="primary-button">Track</button></article>
           </div>
         </section>
         <section class="ui-test-layout">

@@ -280,9 +280,9 @@ try {
   let compactRows = targetCard.locator(".challenge-row");
   check(await compactRows.count() === 4, "The compact gated Critter card must render all four ordered challenges.");
   check((await compactRows.nth(0).textContent())?.includes("0 / 2"), "The Gate 1 challenge must render first on the compact card.");
-  check((await compactRows.nth(1).textContent())?.includes("Receive Damage") && (await compactRows.nth(1).textContent())?.includes("0 / 4"), "The Gate 2 challenge must render second on the compact card.");
-  check((await compactRows.nth(2).textContent())?.includes("Damage Critters"), "The first ungated challenge must render after gated challenges.");
-  check((await compactRows.nth(3).textContent())?.includes("Knock out Critters"), "The second ungated challenge must remain ordered after the first.");
+  check((await compactRows.nth(1).textContent())?.includes("Take damage as any user Critter from any enemy Critter.") && (await compactRows.nth(1).textContent())?.includes("0 / 4"), "The Gate 2 challenge must render second on the compact card.");
+  check((await compactRows.nth(2).textContent())?.includes("Deal damage to any enemy Critter."), "The first ungated challenge must render after gated challenges.");
+  check((await compactRows.nth(3).textContent())?.includes("Knock out any enemy Critter."), "The second ungated challenge must remain ordered after the first.");
   let compactBoundary = targetCard.locator(".challenge-gate-boundary");
   check(await compactBoundary.count() === 1, "The compact card must render exactly one locked-group boundary.");
   check((await compactBoundary.textContent())?.trim() === "Complete all above challenges first", "The compact locked-group boundary must use the requested copy.");
@@ -290,7 +290,7 @@ try {
     previous: entry.previousElementSibling?.textContent ?? "",
     next: entry.nextElementSibling?.textContent ?? "",
   }));
-  check(boundaryNeighbors.previous.includes("0 / 2") && boundaryNeighbors.next.includes("Receive Damage"), "The initial compact boundary must sit between Gate 1 and Gate 2.");
+  check(boundaryNeighbors.previous.includes("0 / 2") && boundaryNeighbors.next.includes("Take damage as any user Critter from any enemy Critter."), "The initial compact boundary must sit between Gate 1 and Gate 2.");
   check(await targetCard.locator(".challenge-row .gate-blocked").count() === 0, "Blocked compact rows must not repeat the shared boundary copy.");
   check(await compactRows.nth(1).locator(".grid-challenge-track").count() === 0 && await compactRows.nth(2).locator(".grid-challenge-track").count() === 0, "Gate-blocked compact challenges must not expose Track actions.");
   const compactAlignmentOffsets = await compactRows.evaluateAll((rows) => rows.map((row) => {
@@ -342,7 +342,7 @@ try {
   await waitForTargetArtwork(page.locator(".modal"));
   let gateOne = page.locator(".challenge-detail-row").nth(0);
   let gateTwo = page.locator(".challenge-detail-row").nth(1);
-  let trackedChallenge = page.locator(".challenge-detail-row").filter({ hasText: "Damage Critters" });
+  let trackedChallenge = page.locator(".challenge-detail-row").filter({ hasText: "Deal damage to any enemy Critter." });
   check(await page.locator(".challenge-detail-row .gate-badge").count() === 0, "Collectible popups must not show Gate pills on gated challenge rows.");
   check((await gateOne.textContent())?.includes("0 / 2"), "Gate 1 must expose its raw Shop progress.");
   check((await gateTwo.textContent())?.includes("0 / 4"), "Gate 2 must expose its raw Shop progress.");
@@ -370,7 +370,7 @@ try {
     previous: entry.previousElementSibling?.textContent ?? "",
     next: entry.nextElementSibling?.textContent ?? "",
   }));
-  check(boundaryNeighbors.previous.includes("0 / 4") && boundaryNeighbors.next.includes("Damage Critters"), "After Gate 1 completes, the boundary must move below Gate 2 and above the ungated challenges.");
+  check(boundaryNeighbors.previous.includes("0 / 4") && boundaryNeighbors.next.includes("Deal damage to any enemy Critter."), "After Gate 1 completes, the boundary must move below Gate 2 and above the ungated challenges.");
   check(!(await compactRows.nth(1).getAttribute("class"))?.includes("blocked"), "Gate 2 must become eligible after Gate 1 completes.");
   check((await compactRows.nth(2).getAttribute("class"))?.includes("blocked"), "Ungated challenges must remain blocked until Gate 2 completes.");
   await compactBoundary.evaluate((entry) => entry.scrollIntoView({ block: "center", inline: "nearest" }));
@@ -388,9 +388,9 @@ try {
   targetCard = page.locator(`.critter-card:has(> .collectible-id:text-is("${target.id}"))`);
   await waitForTargetArtwork(targetCard);
   check(await targetCard.locator(".challenge-gate-boundary").count() === 0, "The compact boundary must disappear after the final gate completes.");
-  const eligibleCompactRow = targetCard.locator(".challenge-row").filter({ hasText: "Damage Critters" });
+  const eligibleCompactRow = targetCard.locator(".challenge-row").filter({ hasText: "Deal damage to any enemy Critter." });
   check(!(await eligibleCompactRow.getAttribute("class"))?.includes("blocked"), "The compact Tracked row must become eligible when the final gate completes.");
-  const compactTrackButton = eligibleCompactRow.getByRole("button", { name: /^Track Damage Critters/ });
+  const compactTrackButton = eligibleCompactRow.getByRole("button", { name: /^Track Deal damage to any enemy Critter\./ });
   check(await compactTrackButton.isEnabled(), "The newly eligible compact challenge must expose an enabled Track action.");
   const trackRowGeometry = await eligibleCompactRow.evaluate((row) => {
     const description = row.querySelector(".challenge-row-description").getBoundingClientRect();
@@ -413,7 +413,7 @@ try {
   await compactTrackButton.click();
   await page.waitForFunction((challengeId) => JSON.parse(window.render_game_to_text()).trackedChallenges.some((row) => row.challenge_id === challengeId), challengeIds[2]);
   check(await page.locator(".modal").count() === 0, "Tracking from a compact card must not open its detail modal.");
-  const compactUntrackButton = eligibleCompactRow.getByRole("button", { name: /^Untrack Damage Critters/ });
+  const compactUntrackButton = eligibleCompactRow.getByRole("button", { name: /^Untrack Deal damage to any enemy Critter\./ });
   check(await compactUntrackButton.getAttribute("aria-pressed") === "true", "The compact action must switch to its tracked state after the refresh.");
   const untrackGeometry = await compactUntrackButton.evaluate((button) => ({ width: button.getBoundingClientRect().width, labelFits: button.scrollWidth <= button.clientWidth }));
   check(untrackGeometry.width === 60 && untrackGeometry.labelFits, "The compact Untrack action must retain enough width for its full label.");
@@ -423,7 +423,7 @@ try {
   await waitForTargetArtwork(page.locator(".modal"));
   gateOne = page.locator(".challenge-detail-row").nth(0);
   gateTwo = page.locator(".challenge-detail-row").nth(1);
-  trackedChallenge = page.locator(".challenge-detail-row").filter({ hasText: "Damage Critters" });
+  trackedChallenge = page.locator(".challenge-detail-row").filter({ hasText: "Deal damage to any enemy Critter." });
   check((await gateOne.getAttribute("class"))?.includes("complete"), "Gate 1 must render complete after reaching its Shop goal.");
   check((await gateTwo.getAttribute("class"))?.includes("complete"), "Gate 2 must render complete after reaching its Shop goal.");
   check(await page.locator(".challenge-detail-gate-boundary").count() === 0, "The detail boundary must disappear after the final gate completes.");
