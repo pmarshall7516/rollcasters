@@ -34,10 +34,12 @@ import {
   ensureUserGameState,
   getActiveDungeonRun,
   getGameAssetUrl,
+  getGameUpdateStatus,
   getSnapshotGameAssetUrl,
   getPromoCodeRedemptionHistory,
   getSession,
   hasSupabaseConfig,
+  currentGameVersion,
   loadAppData,
   openLootbox,
   purchaseShopEntry,
@@ -177,7 +179,7 @@ import type {
   View,
 } from "./lib/types";
 import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
-import { checkForDesktopUpdate, isTauriDesktop, type DesktopUpdate } from "./lib/desktop-updater";
+import { checkForDesktopUpdate, isTauriDesktop, resolveDesktopUpdateGate, type DesktopUpdate } from "./lib/desktop-updater";
 import { downloadDiagnosticReport } from "./lib/diagnostics";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
@@ -321,11 +323,17 @@ export function App() {
       return;
     }
     let active = true;
-    checkForDesktopUpdate()
-      .then((update) => {
+    Promise.all([checkForDesktopUpdate(), getGameUpdateStatus()])
+      .then(([update, status]) => {
         if (!active) return;
-        setDesktopUpdate(update);
-        setDesktopGate(update ? "required" : "ready");
+        const decision = resolveDesktopUpdateGate(status, currentGameVersion, update);
+        if (decision.kind === "maintenance" || decision.kind === "error") {
+          setDesktopGateError(decision.message);
+          setDesktopGate("error");
+          return;
+        }
+        setDesktopUpdate(decision.kind === "required" ? decision.update : null);
+        setDesktopGate(decision.kind === "required" ? "required" : "ready");
       })
       .catch((updateError) => {
         if (!active) return;
@@ -350,9 +358,17 @@ export function App() {
     let active = true;
     const check = async () => {
       try {
-        const update = await checkForDesktopUpdate();
-        if (!active || !update) return;
-        setDesktopUpdate(update);
+        const [update, status] = await Promise.all([checkForDesktopUpdate(), getGameUpdateStatus()]);
+        if (!active) return;
+        const decision = resolveDesktopUpdateGate(status, currentGameVersion, update);
+        if (decision.kind === "maintenance") {
+          setDesktopGateError(decision.message);
+          setDesktopGate("error");
+          return;
+        }
+        if (decision.kind === "error") throw new Error(decision.message);
+        if (decision.kind !== "required") return;
+        setDesktopUpdate(decision.update);
         if (!combatRef.current && !lootboxOperationActive) setDesktopGate("required");
       } catch (updateError) {
         // A failed periodic check does not invalidate a session that already

@@ -45,6 +45,7 @@ const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
 const configuredGameAssetBaseUrl = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 const gameCatalogBaseUrl = (import.meta.env.VITE_GAME_CATALOG_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 const gameVersion = (import.meta.env.VITE_GAME_VERSION as string | undefined) ?? "0.1.0";
+export const currentGameVersion = gameVersion;
 const gameCatalogReleaseId = (import.meta.env.VITE_GAME_CATALOG_RELEASE_ID as string | undefined) ?? "unversioned";
 const gameClientProtocol = (import.meta.env.VITE_GAME_CLIENT_PROTOCOL_VERSION as string | undefined) ?? "1";
 export const desktopProfile = resolveDesktopProfile(import.meta.env);
@@ -85,6 +86,22 @@ function requireClient(): SupabaseClient {
     throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY.");
   }
   return supabase;
+}
+
+export type GameUpdateStatus = {
+  environment: "production";
+  channel: "stable";
+  maintenance: boolean;
+  emergencyMaintenance: boolean;
+  maintenanceReason: string | null;
+  active: null | { id: string; version: string; catalogReleaseId: string; clientProtocolVersion: number; activatedAt: string };
+  scheduled: null | { id: string; version: string; catalogReleaseId: string; clientProtocolVersion: number; activatesAt: string };
+};
+
+export async function getGameUpdateStatus(): Promise<GameUpdateStatus> {
+  const { data, error } = await requireClient().rpc("get_game_update_status");
+  if (error) throw error;
+  return data as GameUpdateStatus;
 }
 
 const LIVE_CATALOG_COLUMNS: Record<string, string> = {
