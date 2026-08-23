@@ -145,7 +145,7 @@ jobs:
           VITE_EXPECTED_SUPABASE_PROJECT_REF: ${{ secrets.PRODUCTION_SUPABASE_PROJECT_REF }}
         run: npm run desktop:build:stable
       - run: node scripts/collect-desktop-artifacts.mjs "${{ matrix.platform }}" "${{ needs.preflight.outputs.version }}" artifacts
-      - run: npm sbom --sbom-format cyclonedx > artifacts/npm-sbom.cdx.json
+      - run: npm sbom --sbom-format cyclonedx > "artifacts/${{ matrix.platform }}-npm-sbom.cdx.json"
         shell: bash
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -170,7 +170,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ai-lab-certification-${{ needs.preflight.outputs.version }}
-          path: draft/certification
+          path: draft
       - run: node scripts/create-update-feed.mjs "${{ inputs.candidate_path }}" draft draft/latest.json
       - name: Create checksums and private evidence
         run: |
