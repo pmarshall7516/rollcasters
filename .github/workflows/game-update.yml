@@ -75,11 +75,18 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai-lab/trainer/requirements.txt
       - run: npm ci
         working-directory: game-source
       - name: Download exact published Catalog Release
         run: node game-source/scripts/download-published-catalog.mjs "candidate-metadata/${{ inputs.candidate_path }}" catalog-release
       - run: npm ci
+        working-directory: ai-lab
+      - run: python -m pip install -r trainer/requirements.txt
         working-directory: ai-lab
       - name: Certify exact combat and Catalog tuple
         working-directory: ai-lab
