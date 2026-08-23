@@ -7,6 +7,14 @@ assert.equal(base.identifier, 'com.rollcasters.game')
 assert.equal(local.identifier, 'com.rollcasters.local')
 assert.equal(base.bundle.macOS.signingIdentity, '-', 'The initial macOS channel must use ad-hoc signing.')
 assert.deepEqual(base.bundle.targets, ['dmg', 'nsis'])
+assert.deepEqual(base.bundle.icon, [
+  'icons/32x32.png',
+  'icons/128x128.png',
+  'icons/128x128@2x.png',
+  'icons/icon.icns',
+  'icons/icon.ico',
+], 'macOS and Windows bundles must use the generated Rollcasters icon assets.')
+for (const icon of base.bundle.icon) assert.ok(fs.existsSync(`src-tauri/${icon}`), `Configured desktop icon is missing: ${icon}`)
 assert.equal(base.bundle.createUpdaterArtifacts, true)
 assert.equal(base.bundle.windows.nsis.installMode, 'currentUser')
 assert.ok(base.app.security.csp && !base.app.security.csp.includes("default-src *"), 'Desktop CSP must fail closed.')
