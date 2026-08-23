@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
   "channel": "stable",
-  "createdAt": "2026-08-23T00:58:00.000Z",
-  "sourceTag": "game-v1.0.0",
-  "sourceCommit": "18fe6481b6c3af5aae756bfc777c0e33d3ddbb44",
+  "createdAt": "2026-08-23T01:22:00.000Z",
+  "sourceTag": "game-v1.0.0-source.2",
+  "sourceCommit": "077cae94c901d7e2577c02083bd6d9bee5934c21",
   "aiLabCommit": "a63e48302a193705fad3e1d1c3f592a8834408c5",
   "releaseNotes": "Rollcasters 1.0.0 stable desktop release.",
   "activation": { "mode": "immediate", "activatesAt": null },
