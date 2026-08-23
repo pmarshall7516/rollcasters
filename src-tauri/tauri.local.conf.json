@@ -1,0 +1,7 @@
+{
+  "productName": "Rollcasters Local",
+  "identifier": "com.rollcasters.local",
+  "build": { "beforeBuildCommand": "npm run build:local" },
+  "app": { "windows": [{ "label": "main", "title": "Rollcasters Local" }] },
+  "plugins": { "updater": { "active": false } }
+}

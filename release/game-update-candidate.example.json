@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "channel": "stable",
+  "createdAt": "2026-08-21T00:00:00.000Z",
+  "sourceTag": "game-v1.0.0",
+  "sourceCommit": "0000000000000000000000000000000000000000",
+  "aiLabCommit": "0000000000000000000000000000000000000000",
+  "releaseNotes": "Player-visible changes and operator classification.",
+  "activation": { "mode": "immediate", "activatesAt": null },
+  "catalogRelease": {
+    "id": "2026.08.22.1",
+    "manifestSha256": "208bd8a45e7c5c771bd0622d6c55d57903ebebf91095d2ca5e7c5c6acfa5b2fd",
+    "publicBaseUrl": "https://YOUR_PROJECT_REF.supabase.co/storage/v1/object/public/game-releases/",
+    "manifestPath": "game-data/releases/2026.08.22.1/release-manifest.208bd8a45e7c.json",
+    "assetProvenance": {
+      "status": "legacy-published-release-attested",
+      "repository": "pmarshall7516/rollcaster-assets",
+      "commit": "b899a5771946ace3e1a99d164655db1093896250"
+    }
+  },
+  "distribution": {
+    "repository": "pmarshall7516/rollcaster-releases",
+    "tag": "game-v1.0.0"
+  }
+}

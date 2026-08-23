@@ -1,0 +1,188 @@
+name: Protected Stable Game Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_path:
+        description: Committed Stable Game Update candidate manifest
+        required: true
+        default: release/game-update-candidate.json
+      candidate_commit:
+        description: Exact commit containing the candidate manifest
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-game-update-${{ inputs.candidate_commit }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+      catalog_id: ${{ steps.candidate.outputs.catalog_id }}
+      catalog_hash: ${{ steps.candidate.outputs.catalog_hash }}
+      source_tag: ${{ steps.candidate.outputs.source_tag }}
+      ai_lab_commit: ${{ steps.candidate.outputs.ai_lab_commit }}
+      release_repository: ${{ steps.candidate.outputs.release_repository }}
+      release_tag: ${{ steps.candidate.outputs.release_tag }}
+      source_commit: ${{ steps.candidate.outputs.source_commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/verify-game-update-candidate.mjs "${{ inputs.candidate_path }}"
+      - id: candidate
+        shell: bash
+        run: |
+          # shellcheck disable=SC2016
+          node -e 'const c=require(process.argv[1]); const o=process.env.GITHUB_OUTPUT; require("fs").appendFileSync(o, `version=${c.version}\ncatalog_id=${c.catalogRelease.id}\ncatalog_hash=${c.catalogRelease.manifestSha256}\nsource_tag=${c.sourceTag}\nsource_commit=${c.sourceCommit}\nai_lab_commit=${c.aiLabCommit}\nrelease_repository=${c.distribution.repository}\nrelease_tag=${c.distribution.tag}\n`)' "${{ inputs.candidate_path }}"
+      - run: npm audit --audit-level=high
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-08-22
+      - run: cargo install cargo-audit --locked && cargo audit --file src-tauri/Cargo.lock
+      - run: npm run test:desktop-profile && npm run test:desktop-config && npm run test:published-catalog && npm run test:update-policy && npm run test:update-feed && npm run test:desktop-session && npm run test:desktop-security
+      - run: npm run typecheck
+
+  certify-ai-lab:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    environment: production-signing
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
+          fetch-depth: 0
+          path: game-source
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          path: candidate-metadata
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: pmarshall7516/rollcaster-sim
+          ref: ${{ needs.preflight.outputs.ai_lab_commit }}
+          token: ${{ secrets.RELEASE_SOURCE_TOKEN }}
+          path: ai-lab
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: game-source
+      - name: Download exact published Catalog Release
+        run: node game-source/scripts/download-published-catalog.mjs "candidate-metadata/${{ inputs.candidate_path }}" catalog-release
+      - run: npm ci
+        working-directory: ai-lab
+      - name: Certify exact combat and Catalog tuple
+        working-directory: ai-lab
+        env:
+          ROLLCASTERS_GAME_ROOT: ${{ github.workspace }}/game-source
+          SIM_ENVIRONMENT: production
+          SIM_GAME_UPDATE_ID: stable:${{ needs.preflight.outputs.version }}
+          SIM_SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+          SIM_SOURCE_TAG: ${{ needs.preflight.outputs.source_tag }}
+          SIM_CATALOG_RELEASE_ID: ${{ needs.preflight.outputs.catalog_id }}
+          SIM_CATALOG_MANIFEST_SHA256: ${{ needs.preflight.outputs.catalog_hash }}
+          SIM_CATALOG_RELEASE_DIR: ${{ github.workspace }}/catalog-release
+        run: npm run certify:game-update
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ai-lab-certification-${{ needs.preflight.outputs.version }}
+          path: ai-lab/output/certification-*.json
+          if-no-files-found: error
+
+  package:
+    needs: [preflight, certify-ai-lab]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-15
+            platform: macos
+          - os: windows-2025
+            platform: windows
+    runs-on: ${{ matrix.os }}
+    environment: production-signing
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
+          fetch-depth: 0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_commit }}
+          path: candidate-metadata
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-08-22
+      - run: npm ci
+      - run: node scripts/download-published-catalog.mjs "candidate-metadata/${{ inputs.candidate_path }}" catalog-release
+      - run: node scripts/stage-desktop-catalog.mjs --source catalog-release
+        env:
+          ROLLCASTERS_EXPECTED_CATALOG_ID: ${{ needs.preflight.outputs.catalog_id }}
+          ROLLCASTERS_EXPECTED_CATALOG_SHA256: ${{ needs.preflight.outputs.catalog_hash }}
+      - name: Build Stable signed updater artifacts
+        env:
+          ROLLCASTERS_GAME_VERSION: ${{ needs.preflight.outputs.version }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_SUPABASE_URL: ${{ secrets.PRODUCTION_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_EXPECTED_SUPABASE_PROJECT_REF: ${{ secrets.PRODUCTION_SUPABASE_PROJECT_REF }}
+        run: npm run desktop:build:stable
+      - run: node scripts/collect-desktop-artifacts.mjs "${{ matrix.platform }}" "${{ needs.preflight.outputs.version }}" artifacts
+      - run: npm sbom --sbom-format cyclonedx > artifacts/npm-sbom.cdx.json
+        shell: bash
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Rollcasters-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+  assemble-draft:
+    needs: [preflight, certify-ai-lab, package]
+    runs-on: ubuntu-24.04
+    environment: production-release-draft
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_commit }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: Rollcasters-${{ needs.preflight.outputs.version }}-*
+          path: draft
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ai-lab-certification-${{ needs.preflight.outputs.version }}
+          path: draft/certification
+      - run: node scripts/create-update-feed.mjs "${{ inputs.candidate_path }}" draft draft/latest.json
+      - name: Create checksums and private evidence
+        run: |
+          find draft -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 shasum -a 256 > draft/SHA256SUMS.txt
+          tar -czf Rollcasters-${{ needs.preflight.outputs.version }}-draft-evidence.tar.gz -C draft .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Rollcasters-${{ needs.preflight.outputs.version }}-draft-evidence
+          path: Rollcasters-${{ needs.preflight.outputs.version }}-draft-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 90
+      - name: Create or update unpublished release draft
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPOSITORY_TOKEN }}
+        run: |
+          gh release view "${{ needs.preflight.outputs.release_tag }}" --repo "${{ needs.preflight.outputs.release_repository }}" >/dev/null 2>&1 || gh release create "${{ needs.preflight.outputs.release_tag }}" --repo "${{ needs.preflight.outputs.release_repository }}" --draft --title "Rollcasters ${{ needs.preflight.outputs.version }}" --notes-file <(node -e 'console.log(require(process.argv[1]).releaseNotes)' "${{ inputs.candidate_path }}")
+          gh release upload "${{ needs.preflight.outputs.release_tag }}" draft/* --repo "${{ needs.preflight.outputs.release_repository }}" --clobber
+        shell: bash

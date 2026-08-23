@@ -5915,3 +5915,22 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
     min-height: calc(var(--combat-unit-height) * 3 + 18px);
   }
 }
+/* Build-profile identity remains visible so Development/Beta cannot be mistaken for Stable. */
+.game-profile-badge {
+  position: fixed;
+  z-index: 10000;
+  top: 12px;
+  right: 12px;
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgb(8 10 24 / 88%);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  pointer-events: none;
+}
+
+.game-profile-badge.development { color: #72e6ff; }
+.game-profile-badge.beta { color: #ffd76b; }

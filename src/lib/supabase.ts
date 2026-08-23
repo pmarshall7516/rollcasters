@@ -36,6 +36,8 @@ import type {
 import { parseBattleFormat, sortDungeonsNaturally } from "./dungeons";
 import { createRequestId } from "./uuid";
 import { aggregateShopPurchaseReceipts, indexedShopPurchaseRequestId, shopPurchaseRpcErrorDisposition } from "./shop";
+import { resolveDesktopProfile } from "./desktop-profile";
+import { createDesktopSessionStorage } from "./desktop-session-storage";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
@@ -43,6 +45,9 @@ const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
 const configuredGameAssetBaseUrl = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 const gameCatalogBaseUrl = (import.meta.env.VITE_GAME_CATALOG_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 const gameVersion = (import.meta.env.VITE_GAME_VERSION as string | undefined) ?? "0.1.0";
+const gameCatalogReleaseId = (import.meta.env.VITE_GAME_CATALOG_RELEASE_ID as string | undefined) ?? "unversioned";
+const gameClientProtocol = (import.meta.env.VITE_GAME_CLIENT_PROTOCOL_VERSION as string | undefined) ?? "1";
+export const desktopProfile = resolveDesktopProfile(import.meta.env);
 // A player build is release-backed unless development explicitly opts into the
 // live authoring catalog. This prevents an omitted env var from weakening the
 // immutable-release boundary.
@@ -54,13 +59,23 @@ const liveAssetVersions = new Map<string, string>();
 
 export const GAME_ASSETS_BUCKET = "game-assets";
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
+const desktopRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export const supabase: SupabaseClient | null = hasSupabaseConfig
   ? createClient(supabaseUrl!, supabaseKey!, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: true,
+        detectSessionInUrl: !desktopRuntime,
+        storageKey: desktopProfile.storageNamespace,
+        ...(desktopRuntime ? { storage: createDesktopSessionStorage(desktopProfile.appId, desktopProfile.storageNamespace) } : {}),
+      },
+      global: {
+        headers: {
+          "x-rollcasters-version": gameVersion,
+          "x-rollcasters-catalog-release": gameCatalogReleaseId,
+          "x-rollcasters-protocol": gameClientProtocol,
+        },
       },
     })
   : null;
@@ -319,12 +334,12 @@ async function isGameAccount(client: SupabaseClient): Promise<boolean> {
   return data === true;
 }
 
-export async function signUp(email: string, password: string, username: string): Promise<boolean> {
+export async function signUp(email: string, password: string, username: string, inviteCode: string): Promise<boolean> {
   const client = requireClient();
   const { data, error } = await client.auth.signUp({
     email,
     password,
-    options: { data: { username } },
+    options: { data: { username, invite_code: inviteCode.trim() } },
   });
   if (error) throw error;
   return Boolean(data.session);

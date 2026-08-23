@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import {
   acknowledgeCollectibleUnlockEvent,
+  desktopProfile,
   ensureUserGameState,
   getActiveDungeonRun,
   getGameAssetUrl,
@@ -176,6 +177,8 @@ import type {
   View,
 } from "./lib/types";
 import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
+import { checkForDesktopUpdate, isTauriDesktop, type DesktopUpdate } from "./lib/desktop-updater";
+import { downloadDiagnosticReport } from "./lib/diagnostics";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type BagTab = "currency" | "shards" | "lootboxes";
@@ -270,6 +273,10 @@ function requiredStarterView(player: PlayerState | null | undefined): View | nul
 }
 
 export function App() {
+  const [desktopGate, setDesktopGate] = useState<"checking" | "ready" | "required" | "error">(() => isTauriDesktop() ? "checking" : "ready");
+  const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
+  const [desktopGateError, setDesktopGateError] = useState<string | null>(null);
+  const [lootboxOperationActive, setLootboxOperationActive] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
   const [view, setView] = useState<View>("auth");
@@ -308,6 +315,62 @@ export function App() {
   const clearedLegacyShopLedgerUserRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!isTauriDesktop()) return;
+    if (desktopProfile.profile === "local") {
+      setDesktopGate("ready");
+      return;
+    }
+    let active = true;
+    checkForDesktopUpdate()
+      .then((update) => {
+        if (!active) return;
+        setDesktopUpdate(update);
+        setDesktopGate(update ? "required" : "ready");
+      })
+      .catch((updateError) => {
+        if (!active) return;
+        console.error("Desktop startup update check failed.", updateError);
+        setDesktopGateError("Rollcasters could not securely verify the required Game Update. Check your connection and try again.");
+        setDesktopGate("error");
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const onLootboxBoundary = (event: Event) => {
+      const phase = (event as CustomEvent<string>).detail;
+      setLootboxOperationActive(phase !== "idle" && phase !== "closed");
+    };
+    window.addEventListener("rollcasters:lootbox-phase", onLootboxBoundary);
+    return () => window.removeEventListener("rollcasters:lootbox-phase", onLootboxBoundary);
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriDesktop() || desktopGate !== "ready") return;
+    let active = true;
+    const check = async () => {
+      try {
+        const update = await checkForDesktopUpdate();
+        if (!active || !update) return;
+        setDesktopUpdate(update);
+        if (!combatRef.current && !lootboxOperationActive) setDesktopGate("required");
+      } catch (updateError) {
+        // A failed periodic check does not invalidate a session that already
+        // passed the fail-closed startup gate. Retry on the next interval.
+        console.error("Desktop periodic update check failed.", updateError);
+      }
+    };
+    const timer = window.setInterval(() => void check(), 5 * 60 * 1000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [desktopGate, lootboxOperationActive]);
+
+  useEffect(() => {
+    if (desktopGate === "ready" && desktopUpdate && !combat && !lootboxOperationActive) {
+      setDesktopGate("required");
+    }
+  }, [combat, desktopGate, desktopUpdate, lootboxOperationActive]);
+
+  useEffect(() => {
     const userId = data?.player?.profile.user_id;
     if (!userId || clearedLegacyShopLedgerUserRef.current === userId) return;
     clearLegacyShopPurchaseLedger(userId);
@@ -315,6 +378,7 @@ export function App() {
   }, [data?.player?.profile.user_id]);
 
   async function purchaseShopItem(entry: ShopEntry, quantity: number): Promise<ShopPurchaseReceipt> {
+    if (desktopUpdate) throw new Error("A required Game Update is ready. Finish the current safe-boundary operation and update before making another purchase.");
     const receipt = await purchaseShopEntry(entry.id, createRequestId(), quantity);
     shopPurchaseRevisionRef.current += 1;
     setData((current) => current ? applyShopPurchaseReceipt(current, entry, receipt) : current);
@@ -620,6 +684,10 @@ export function App() {
 
   async function beginDungeon(dungeon: Dungeon) {
     if (!data?.player) return;
+    if (desktopUpdate) {
+      setError("A required Game Update is ready. Update before starting another Dungeon.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -649,6 +717,7 @@ export function App() {
   }
 
   useEffect(() => {
+    if (desktopGate !== "ready") return;
     if (!hasSupabaseConfig || !supabase) {
       setSessionReady(true);
       return;
@@ -674,7 +743,7 @@ export function App() {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [desktopGate]);
 
   useEffect(() => {
     function popstate() {
@@ -935,6 +1004,9 @@ export function App() {
     window.advanceTime = () => undefined;
   }, [view, shopTab, bagTab, loading, isAuthed, data, combat, notificationQueue, promoState]);
 
+  if (desktopGate === "checking") return <Shell><Loading message="Checking for required Game Updates..." /></Shell>;
+  if (desktopGate === "error") return <Shell><DesktopUpdateScreen message={desktopGateError ?? "The secure update check failed."} /></Shell>;
+  if (desktopGate === "required" && desktopUpdate) return <Shell><DesktopUpdateScreen version={desktopUpdate.version} update={desktopUpdate} /></Shell>;
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
   if (!isAuthed) return <Shell><AuthScreen onAuthed={() => refresh()} error={error} setError={setError} /></Shell>;
@@ -1019,7 +1091,9 @@ export function App() {
           tab={bagTab}
           setTab={setBagTab}
           onRefresh={() => refresh("bag")}
-          onBeforeOpenLootbox={async () => undefined}
+          onBeforeOpenLootbox={async () => {
+            if (desktopUpdate) throw new Error("A required Game Update is ready. Update before opening another Lootbox.");
+          }}
           onPurchaseError={(purchaseFailure) => enqueueNotification(createShopErrorNotification(purchaseFailure))}
           onBack={() => navigate("home")}
         />
@@ -1183,10 +1257,39 @@ function useViewportFitScale(bottomGutter = 4) {
 
 function Shell({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <main className={`app-shell ${className}`.trim()}>
+    <main className={`app-shell ${className}`.trim()} data-game-profile={desktopProfile.profile} data-game-environment={desktopProfile.environment}>
       <div className="world-glow" />
+      {desktopProfile.badge && <span className={`game-profile-badge ${desktopProfile.profile}`} aria-label={`${desktopProfile.appName} profile`}>{desktopProfile.badge}</span>}
       {children}
     </main>
+  );
+}
+
+function DesktopUpdateScreen({ version, update, message }: { version?: string; update?: DesktopUpdate; message?: string }) {
+  const [installing, setInstalling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <section className="setup-panel loading-panel desktop-update-panel" role="alert">
+      <RefreshCw size={42} aria-hidden="true" />
+      <h1>{version ? `Rollcasters ${version} is required` : "Secure update check unavailable"}</h1>
+      <p>{message ?? "Install this signed Game Update before entering Rollcasters. Your account and progress remain safely stored online."}</p>
+      {error && <div className="notice error">{error}</div>}
+      {update && <button className="primary-button" type="button" disabled={installing} onClick={async () => {
+        setInstalling(true);
+        setError(null);
+        try {
+          await update.installAndRestart();
+        } catch (installError) {
+          setError(installError instanceof Error ? installError.message : "The signed update could not be installed.");
+          setInstalling(false);
+        }
+      }}>{installing ? "Installing signed update..." : "Update and restart"}</button>}
+      <button className="secondary-button" type="button" onClick={() => downloadDiagnosticReport(desktopProfile, import.meta.env.VITE_GAME_VERSION ?? "0.1.0", {
+        state: error ? "install-error" : version ? "update-required" : "update-check-error",
+        availableVersion: version,
+        errorClass: error ? "install-failed" : message ? "update-check-failed" : undefined,
+      })}>Export redacted diagnostics</button>
+    </section>
   );
 }
 
@@ -1227,6 +1330,7 @@ function AuthScreen({
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
 
@@ -1236,7 +1340,7 @@ function AuthScreen({
     setError(null);
     try {
       if (mode === "signup") {
-        const hasSession = await signUp(email, password, username || email.split("@")[0]);
+        const hasSession = await signUp(email, password, username || email.split("@")[0], inviteCode);
         if (!hasSession) {
           setConfirmationEmail(email);
           return;
@@ -1267,10 +1371,16 @@ function AuthScreen({
         ) : <>
         <h2>{mode === "login" ? "Log in" : "Sign up"}</h2>
         {mode === "signup" && (
-          <label>
-            Username
-            <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="ShanksFan" />
-          </label>
+          <>
+            <label>
+              Username
+              <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="ShanksFan" />
+            </label>
+            <label>
+              Player invite
+              <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} autoComplete="one-time-code" required />
+            </label>
+          </>
         )}
         <label>
           Email
@@ -2867,7 +2977,11 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   }, []);
   useEffect(() => {
     document.documentElement.dataset.lootboxOpeningPhase = phase;
-    return () => { delete document.documentElement.dataset.lootboxOpeningPhase; };
+    window.dispatchEvent(new CustomEvent("rollcasters:lootbox-phase", { detail: phase }));
+    return () => {
+      delete document.documentElement.dataset.lootboxOpeningPhase;
+      window.dispatchEvent(new CustomEvent("rollcasters:lootbox-phase", { detail: "closed" }));
+    };
   }, [phase]);
 
   async function purchaseBox() {

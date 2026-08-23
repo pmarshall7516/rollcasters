@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Rollcasters",
+  "version": "0.1.0",
+  "identifier": "com.rollcasters.game",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build:stable",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co"
+    },
+    "windows": [{
+      "label": "main", "title": "Rollcasters", "width": 1280, "height": 800,
+      "minWidth": 1024, "minHeight": 700, "resizable": true, "fullscreen": false,
+      "maximized": false, "center": true
+    }]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "nsis"],
+    "createUpdaterArtifacts": true,
+    "macOS": { "minimumSystemVersion": "12.0", "signingIdentity": "-" },
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVENEU3RTU3MzM3QUQ0QzIKUldUQzFIb3pWMzVPN2V5R1pNNFBiUzFzdEV4VVlkc1I5SVg3ZUVOTWJ1RzVVNTFBY2cvb1pZb00K",
+      "endpoints": ["https://github.com/pmarshall7516/rollcaster-releases/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  }
+}
