@@ -15,7 +15,9 @@ let exitStatus = 0
 try {
   fs.writeFileSync(generated, `${JSON.stringify(profile === 'local' ? { version } : { version, plugins: { updater: { pubkey: publicKey } } }, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
   const bundleArgs = process.env.TAURI_BUNDLES?.trim() ? ['--bundles', process.env.TAURI_BUNDLES.trim()] : []
-  const result = spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tauri', 'build', ...overlays.flatMap((config) => ['--config', config]), ...bundleArgs], { stdio: 'inherit', env: { ...process.env, VITE_GAME_VERSION: version } })
+  const tauriCli = path.resolve('node_modules', '@tauri-apps', 'cli', 'tauri.js')
+  if (!fs.existsSync(tauriCli)) throw new Error('The local Tauri CLI is missing; run npm ci before packaging.')
+  const result = spawnSync(process.execPath, [tauriCli, 'build', ...overlays.flatMap((config) => ['--config', config]), ...bundleArgs], { stdio: 'inherit', env: { ...process.env, VITE_GAME_VERSION: version } })
   if (result.error) throw result.error
   if (result.status !== 0) exitStatus = result.status ?? 1
 } finally {
