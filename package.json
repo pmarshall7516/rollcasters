@@ -21,6 +21,8 @@
     "desktop:build:stable": "node scripts/build-desktop.mjs stable",
     "test:desktop-config": "node scripts/desktop-config-tests.mjs",
     "test:desktop-session": "node scripts/desktop-session-source-tests.mjs",
+    "test:desktop-session-storage": "tsc scripts/desktop-session-storage-tests.ts src/lib/desktop-session-storage.ts --outDir /tmp/rollcasters-desktop-session-storage-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-desktop-session-storage-tests/scripts/desktop-session-storage-tests.js",
+    "test:player-registration": "node scripts/player-registration-source-tests.mjs",
     "test:desktop-security": "node scripts/desktop-security-audit.mjs",
     "test:diagnostics": "node scripts/diagnostic-report-tests.mjs",
     "test:update-policy": "tsc scripts/update-policy-tests.ts src/lib/update-policy.ts --outDir /tmp/rollcasters-update-policy-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-update-policy-tests/scripts/update-policy-tests.js",

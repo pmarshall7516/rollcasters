@@ -351,12 +351,12 @@ async function isGameAccount(client: SupabaseClient): Promise<boolean> {
   return data === true;
 }
 
-export async function signUp(email: string, password: string, username: string, inviteCode: string): Promise<boolean> {
+export async function signUp(email: string, password: string, username: string): Promise<boolean> {
   const client = requireClient();
   const { data, error } = await client.auth.signUp({
     email,
     password,
-    options: { data: { username, invite_code: inviteCode.trim() } },
+    options: { data: { username } },
   });
   if (error) throw error;
   return Boolean(data.session);

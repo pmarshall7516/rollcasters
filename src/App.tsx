@@ -1346,7 +1346,6 @@ function AuthScreen({
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
 
@@ -1356,7 +1355,7 @@ function AuthScreen({
     setError(null);
     try {
       if (mode === "signup") {
-        const hasSession = await signUp(email, password, username || email.split("@")[0], inviteCode);
+        const hasSession = await signUp(email, password, username || email.split("@")[0]);
         if (!hasSession) {
           setConfirmationEmail(email);
           return;
@@ -1391,10 +1390,6 @@ function AuthScreen({
             <label>
               Username
               <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="ShanksFan" />
-            </label>
-            <label>
-              Player invite
-              <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} autoComplete="one-time-code" required />
             </label>
           </>
         )}
