@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const SHA256 = /^[0-9a-f]{64}$/
 const LEGACY_CATALOG_ID = '2026.08.22.1'
@@ -123,7 +124,7 @@ async function parallelMap(items, concurrency, worker) {
   await Promise.all(runners)
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const candidate = JSON.parse(fs.readFileSync(path.resolve(process.argv[2] ?? 'release/game-update-candidate.json'), 'utf8'))
   const result = await downloadPublishedCatalog(candidate, process.argv[3] ?? 'catalog-release')
   console.log(JSON.stringify(result))
