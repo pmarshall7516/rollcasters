@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "channel": "stable",
+  "createdAt": "2026-08-23T00:58:00.000Z",
+  "sourceTag": "game-v1.0.0",
+  "sourceCommit": "18fe6481b6c3af5aae756bfc777c0e33d3ddbb44",
+  "aiLabCommit": "31f97182a65b50a24cc684a26203f82cfad20b56",
+  "releaseNotes": "Rollcasters 1.0.0 stable desktop release.",
+  "activation": { "mode": "immediate", "activatesAt": null },
+  "catalogRelease": {
+    "id": "2026.08.22.1",
+    "manifestSha256": "208bd8a45e7c5c771bd0622d6c55d57903ebebf91095d2ca5e7c5c6acfa5b2fd",
+    "publicBaseUrl": "https://vmmakykjoougmnlwkout.supabase.co/storage/v1/object/public/game-releases/",
+    "manifestPath": "game-data/releases/2026.08.22.1/release-manifest.208bd8a45e7c.json",
+    "assetProvenance": {
+      "status": "legacy-published-release-attested",
+      "repository": "pmarshall7516/rollcaster-assets",
+      "commit": "b899a5771946ace3e1a99d164655db1093896250"
+    }
+  },
+  "distribution": {
+    "repository": "pmarshall7516/rollcaster-releases",
+    "tag": "game-v1.0.0"
+  }
+}
