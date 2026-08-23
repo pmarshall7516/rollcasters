@@ -14,6 +14,9 @@ export function validateCandidate(candidate, repoRoot) {
   if (!candidate.sourceTag || !candidate.releaseNotes?.trim()) throw new Error('Candidate tag and release notes are required.')
   if (!Number.isFinite(Date.parse(String(candidate.createdAt ?? '')))) throw new Error('Candidate createdAt must be an ISO timestamp.')
   if (!SHA.test(String(candidate.aiLabCommit ?? ''))) throw new Error('Candidate aiLabCommit must be a full lowercase commit SHA.')
+  for (const field of ['clientProtocolVersion', 'contentSchemaVersion', 'combatRuntimeVersion']) {
+    if (!Number.isInteger(candidate[field]) || candidate[field] < 1) throw new Error(`Candidate ${field} must be a positive integer.`)
+  }
   if (!/^\d{4}\.\d{2}\.\d{2}\.\d+$/.test(String(candidate.catalogRelease?.id ?? '')) || !SHA256.test(String(candidate.catalogRelease?.manifestSha256 ?? ''))) throw new Error('Candidate must pin an immutable Catalog Release ID and SHA-256.')
   validatePublishedCatalogContract(candidate)
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(candidate.distribution?.repository ?? '')) || !candidate.distribution?.tag) throw new Error('Candidate must identify the release-only repository and immutable release tag.')

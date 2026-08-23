@@ -9,7 +9,8 @@
   "scripts": {
     "test:server-update-gate": "tsc scripts/desktop-server-update-gate-tests.ts src/lib/desktop-updater.ts --outDir /tmp/rollcasters-server-update-gate-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-server-update-gate-tests/scripts/desktop-server-update-gate-tests.js",
     "test:stable-policy:db": "node scripts/stable-policy-db-tests.mjs",
-    "dev": "vite --host 127.0.0.1",
+    "dev": "node scripts/dev-local.mjs",
+    "dev:catalog": "node scripts/dev-with-catalog.mjs",
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build",
     "build:local": "tsc && vite build --mode local",

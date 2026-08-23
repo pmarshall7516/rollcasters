@@ -33,6 +33,9 @@ export default defineConfig(({ command, mode }) => {
   // the app is opened through a forwarded or shared desktop port.
   server: {
     hmr: false,
+    ...(env.VITE_LOCAL_CATALOG_DIR ? {
+      fs: { allow: [process.cwd(), path.resolve(env.VITE_LOCAL_CATALOG_DIR)] },
+    } : {}),
   },
   build: {
     rollupOptions: {

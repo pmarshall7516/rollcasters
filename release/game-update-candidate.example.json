@@ -5,6 +5,9 @@
   "sourceTag": "game-v1.0.0",
   "sourceCommit": "0000000000000000000000000000000000000000",
   "aiLabCommit": "0000000000000000000000000000000000000000",
+  "clientProtocolVersion": 1,
+  "contentSchemaVersion": 2,
+  "combatRuntimeVersion": 2,
   "releaseNotes": "Player-visible changes and operator classification.",
   "activation": { "mode": "immediate", "activatesAt": null },
   "catalogRelease": {

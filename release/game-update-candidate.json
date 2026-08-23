@@ -5,6 +5,9 @@
   "sourceTag": "game-v1.0.0-source.4",
   "sourceCommit": "7236286b2773761264dfd966acef1b800b98e378",
   "aiLabCommit": "9f0a1ba7769dd7aae0809d00f569c9c4ac280094",
+  "clientProtocolVersion": 1,
+  "contentSchemaVersion": 2,
+  "combatRuntimeVersion": 2,
   "releaseNotes": "Rollcasters 1.0.0 stable desktop release.",
   "activation": { "mode": "immediate", "activatesAt": null },
   "catalogRelease": {
