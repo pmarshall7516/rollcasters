@@ -280,6 +280,33 @@ try {
     "An abandoned Dungeon run must no longer be returned as active.",
   );
 
+  const supersededRun = (await client.query(
+    "select public.start_dungeon_run_v2($1,$2) as run",
+    [dungeon.id, crypto.randomUUID()],
+  )).rows[0].run;
+  const replacementRun = (await client.query(
+    "select public.start_dungeon_run_v2($1,$2) as run",
+    [dungeon.id, crypto.randomUUID()],
+  )).rows[0].run;
+  const activeRunRows = (await client.query(
+    "select id,status from public.dungeon_runs where user_id=$1 and status='started' order by started_at,id",
+    [userId],
+  )).rows;
+  check(
+    activeRunRows.length === 1 && activeRunRows[0].id === replacementRun.id,
+    "Starting a new Dungeon must replace the previous active run instead of leaving multiple resumable rows.",
+  );
+  const supersededStatus = (await client.query(
+    "select status from public.dungeon_runs where id=$1",
+    [supersededRun.id],
+  )).rows[0]?.status;
+  check(supersededStatus === "abandoned", "Replacing an active Dungeon must abandon the superseded run.");
+  await client.query("select public.resolve_dungeon_run($1)", [replacementRun.id]);
+  check(
+    (await client.query("select count(*)::int as count from public.dungeon_runs where user_id=$1 and status='started'", [userId])).rows[0].count === 0,
+    "Abandoning the current Dungeon must clear every stale active row for the player.",
+  );
+
   const executePrivileges = (await client.query(`
     select
       has_function_privilege('anon','public.start_dungeon_run_v2(text,uuid)','execute') as anon_start,

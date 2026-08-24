@@ -33,13 +33,14 @@ import {
   acquireGameplaySession,
   desktopProfile,
   ensureUserGameState,
-  getActiveDungeonRun,
+  getActiveDungeonRunWithTimeout,
   getGameAssetUrl,
   getGameUpdateStatus,
   getSnapshotGameAssetUrl,
   getPromoCodeRedemptionHistory,
   getSession,
   flushPlayerMutations,
+  flushPlayerMutationsWithTimeout,
   heartbeatGameplaySession,
   hasSupabaseConfig,
   currentGameVersion,
@@ -48,7 +49,7 @@ import {
   purchaseShopEntry,
   recordDungeonBattleResult,
   redeemPromoCode,
-  resolveDungeonRun,
+  resolveDungeonRunWithTimeout,
   releaseGameplaySession,
   setActiveRollcaster,
   setCritterRelicSlot,
@@ -57,6 +58,7 @@ import {
   setSquadSlot,
   selectStarterCritter,
   selectStarterRollcaster,
+  saveDungeonRunStateWithTimeout,
   signIn,
   signOut,
   signUp,
@@ -104,6 +106,7 @@ import {
   dungeonBattleSubmission,
   revealDungeonSwapEvent,
   restoreDungeonRunState,
+  serializeDungeonRunState,
   rollDungeonDice,
   submitDungeonActions,
   toggleDungeonLead,
@@ -208,7 +211,9 @@ type DungeonEntryState = {
   attempt: number;
   maxAttempts: number;
   requestId: string;
+  runId?: string;
 };
+type DungeonExitDestination = "play" | "home";
 type ActiveDungeonPrompt = {
   active: ActiveDungeonRun;
   dungeon: Dungeon;
@@ -256,16 +261,6 @@ type BannerNotification =
     };
 
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
-
-async function closeRollcasters(): Promise<void> {
-  await releaseGameplaySession().catch(() => undefined);
-  if (isTauriDesktop()) {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().close();
-    return;
-  }
-  window.close();
-}
 
 function createShopErrorNotification(error: unknown): BannerNotification {
   return {
@@ -326,6 +321,8 @@ export function App() {
   const [dungeonEntry, setDungeonEntry] = useState<DungeonEntryState | null>(null);
   const [activeDungeonPrompt, setActiveDungeonPrompt] = useState<ActiveDungeonPrompt | null>(null);
   const [activeDungeonPromptBusy, setActiveDungeonPromptBusy] = useState<"continue" | "abandon" | null>(null);
+  const [dungeonExitPrompt, setDungeonExitPrompt] = useState<DungeonExitDestination | null>(null);
+  const [dungeonExitPromptBusy, setDungeonExitPromptBusy] = useState(false);
   const [notificationQueue, setNotificationQueue] = useState<BannerNotification[]>([]);
   const [promoState, setPromoState] = useState<PromoRenderState>({
     historyStatus: "idle",
@@ -347,9 +344,28 @@ export function App() {
   const appKeyboardFocusProxyRef = useRef<HTMLElement | null>(null);
   const appInvalidFocusTimerRef = useRef<number | null>(null);
   const combatProgressQueue = useRef<Promise<void>>(Promise.resolve());
+  const combatSaveTimerRef = useRef<number | null>(null);
+  const combatSavePromiseRef = useRef<Promise<void> | null>(null);
+  const combatSavePendingRef = useRef(false);
+  const combatSaveDisabledRef = useRef(false);
+  const combatSaveSignatureRef = useRef<string | null>(null);
+  const dungeonAbandonRequestRef = useRef<string | null>(null);
+  const flushCombatSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const clearedLegacyShopLedgerUserRef = useRef<string | null>(null);
   const dungeonEntryRequestRef = useRef<string | null>(null);
   const closeRequestedRef = useRef(false);
+  const sessionStoppingRef = useRef(false);
+
+  async function closeRollcasters(): Promise<void> {
+    sessionStoppingRef.current = true;
+    await releaseGameplaySession().catch(() => undefined);
+    if (isTauriDesktop()) {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().close();
+      return;
+    }
+    window.close();
+  }
 
   useEffect(() => {
     if (!isTauriDesktop()) return;
@@ -359,8 +375,14 @@ export function App() {
       .then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(async (event) => {
         if (closeRequestedRef.current) return;
         closeRequestedRef.current = true;
+        sessionStoppingRef.current = true;
         event.preventDefault();
+        // Free the account lease before any best-effort Dungeon-state flush so
+        // another session can acquire the account while the window winds down.
         await releaseGameplaySession().catch(() => undefined);
+        await flushCombatSaveRef.current().catch((saveError) => {
+          console.warn("Unable to flush the current Dungeon state before closing.", saveError);
+        });
         await getCurrentWindow().close();
       }))
       .then((removeListener) => {
@@ -565,6 +587,113 @@ export function App() {
     return true;
   }
 
+  function cancelCombatSave() {
+    combatSaveDisabledRef.current = true;
+    combatSavePendingRef.current = false;
+    if (combatSaveTimerRef.current !== null) {
+      window.clearTimeout(combatSaveTimerRef.current);
+      combatSaveTimerRef.current = null;
+    }
+  }
+
+  async function drainCombatSave(): Promise<void> {
+    if (combatSaveDisabledRef.current) return;
+    if (combatSavePromiseRef.current) {
+      await combatSavePromiseRef.current;
+      if (combatSavePendingRef.current) await drainCombatSave();
+      return;
+    }
+    if (combatSaveTimerRef.current !== null) {
+      window.clearTimeout(combatSaveTimerRef.current);
+      combatSaveTimerRef.current = null;
+    }
+    const latest = combatRef.current;
+    if (!latest || latest.run.status !== "started") {
+      combatSavePendingRef.current = false;
+      return;
+    }
+    combatSavePendingRef.current = false;
+    const serialized = serializeDungeonRunState(latest);
+    const signature = JSON.stringify(serialized);
+    const savePromise = (async () => {
+      try {
+        const saved = await saveDungeonRunStateWithTimeout(latest.run, serialized);
+        setCombat((current) => {
+          if (!current || current.run.id !== saved.run.id || current.run.version > saved.run.version) return current;
+          return { ...current, run: saved.run };
+        });
+        combatSaveSignatureRef.current = signature;
+      } catch (saveError) {
+        // A transient save failure must not interrupt combat. The next combat
+        // state change, or the desktop close flush, will retry the latest state.
+        combatSaveSignatureRef.current = null;
+        console.warn("Unable to persist the current Dungeon state.", saveError);
+        window.setTimeout(() => {
+          if (!combatSaveDisabledRef.current) void drainCombatSave();
+        }, 1_000);
+      }
+    })();
+    combatSavePromiseRef.current = savePromise;
+    try {
+      await savePromise;
+    } finally {
+      combatSavePromiseRef.current = null;
+    }
+    if (combatSavePendingRef.current) await drainCombatSave();
+  }
+
+  function scheduleCombatSave() {
+    combatSavePendingRef.current = true;
+    if (combatSaveDisabledRef.current || combatSaveTimerRef.current !== null || combatSavePromiseRef.current) return;
+    combatSaveTimerRef.current = window.setTimeout(() => {
+      combatSaveTimerRef.current = null;
+      void drainCombatSave();
+    }, 350);
+  }
+
+  function requestDungeonExit(destination: DungeonExitDestination) {
+    const activeRun = combat?.run.status === "started" || Boolean(dungeonEntry);
+    if (!activeRun) {
+      setCombat(null);
+      setDungeonEntry(null);
+      navigate(destination);
+      return;
+    }
+    setDungeonExitPrompt(destination);
+  }
+
+  async function confirmDungeonExit() {
+    const destination = dungeonExitPrompt;
+    if (!destination || dungeonExitPromptBusy) return;
+    setDungeonExitPromptBusy(true);
+    setError(null);
+    cancelCombatSave();
+    const entryRequestId = dungeonEntry?.requestId ?? dungeonEntryRequestRef.current;
+    if (entryRequestId) dungeonAbandonRequestRef.current = entryRequestId;
+    try {
+      let runId = combat?.run.id ?? dungeonEntry?.runId;
+      if (!runId) {
+        const active = await getActiveDungeonRunWithTimeout();
+        runId = active?.run.id;
+      }
+      if (runId) await resolveDungeonRunWithTimeout(runId);
+      setDungeonExitPrompt(null);
+      setActiveDungeonPrompt(null);
+      setCombat(null);
+      setDungeonEntry(null);
+      navigate(destination);
+    } catch (exitError) {
+      console.error("Unable to abandon the current Dungeon run.", exitError);
+      combatSaveDisabledRef.current = false;
+      if (combat) scheduleCombatSave();
+      setError(errorMessage(exitError, "Unable to abandon the current Dungeon run."));
+    } finally {
+      setDungeonExitPromptBusy(false);
+    }
+  }
+
+  flushCombatSaveRef.current = drainCombatSave;
+
   function appKeyboardScope(): HTMLElement | null {
     const root = appKeyboardRootRef.current;
     if (!root) return null;
@@ -762,7 +891,7 @@ export function App() {
         const route = routeFromLocation();
         setShopTab(route.shopTab);
         if (route.view === "play") {
-          const active = await getActiveDungeonRun();
+          const active = await getActiveDungeonRunWithTimeout();
           showActiveDungeonPrompt(active, loaded.catalog.dungeons);
         }
         setView(route.view);
@@ -779,10 +908,10 @@ export function App() {
     if (dungeonEntryRequestRef.current) return;
     navigate("play");
     try {
-      const active = await getActiveDungeonRun();
+      const active = await getActiveDungeonRunWithTimeout();
       showActiveDungeonPrompt(active, data?.catalog.dungeons ?? []);
     } catch (err) {
-      setError(errorMessage(err, "Unable to check for an unfinished Dungeon run."));
+      setError(dungeonEntryErrorMessage(err));
     }
   }
 
@@ -794,22 +923,18 @@ export function App() {
     setError(null);
     const requestId = createRequestId();
     dungeonEntryRequestRef.current = requestId;
+    combatSaveDisabledRef.current = false;
+    combatSaveSignatureRef.current = null;
     try {
-      const active = await getActiveDungeonRun();
-      if (!active) {
-        setActiveDungeonPrompt(null);
-        setView("play");
-        return;
-      }
-      const dungeon = data.catalog.dungeons.find((candidate) => candidate.id === active.run.dungeonId) ?? prompt.dungeon;
+      const dungeon = data.catalog.dungeons.find((candidate) => candidate.id === prompt.active.run.dungeonId) ?? prompt.dungeon;
       setActiveDungeonPrompt(null);
       setDungeonEntry({ dungeon, phase: "recovering", attempt: 1, maxAttempts: 1, requestId });
       setCombat(null);
       setView("combat");
-      const persisted = restoreDungeonRunState(active.combatState, data.catalog, active.run);
+      const persisted = restoreDungeonRunState(prompt.active.combatState, data.catalog, prompt.active.run);
       const resumed = persisted
-        ?? createDungeonRunState(data.catalog, data.player, dungeon, active.run);
-      const authoritative = applyAuthoritativeDungeonEffectSnapshot(resumed, active.effectSnapshot);
+        ?? createDungeonRunState(data.catalog, data.player, dungeon, prompt.active.run);
+      const authoritative = applyAuthoritativeDungeonEffectSnapshot(resumed, prompt.active.effectSnapshot);
       if (dungeonEntryRequestRef.current !== requestId) return;
       setCombat(authoritative);
       setDungeonEntry(null);
@@ -832,11 +957,11 @@ export function App() {
     setActiveDungeonPromptBusy("abandon");
     setError(null);
     try {
-      await resolveDungeonRun(prompt.active.run.id);
+      await resolveDungeonRunWithTimeout(prompt.active.run.id);
       setActiveDungeonPrompt(null);
       setCombat(null);
       setDungeonEntry(null);
-      setView("play");
+      navigate("play");
     } catch (err) {
       console.error("Unable to abandon Dungeon run.", { runId: prompt.active.run.id, error: err });
       setError(errorMessage(err, "Unable to abandon the Dungeon run."));
@@ -853,8 +978,7 @@ export function App() {
     }
     if (dungeonEntryRequestRef.current) return;
     try {
-      await flushPlayerMutations();
-      const activeBeforeStart = await getActiveDungeonRun();
+      const activeBeforeStart = await getActiveDungeonRunWithTimeout();
       if (activeBeforeStart) {
         const activeDungeon = data.catalog.dungeons.find((candidate) => candidate.id === activeBeforeStart.run.dungeonId);
         if (!activeDungeon) throw new Error("An active Dungeon run is unavailable in this release.");
@@ -862,13 +986,16 @@ export function App() {
         setView("play");
         return;
       }
+      await flushPlayerMutationsWithTimeout();
     } catch (err) {
       console.error("Unable to check for an existing Dungeon run.", { dungeonId: dungeon.id, error: err });
-      setError(errorMessage(err, "Unable to check for an unfinished Dungeon run."));
+      setError(dungeonEntryErrorMessage(err));
       return;
     }
     const requestId = createRequestId();
     dungeonEntryRequestRef.current = requestId;
+    combatSaveDisabledRef.current = false;
+    combatSaveSignatureRef.current = null;
     setDungeonEntry({ dungeon, phase: "starting", attempt: 1, maxAttempts: 3, requestId });
     setCombat(null);
     setView("combat");
@@ -880,6 +1007,13 @@ export function App() {
           : current);
       });
       setDungeonEntry((current) => current?.requestId === requestId
+        ? { ...current, runId: run.id }
+        : current);
+      if (dungeonAbandonRequestRef.current === requestId) {
+        await resolveDungeonRunWithTimeout(run.id);
+        return;
+      }
+      setDungeonEntry((current) => current?.requestId === requestId
         ? { ...current, phase: "confirming" }
         : current);
       const initialCombat = createDungeonRunState(data.catalog, data.player, dungeon, run);
@@ -888,10 +1022,15 @@ export function App() {
           ? { ...current, phase: attempt.phase, attempt: attempt.attempt, maxAttempts: attempt.maxAttempts }
           : current);
       });
+      if (dungeonAbandonRequestRef.current === requestId) {
+        await resolveDungeonRunWithTimeout(run.id);
+        return;
+      }
       if (dungeonEntryRequestRef.current !== requestId) return;
       setCombat(applyAuthoritativeDungeonEffectSnapshot(initialCombat, confirmedSnapshot));
       setDungeonEntry(null);
     } catch (err) {
+      if (dungeonAbandonRequestRef.current === requestId) return;
       console.error("Unable to initialize Dungeon entry.", { dungeonId: dungeon.id, requestId, error: err });
       setCombat(null);
       setDungeonEntry(null);
@@ -899,6 +1038,7 @@ export function App() {
       setView("play");
     } finally {
       if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
+      if (dungeonAbandonRequestRef.current === requestId) dungeonAbandonRequestRef.current = null;
     }
   }
 
@@ -917,6 +1057,7 @@ export function App() {
 
   async function establishGameplaySession(takeover = false): Promise<boolean> {
     const result = await acquireGameplaySession(takeover);
+    sessionStoppingRef.current = false;
     setIsAuthed(true);
     if (result.outcome === "ACCOUNT_ONLINE") {
       setSessionConflict(result);
@@ -969,8 +1110,9 @@ export function App() {
   useEffect(() => {
     if (!isAuthed || sessionConflict || accountMoved) return;
     const heartbeat = window.setInterval(() => {
+      if (sessionStoppingRef.current) return;
       void heartbeatGameplaySession().catch((heartbeatError) => {
-        if (errorMessage(heartbeatError, "").includes("SESSION_DISPLACED")) {
+        if (!sessionStoppingRef.current && errorMessage(heartbeatError, "").includes("SESSION_DISPLACED")) {
           setAccountMoved(true);
           setCombat(null);
           setDungeonEntry(null);
@@ -980,6 +1122,19 @@ export function App() {
     }, 20_000);
     return () => window.clearInterval(heartbeat);
   }, [accountMoved, isAuthed, sessionConflict]);
+
+  async function endSession(): Promise<void> {
+    sessionStoppingRef.current = true;
+    try {
+      await signOut();
+      setIsAuthed(false);
+      setSessionConflict(null);
+      setAccountMoved(false);
+    } catch (error) {
+      sessionStoppingRef.current = false;
+      throw error;
+    }
+  }
 
   useEffect(() => {
     function popstate() {
@@ -1037,7 +1192,11 @@ export function App() {
 
   useEffect(() => {
     combatRef.current = combat;
-  }, [combat]);
+    if (!combat || combat.run.status !== "started" || dungeonEntry || combatSaveDisabledRef.current) return;
+    const signature = JSON.stringify(serializeDungeonRunState(combat));
+    if (signature === combatSaveSignatureRef.current) return;
+    scheduleCombatSave();
+  }, [combat, dungeonEntry]);
 
   useEffect(() => {
     const textData = data;
@@ -1056,6 +1215,10 @@ export function App() {
           dungeonName: activeDungeonPrompt.dungeon.name,
           runId: activeDungeonPrompt.active.run.id,
           busy: activeDungeonPromptBusy,
+        } : null,
+        dungeonExitPrompt: dungeonExitPrompt ? {
+          destination: dungeonExitPrompt,
+          busy: dungeonExitPromptBusy,
         } : null,
         authed: isAuthed,
         catalogRelease: textData?.catalogRelease ?? null,
@@ -1213,20 +1376,20 @@ export function App() {
           : null,
       });
     window.advanceTime = () => undefined;
-  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, dungeonEntry, activeDungeonPrompt, activeDungeonPromptBusy, notificationQueue, promoState]);
+  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, dungeonEntry, activeDungeonPrompt, activeDungeonPromptBusy, dungeonExitPrompt, dungeonExitPromptBusy, notificationQueue, promoState]);
 
   if (desktopGate === "checking") return <Shell><Loading message="Checking for required Game Updates..." /></Shell>;
   if (desktopGate === "error") return <Shell><DesktopUpdateScreen message={desktopGateError ?? "The secure update check failed."} /></Shell>;
   if (desktopGate === "required" && desktopUpdate) return <Shell><DesktopUpdateScreen version={desktopUpdate.version} update={desktopUpdate} /></Shell>;
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
-  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => void finishAuthentication()} error={error} setError={setError} /></Shell>;
+  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => void finishAuthentication()} onClose={closeRollcasters} error={error} setError={setError} /></Shell>;
   if (sessionConflict) return <Shell><GameplaySessionDialog
     kind="online"
     busy={sessionActionBusy}
     onOk={async () => {
       setSessionActionBusy(true);
-      try { await signOut(); setIsAuthed(false); setSessionConflict(null); } finally { setSessionActionBusy(false); }
+      try { await endSession(); } finally { setSessionActionBusy(false); }
     }}
     onPlayHere={async () => {
       setSessionActionBusy(true);
@@ -1236,7 +1399,7 @@ export function App() {
   if (accountMoved) return <Shell><GameplaySessionDialog
     kind="moved"
     busy={sessionActionBusy}
-    onOk={async () => { setSessionActionBusy(true); try { await signOut(); setIsAuthed(false); setAccountMoved(false); } finally { setSessionActionBusy(false); } }}
+    onOk={async () => { setSessionActionBusy(true); try { await endSession(); } finally { setSessionActionBusy(false); } }}
   /></Shell>;
   if (!data?.player) return <Shell><Loading message="Loading Rollcasters..." error={error} /></Shell>;
 
@@ -1252,13 +1415,15 @@ export function App() {
         data={data}
         player={data.player!}
         onHome={() => {
+          if (view === "combat" && (combat || dungeonEntry)) {
+            requestDungeonExit("home");
+            return;
+          }
           if (dungeonEntryRequestRef.current) return;
           navigate(requiredStarterView(data.player) ?? "home");
         }}
-        onSignOut={async () => {
-          await signOut();
-          setIsAuthed(false);
-        }}
+        onSignOut={endSession}
+        onClose={closeRollcasters}
       />
       <div ref={appKeyboardRootRef} className="app-keyboard-root" aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft">
         {error && <div className="notice error">{error}</div>}
@@ -1358,6 +1523,20 @@ export function App() {
           }}
         />
       )}
+      {view === "combat" && dungeonExitPrompt && (
+        <AbandonDungeonDialog
+          busy={dungeonExitPromptBusy}
+          onConfirm={() => void confirmDungeonExit()}
+          onCancel={() => {
+            if (!dungeonExitPromptBusy) {
+              setDungeonExitPrompt(null);
+              combatSaveDisabledRef.current = false;
+              if (dungeonAbandonRequestRef.current === dungeonEntry?.requestId) dungeonAbandonRequestRef.current = null;
+              if (combat) scheduleCombatSave();
+            }
+          }}
+        />
+      )}
         {view === "combat" && dungeonEntry && (
           <DungeonEntryScreen entry={dungeonEntry} />
         )}
@@ -1423,8 +1602,8 @@ export function App() {
               setLoading(false);
             }
           }}
-          onBack={() => { setError(null); setCombat(null); navigate("play"); }}
-          onHome={() => { setError(null); setCombat(null); navigate("home"); }}
+          onBack={() => requestDungeonExit("play")}
+          onHome={() => requestDungeonExit("home")}
           onReplay={() => beginDungeon(combat.dungeon)}
           onNextDungeon={(dungeonId) => {
             const next = data.catalog.dungeons.find((dungeon) => dungeon.id === dungeonId);
@@ -1454,7 +1633,7 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function dungeonEntryErrorMessage(error: unknown): string {
   const raw = errorMessage(error, "Unable to start dungeon.");
-  if (raw.includes("DUNGEON_ENTRY_TIMEOUT")) {
+  if (raw.includes("DUNGEON_ENTRY_TIMEOUT") || raw.toLowerCase().includes("canceling statement due to statement timeout")) {
     return "Dungeon entry is taking longer than expected. No combat was started; please try again.";
   }
   return raw;
@@ -1642,10 +1821,12 @@ function GameplaySessionDialog({
 
 function AuthScreen({
   onAuthed,
+  onClose,
   error,
   setError,
 }: {
   onAuthed: () => void;
+  onClose: () => Promise<void>;
   error: string | null;
   setError: (error: string | null) => void;
 }) {
@@ -1680,6 +1861,7 @@ function AuthScreen({
 
   return (
     <section className="auth-layout">
+      <ExitControl className="auth-exit-control" onClose={onClose} />
       <header className="auth-brand"><BrandLogo /></header>
       <form className="auth-card" onSubmit={submit}>
         {confirmationEmail ? (
@@ -1742,18 +1924,19 @@ function TopBar({
   player,
   onHome,
   onSignOut,
+  onClose,
 }: {
   data: AppData;
   player: PlayerState;
   onHome: () => void;
   onSignOut: () => void;
+  onClose: () => Promise<void>;
 }) {
   const currencies = orderedCurrencies(data);
   const topBarRef = useRef<HTMLElement>(null);
   const currencyTooltipRef = useRef<HTMLSpanElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [exitDialogOpen, setExitDialogOpen] = useState(false);
 
   useEffect(() => {
     if (!profileMenuOpen) return;
@@ -1854,9 +2037,7 @@ function TopBar({
             </div>
           )}
         </div>
-        <button type="button" className="icon-button exit-button" onClick={() => setExitDialogOpen(true)} aria-label="Exit Rollcasters">
-          <X size={19} aria-hidden="true" />
-        </button>
+        <ExitControl onClose={onClose} />
       </div>
       <span
         ref={currencyTooltipRef}
@@ -1864,6 +2045,21 @@ function TopBar({
         aria-hidden="true"
       />
     </header>
+  </>;
+}
+
+function ExitControl({ className = "", onClose }: { className?: string; onClose: () => Promise<void> }) {
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
+
+  return <>
+    <button
+      type="button"
+      className={`icon-button exit-button ${className}`.trim()}
+      onClick={() => setExitDialogOpen(true)}
+      aria-label="Exit Rollcasters"
+    >
+      <X size={19} aria-hidden="true" />
+    </button>
     {exitDialogOpen && (
       <Modal eyebrow="Rollcasters" title="Do you want to exit Rollcasters?" description={null} onClose={() => setExitDialogOpen(false)} className="exit-dialog">
         <div className="dialog-actions exit-dialog-actions">
@@ -1872,7 +2068,7 @@ function TopBar({
             type="button"
             className="danger-button"
             onClick={() => {
-              void closeRollcasters().catch((error) => console.error("Unable to close Rollcasters.", error));
+              void onClose().catch((error) => console.error("Unable to close Rollcasters.", error));
               setExitDialogOpen(false);
             }}
           >
@@ -4788,6 +4984,34 @@ function ContinueDungeonDialog({
   );
 }
 
+function AbandonDungeonDialog({
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal
+      eyebrow="Dungeon expedition"
+      title="Do you want to abandon the current run?"
+      description={null}
+      onClose={onCancel}
+      className="abandon-dungeon-modal"
+      dismissible={false}
+    >
+      <div className="dialog-actions abandon-dungeon-actions">
+        <button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>No</button>
+        <button type="button" className="danger-button" disabled={busy} onClick={onConfirm}>
+          {busy ? "Abandoning…" : "Yes"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
   const currency = drop.kind === "currency" ? currencyFor(data, drop.targetId) : undefined;
   const targetName = drop.kind === "currency"
@@ -6833,6 +7057,7 @@ function Modal({
   children,
   onClose,
   className = "",
+  dismissible = true,
 }: {
   eyebrow?: string;
   title: string;
@@ -6840,6 +7065,7 @@ function Modal({
   children: React.ReactNode;
   onClose: () => void;
   className?: string;
+  dismissible?: boolean;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -6877,16 +7103,16 @@ function Modal({
       className="modal-backdrop"
       onMouseDown={(event) => {
         event.stopPropagation();
-        if (event.target === event.currentTarget) onClose();
+        if (dismissible && event.target === event.currentTarget) onClose();
       }}
       onClick={(event) => event.stopPropagation()}
     >
       <div className={`modal ${className}`.trim()} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <div className="modal-header">
           <div><p className="eyebrow">{eyebrow}</p><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div>
-          <button className="icon-button" onClick={onClose} aria-label="Close">
+          {dismissible && <button className="icon-button" onClick={onClose} aria-label="Close">
             <X size={18} />
-          </button>
+          </button>}
         </div>
         {children}
       </div>

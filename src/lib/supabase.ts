@@ -454,8 +454,11 @@ export async function signUp(email: string, password: string, username: string):
 
 export async function signOut(): Promise<void> {
   const client = requireClient();
-  await flushPlayerMutations().catch(() => undefined);
+  // Release the lease before waiting on any queued writes. A logout is a
+  // session boundary: another device must be able to acquire the account even
+  // if a best-effort mutation flush is slow or unavailable.
   await releaseGameplaySession().catch(() => undefined);
+  await flushPlayerMutations().catch(() => undefined);
   const { error } = await client.auth.signOut();
   if (error) throw error;
 }
@@ -1273,9 +1276,13 @@ async function withDungeonEntryTimeout<T>(operation: Promise<T>, step: string): 
   }
 }
 
+export function flushPlayerMutationsWithTimeout(): Promise<void> {
+  return withDungeonEntryTimeout(flushPlayerMutations(), "flush");
+}
+
 async function activeDungeonRunForRecovery(): Promise<ActiveDungeonRun | null> {
   try {
-    return await getActiveDungeonRun();
+    return await withDungeonEntryTimeout(getActiveDungeonRun(), "resume");
   } catch {
     // A recovery read is best effort. The original typed or timeout error is
     // more useful than replacing it with a second network failure.
@@ -1344,6 +1351,10 @@ export async function getActiveDungeonRun(): Promise<ActiveDungeonRun | null> {
   };
 }
 
+export function getActiveDungeonRunWithTimeout(): Promise<ActiveDungeonRun | null> {
+  return withDungeonEntryTimeout(getActiveDungeonRun(), "resume");
+}
+
 export async function saveDungeonRunState(
   run: DungeonRunSnapshot,
   combatState: Record<string, unknown>,
@@ -1361,6 +1372,14 @@ export async function saveDungeonRunState(
     ...response,
     run: normalizeDungeonRunSnapshot(response.run),
   };
+}
+
+export function saveDungeonRunStateWithTimeout(
+  run: DungeonRunSnapshot,
+  combatState: Record<string, unknown>,
+  requestId = createRequestId(),
+): Promise<{ run: DungeonRunSnapshot; combatState: unknown }> {
+  return withDungeonEntryTimeout(saveDungeonRunState(run, combatState, requestId), "save");
 }
 
 export async function snapshotDungeonRunEffects(runId: string, snapshot: unknown): Promise<void> {
@@ -1402,6 +1421,10 @@ export async function resolveDungeonRun(runId: string): Promise<void> {
   const client = requireClient();
   const { error } = await client.rpc("resolve_dungeon_run", { p_run_id: runId });
   if (error) throw error;
+}
+
+export function resolveDungeonRunWithTimeout(runId: string): Promise<void> {
+  return withDungeonEntryTimeout(resolveDungeonRun(runId), "abandon");
 }
 
 export async function trackCollectibleChallenge(challengeId: string): Promise<void> {

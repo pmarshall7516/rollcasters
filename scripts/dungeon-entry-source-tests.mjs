@@ -15,7 +15,7 @@ const beginSource = appSource.slice(beginStart, beginEnd);
 check(beginSource.includes("dungeonEntryRequestRef.current"), "Dungeon entry must guard against duplicate starts.");
 check(beginSource.includes("startDungeonRunWithRecovery(dungeon.id, requestId"), "Dungeon entry must reuse one request id across retries.");
 check(beginSource.includes("snapshotDungeonRunEffectsWithRecovery"), "Dungeon entry must confirm the effect snapshot before showing combat.");
-check(beginSource.includes("const activeBeforeStart = await getActiveDungeonRun()"), "Dungeon entry must reconcile an existing active run before creating another one.");
+check(beginSource.includes("const activeBeforeStart = await getActiveDungeonRunWithTimeout()"), "Dungeon entry must reconcile an existing active run before creating another one.");
 check(beginSource.includes("showActiveDungeonPrompt(activeBeforeStart"), "Dungeon entry must prompt before replacing or resuming an existing active run.");
 check(!beginSource.includes("setLoading(true)"), "Dungeon entry must not use the global Refreshing state.");
 check(beginSource.includes("setCombat(null)") && beginSource.includes('setView("combat")'), "Dungeon entry must show a dedicated pre-combat state.");

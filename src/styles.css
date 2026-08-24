@@ -1056,6 +1056,7 @@ button { transition: transform var(--motion), border-color var(--motion), box-sh
 button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
 .app-shell {
+  position: relative;
   min-height: 100vh;
   padding: 24px clamp(16px, 3vw, 48px) 48px;
   color: var(--text-primary);
@@ -1101,6 +1102,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 3
 .user-menu-version strong { color: var(--accent-cyan); font-size: 13px; letter-spacing: .06em; }
 .exit-button { color: var(--danger); }
 .exit-button:hover { border-color: var(--danger); color: #ffb0bd; box-shadow: 0 0 18px rgb(255 110 134 / 22%); }
+.auth-exit-control { position: absolute; top: 24px; right: clamp(16px, 3vw, 48px); z-index: 10; }
 .auth-layout { grid-template-rows: auto minmax(440px, auto) auto; gap: 14px; width: min(460px, calc(100vw - 32px)); margin-top: clamp(3vh, 7vh, 80px); }
 .auth-card, .setup-panel { border: 1px solid var(--border-bright); border-radius: var(--radius-lg); background: linear-gradient(155deg, rgb(23 29 56 / 94%), rgb(12 16 37 / 96%)); box-shadow: 0 0 0 1px rgb(167 121 255 / 12%) inset, 0 24px 70px rgb(0 0 0 / 45%), 0 0 34px rgb(112 72 191 / 16%); }
 .auth-card { height: auto; min-height: 440px; padding: 34px; gap: 16px; }
@@ -1558,6 +1560,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .continue-dungeon-warning { color: #ffdca0; }
 .continue-dungeon-actions { margin-top: 22px; }
 .continue-dungeon-actions > button { min-width: 124px; }
+.modal.abandon-dungeon-modal { width: min(460px, calc(100vw - 32px)); height: auto; min-height: 0; }
+.abandon-dungeon-actions { margin-top: 4px; }
+.abandon-dungeon-actions > button { min-width: 84px; }
 .candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .candidate-card { position: relative; display: grid; justify-items: center; align-content: start; gap: 8px; min-height: 220px; padding: 14px; border: 1px solid var(--border-soft); border-radius: 16px; background: rgb(8 10 24 / 52%); color: var(--text-primary); text-align: center; }
 .candidate-card:hover:not(:disabled) { border-color: var(--accent-magic); box-shadow: 0 0 22px rgb(167 121 255 / 18%); }
@@ -1647,6 +1652,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 @media (max-width: 600px) {
   .app-shell { padding: 12px 12px 36px; }
   .top-bar { margin-bottom: 20px; }
+  .auth-exit-control { top: 12px; right: 12px; }
   .brand-logo.signed-in { width: 116px; }
   .coin-pill { padding: 7px 9px; }
   .account-cluster { gap: 5px; }
