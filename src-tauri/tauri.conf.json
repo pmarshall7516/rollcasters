@@ -30,7 +30,15 @@
       "icons/icon.ico"
     ],
     "createUpdaterArtifacts": true,
-    "macOS": { "minimumSystemVersion": "12.0", "signingIdentity": "-" },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-",
+      "dmg": {
+        "windowSize": { "width": 660, "height": 400 },
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 }
+      }
+    },
     "windows": { "nsis": { "installMode": "currentUser" } }
   },
   "plugins": {

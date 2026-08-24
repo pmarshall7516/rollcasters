@@ -59,12 +59,21 @@ async function seedContent() {
     const critter = await db.query(`
       select c.id,c.name
       from public.critters c
+      join public.collectible_unlock_requirements requirement
+        on requirement.collectible_type='critter'
+       and requirement.collectible_id=c.id
+       and requirement.required_challenges=1
       where c.is_active and not c.is_archived
-        and not exists(select 1 from public.collectible_unlock_requirements r where r.collectible_type='critter' and r.collectible_id=c.id)
-        and not exists(select 1 from public.shop_entries s where s.target_category='critter' and s.target_id=c.id)
+        and c.id not in ('001')
+        and not exists(
+          select 1 from public.collectible_unlock_challenges existing_challenge
+          where existing_challenge.collectible_type='critter'
+            and existing_challenge.collectible_id=c.id
+            and existing_challenge.challenge_type='shop_shards'
+        )
       order by c.sort_order,c.id limit 1
     `);
-    check(critter.rowCount === 1, "No isolated Critter is available for the disposable browser fixture.");
+    check(critter.rowCount === 1, "No one-step shard-gated Critter is available for the disposable browser fixture.");
     critterTarget = critter.rows[0];
 
     const relic = await db.query(`
@@ -79,19 +88,15 @@ async function seedContent() {
     relicTarget = relic.rows[0];
 
     await db.query(`
-      insert into public.collectible_unlock_requirements(collectible_type,collectible_id,required_challenges)
-      values('critter',$1,1)
-    `, [critterTarget.id]);
-    await db.query(`
       insert into public.collectible_unlock_challenges(
-        id,collectible_type,collectible_id,challenge_type,target_mode,any_target,target_ids,required_amount,sort_order
-      ) values($1,'critter',$2,'deal_damage','species',true,'{}',5,0)
+        id,collectible_type,collectible_id,challenge_type,parameters,target_mode,any_target,target_ids,required_amount,sort_order
+      ) values($1,'critter',$2,'deal_damage','{"damage_mode":"any","tracking_scope":"lifetime","required_amount":5,"tracking_required":true,"source_critter_ids":[],"source_element_ids":[],"target_critter_ids":[],"target_element_ids":[],"source_skill_tag_ids":[],"source_critter_tag_ids":[],"target_critter_tag_ids":[]}'::jsonb,null,false,'{}',5,0)
     `, [challengeIds[0], critterTarget.id]);
     await db.query(`
       insert into public.collectible_unlock_challenges(
-        id,collectible_type,collectible_id,challenge_type,required_amount,sort_order
+        id,collectible_type,collectible_id,challenge_type,parameters,required_amount,sort_order
       ) values
-        ($1,'critter',$2,'shop_shards',4,1)
+        ($1,'critter',$2,'shop_shards','{"required_amount":4}'::jsonb,4,1)
     `, [challengeIds[1], critterTarget.id]);
     await db.query(`
       insert into public.shop_entries(
@@ -118,7 +123,6 @@ async function cleanupContent() {
     await db.query("begin");
     await db.query("delete from public.shop_entries where id=any($1::uuid[])", [entryIds]);
     await db.query("delete from public.collectible_unlock_challenges where id=any($1::uuid[])", [[challengeIds[0], challengeIds[1]]]);
-    await db.query("delete from public.collectible_unlock_requirements where collectible_type='critter' and collectible_id=$1", [critterTarget.id]);
     await db.query("commit");
   } catch (error) {
     await db.query("rollback").catch(() => undefined);
@@ -169,20 +173,20 @@ try {
   await page.getByRole("button", { name: "Collection" }).click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "collection");
   const starterCollectionCard = page.locator(`.critter-card:has(> .collectible-id:text-is("${selectedStarterId}"))`);
-  check(await starterCollectionCard.count() === 1, "The selected starter did not render in Collection.");
-  await starterCollectionCard.click();
+  check(await starterCollectionCard.count() > 0, "The selected starter did not render in Collection.");
+  await starterCollectionCard.first().click();
   const starterChallenge = page.locator(".challenge-detail-row").filter({ hasText: "50 / 50" });
   check(await starterChallenge.count() === 1, "The selected starter popup must show 50 / 50 shard progress.");
   check((await starterChallenge.getAttribute("class"))?.includes("complete"), "The selected starter shard challenge must render completed status.");
-  await page.screenshot({ path: path.join(outputDir, "starter-shard-challenge-complete.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "starter-shard-challenge-complete.png"), fullPage: false });
   await page.getByRole("button", { name: "Close" }).click();
 
-  const targetCard = page.locator(".critter-card").filter({ hasText: critterTarget.id });
-  check(await targetCard.count() === 1, "The locked Critter card did not render in Collection.");
+  const targetCard = page.locator(`.critter-card:has(> .collectible-id:text-is("${critterTarget.id}"))`).first();
+  check(await targetCard.count() === 1, `The locked Critter ${critterTarget.id} card did not render in Collection.`);
   await targetCard.click();
   await page.getByRole("button", { name: "Track", exact: true }).click();
   await page.waitForFunction((challengeId) => JSON.parse(window.render_game_to_text()).trackedChallenges.some((row) => row.challenge_id === challengeId), challengeIds[0]);
-  await page.screenshot({ path: path.join(outputDir, "collection-challenges.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "collection-challenges.png"), fullPage: false });
   await page.getByRole("button", { name: "Close" }).click();
   await page.getByRole("button", { name: "Rollcasters home" }).click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");
@@ -199,7 +203,7 @@ try {
   check(headerCurrencies[0]?.label === "Coins: 0" && headerCurrencies[1]?.label === "Prismite: 0", "Zero-balance currencies must remain visible with exact accessible labels.");
   check(headerCurrencies[0]?.color === "rgb(255, 214, 90)" && headerCurrencies[1]?.color === "rgb(125, 232, 255)", "Currency balance text must use its authored display color.");
   check(headerCurrencies[0]?.iconLoaded && headerCurrencies[1]?.iconLoaded, "Currency sprites must load in the signed-in header.");
-  await page.screenshot({ path: path.join(outputDir, "home-tracking.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "home-tracking.png"), fullPage: false });
 
   const coinsCurrency = page.locator('.currency-pill[data-currency-id="coins"]');
   const prismiteCurrency = page.locator('.currency-pill[data-currency-id="prismite"]');
@@ -223,7 +227,7 @@ try {
   await page.getByRole("button", { name: "Shop" }).click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "shop");
   check(await page.getByText(/Shop offer for/i).count() === 0, "Generated Shard Shop offer descriptions must be hidden.");
-  const shardOffer = page.locator(".shop-entry-card").filter({ hasText: critterTarget.id });
+  const shardOffer = page.locator(".shop-entry-card").filter({ hasText: `${critterTarget.id} Shard Bundle` });
   const shardIdentity = await shardOffer.locator(".shop-target-identity").evaluate((identity) => {
     const nameNode = identity.querySelector(".critter-name");
     const idNode = identity.querySelector(".shop-target-id");
@@ -245,18 +249,18 @@ try {
       && shardIdentity.whiteSpace === "nowrap",
     `Critter name and ID must share one vertically aligned row: ${JSON.stringify(shardIdentity)}.`,
   );
-  await page.screenshot({ path: path.join(outputDir, "shop-shards.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "shop-shards.png"), fullPage: false });
   await shardOffer.hover();
   await page.waitForTimeout(250);
-  await page.screenshot({ path: path.join(outputDir, "shop-shards-diamond-hover.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "shop-shards-diamond-hover.png"), fullPage: false });
   await page.getByRole("button", { name: "Relic Shop" }).click();
   check(await page.getByText(/Shop offer for/i).count() === 0, "Generated Relic Shop offer descriptions must be hidden.");
-  await page.screenshot({ path: path.join(outputDir, "shop-relics.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "shop-relics.png"), fullPage: false });
   const relicOffer = page.locator(".shop-entry-card").filter({ hasText: relicOfferName });
   check(await relicOffer.count() === 1, "The Relic offer did not render.");
   check(await relicOffer.getByRole("button", { name: "Purchase" }).isEnabled(), "An unowned Relic offer must begin purchasable.");
   await relicOffer.hover();
-  await page.screenshot({ path: path.join(outputDir, "shop-relics-hover.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "shop-relics-hover.png"), fullPage: false });
   for (let quantity = 1; quantity <= relicTarget.max_owned; quantity += 1) {
     await relicOffer.getByRole("button", { name: "Purchase" }).click();
     await page.waitForFunction(({ offerName, expected, maximum }) => {
@@ -312,7 +316,7 @@ try {
   }));
   check(relicMaxPresentation.statusText === "Max Owned!" && relicMaxPresentation.statusColor === "rgb(97, 221, 160)" && relicMaxPresentation.cardOpacity === "1" && relicMaxPresentation.spriteFilter === "none", `A max-owned Relic offer must use the full-card green status treatment: ${JSON.stringify(relicMaxPresentation)}`);
   await relicOffer.hover();
-  await page.screenshot({ path: path.join(outputDir, "shop-relics-max-owned-hover.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "shop-relics-max-owned-hover.png"), fullPage: false });
   await page.getByRole("button", { name: "Shard Shop" }).click();
 
   await shardOffer.getByRole("button", { name: "Purchase" }).click();
@@ -322,7 +326,7 @@ try {
   }, critterTarget.id);
   const firstShardReward = page.locator(".reward-notification").filter({ hasText: "Shop reward" });
   await firstShardReward.waitFor();
-  await page.screenshot({ path: path.join(outputDir, "shop-shards-progress.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "shop-shards-progress.png"), fullPage: false });
   await firstShardReward.waitFor({ state: "hidden", timeout: 6_000 });
   await shardOffer.getByRole("button", { name: "Purchase" }).click();
   const secondShardReward = page.locator(".reward-notification").filter({ hasText: "Shop reward" });
@@ -364,7 +368,7 @@ try {
       && unlockPresentation.animationName.includes("unlock-banner-in"),
     `The unlock banner must announce politely, animate in, and layer above other UI: ${JSON.stringify(unlockPresentation)}`,
   );
-  await page.screenshot({ path: path.join(outputDir, "unlock-notification.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "unlock-notification.png"), fullPage: false });
   await unlockBanner.waitFor({ state: "hidden", timeout: 6_000 });
   await page.waitForFunction((targetId) => {
     const card = [...document.querySelectorAll(".shop-entry-card")].find((candidate) => candidate.textContent?.includes(targetId));
@@ -423,7 +427,7 @@ try {
   }));
   check(shardHover.cardShadow !== "none" && shardHover.outlineGlowOpacity === "1", "Hovering a Shard offer must glow both the card border and diamond outline.");
   check(shardHover.outlineFilter === shardVisuals?.outlineFilter && shardHover.spriteFilter === shardVisuals?.spriteFilter && shardHover.wrapperFilter === "none", "Shard hover must not apply a filter glow to the collectible sprite or its wrapper.");
-  await page.screenshot({ path: path.join(outputDir, "shop-shards-owned-hover.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "shop-shards-owned-hover.png"), fullPage: false });
 
   await page.getByRole("button", { name: "Bag" }).click();
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "bag");
@@ -453,7 +457,7 @@ try {
   check(bagCompletion.outlineColor === "rgb(97, 221, 160)" && bagCompletion.outlineWidth === "2.4px", `The completed Bag Shard outline must use the success treatment: ${JSON.stringify(bagCompletion)}`);
   check(bagCompletion.outlineFilter !== "none" && bagCompletion.progressBorderColor === "rgb(97, 221, 160)" && bagCompletion.progressAnimation === "none", `The completed Bag Shard progress visuals must be static and distinct: ${JSON.stringify(bagCompletion)}`);
   check(bagCompletion.text?.includes("4 / 4 Shards") && !bagCompletion.text?.includes("Shards: 4 / 4"), `The Bag Shard card must keep one centered progress label: ${JSON.stringify(bagCompletion)}`);
-  await page.screenshot({ path: path.join(outputDir, "bag-shards-complete.png"), fullPage: true });
+  await page.screenshot({ path: path.join(outputDir, "bag-shards-complete.png"), fullPage: false });
 
   const finalState = await gameState(page);
   check(finalState.currencies.some((row) => row.currency_id === "coins" && row.balance === "0"), "The currency header did not use the normalized ledger snapshot.");

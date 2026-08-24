@@ -37,10 +37,10 @@ import { parseBattleFormat, sortDungeonsNaturally } from "./dungeons";
 import { createRequestId } from "./uuid";
 import { aggregateShopPurchaseReceipts, indexedShopPurchaseRequestId, shopPurchaseRpcErrorDisposition } from "./shop";
 import { resolveDesktopProfile } from "./desktop-profile";
-import { createDesktopSessionStorage } from "./desktop-session-storage";
 import {
   isLocalCatalogPreview,
   resolveLocalServerCompatibilityIdentity,
+  type LocalServerCompatibilityIdentity,
 } from "./local-release-preview";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -75,6 +75,18 @@ const gameCompatibilityHeaders: Record<string, string> = {
   "x-rollcasters-protocol": gameClientProtocol,
 };
 
+// Supabase copies the global header object into its Auth and PostgREST
+// clients during construction. The local browser preview updates these
+// compatibility values after reading the active server policy, so inject the
+// current values at request time instead of relying on a stale initial copy.
+const compatibilityFetch: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers);
+  for (const [name, value] of Object.entries(gameCompatibilityHeaders)) {
+    headers.set(name, value);
+  }
+  return globalThis.fetch(input, { ...init, headers });
+};
+
 export const supabase: SupabaseClient | null = hasSupabaseConfig
   ? createClient(supabaseUrl!, supabaseKey!, {
       auth: {
@@ -82,13 +94,35 @@ export const supabase: SupabaseClient | null = hasSupabaseConfig
         autoRefreshToken: true,
         detectSessionInUrl: !desktopRuntime,
         storageKey: desktopProfile.storageNamespace,
-        ...(desktopRuntime ? { storage: createDesktopSessionStorage(desktopProfile.appId, desktopProfile.storageNamespace) } : {}),
       },
       global: {
         headers: gameCompatibilityHeaders,
+        fetch: compatibilityFetch,
       },
     })
   : null;
+
+function applyServerCompatibilityIdentity(identity: LocalServerCompatibilityIdentity): void {
+  Object.assign(gameCompatibilityHeaders, {
+    "x-rollcasters-version": identity.version,
+    "x-rollcasters-catalog-release": identity.catalogReleaseId,
+    "x-rollcasters-protocol": identity.protocol,
+  });
+
+  // Supabase creates independent Auth and PostgREST header collections. Keep
+  // those already-created clients aligned for the first request after the
+  // local preview reads the active server policy.
+  const client = supabase as unknown as {
+    headers?: Record<string, string>;
+    auth?: { headers?: Record<string, string> };
+    rest?: { headers?: Headers };
+  } | null;
+  Object.assign(client?.headers ?? {}, gameCompatibilityHeaders);
+  Object.assign(client?.auth?.headers ?? {}, gameCompatibilityHeaders);
+  for (const [name, value] of Object.entries(gameCompatibilityHeaders)) {
+    client?.rest?.headers?.set(name, value);
+  }
+}
 
 function requireClient(): SupabaseClient {
   if (!supabase) {
@@ -128,8 +162,7 @@ export function syncLocalServerCompatibility(): Promise<GameUpdateStatus | null>
     localServerCompatibilityPromise = (async () => {
       const status = await getGameUpdateStatus();
       if (status.active) {
-        Object.assign(
-          gameCompatibilityHeaders,
+        applyServerCompatibilityIdentity(
           resolveLocalServerCompatibilityIdentity(
             {
               version: gameCompatibilityHeaders["x-rollcasters-version"],
@@ -441,7 +474,9 @@ export function getGameAssetUrl(assetPath: string | null | undefined): string | 
     : requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(normalizedPath).data.publicUrl;
   const version = gameCatalogMode === "live" ? liveAssetVersions.get(normalizedPath) : undefined;
   if (!query && !version) return publicUrl;
-  const url = new URL(publicUrl);
+  // Local exact-catalog previews use Vite's relative `/@fs/...` asset root.
+  // `URL` needs an absolute base when a cache-busting query is present.
+  const url = new URL(publicUrl, typeof window === "undefined" ? undefined : window.location.href);
   if (query) url.search = query;
   if (version && !url.searchParams.has("v")) url.searchParams.set("v", version);
   return url.toString();

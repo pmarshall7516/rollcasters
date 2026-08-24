@@ -14,6 +14,23 @@ This serves the candidate Catalog and artwork locally while leaving the Producti
 
 Before packaging, stage an immutable verified Catalog Release with `npm run desktop:stage-catalog -- <release-directory>`. Stable packaging requires protected environment configuration, `ROLLCASTERS_GAME_VERSION`, the correct Supabase project reference, and the paired `TAURI_UPDATER_PUBLIC_KEY`; signing private keys are supplied only through protected CI.
 
+For a packaged pre-publication playtest, build the local preview against the exact
+Catalog Release used by the candidate:
+
+```bash
+npm run desktop:build:preview -- --release 2026.08.23.1 --version 1.0.0
+open src-tauri/target/release/bundle/dmg/Rollcasters\ Local_1.0.0_aarch64.dmg
+```
+
+The preview embeds the verified Catalog, uses the same production Supabase
+project and `v1` player bootstrap as Stable, and keeps the Stable updater off.
+It has a separate app identifier and local badge, so it can be installed beside
+Stable without consuming Stable update state. It is the correct way to play an
+unpublished candidate; a GitHub draft cannot serve `latest.json` to a packaged
+Stable updater because draft assets are private. The protected CI artifacts are
+still the exact bytes that will be published; publication changes GitHub release
+visibility and the server Game Update pointer, not the installers.
+
 Official candidates use `release/game-update-candidate.example.json` and `.github/workflows/game-update.yml`. The workflow checks out exact commits, downloads and verifies the exact published Catalog, certifies AI Lab parity, builds macOS/Windows artifacts, signs updater payloads, emits checksums/SBOM/evidence, and stops at an unpublished public-repository draft. Publishing or activating Stable is a separate explicit operator action in Content Studio.
 
 The shared project documentation lives in the Obsidian vault at

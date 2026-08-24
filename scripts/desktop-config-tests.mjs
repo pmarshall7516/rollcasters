@@ -17,6 +17,11 @@ assert.deepEqual(base.bundle.icon, [
 for (const icon of base.bundle.icon) assert.ok(fs.existsSync(`src-tauri/${icon}`), `Configured desktop icon is missing: ${icon}`)
 assert.equal(base.bundle.createUpdaterArtifacts, true)
 assert.equal(base.bundle.windows.nsis.installMode, 'currentUser')
+assert.deepEqual(base.bundle.macOS.dmg, {
+  windowSize: { width: 660, height: 400 },
+  appPosition: { x: 180, y: 170 },
+  applicationFolderPosition: { x: 480, y: 170 },
+}, 'Every macOS DMG must use the standard app-to-Applications layout.')
 assert.ok(base.app.security.csp && !base.app.security.csp.includes("default-src *"), 'Desktop CSP must fail closed.')
 assert.ok(!JSON.stringify(base).match(/service.role|private.key|password/i), 'Desktop configuration must not carry secret material.')
 assert.notEqual(base.plugins.updater.pubkey, '', 'Updater verification may not be disabled.')

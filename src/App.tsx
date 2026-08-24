@@ -1368,7 +1368,7 @@ function AuthScreen({
       }
       await onAuthed();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed.");
+      setError(errorMessage(err, "Authentication failed."));
     } finally {
       setBusy(false);
     }
