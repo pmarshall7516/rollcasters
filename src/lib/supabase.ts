@@ -1129,16 +1129,14 @@ export async function resolveDungeonRun(runId: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function trackCollectibleChallenge(challengeId: string): Promise<CollectiblePlayerSnapshot> {
+export async function trackCollectibleChallenge(challengeId: string): Promise<void> {
   const { error } = await requireClient().rpc("track_collectible_challenge", { p_challenge_id: challengeId });
   if (error) throw error;
-  return getCollectiblePlayerSnapshot();
 }
 
-export async function untrackCollectibleChallenge(challengeId: string): Promise<CollectiblePlayerSnapshot> {
+export async function untrackCollectibleChallenge(challengeId: string): Promise<void> {
   const { error } = await requireClient().rpc("untrack_collectible_challenge", { p_challenge_id: challengeId });
   if (error) throw error;
-  return getCollectiblePlayerSnapshot();
 }
 
 export async function acknowledgeCollectibleUnlockEvent(eventId: string): Promise<void> {

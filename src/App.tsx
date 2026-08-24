@@ -3540,7 +3540,7 @@ function ShopEntryCard({ data, entry, quantity, busy, onQuantityChange, onPurcha
   const displayName = entry.shop_type === "shard" ? `${targetName} Shards` : targetName;
   const lineType = entry.shop_type === "shard" ? "Shards" : "Relics";
   return (
-    <article className={`shop-entry-card ${complete ? "complete" : ""} ${maxOwned ? "max-owned" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"} data-shard-status={entry.shop_type === "shard" ? (complete ? "complete" : "in-progress") : undefined}>
+    <article className={`shop-entry-card ${complete ? "complete" : ""} ${maxOwned ? "max-owned" : ""}`.trim()} data-shop-type={entry.shop_type} data-target-id={entry.target_id} data-availability-code={availability.code ?? "AVAILABLE"} data-shard-status={entry.shop_type === "shard" ? (complete ? "complete" : "in-progress") : undefined}>
       <div className="shop-card-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="md" shard={entry.shop_type === "shard"} /></div>
       <div className="shop-entry-copy">
         <h3 className="shop-item-name shop-target">
@@ -3990,7 +3990,7 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
               {challenge.id === firstBlockedChallengeId && <div className="challenge-gate-boundary challenge-detail-gate-boundary">
                 <span className="gate-blocked"><Lock size={12} />Complete all above challenges first</span>
               </div>}
-              <article className={`challenge-detail-row ${progress.completed ? "complete" : ""} ${blocked ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()}>
+              <article data-challenge-id={challenge.id} className={`challenge-detail-row ${progress.completed ? "complete" : ""} ${blocked ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()}>
                 <span className="challenge-detail-copy">
                   <span>{challengeDescription(data, challenge)}</span>
                 </span>
