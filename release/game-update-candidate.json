@@ -19,13 +19,13 @@
   "clientProtocolVersion": 1,
   "combatRuntimeVersion": 2,
   "contentSchemaVersion": 2,
-  "createdAt": "2026-08-24T01:35:26.469Z",
+  "createdAt": "2026-08-24T03:58:25.493Z",
   "distribution": {
     "repository": "pmarshall7516/rollcaster-releases",
-    "tag": "game-v1.0.2"
+    "tag": "game-v1.0.0"
   },
-  "releaseNotes": "Icon and login fix",
-  "sourceCommit": "82e8ac4c1b9df909e1dae41efd7fa6244d4286e1",
-  "sourceTag": "game-v1.0.2-source",
-  "version": "1.0.2"
+  "releaseNotes": "Base implementation",
+  "sourceCommit": "2487a1fed98c935fe010fe1d06b63c0c4ba58ce2",
+  "sourceTag": "game-v1.0.0-source",
+  "version": "1.0.0"
 }
