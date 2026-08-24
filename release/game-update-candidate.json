@@ -10,22 +10,22 @@
       "repository": "pmarshall7516/rollcaster-assets",
       "status": "catalog-manifest-clean"
     },
-    "id": "2026.08.23.1",
-    "manifestPath": "game-data/releases/2026.08.23.1/release-manifest.e5be331694a3.json",
-    "manifestSha256": "e5be331694a3d4d9e6805597a09a734b914f6878227bb137a5f92774017eacc8",
+    "id": "2026.08.23.2",
+    "manifestPath": "game-data/releases/2026.08.23.2/release-manifest.d2f3e799696d.json",
+    "manifestSha256": "d2f3e799696d07590ea93c7abdaefce8f25976284cb5737e4a9a541b3019b1fb",
     "publicBaseUrl": "https://vmmakykjoougmnlwkout.supabase.co/storage/v1/object/public/game-releases/"
   },
   "channel": "stable",
   "clientProtocolVersion": 1,
   "combatRuntimeVersion": 2,
   "contentSchemaVersion": 2,
-  "createdAt": "2026-08-24T03:58:25.493Z",
+  "createdAt": "2026-08-24T05:26:38.318Z",
   "distribution": {
     "repository": "pmarshall7516/rollcaster-releases",
-    "tag": "game-v1.0.0"
+    "tag": "game-v0.0.1"
   },
-  "releaseNotes": "Base implementation",
-  "sourceCommit": "2487a1fed98c935fe010fe1d06b63c0c4ba58ce2",
-  "sourceTag": "game-v1.0.0-source",
-  "version": "1.0.0"
+  "releaseNotes": "Local release validation baseline",
+  "sourceCommit": "fab81f47fed47d7af84ccca3e6521696ffbbb5af",
+  "sourceTag": "game-v0.0.1-source",
+  "version": "0.0.1"
 }
