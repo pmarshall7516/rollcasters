@@ -19,13 +19,13 @@
   "clientProtocolVersion": 1,
   "combatRuntimeVersion": 2,
   "contentSchemaVersion": 2,
-  "createdAt": "2026-08-24T05:31:24.925Z",
+  "createdAt": "2026-08-24T15:53:29.393Z",
   "distribution": {
     "repository": "pmarshall7516/rollcaster-releases",
     "tag": "game-v0.0.1"
   },
-  "releaseNotes": "Local release validation baseline",
-  "sourceCommit": "85e27981e76d394d262bf72f77f87cac29b0aba7",
+  "releaseNotes": "First Game release, all run bugs should be fixed.",
+  "sourceCommit": "e1cd0f7cdaca1737c60d798f5ad2691fdf5831a8",
   "sourceTag": "game-v0.0.1-source",
   "version": "0.0.1"
 }
