@@ -48,7 +48,7 @@ import {
   purchaseShopEntry,
   recordDungeonBattleResult,
   redeemPromoCode,
-  saveDungeonRunState,
+  releaseGameplaySession,
   setActiveRollcaster,
   setCritterRelicSlot,
   setCritterSkillSlot,
@@ -87,6 +87,7 @@ import {
   squadCritters,
   type ActionCostBreakdown,
   type CombatState,
+  type RunEffectSnapshot,
 } from "./lib/game";
 import { effectMatchesSourceCritter, sourceElementIds } from "./lib/effects";
 import {
@@ -103,7 +104,6 @@ import {
   revealDungeonSwapEvent,
   restoreDungeonRunState,
   rollDungeonDice,
-  serializeDungeonRunState,
   submitDungeonActions,
   toggleDungeonLead,
   type DungeonRunState,
@@ -251,6 +251,16 @@ type BannerNotification =
 
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
 
+async function closeRollcasters(): Promise<void> {
+  await releaseGameplaySession().catch(() => undefined);
+  if (isTauriDesktop()) {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().close();
+    return;
+  }
+  window.close();
+}
+
 function createShopErrorNotification(error: unknown): BannerNotification {
   return {
     id: `shop-error:${createRequestId()}`,
@@ -324,8 +334,6 @@ export function App() {
   const seenChallengeCompletions = useRef(new Set<string>());
   const seenChallengeCompletionUserId = useRef<string | null>(null);
   const combatRef = useRef<DungeonRunState | null>(null);
-  const combatSaveQueue = useRef<Promise<void>>(Promise.resolve());
-  const lastPersistedCombat = useRef("");
   const appKeyboardRootRef = useRef<HTMLDivElement>(null);
   const appKeyboardFocusRef = useRef<HTMLElement | null>(null);
   const appKeyboardFocusProxyRef = useRef<HTMLElement | null>(null);
@@ -333,6 +341,32 @@ export function App() {
   const combatProgressQueue = useRef<Promise<void>>(Promise.resolve());
   const clearedLegacyShopLedgerUserRef = useRef<string | null>(null);
   const dungeonEntryRequestRef = useRef<string | null>(null);
+  const closeRequestedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isTauriDesktop()) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(async (event) => {
+        if (closeRequestedRef.current) return;
+        closeRequestedRef.current = true;
+        event.preventDefault();
+        await releaseGameplaySession().catch(() => undefined);
+        await getCurrentWindow().close();
+      }))
+      .then((removeListener) => {
+        if (disposed) removeListener();
+        else unlisten = removeListener;
+      })
+      .catch((closeListenerError) => {
+        console.error("Unable to register the desktop close handler.", closeListenerError);
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isTauriDesktop()) return;
@@ -501,6 +535,7 @@ export function App() {
   }
 
   function navigate(nextView: View, nextShopTab = shopTab, replace = false) {
+    if (nextView !== "combat") setError(null);
     if (nextView === "shop") setShopTab(nextShopTab);
     setView(nextView);
     if (["home", "collection", "bag", "shop", "play"].includes(nextView)) {
@@ -712,9 +747,6 @@ export function App() {
               const persisted = restoreDungeonRunState(active.combatState, loaded.catalog, active.run);
               const resumed = persisted
                 ?? createDungeonRunState(loaded.catalog, loaded.player!, dungeon, active.run);
-              lastPersistedCombat.current = persisted
-                ? JSON.stringify(serializeDungeonRunState(persisted))
-                : "";
               setCombat(resumed);
               setView("combat");
               return;
@@ -746,6 +778,19 @@ export function App() {
     setError(null);
     try {
       await flushPlayerMutations();
+      const activeBeforeStart = await getActiveDungeonRun();
+      if (activeBeforeStart) {
+        const activeDungeon = data.catalog.dungeons.find((candidate) => candidate.id === activeBeforeStart.run.dungeonId);
+        if (!activeDungeon) throw new Error("An active Dungeon run is unavailable in this release.");
+        const persisted = restoreDungeonRunState(activeBeforeStart.combatState, data.catalog, activeBeforeStart.run);
+        const resumed = persisted
+          ?? createDungeonRunState(data.catalog, data.player, activeDungeon, activeBeforeStart.run);
+        const authoritative = applyAuthoritativeDungeonEffectSnapshot(resumed, activeBeforeStart.effectSnapshot);
+        if (dungeonEntryRequestRef.current !== requestId) return;
+        setCombat(authoritative);
+        setDungeonEntry(null);
+        return;
+      }
       const run = await startDungeonRunWithRecovery(dungeon.id, requestId, (attempt) => {
         setDungeonEntry((current) => current?.requestId === requestId
           ? { ...current, phase: attempt.phase, attempt: attempt.attempt, maxAttempts: attempt.maxAttempts }
@@ -755,14 +800,13 @@ export function App() {
         ? { ...current, phase: "confirming" }
         : current);
       const initialCombat = createDungeonRunState(data.catalog, data.player, dungeon, run);
-      await snapshotDungeonRunEffectsWithRecovery(run.id, initialCombat.battle.snapshot, (attempt) => {
+      const confirmedSnapshot = await snapshotDungeonRunEffectsWithRecovery(run.id, initialCombat.battle.snapshot, (attempt) => {
         setDungeonEntry((current) => current?.requestId === requestId
           ? { ...current, phase: attempt.phase, attempt: attempt.attempt, maxAttempts: attempt.maxAttempts }
           : current);
       });
       if (dungeonEntryRequestRef.current !== requestId) return;
-      lastPersistedCombat.current = "";
-      setCombat(initialCombat);
+      setCombat(applyAuthoritativeDungeonEffectSnapshot(initialCombat, confirmedSnapshot));
       setDungeonEntry(null);
     } catch (err) {
       console.error("Unable to initialize Dungeon entry.", { dungeonId: dungeon.id, requestId, error: err });
@@ -779,11 +823,12 @@ export function App() {
     if (events.length === 0) return;
     const work = combatProgressQueue.current.then(async () => {
       await submitCollectibleCombatEvents(runId, turnNumber, events);
-      void refresh("combat", { showLoading: false });
     });
     combatProgressQueue.current = work.catch((progressError) => {
-      console.error("Unable to submit collectible combat progress.", progressError);
-      setError(errorMessage(progressError, "Unable to update challenge progress."));
+      // Challenge progress is a non-critical post-combat projection. Combat
+      // and its authoritative rewards have already completed, so a slow or
+      // locked progress write must not become a gameplay error banner.
+      console.warn("Collectible combat progress was deferred after the combat result.", progressError);
     });
   }
 
@@ -909,44 +954,6 @@ export function App() {
 
   useEffect(() => {
     combatRef.current = combat;
-    if (
-      !combat
-      || combat.run.status !== "started"
-      || combat.phase === "battle_result"
-      || combat.phase === "dungeon_complete"
-      || combat.phase === "dungeon_failed"
-    ) return;
-    const serialized = serializeDungeonRunState(combat);
-    const signature = JSON.stringify(serialized);
-    if (signature === lastPersistedCombat.current) return;
-
-    combatSaveQueue.current = combatSaveQueue.current
-      .then(async () => {
-        const latest = combatRef.current;
-        if (
-          !latest
-          || latest.run.status !== "started"
-          || latest.phase === "battle_result"
-          || latest.phase === "dungeon_complete"
-          || latest.phase === "dungeon_failed"
-        ) return;
-        const latestSerialized = serializeDungeonRunState(latest);
-        const latestSignature = JSON.stringify(latestSerialized);
-        if (latestSignature === lastPersistedCombat.current) return;
-        const saved = await saveDungeonRunState(latest.run, latestSerialized);
-        lastPersistedCombat.current = latestSignature;
-        const latestCurrent = combatRef.current;
-        if (latestCurrent?.run.id === latest.run.id) {
-          combatRef.current = { ...latestCurrent, run: saved.run };
-        }
-        setCombat((current) => current?.run.id === latest.run.id
-          ? { ...current, run: saved.run }
-          : current);
-      })
-      .catch((saveError) => {
-        console.error("Unable to persist Dungeon combat state.", saveError);
-        setError(errorMessage(saveError, "Unable to save Dungeon progress."));
-      });
   }, [combat]);
 
   useEffect(() => {
@@ -1254,24 +1261,15 @@ export function App() {
         {view === "combat" && dungeonEntry && (
           <DungeonEntryScreen entry={dungeonEntry} />
         )}
-        {view === "combat" && !dungeonEntry && combat && (
+      {view === "combat" && !dungeonEntry && combat && (
         <CombatScreen
           data={data}
           combat={combat}
           setCombat={setCombat}
-          onTurnResolved={(resolved) => {
-            const turn = resolved.pendingBattle ?? resolved.battle;
-            if (turn.turnEvents.length === 0) return;
-            // Challenge progress is durable but not required to render the
-            // already-resolved turn. Keep it ordered in the background so a
-            // slow progress RPC cannot delay combat presentation.
-            queueCombatProgressEvents(resolved.run.id, resolved.battle.turn, turn.turnEvents);
-          }}
           onBattleResult={async (resolved) => {
             setLoading(true);
             setError(null);
             try {
-              await combatSaveQueue.current;
               const result = await recordDungeonBattleResult(
                 resolved.run,
                 dungeonBattleSubmission(resolved),
@@ -1310,8 +1308,8 @@ export function App() {
               setLoading(false);
             }
           }}
-          onBack={() => navigate("play")}
-          onHome={() => { setCombat(null); navigate("home"); }}
+          onBack={() => { setError(null); setCombat(null); navigate("play"); }}
+          onHome={() => { setError(null); setCombat(null); navigate("home"); }}
           onReplay={() => beginDungeon(combat.dungeon)}
           onNextDungeon={(dungeonId) => {
             const next = data.catalog.dungeons.find((dungeon) => dungeon.id === dungeonId);
@@ -1345,6 +1343,19 @@ function dungeonEntryErrorMessage(error: unknown): string {
     return "Dungeon entry is taking longer than expected. No combat was started; please try again.";
   }
   return raw;
+}
+
+function applyAuthoritativeDungeonEffectSnapshot(
+  state: DungeonRunState,
+  effectSnapshot: unknown,
+): DungeonRunState {
+  if (!effectSnapshot || typeof effectSnapshot !== "object") return state;
+  const snapshot = structuredClone(effectSnapshot) as RunEffectSnapshot;
+  return {
+    ...state,
+    battle: { ...state.battle, snapshot },
+    pendingBattle: state.pendingBattle ? { ...state.pendingBattle, snapshot } : null,
+  };
 }
 
 function loadoutErrorMessage(error: unknown, fallback: string): string {
@@ -1488,7 +1499,6 @@ function DungeonEntryScreen({ entry }: { entry: DungeonEntryState }) {
       <p className="eyebrow">Dungeon briefing</p>
       <h1>Entering {entry.dungeon.name}</h1>
       <p>{message}</p>
-      <small>Attempt {entry.attempt} of {entry.maxAttempts}. Combat controls unlock after the server confirms this run.</small>
     </section>
   );
 }
@@ -1605,6 +1615,9 @@ function AuthScreen({
         </button>
         </>}
       </form>
+      <div className="auth-version-pill" aria-label={`Game version ${currentGameVersion}`}>
+        v{currentGameVersion}
+      </div>
     </section>
   );
 }
@@ -1623,6 +1636,25 @@ function TopBar({
   const currencies = orderedCurrencies(data);
   const topBarRef = useRef<HTMLElement>(null);
   const currencyTooltipRef = useRef<HTMLSpanElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    function handleDocumentInteraction(event: MouseEvent) {
+      if (!userMenuRef.current?.contains(event.target as Node)) setProfileMenuOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setProfileMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleDocumentInteraction);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentInteraction);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [profileMenuOpen]);
 
   const showCurrencyTooltip = (element: HTMLElement, label: string) => {
     const topBar = topBarRef.current;
@@ -1640,7 +1672,7 @@ function TopBar({
 
   const hideCurrencyTooltip = () => currencyTooltipRef.current?.classList.remove("visible");
 
-  return (
+  return <>
     <header ref={topBarRef} className={`top-bar ${currencies.length > 3 ? "currency-rich" : ""}`.trim()}>
       <button type="button" className="brand-home-button" onClick={onHome} aria-label="Rollcasters home">
         <BrandLogo compact />
@@ -1674,12 +1706,41 @@ function TopBar({
             );
           })}
         </div>
-        <div className="user-pill">
-          <UserRound size={17} />
-          {player.profile.username}
+        <div className="user-menu" ref={userMenuRef}>
+          <button
+            type="button"
+            className="user-pill user-menu-trigger"
+            aria-haspopup="menu"
+            aria-expanded={profileMenuOpen}
+            onClick={() => setProfileMenuOpen((open) => !open)}
+          >
+            <UserRound size={17} aria-hidden="true" />
+            <span className="user-menu-name">{player.profile.username}</span>
+            <ChevronDown size={15} aria-hidden="true" />
+          </button>
+          {profileMenuOpen && (
+            <div className="user-menu-dropdown" role="menu" aria-label="Account menu">
+              <button
+                type="button"
+                className="user-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                  void onSignOut();
+                }}
+              >
+                <LogOut size={17} aria-hidden="true" />
+                Log Out
+              </button>
+              <div className="user-menu-version" aria-label={`Game version ${currentGameVersion}`}>
+                <span>Game version</span>
+                <strong>v{currentGameVersion}</strong>
+              </div>
+            </div>
+          )}
         </div>
-        <button className="icon-button" onClick={onSignOut} aria-label="Log out">
-          <LogOut size={18} />
+        <button type="button" className="icon-button exit-button" onClick={() => setExitDialogOpen(true)} aria-label="Exit Rollcasters">
+          <X size={19} aria-hidden="true" />
         </button>
       </div>
       <span
@@ -1688,7 +1749,24 @@ function TopBar({
         aria-hidden="true"
       />
     </header>
-  );
+    {exitDialogOpen && (
+      <Modal eyebrow="Rollcasters" title="Do you want to exit Rollcasters?" description={null} onClose={() => setExitDialogOpen(false)} className="exit-dialog">
+        <div className="dialog-actions exit-dialog-actions">
+          <button type="button" className="secondary-button" onClick={() => setExitDialogOpen(false)}>No</button>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={() => {
+              void closeRollcasters().catch((error) => console.error("Unable to close Rollcasters.", error));
+              setExitDialogOpen(false);
+            }}
+          >
+            Yes
+          </button>
+        </div>
+      </Modal>
+    )}
+  </>;
 }
 
 function BrandLogo({ compact = false }: { compact?: boolean }) {
@@ -4584,7 +4662,6 @@ function CombatScreen({
   data,
   combat,
   setCombat,
-  onTurnResolved,
   onBattleResult,
   onBack,
   onHome,
@@ -4594,7 +4671,6 @@ function CombatScreen({
   data: AppData;
   combat: DungeonRunState;
   setCombat: Dispatch<SetStateAction<DungeonRunState | null>>;
-  onTurnResolved: (state: DungeonRunState) => void | Promise<void>;
   onBattleResult: (state: DungeonRunState) => Promise<void>;
   onBack: () => void;
   onHome: () => void;
@@ -5280,7 +5356,6 @@ function CombatScreen({
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     const resolved = submitDungeonActions(combat, selectedActions);
     try {
-      await onTurnResolved(resolved);
       // Keep the resolved presentation out of the tree until turn loading has
       // finished. Presentation classes start their animations on mount.
       setCombat((current) => current

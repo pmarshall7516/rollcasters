@@ -1090,8 +1090,18 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 3
 .coin-pill, .user-pill { min-height: 44px; border: 1px solid var(--border-soft); background: rgb(16 21 42 / 82%); color: var(--text-primary); box-shadow: 0 8px 24px rgb(0 0 0 / 22%); }
 .coin-pill { color: var(--accent-gold); }
 .icon-button { width: 44px; height: 44px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--bg-raised); color: var(--text-secondary); }
-
-.auth-layout { grid-template-rows: auto minmax(440px, auto); gap: 28px; width: min(460px, calc(100vw - 32px)); margin-top: clamp(3vh, 7vh, 80px); }
+.user-menu { position: relative; }
+.user-menu-trigger { border: 1px solid var(--border-soft); }
+.user-menu-trigger:hover, .user-menu-trigger[aria-expanded="true"] { border-color: var(--border-bright); background: var(--bg-raised); }
+.user-menu-trigger .user-menu-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-menu-dropdown { position: absolute; z-index: 20; top: calc(100% + 9px); right: 0; display: grid; gap: 5px; width: min(220px, calc(100vw - 24px)); padding: 8px; border: 1px solid var(--border-bright); border-radius: 14px; background: linear-gradient(155deg, rgb(23 29 56 / 98%), rgb(10 13 31 / 99%)); box-shadow: 0 20px 48px rgb(0 0 0 / 55%); }
+.user-menu-item { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 9px 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text-primary); font-weight: 800; text-align: left; }
+.user-menu-item:hover { border-color: var(--border-soft); background: rgb(52 61 104 / 32%); }
+.user-menu-version { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; padding: 10px 10px 3px; border-top: 1px solid var(--border-soft); color: var(--text-muted); font-size: 12px; }
+.user-menu-version strong { color: var(--accent-cyan); font-size: 13px; letter-spacing: .06em; }
+.exit-button { color: var(--danger); }
+.exit-button:hover { border-color: var(--danger); color: #ffb0bd; box-shadow: 0 0 18px rgb(255 110 134 / 22%); }
+.auth-layout { grid-template-rows: auto minmax(440px, auto) auto; gap: 14px; width: min(460px, calc(100vw - 32px)); margin-top: clamp(3vh, 7vh, 80px); }
 .auth-card, .setup-panel { border: 1px solid var(--border-bright); border-radius: var(--radius-lg); background: linear-gradient(155deg, rgb(23 29 56 / 94%), rgb(12 16 37 / 96%)); box-shadow: 0 0 0 1px rgb(167 121 255 / 12%) inset, 0 24px 70px rgb(0 0 0 / 45%), 0 0 34px rgb(112 72 191 / 16%); }
 .auth-card { height: auto; min-height: 440px; padding: 34px; gap: 16px; }
 .auth-card h2 { font-family: Georgia, "Times New Roman", serif; font-size: 30px; }
@@ -1099,6 +1109,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 3
 .auth-card input { min-height: 48px; border: 1px solid var(--border-soft); background: rgb(8 10 24 / 72%); color: var(--text-primary); }
 .auth-card input:hover { border-color: var(--border-bright); }
 .auth-card .error-text { margin: 0; padding: 9px 11px; border: 1px solid var(--danger); border-radius: 10px; }
+.auth-version-pill { justify-self: center; min-width: 76px; padding: 7px 14px; border: 1px solid var(--border-bright); border-radius: 999px; background: rgb(16 21 42 / 86%); color: var(--accent-cyan); box-shadow: 0 8px 24px rgb(0 0 0 / 22%); font-size: 13px; font-weight: 900; letter-spacing: .08em; text-align: center; }
 .confirmation-message p, .screen-heading p, .rollcaster-panel p, .catalog-card p, .loadout-slot p, .dungeon-card p, .battle-unit p, .modal-header p { color: var(--text-secondary); }
 
 .primary-button { min-height: 46px; border: 1px solid rgb(181 160 255 / 65%); border-radius: 12px; background: linear-gradient(135deg, #7b4ee3, #4e9fc7); box-shadow: 0 8px 24px rgb(79 73 190 / 30%), inset 0 1px rgb(255 255 255 / 25%); }
@@ -1534,6 +1545,12 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 .modal-header { position: sticky; z-index: 3; top: -22px; justify-content: space-between; margin: -22px -22px 20px; padding: 18px 22px; border-bottom: 1px solid var(--border-soft); background: rgb(16 21 42 / 96%); backdrop-filter: blur(12px); }
 .modal-header h2, .modal-header p { margin: 2px 0; }
+.modal.exit-dialog { width: min(520px, calc(100vw - 32px)); height: auto; min-height: 0; max-height: calc(100vh - 32px); overflow: hidden; padding: 0; }
+.modal.exit-dialog .modal-header { position: static; top: auto; margin: 0; padding: 16px 20px 14px; }
+.modal.exit-dialog .modal-header > div { min-width: 0; }
+.modal.exit-dialog .modal-header .icon-button { flex: 0 0 auto; }
+.modal.exit-dialog .exit-dialog-actions { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 10px; margin: 0; padding: 14px 20px 18px; border-top: 1px solid var(--border-soft); }
+.modal.exit-dialog .exit-dialog-actions > button { min-width: 64px; }
 .candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .candidate-card { position: relative; display: grid; justify-items: center; align-content: start; gap: 8px; min-height: 220px; padding: 14px; border: 1px solid var(--border-soft); border-radius: 16px; background: rgb(8 10 24 / 52%); color: var(--text-primary); text-align: center; }
 .candidate-card:hover:not(:disabled) { border-color: var(--accent-magic); box-shadow: 0 0 22px rgb(167 121 255 / 18%); }
@@ -2415,6 +2432,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 @media (max-width: 1100px) {
   .top-bar { grid-template-rows: auto auto; row-gap: 8px; }
   .top-bar .account-cluster { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; justify-content: flex-end; min-width: 0; }
+  .top-bar .user-menu .user-menu-trigger { display: inline-flex; }
   .top-bar .currency-cluster, .top-bar.currency-rich .currency-cluster { max-width: calc(100% - 49px); }
 }
 
@@ -2435,7 +2453,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   .challenge-panel-heading { align-items: flex-start; flex-direction: column; }
   .challenge-detail-row button { width: 100%; }
   .currency-pill { padding: 7px 8px; }
-  .user-pill { display: none; }
+  .user-menu .user-menu-trigger { display: inline-flex; padding: 7px 9px; }
+  .user-menu-trigger .user-menu-name { display: none; }
+  .user-menu-trigger { width: 40px; justify-content: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

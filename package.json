@@ -23,6 +23,8 @@
     "test:desktop-config": "node scripts/desktop-config-tests.mjs",
     "test:desktop-session": "node scripts/desktop-session-source-tests.mjs",
     "test:desktop-session-storage": "node scripts/desktop-session-source-tests.mjs",
+    "test:gameplay-session": "node scripts/gameplay-session-regression-tests.mjs",
+    "test:gameplay-session:db": "node scripts/gameplay-session-db-tests.mjs",
     "test:player-registration": "node scripts/player-registration-source-tests.mjs",
     "test:desktop-security": "node scripts/desktop-security-audit.mjs",
     "test:diagnostics": "node scripts/diagnostic-report-tests.mjs",

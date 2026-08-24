@@ -1,6 +1,7 @@
 import {
   isLocalCatalogPreview,
   resolveLocalServerCompatibilityIdentity,
+  shouldSyncLocalServerCompatibility,
 } from "../src/lib/local-release-preview.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -29,5 +30,13 @@ check(
 );
 check(isLocalCatalogPreview("local", true), "The local exact-Catalog launcher must enable preview mode.");
 check(!isLocalCatalogPreview("stable", true), "Stable builds must never enable local Catalog preview mode.");
+check(
+  shouldSyncLocalServerCompatibility("local"),
+  "Packaged Local clients must sync the active server identity before authentication.",
+);
+check(
+  !shouldSyncLocalServerCompatibility("stable"),
+  "Stable clients must retain the fail-closed update gate.",
+);
 
 console.log("Local release preview compatibility contract passed.");

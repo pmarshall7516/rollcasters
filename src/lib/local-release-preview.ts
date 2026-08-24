@@ -30,3 +30,11 @@ export function resolveLocalServerCompatibilityIdentity(
 export function isLocalCatalogPreview(profile: "local" | "stable", enabled: boolean): boolean {
   return profile === "local" && enabled;
 }
+
+/**
+ * Local packaged previews use the candidate Catalog but must still present
+ * the active server Game Update identity to compatibility-gated RPCs.
+ */
+export function shouldSyncLocalServerCompatibility(profile: "local" | "stable"): boolean {
+  return profile === "local";
+}

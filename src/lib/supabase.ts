@@ -47,6 +47,7 @@ import { resolveDesktopProfile } from "./desktop-profile";
 import {
   isLocalCatalogPreview,
   resolveLocalServerCompatibilityIdentity,
+  shouldSyncLocalServerCompatibility,
   type LocalServerCompatibilityIdentity,
 } from "./local-release-preview";
 
@@ -168,7 +169,7 @@ let localServerCompatibilityPromise: Promise<GameUpdateStatus | null> | null = n
  * used by every Supabase request. Stable desktop builds never enter this path.
  */
 export function syncLocalServerCompatibility(): Promise<GameUpdateStatus | null> {
-  if (!supabase || desktopRuntime || desktopProfile.profile !== "local") return Promise.resolve(null);
+  if (!supabase || !shouldSyncLocalServerCompatibility(desktopProfile.profile)) return Promise.resolve(null);
   if (!localServerCompatibilityPromise) {
     localServerCompatibilityPromise = (async () => {
       const status = await getGameUpdateStatus();
@@ -454,14 +455,7 @@ export async function signUp(email: string, password: string, username: string):
 export async function signOut(): Promise<void> {
   const client = requireClient();
   await flushPlayerMutations().catch(() => undefined);
-  if (activeGameplaySessionId) {
-    try {
-      await client.rpc("release_gameplay_session", { p_session_id: activeGameplaySessionId });
-    } catch {
-      // Lease expiry is the safe fallback when a clean release cannot reach the server.
-    }
-    activeGameplaySessionId = null;
-  }
+  await releaseGameplaySession().catch(() => undefined);
   const { error } = await client.auth.signOut();
   if (error) throw error;
 }
@@ -477,6 +471,14 @@ export type GameplaySessionResult = {
 
 export function currentGameplaySessionId(): string | null {
   return activeGameplaySessionId;
+}
+
+export async function releaseGameplaySession(): Promise<void> {
+  const sessionId = activeGameplaySessionId;
+  activeGameplaySessionId = null;
+  if (!sessionId) return;
+  const { error } = await requireClient().rpc("release_gameplay_session", { p_session_id: sessionId });
+  if (error) throw error;
 }
 
 export async function acquireGameplaySession(takeover = false): Promise<GameplaySessionResult> {
@@ -1370,7 +1372,7 @@ export async function snapshotDungeonRunEffectsWithRecovery(
   runId: string,
   snapshot: unknown,
   onAttempt?: (attempt: DungeonEntryAttempt) => void,
-): Promise<void> {
+): Promise<unknown> {
   const maxAttempts = 3;
   let lastError: unknown = new Error("Dungeon effect snapshot failed.");
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1378,18 +1380,19 @@ export async function snapshotDungeonRunEffectsWithRecovery(
     if (attempt > 1) await dungeonEntryDelay(250 * 2 ** (attempt - 2));
     try {
       await withDungeonEntryTimeout(snapshotDungeonRunEffects(runId, snapshot), "effects");
-      return;
+      return snapshot;
     } catch (error) {
       lastError = error;
       const active = await activeDungeonRunForRecovery();
-      if (active?.run.id === runId) {
-        // The snapshot RPC is an exactly-once upsert. An active run with the
-        // same id means a timeout may have committed it, so retrying the same
-        // payload is safe and keeps entry deterministic.
-      } else if (!isRetryableDungeonEntryError(error) || attempt === maxAttempts) {
+      if (active?.run.id === runId && active.effectSnapshot != null) {
+        // A previous request may have committed a different client snapshot
+        // before its response was lost. The server snapshot is authoritative;
+        // adopting it keeps the run resumable without overwriting it.
+        return active.effectSnapshot;
+      }
+      if (!isRetryableDungeonEntryError(error) || attempt === maxAttempts) {
         throw error;
       }
-      if (!isRetryableDungeonEntryError(error) && !active) throw error;
     }
   }
   throw lastError;

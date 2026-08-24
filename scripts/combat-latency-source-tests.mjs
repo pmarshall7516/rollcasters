@@ -7,18 +7,22 @@ function check(condition, message) {
 }
 
 const source = fs.readFileSync(path.join(root, "src", "App.tsx"), "utf8");
-const turnHandler = source.match(/onTurnResolved=\{([\s\S]*?)\n\s*\}\}\s*onBattleResult=/)?.[1] ?? "";
 const resultHandler = source.match(/onBattleResult=\{([\s\S]*?)\n\s*\}\}\s*onBack=/)?.[1] ?? "";
+const progressQueue = source.match(/function queueCombatProgressEvents\([\s\S]*?\n\s*}\n\n\s*async function establishGameplaySession/)?.[0] ?? "";
 
-check(turnHandler.includes("queueCombatProgressEvents"),
-  "Turn presentation must enqueue collectible progress without blocking the resolved combat state.");
-check(!turnHandler.includes("await submitCollectibleCombatEvents"),
-  "Turn presentation must not await the challenge-progress RPC before playing the turn out.");
+check(!source.includes("onTurnResolved="),
+  "Local combat turns must not invoke a server-backed progress callback.");
 check(resultHandler.includes("applyDungeonBattleResult(resolved, result, data.catalog, data.player!)"),
   "Encounter result presentation must apply from the current client snapshot before refreshing in the background.");
 check(!resultHandler.includes("await loadAppData()"),
   "Encounter result presentation must not block on a full app-data reload before showing rewards or Dungeon complete.");
-check(resultHandler.includes("queueCombatProgressEvents"),
-  "Dungeon completion progress must remain queued after the authoritative battle result is recorded.");
+check(!source.includes("saveDungeonRunState(latest.run, latestSerialized)"),
+  "Local combat must not persist every turn through save_dungeon_run_state.");
+check(!source.includes("setError(errorMessage(progressError, \"Unable to update challenge progress.\"))"),
+  "A non-critical background challenge-progress failure must not become the global gameplay error banner.");
+check(!progressQueue.includes("void refresh(\"combat\", { showLoading: false })"),
+  "Post-combat challenge projection must not navigate the player back into combat after they leave it.");
+check(source.includes("onBack={() => { setError(null);"),
+  "Leaving combat must clear any transient gameplay error banner.");
 
-console.log(JSON.stringify({ turnRpcBlocking: false, resultRefreshBlocking: false }));
+console.log(JSON.stringify({ localTurns: true, turnRpcBlocking: false, resultRefreshBlocking: false, transientErrors: true }));

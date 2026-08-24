@@ -99,6 +99,38 @@ try {
     ),
     "Selected opponents must include every normalized combat and reward child.",
   );
+  const effectSnapshot = {
+    effects: [],
+    loadouts: { playerSkillSlots: [], playerAbilitySlots: [], playerRelicSlots: [], opponents: [] },
+    statuses: [],
+    seed: 1,
+  };
+  await client.query(
+    "select public.snapshot_dungeon_run_effects($1,$2::jsonb)",
+    [firstStart.id, JSON.stringify(effectSnapshot)],
+  );
+  await client.query(
+    "select public.snapshot_dungeon_run_effects($1,$2::jsonb)",
+    [firstStart.id, JSON.stringify(effectSnapshot)],
+  );
+  const storedEffectSnapshot = (await client.query(
+    "select effect_snapshot from public.dungeon_runs where id=$1",
+    [firstStart.id],
+  )).rows[0]?.effect_snapshot;
+  check(
+    storedEffectSnapshot?.seed === effectSnapshot.seed
+      && Array.isArray(storedEffectSnapshot?.effects)
+      && storedEffectSnapshot.effects.length === 0
+      && Array.isArray(storedEffectSnapshot?.statuses)
+      && storedEffectSnapshot.statuses.length === 0,
+    "A retried identical effect snapshot must remain idempotent.",
+  );
+  await expectError(client, "conflicting_effect_snapshot", "Effect snapshot already exists", () =>
+    client.query(
+      "select public.snapshot_dungeon_run_effects($1,$2::jsonb)",
+      [firstStart.id, JSON.stringify({ ...effectSnapshot, seed: 2 })],
+    ),
+  );
   const saveRequest = crypto.randomUUID();
   const savedState = { phase: "event_playback", eventCursor: 0, marker: crypto.randomUUID() };
   const saved = (await client.query(
