@@ -3,7 +3,7 @@
     "activatesAt": null,
     "mode": "immediate"
   },
-  "aiLabCommit": "75cda5b2b0e21829985e30883d36eb17b6360b24",
+  "aiLabCommit": "137b4c83d51b6601bdc3377b6325434dfbd750fb",
   "catalogRelease": {
     "assetProvenance": {
       "commit": "b899a5771946ace3e1a99d164655db1093896250",
@@ -19,13 +19,13 @@
   "clientProtocolVersion": 1,
   "combatRuntimeVersion": 2,
   "contentSchemaVersion": 2,
-  "createdAt": "2026-08-23T23:50:52.291Z",
+  "createdAt": "2026-08-24T00:12:01.262Z",
   "distribution": {
     "repository": "pmarshall7516/rollcaster-releases",
     "tag": "game-v1.0.1"
   },
-  "releaseNotes": "Icon and sign in fix",
-  "sourceCommit": "5fb04722afcafe036a9fe7d11ec03eb4ad5a6f8e",
+  "releaseNotes": "Icon and db fix",
+  "sourceCommit": "33249df5e8460aefb094ddc2ab62e1a72798bf44",
   "sourceTag": "game-v1.0.1-source",
   "version": "1.0.1"
 }
