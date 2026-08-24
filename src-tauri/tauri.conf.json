@@ -11,7 +11,7 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co"
+      "csp": "default-src 'self'; img-src 'self' http://127.0.0.1:1430 asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:1430 https://*.supabase.co wss://*.supabase.co"
     },
     "windows": [{
       "label": "main", "title": "Rollcasters", "width": 1280, "height": 800,

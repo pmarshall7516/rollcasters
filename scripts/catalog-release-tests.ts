@@ -60,6 +60,10 @@ check(
   resolveCatalogBaseUrl("/desktop-catalog/game-data", "https://tauri.localhost/") === "https://tauri.localhost/desktop-catalog/game-data/",
   "The desktop catalog path must resolve against the app origin.",
 );
+check(
+  resolveCatalogBaseUrl("/desktop-catalog/game-data", "tauri://localhost/") === "http://tauri.localhost/desktop-catalog/game-data/",
+  "macOS Tauri catalog paths must resolve through an HTTP localhost alias.",
+);
 check(await sha256Hex(new TextEncoder().encode("abc").buffer) === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 verification must be deterministic.");
 check(sha256HexFallback(new ArrayBuffer(0)) === "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "Fallback SHA-256 must hash empty bytes correctly.");
 check(sha256HexFallback(new TextEncoder().encode("abc").buffer) === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "Fallback SHA-256 must match the standard abc vector.");

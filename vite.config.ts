@@ -4,6 +4,8 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolveBuildProfile } from "./src/lib/desktop-profile";
 
+const DESKTOP_ASSET_SERVER = "http://127.0.0.1:1430";
+
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const buildProfile = command === "build" ? resolveBuildProfile(mode, env) : undefined;
@@ -23,8 +25,8 @@ export default defineConfig(({ command, mode }) => {
       ...(embeddedCatalog ? { "import.meta.env.VITE_GAME_CATALOG_RELEASE_ID": JSON.stringify(embeddedCatalog.catalogVersion) } : {}),
     ...(desktopBuild ? {
       "import.meta.env.VITE_DESKTOP_BUILD": JSON.stringify("true"),
-      "import.meta.env.VITE_GAME_CATALOG_BASE_URL": JSON.stringify("/desktop-catalog/game-data"),
-      "import.meta.env.VITE_GAME_ASSET_BASE_URL": JSON.stringify("/desktop-catalog/game-assets"),
+      "import.meta.env.VITE_GAME_CATALOG_BASE_URL": JSON.stringify(`${DESKTOP_ASSET_SERVER}/desktop-catalog/game-data`),
+      "import.meta.env.VITE_GAME_ASSET_BASE_URL": JSON.stringify(`${DESKTOP_ASSET_SERVER}/desktop-catalog/game-assets`),
     } : {}),
   } : undefined,
   plugins: [react()],
