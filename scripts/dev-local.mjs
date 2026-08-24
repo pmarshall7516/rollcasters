@@ -11,6 +11,7 @@ const child = spawn(process.execPath, [viteCli, '--host', '127.0.0.1'], {
     ...process.env,
     VITE_GAME_PROFILE: 'local',
     VITE_GAME_CATALOG_MODE: 'live',
+    VITE_GAME_LOCAL_CATALOG_PREVIEW: 'false',
   },
 })
 
@@ -18,4 +19,3 @@ child.on('exit', (code, signal) => {
   if (signal) process.kill(process.pid, signal)
   process.exitCode = code ?? 1
 })
-

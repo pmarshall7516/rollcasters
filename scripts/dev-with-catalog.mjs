@@ -12,7 +12,7 @@ const valueAfter = (name) => {
 const releaseId = valueAfter('--release')
 const requestedDir = valueAfter('--catalog-dir')
 if (!releaseId && !requestedDir) {
-  throw new Error('Usage: npm run dev:catalog -- --release YYYY.MM.DD.N or --catalog-dir /absolute/release-directory')
+  throw new Error('Usage: npm run dev:catalog -- --release YYYY.MM.DD.N [--game-version X.Y.Z] or --catalog-dir /absolute/release-directory')
 }
 
 const catalogRoot = path.resolve(requestedDir ?? path.join('..', 'rollcaster-dev', 'release-output', String(releaseId)))
@@ -22,6 +22,21 @@ const pointer = JSON.parse(fs.readFileSync(pointerFile, 'utf8'))
 if (releaseId && pointer.catalogVersion !== releaseId) {
   throw new Error(`Catalog directory contains ${String(pointer.catalogVersion)}, not ${releaseId}.`)
 }
+
+const candidateFile = path.resolve('release', 'game-update-candidate.json')
+let candidateGameVersion
+if (fs.existsSync(candidateFile)) {
+  try {
+    const candidate = JSON.parse(fs.readFileSync(candidateFile, 'utf8'))
+    if (candidate.catalogRelease?.id === pointer.catalogVersion && typeof candidate.version === 'string') {
+      candidateGameVersion = candidate.version
+    }
+  } catch {
+    // The candidate manifest is optional; pass --game-version for a catalog
+    // whose minimum version differs from the normal .env value.
+  }
+}
+const requestedGameVersion = valueAfter('--game-version') ?? candidateGameVersion
 
 const viteCli = path.resolve(path.dirname(require.resolve('vite')), '../../bin/vite.js')
 const vitePath = catalogRoot.replaceAll(path.sep, '/')
@@ -35,6 +50,8 @@ const child = spawn(process.execPath, [viteCli, '--host', '127.0.0.1'], {
     VITE_GAME_CATALOG_RELEASE_ID: String(pointer.catalogVersion),
     VITE_GAME_CATALOG_BASE_URL: `/@fs/${vitePath}/game-data`,
     VITE_GAME_ASSET_BASE_URL: `/@fs/${vitePath}/game-assets`,
+    VITE_GAME_LOCAL_CATALOG_PREVIEW: 'true',
+    ...(requestedGameVersion ? { VITE_GAME_VERSION: requestedGameVersion } : {}),
   },
 })
 

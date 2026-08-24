@@ -26,6 +26,7 @@
     "test:desktop-security": "node scripts/desktop-security-audit.mjs",
     "test:diagnostics": "node scripts/diagnostic-report-tests.mjs",
     "test:update-policy": "tsc scripts/update-policy-tests.ts src/lib/update-policy.ts --outDir /tmp/rollcasters-update-policy-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-update-policy-tests/scripts/update-policy-tests.js",
+    "test:local-release-preview": "tsc scripts/local-release-preview-tests.ts src/lib/local-release-preview.ts --outDir /tmp/rollcasters-local-release-preview-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-local-release-preview-tests/scripts/local-release-preview-tests.js",
     "test:update-feed": "node scripts/update-feed-tests.mjs",
     "test:published-catalog": "node scripts/download-published-catalog-tests.mjs",
     "desktop:icon": "node scripts/create-desktop-icon.mjs && tauri icon src-tauri/icons/icon-source.png",

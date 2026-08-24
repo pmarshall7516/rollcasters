@@ -38,6 +38,10 @@ import { createRequestId } from "./uuid";
 import { aggregateShopPurchaseReceipts, indexedShopPurchaseRequestId, shopPurchaseRpcErrorDisposition } from "./shop";
 import { resolveDesktopProfile } from "./desktop-profile";
 import { createDesktopSessionStorage } from "./desktop-session-storage";
+import {
+  isLocalCatalogPreview,
+  resolveLocalServerCompatibilityIdentity,
+} from "./local-release-preview";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
@@ -49,6 +53,11 @@ export const currentGameVersion = gameVersion;
 const gameCatalogReleaseId = (import.meta.env.VITE_GAME_CATALOG_RELEASE_ID as string | undefined) ?? "unversioned";
 const gameClientProtocol = (import.meta.env.VITE_GAME_CLIENT_PROTOCOL_VERSION as string | undefined) ?? "1";
 export const desktopProfile = resolveDesktopProfile(import.meta.env);
+const desktopRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const localCatalogPreview = isLocalCatalogPreview(
+  desktopProfile.profile,
+  import.meta.env.VITE_GAME_LOCAL_CATALOG_PREVIEW === "true",
+);
 // A player build is release-backed unless development explicitly opts into the
 // live authoring catalog. This prevents an omitted env var from weakening the
 // immutable-release boundary.
@@ -60,7 +69,11 @@ const liveAssetVersions = new Map<string, string>();
 
 export const GAME_ASSETS_BUCKET = "game-assets";
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
-const desktopRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const gameCompatibilityHeaders: Record<string, string> = {
+  "x-rollcasters-version": gameVersion,
+  "x-rollcasters-catalog-release": gameCatalogReleaseId,
+  "x-rollcasters-protocol": gameClientProtocol,
+};
 
 export const supabase: SupabaseClient | null = hasSupabaseConfig
   ? createClient(supabaseUrl!, supabaseKey!, {
@@ -72,11 +85,7 @@ export const supabase: SupabaseClient | null = hasSupabaseConfig
         ...(desktopRuntime ? { storage: createDesktopSessionStorage(desktopProfile.appId, desktopProfile.storageNamespace) } : {}),
       },
       global: {
-        headers: {
-          "x-rollcasters-version": gameVersion,
-          "x-rollcasters-catalog-release": gameCatalogReleaseId,
-          "x-rollcasters-protocol": gameClientProtocol,
-        },
+        headers: gameCompatibilityHeaders,
       },
     })
   : null;
@@ -102,6 +111,42 @@ export async function getGameUpdateStatus(): Promise<GameUpdateStatus> {
   const { data, error } = await requireClient().rpc("get_game_update_status");
   if (error) throw error;
   return data as GameUpdateStatus;
+}
+
+let localServerCompatibilityPromise: Promise<GameUpdateStatus | null> | null = null;
+
+/**
+ * The browser harness is not an installed desktop client, so it cannot use
+ * the Tauri updater to move its version forward. It still needs to satisfy
+ * the Production RPC compatibility hook. Read the active identity through the
+ * deliberately public status RPC, then update the same mutable header object
+ * used by every Supabase request. Stable desktop builds never enter this path.
+ */
+export function syncLocalServerCompatibility(): Promise<GameUpdateStatus | null> {
+  if (!supabase || desktopRuntime || desktopProfile.profile !== "local") return Promise.resolve(null);
+  if (!localServerCompatibilityPromise) {
+    localServerCompatibilityPromise = (async () => {
+      const status = await getGameUpdateStatus();
+      if (status.active) {
+        Object.assign(
+          gameCompatibilityHeaders,
+          resolveLocalServerCompatibilityIdentity(
+            {
+              version: gameCompatibilityHeaders["x-rollcasters-version"],
+              catalogReleaseId: gameCompatibilityHeaders["x-rollcasters-catalog-release"],
+              protocol: gameCompatibilityHeaders["x-rollcasters-protocol"],
+            },
+            status.active,
+          ),
+        );
+      }
+      return status;
+    })().catch((error) => {
+      localServerCompatibilityPromise = null;
+      throw error;
+    });
+  }
+  return localServerCompatibilityPromise;
 }
 
 const LIVE_CATALOG_COLUMNS: Record<string, string> = {
@@ -885,7 +930,9 @@ export const unlockRollcasterAbility = (userRollcasterId: string, abilityId: str
 export async function loadAppData(): Promise<AppData> {
   const [catalog, player] = await Promise.all([loadCatalog(), loadPlayerState()]);
   const catalogRelease = getCurrentCatalogRelease();
-  assertServerCatalogCompatibility(catalogRelease, player.serverCatalogVersion, playerBootstrapMode === "v1");
+  if (!localCatalogPreview) {
+    assertServerCatalogCompatibility(catalogRelease, player.serverCatalogVersion, playerBootstrapMode === "v1");
+  }
   return { catalog, player, catalogRelease };
 }
 

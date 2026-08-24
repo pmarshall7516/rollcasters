@@ -60,6 +60,7 @@ import {
   startDungeonRun,
   submitCollectibleCombatEvents,
   supabase,
+  syncLocalServerCompatibility,
   trackCollectibleChallenge,
   untrackCollectibleChallenge,
   unlockCritterSkill,
@@ -739,11 +740,13 @@ export function App() {
       return;
     }
 
-    getSession()
-      .then(async (session) => {
-        setIsAuthed(Boolean(session));
-        if (session) await refresh();
-      })
+    const initializeSession = async () => {
+      await syncLocalServerCompatibility();
+      const session = await getSession();
+      setIsAuthed(Boolean(session));
+      if (session) await refresh();
+    };
+    void initializeSession()
       .catch((err) => setError(err.message))
       .finally(() => setSessionReady(true));
 
