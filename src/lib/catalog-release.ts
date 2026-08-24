@@ -160,6 +160,24 @@ export function isMinimumVersionSatisfied(current: string, minimum: string): boo
   return true;
 }
 
+/**
+ * Resolve the configured catalog root before appending release-relative files.
+ * Desktop builds intentionally use a same-origin path so the bundled catalog
+ * travels with the app. `URL` requires an absolute base, so relative roots
+ * must first be resolved against the app document URL.
+ */
+export function resolveCatalogBaseUrl(catalogBaseUrl: string, appUrl?: string): string {
+  const trimmed = catalogBaseUrl.trim();
+  if (!trimmed) throw new Error("Catalog base URL is empty.");
+  const base = appUrl ?? (typeof location === "undefined" ? undefined : location.href);
+  const normalized = `${trimmed.replace(/\/+$/, "")}/`;
+  try {
+    return new URL(normalized, base).toString();
+  } catch {
+    throw new Error(`Catalog base URL is invalid: ${trimmed}.`);
+  }
+}
+
 const SHA256_CONSTANTS = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
   0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -331,7 +349,7 @@ export async function loadPublishedCatalog(
   catalogBaseUrl: string,
   gameVersion: string,
 ): Promise<{ catalog: Catalog; release: CatalogReleaseInfo }> {
-  const latestUrl = new URL("latest.json", `${catalogBaseUrl.replace(/\/+$/, "")}/`).toString();
+  const latestUrl = new URL("latest.json", resolveCatalogBaseUrl(catalogBaseUrl)).toString();
   const { pointer, source: pointerSource } = await fetchPointer(latestUrl);
   if (!isSupportedCatalogSchema(pointer.schemaVersion)) {
     throw new Error(`Catalog schema ${pointer.schemaVersion} is not supported by this game.`);
