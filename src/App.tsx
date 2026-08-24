@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import {
   acknowledgeCollectibleUnlockEvent,
+  acquireGameplaySession,
   desktopProfile,
   ensureUserGameState,
   getActiveDungeonRun,
@@ -38,6 +39,8 @@ import {
   getSnapshotGameAssetUrl,
   getPromoCodeRedemptionHistory,
   getSession,
+  flushPlayerMutations,
+  heartbeatGameplaySession,
   hasSupabaseConfig,
   currentGameVersion,
   loadAppData,
@@ -56,8 +59,8 @@ import {
   signIn,
   signOut,
   signUp,
-  snapshotDungeonRunEffects,
-  startDungeonRun,
+  snapshotDungeonRunEffectsWithRecovery,
+  startDungeonRunWithRecovery,
   submitCollectibleCombatEvents,
   supabase,
   syncLocalServerCompatibility,
@@ -65,6 +68,7 @@ import {
   untrackCollectibleChallenge,
   unlockCritterSkill,
   unlockRollcasterAbility,
+  type GameplaySessionResult,
 } from "./lib/supabase";
 import {
   byId,
@@ -196,6 +200,13 @@ function clearLegacyShopPurchaseLedger(userId: string) {
   }
 }
 type CollectionDetail = { type: "critter" | "rollcaster" | "relic"; id: string };
+type DungeonEntryState = {
+  dungeon: Dungeon;
+  phase: "starting" | "recovering" | "confirming";
+  attempt: number;
+  maxAttempts: number;
+  requestId: string;
+};
 type PromoRenderState = {
   historyStatus: "idle" | "loading" | "loaded" | "error";
   historyCount: number;
@@ -282,9 +293,13 @@ export function App() {
   const [lootboxOperationActive, setLootboxOperationActive] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
+  const [sessionConflict, setSessionConflict] = useState<GameplaySessionResult | null>(null);
+  const [accountMoved, setAccountMoved] = useState(false);
+  const [sessionActionBusy, setSessionActionBusy] = useState(false);
   const [view, setView] = useState<View>("auth");
   const [data, setData] = useState<AppData | null>(null);
   const shopPurchaseRevisionRef = useRef(0);
+  const shopPurchaseRequestIdsRef = useRef(new Map<string, string>());
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("critters");
@@ -292,6 +307,7 @@ export function App() {
   const [shopTab, setShopTab] = useState<ShopTab>(() => routeFromLocation().shopTab);
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
   const [combat, setCombat] = useState<DungeonRunState | null>(null);
+  const [dungeonEntry, setDungeonEntry] = useState<DungeonEntryState | null>(null);
   const [notificationQueue, setNotificationQueue] = useState<BannerNotification[]>([]);
   const [promoState, setPromoState] = useState<PromoRenderState>({
     historyStatus: "idle",
@@ -316,6 +332,7 @@ export function App() {
   const appInvalidFocusTimerRef = useRef<number | null>(null);
   const combatProgressQueue = useRef<Promise<void>>(Promise.resolve());
   const clearedLegacyShopLedgerUserRef = useRef<string | null>(null);
+  const dungeonEntryRequestRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isTauriDesktop()) return;
@@ -370,7 +387,7 @@ export function App() {
         if (decision.kind === "error") throw new Error(decision.message);
         if (decision.kind !== "required") return;
         setDesktopUpdate(decision.update);
-        if (!combatRef.current && !lootboxOperationActive) setDesktopGate("required");
+        if (!combatRef.current && !dungeonEntryRequestRef.current && !lootboxOperationActive) setDesktopGate("required");
       } catch (updateError) {
         // A failed periodic check does not invalidate a session that already
         // passed the fail-closed startup gate. Retry on the next interval.
@@ -396,7 +413,22 @@ export function App() {
 
   async function purchaseShopItem(entry: ShopEntry, quantity: number): Promise<ShopPurchaseReceipt> {
     if (desktopUpdate) throw new Error("A required Game Update is ready. Finish the current safe-boundary operation and update before making another purchase.");
-    const receipt = await purchaseShopEntry(entry.id, createRequestId(), quantity);
+    await flushPlayerMutations();
+    const intentKey = `${entry.id}:${quantity}`;
+    const requestId = shopPurchaseRequestIdsRef.current.get(intentKey) ?? createRequestId();
+    shopPurchaseRequestIdsRef.current.set(intentKey, requestId);
+    let receipt: ShopPurchaseReceipt;
+    try {
+      receipt = await purchaseShopEntry(entry.id, requestId, quantity);
+    } catch (purchaseError) {
+      // An ambiguous command keeps its request ID so a later click can recover
+      // the same receipt instead of creating a second economic command.
+      if (!errorMessage(purchaseError, "").includes("SHOP_PURCHASE_PENDING")) {
+        shopPurchaseRequestIdsRef.current.delete(intentKey);
+      }
+      throw purchaseError;
+    }
+    shopPurchaseRequestIdsRef.current.delete(intentKey);
     shopPurchaseRevisionRef.current += 1;
     setData((current) => current ? applyShopPurchaseReceipt(current, entry, receipt) : current);
     if (receipt.shop_type !== "lootbox" && receipt.target_category !== "lootbox") {
@@ -705,19 +737,41 @@ export function App() {
       setError("A required Game Update is ready. Update before starting another Dungeon.");
       return;
     }
-    setLoading(true);
+    if (dungeonEntryRequestRef.current) return;
+    const requestId = createRequestId();
+    dungeonEntryRequestRef.current = requestId;
+    setDungeonEntry({ dungeon, phase: "starting", attempt: 1, maxAttempts: 3, requestId });
+    setCombat(null);
+    setView("combat");
     setError(null);
     try {
-      const run = await startDungeonRun(dungeon.id);
+      await flushPlayerMutations();
+      const run = await startDungeonRunWithRecovery(dungeon.id, requestId, (attempt) => {
+        setDungeonEntry((current) => current?.requestId === requestId
+          ? { ...current, phase: attempt.phase, attempt: attempt.attempt, maxAttempts: attempt.maxAttempts }
+          : current);
+      });
+      setDungeonEntry((current) => current?.requestId === requestId
+        ? { ...current, phase: "confirming" }
+        : current);
       const initialCombat = createDungeonRunState(data.catalog, data.player, dungeon, run);
-      await snapshotDungeonRunEffects(run.id, initialCombat.battle.snapshot);
+      await snapshotDungeonRunEffectsWithRecovery(run.id, initialCombat.battle.snapshot, (attempt) => {
+        setDungeonEntry((current) => current?.requestId === requestId
+          ? { ...current, phase: attempt.phase, attempt: attempt.attempt, maxAttempts: attempt.maxAttempts }
+          : current);
+      });
+      if (dungeonEntryRequestRef.current !== requestId) return;
       lastPersistedCombat.current = "";
       setCombat(initialCombat);
-      setView("combat");
+      setDungeonEntry(null);
     } catch (err) {
-      setError(errorMessage(err, "Unable to start dungeon."));
+      console.error("Unable to initialize Dungeon entry.", { dungeonId: dungeon.id, requestId, error: err });
+      setCombat(null);
+      setDungeonEntry(null);
+      setError(dungeonEntryErrorMessage(err));
+      setView("play");
     } finally {
-      setLoading(false);
+      if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
     }
   }
 
@@ -733,6 +787,22 @@ export function App() {
     });
   }
 
+  async function establishGameplaySession(takeover = false): Promise<boolean> {
+    const result = await acquireGameplaySession(takeover);
+    setIsAuthed(true);
+    if (result.outcome === "ACCOUNT_ONLINE") {
+      setSessionConflict(result);
+      return false;
+    }
+    setSessionConflict(null);
+    setAccountMoved(false);
+    return true;
+  }
+
+  async function finishAuthentication(): Promise<void> {
+    if (await establishGameplaySession(false)) await refresh();
+  }
+
   useEffect(() => {
     if (desktopGate !== "ready") return;
     if (!hasSupabaseConfig || !supabase) {
@@ -744,7 +814,7 @@ export function App() {
       await syncLocalServerCompatibility();
       const session = await getSession();
       setIsAuthed(Boolean(session));
-      if (session) await refresh();
+      if (session && await establishGameplaySession(false)) await refresh();
     };
     void initializeSession()
       .catch((err) => setError(err.message))
@@ -756,6 +826,10 @@ export function App() {
       setIsAuthed(Boolean(session));
       if (!session) {
         setData(null);
+        setSessionConflict(null);
+        setAccountMoved(false);
+        setDungeonEntry(null);
+        dungeonEntryRequestRef.current = null;
         clearedLegacyShopLedgerUserRef.current = null;
         setView("auth");
       }
@@ -765,8 +839,24 @@ export function App() {
   }, [desktopGate]);
 
   useEffect(() => {
+    if (!isAuthed || sessionConflict || accountMoved) return;
+    const heartbeat = window.setInterval(() => {
+      void heartbeatGameplaySession().catch((heartbeatError) => {
+        if (errorMessage(heartbeatError, "").includes("SESSION_DISPLACED")) {
+          setAccountMoved(true);
+          setCombat(null);
+          setDungeonEntry(null);
+          dungeonEntryRequestRef.current = null;
+        }
+      });
+    }, 20_000);
+    return () => window.clearInterval(heartbeat);
+  }, [accountMoved, isAuthed, sessionConflict]);
+
+  useEffect(() => {
     function popstate() {
       if (!isAuthed || !data?.player) return;
+      if (dungeonEntryRequestRef.current) return;
       const requiredView = requiredStarterView(data.player);
       if (requiredView) {
         setView(requiredView);
@@ -865,6 +955,12 @@ export function App() {
       JSON.stringify({
         view,
         loading,
+        dungeonEntry: dungeonEntry ? {
+          dungeonId: dungeonEntry.dungeon.id,
+          phase: dungeonEntry.phase,
+          attempt: dungeonEntry.attempt,
+          maxAttempts: dungeonEntry.maxAttempts,
+        } : null,
         authed: isAuthed,
         catalogRelease: textData?.catalogRelease ?? null,
         playerStateRevision: textData?.player?.playerStateRevision ?? null,
@@ -1028,7 +1124,24 @@ export function App() {
   if (desktopGate === "required" && desktopUpdate) return <Shell><DesktopUpdateScreen version={desktopUpdate.version} update={desktopUpdate} /></Shell>;
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
-  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => refresh()} error={error} setError={setError} /></Shell>;
+  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => void finishAuthentication()} error={error} setError={setError} /></Shell>;
+  if (sessionConflict) return <Shell><GameplaySessionDialog
+    kind="online"
+    busy={sessionActionBusy}
+    onOk={async () => {
+      setSessionActionBusy(true);
+      try { await signOut(); setIsAuthed(false); setSessionConflict(null); } finally { setSessionActionBusy(false); }
+    }}
+    onPlayHere={async () => {
+      setSessionActionBusy(true);
+      try { if (await establishGameplaySession(true)) await refresh(); } catch (sessionError) { setError(errorMessage(sessionError, "Unable to take over this account.")); } finally { setSessionActionBusy(false); }
+    }}
+  /></Shell>;
+  if (accountMoved) return <Shell><GameplaySessionDialog
+    kind="moved"
+    busy={sessionActionBusy}
+    onOk={async () => { setSessionActionBusy(true); try { await signOut(); setIsAuthed(false); setAccountMoved(false); } finally { setSessionActionBusy(false); } }}
+  /></Shell>;
   if (!data?.player) return <Shell><Loading message="Loading Rollcasters..." error={error} /></Shell>;
 
   return (
@@ -1042,8 +1155,10 @@ export function App() {
       <TopBar
         data={data}
         player={data.player!}
-        refreshing={view !== "combat" && loading}
-        onHome={() => navigate(requiredStarterView(data.player) ?? "home")}
+        onHome={() => {
+          if (dungeonEntryRequestRef.current) return;
+          navigate(requiredStarterView(data.player) ?? "home");
+        }}
         onSignOut={async () => {
           await signOut();
           setIsAuthed(false);
@@ -1136,7 +1251,10 @@ export function App() {
           onStart={beginDungeon}
         />
       )}
-        {view === "combat" && combat && (
+        {view === "combat" && dungeonEntry && (
+          <DungeonEntryScreen entry={dungeonEntry} />
+        )}
+        {view === "combat" && !dungeonEntry && combat && (
         <CombatScreen
           data={data}
           combat={combat}
@@ -1219,6 +1337,28 @@ function errorMessage(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
+}
+
+function dungeonEntryErrorMessage(error: unknown): string {
+  const raw = errorMessage(error, "Unable to start dungeon.");
+  if (raw.includes("DUNGEON_ENTRY_TIMEOUT")) {
+    return "Dungeon entry is taking longer than expected. No combat was started; please try again.";
+  }
+  return raw;
+}
+
+function loadoutErrorMessage(error: unknown, fallback: string): string {
+  const raw = errorMessage(error, fallback);
+  const messages: Record<string, string> = {
+    SKILL_NOT_IN_PUBLISHED_RELEASE: "This Skill is not part of the current published release.",
+    ABILITY_NOT_IN_PUBLISHED_RELEASE: "This Ability is not part of the current published release.",
+    SKILL_NOT_ALLOWED_FOR_CRITTER: "This Skill is not available for this Critter.",
+    ABILITY_NOT_ALLOWED_FOR_ROLLCASTER: "This Ability is not available for this Rollcaster.",
+    PLAYER_REVISION_CONFLICT: "Your loadout changed elsewhere. Reloading the latest state…",
+    SESSION_DISPLACED: "This account moved to another session.",
+  };
+  const code = Object.keys(messages).find((candidate) => raw.includes(candidate));
+  return code ? messages[code] : raw;
 }
 
 function useViewportFitScale(bottomGutter = 4) {
@@ -1336,6 +1476,45 @@ function Loading({ message, error }: { message: string; error?: string | null })
   );
 }
 
+function DungeonEntryScreen({ entry }: { entry: DungeonEntryState }) {
+  const message = entry.phase === "starting"
+    ? "Preparing your squad and opponents..."
+    : entry.phase === "confirming"
+      ? "Confirming the run snapshot..."
+      : "Reconnecting to the Dungeon run...";
+  return (
+    <section className="setup-panel loading-panel dungeon-entry-screen" role="status" aria-live="polite">
+      <Swords size={46} aria-hidden="true" />
+      <p className="eyebrow">Dungeon briefing</p>
+      <h1>Entering {entry.dungeon.name}</h1>
+      <p>{message}</p>
+      <small>Attempt {entry.attempt} of {entry.maxAttempts}. Combat controls unlock after the server confirms this run.</small>
+    </section>
+  );
+}
+
+function GameplaySessionDialog({
+  kind,
+  busy,
+  onOk,
+  onPlayHere,
+}: {
+  kind: "online" | "moved";
+  busy: boolean;
+  onOk: () => Promise<void>;
+  onPlayHere?: () => Promise<void>;
+}) {
+  return <section className="setup-panel loading-panel gameplay-session-dialog" role="alertdialog" aria-live="assertive">
+    <UserRound size={42} aria-hidden="true" />
+    <h1>{kind === "online" ? "Account is Online" : "Account Moved"}</h1>
+    <p>{kind === "online" ? "This account is active in another Rollcasters session." : "This account is now being played on another device."}</p>
+    <div className="dialog-actions">
+      <button type="button" className="secondary-button" disabled={busy} onClick={() => void onOk()}>{kind === "online" ? "OK" : "Return to sign in"}</button>
+      {kind === "online" && onPlayHere && <button type="button" className="primary-button" disabled={busy} onClick={() => void onPlayHere()}>{busy ? "Connecting…" : "Play Here"}</button>}
+    </div>
+  </section>;
+}
+
 function AuthScreen({
   onAuthed,
   error,
@@ -1433,13 +1612,11 @@ function AuthScreen({
 function TopBar({
   data,
   player,
-  refreshing,
   onHome,
   onSignOut,
 }: {
   data: AppData;
   player: PlayerState;
-  refreshing: boolean;
   onHome: () => void;
   onSignOut: () => void;
 }) {
@@ -1465,13 +1642,6 @@ function TopBar({
 
   return (
     <header ref={topBarRef} className={`top-bar ${currencies.length > 3 ? "currency-rich" : ""}`.trim()}>
-      {refreshing && (
-        <div className="refresh-indicator" role="status" aria-live="polite" title="Refreshing game data">
-          <RefreshCw aria-hidden="true" />
-          <span>Refreshing</span>
-          <span className="sr-only"> game data</span>
-        </div>
-      )}
       <button type="button" className="brand-home-button" onClick={onHome} aria-label="Rollcasters home">
         <BrandLogo compact />
       </button>
@@ -1688,7 +1858,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
       await onRefresh();
       setEquipTarget(null);
     } catch (err) {
-      setEquipError(errorMessage(err, "Unable to update loadout."));
+      setEquipError(loadoutErrorMessage(err, "Unable to update loadout."));
     } finally {
       setSaving(false);
     }

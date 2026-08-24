@@ -2,6 +2,7 @@ import {
   aggregateShopPurchaseReceipts,
   indexedShopPurchaseRequestId,
   partialShopPurchaseReceipt,
+  isAmbiguousShopPurchaseError,
   shopPurchaseRpcErrorDisposition,
 } from "../src/lib/shop.js";
 import type { ShopPurchaseReceipt } from "../src/lib/types.js";
@@ -49,6 +50,14 @@ check(
 check(
   shopPurchaseRpcErrorDisposition({ code: "42501", message: "permission denied" }, 3) === "throw",
   "Non-compatibility RPC errors must still reject the purchase batch.",
+);
+check(
+  isAmbiguousShopPurchaseError({ code: "57014", message: "canceling statement due to statement timeout" }),
+  "A statement timeout must enter receipt recovery rather than become a definitive purchase failure.",
+);
+check(
+  !isAmbiguousShopPurchaseError({ code: "INSUFFICIENT_FUNDS", message: "INSUFFICIENT_FUNDS" }),
+  "A typed business rejection must not be treated as an ambiguous committed purchase.",
 );
 
 console.log("Shop purchase flow tests passed.");

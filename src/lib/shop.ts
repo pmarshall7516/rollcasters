@@ -28,6 +28,31 @@ function shopPurchaseRpcErrorParts(error: ShopPurchaseRpcError): { code: string;
   };
 }
 
+export function shopPurchaseRpcErrorCode(error: ShopPurchaseRpcError): string {
+  return shopPurchaseRpcErrorParts(error).code;
+}
+
+/**
+ * A transport failure is not a business rejection: the transaction may have
+ * committed even though PostgREST did not return its body. Keep this narrow so
+ * validation, auth, release, and balance errors remain immediately actionable.
+ */
+export function isAmbiguousShopPurchaseError(error: ShopPurchaseRpcError): boolean {
+  const { code, message } = shopPurchaseRpcErrorParts(error);
+  const status = error && typeof error === "object" && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : NaN;
+  return code === "57014"
+    || (Number.isFinite(status) && status >= 500)
+    || /statement timeout|timed out|timeout|network|failed to fetch|connection reset|connection refused|gateway|upstream/i.test(message);
+}
+
+export function pendingShopPurchaseError(requestId: string): Error & { requestId: string } {
+  const error = new Error("SHOP_PURCHASE_PENDING") as Error & { requestId: string };
+  error.requestId = requestId;
+  return error;
+}
+
 export function shopPurchaseRpcErrorDisposition(error: ShopPurchaseRpcError, quantity: number): "none" | "legacy" | "throw" {
   normalizedQuantity(quantity);
   if (!error) return "none";

@@ -35,7 +35,14 @@ import type {
 } from "./types";
 import { parseBattleFormat, sortDungeonsNaturally } from "./dungeons";
 import { createRequestId } from "./uuid";
-import { aggregateShopPurchaseReceipts, indexedShopPurchaseRequestId, shopPurchaseRpcErrorDisposition } from "./shop";
+import { createPlayerMutationOutbox } from "./player-mutations";
+import {
+  aggregateShopPurchaseReceipts,
+  indexedShopPurchaseRequestId,
+  isAmbiguousShopPurchaseError,
+  pendingShopPurchaseError,
+  shopPurchaseRpcErrorDisposition,
+} from "./shop";
 import { resolveDesktopProfile } from "./desktop-profile";
 import {
   isLocalCatalogPreview,
@@ -66,6 +73,10 @@ const playerBootstrapMode = (import.meta.env.VITE_GAME_PLAYER_BOOTSTRAP_MODE as 
 const allowLegacyPlayerBootstrap = import.meta.env.VITE_ALLOW_LEGACY_PLAYER_BOOTSTRAP === "true";
 let activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
 const liveAssetVersions = new Map<string, string>();
+const gameplaySessionId = createRequestId();
+let activeGameplaySessionId: string | null = null;
+let latestPlayerStateRevision: bigint | null = null;
+const playerMutationOutbox = createPlayerMutationOutbox<null>(null);
 
 export const GAME_ASSETS_BUCKET = "game-assets";
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
@@ -442,8 +453,84 @@ export async function signUp(email: string, password: string, username: string):
 
 export async function signOut(): Promise<void> {
   const client = requireClient();
+  await flushPlayerMutations().catch(() => undefined);
+  if (activeGameplaySessionId) {
+    try {
+      await client.rpc("release_gameplay_session", { p_session_id: activeGameplaySessionId });
+    } catch {
+      // Lease expiry is the safe fallback when a clean release cannot reach the server.
+    }
+    activeGameplaySessionId = null;
+  }
   const { error } = await client.auth.signOut();
   if (error) throw error;
+}
+
+export type GameplaySessionResult = {
+  outcome: "ACQUIRED" | "ACCOUNT_ONLINE";
+  session_id?: string;
+  active_session_id?: string;
+  player_state_revision?: string | number;
+  heartbeat_at?: string;
+  expires_at?: string;
+};
+
+export function currentGameplaySessionId(): string | null {
+  return activeGameplaySessionId;
+}
+
+export async function acquireGameplaySession(takeover = false): Promise<GameplaySessionResult> {
+  const { data, error } = await requireClient().rpc("acquire_gameplay_session", {
+    p_session_id: gameplaySessionId,
+    p_device_install_id: desktopProfile.storageNamespace,
+    p_game_version: gameVersion,
+    p_catalog_release_id: gameCatalogReleaseId,
+    p_client_protocol_version: Number(gameClientProtocol) || 1,
+    p_takeover: takeover,
+  });
+  if (error) throw error;
+  const result = data as GameplaySessionResult;
+  if (result.outcome === "ACQUIRED") activeGameplaySessionId = result.session_id ?? gameplaySessionId;
+  return result;
+}
+
+export async function heartbeatGameplaySession(): Promise<GameplaySessionResult> {
+  if (!activeGameplaySessionId) throw new Error("SESSION_DISPLACED");
+  const { data, error } = await requireClient().rpc("heartbeat_gameplay_session", { p_session_id: activeGameplaySessionId });
+  if (error) throw error;
+  return data as GameplaySessionResult;
+}
+
+export function flushPlayerMutations(): Promise<void> {
+  return playerMutationOutbox.flushPlayerMutations();
+}
+
+function enqueuePlayerMutation<T>(resourceKey: string, operation: () => Promise<T>): Promise<T> {
+  let result: T;
+  return playerMutationOutbox.mutatePlayer({
+    requestId: createRequestId(),
+    resourceKey,
+    apply: (state) => state,
+    send: async () => {
+      result = await operation();
+      return { requestId: createRequestId() };
+    },
+  }).then(() => result!);
+}
+
+function playerMutationResourceKey(name: string, args: Record<string, unknown>): string {
+  if (name.includes("set_squad_critter_slot")) return `${name}:${args.p_slot_index ?? ""}`;
+  if (name.includes("set_critter_skill_slot") || name.includes("set_critter_relic_slot")) {
+    return `${name}:${args.p_user_critter_id ?? ""}:${args.p_slot_index ?? ""}`;
+  }
+  if (name.includes("set_rollcaster_ability_slot")) {
+    return `${name}:${args.p_user_rollcaster_id ?? ""}:${args.p_slot_index ?? ""}`;
+  }
+  if (name.includes("unlock_critter_skill")) return `${name}:${args.p_user_critter_id ?? ""}:${args.p_skill_id ?? ""}`;
+  if (name.includes("unlock_rollcaster_ability")) return `${name}:${args.p_user_rollcaster_id ?? ""}:${args.p_ability_id ?? ""}`;
+  if (name.includes("active_rollcaster")) return name;
+  if (name.includes("challenge")) return `${name}:${args.p_challenge_id ?? ""}`;
+  return `${name}:${JSON.stringify(args)}`;
 }
 
 export async function ensureUserGameState(): Promise<void> {
@@ -924,43 +1011,120 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
 }
 
 export async function loadPlayerState(): Promise<PlayerState> {
-  if (playerBootstrapMode === "legacy") return loadLegacyPlayerState();
+  if (playerBootstrapMode === "legacy") {
+    const state = await loadLegacyPlayerState();
+    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    return state;
+  }
   try {
-    return await loadPlayerBootstrapV1();
+    const state = await loadPlayerBootstrapV1();
+    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    return state;
   } catch (error) {
     const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
     const missingRpc = code === "42883" || code === "PGRST202";
     if (!allowLegacyPlayerBootstrap || !missingRpc) throw error;
     console.warn("player_bootstrap_v1 is not installed; using the explicitly enabled legacy Supabase fallback.");
-    return loadLegacyPlayerState();
+    const state = await loadLegacyPlayerState();
+    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    return state;
   }
 }
 
 async function callLoadoutRpc(name: string, args: Record<string, unknown>): Promise<void> {
-  const { error } = await requireClient().rpc(name, args);
+  const { error } = await enqueuePlayerMutation(playerMutationResourceKey(name, args), async () => requireClient().rpc(name, args));
   if (error) throw error;
 }
 
-export const setSquadSlot = (slotIndex: number, userCritterId: string | null) =>
-  callLoadoutRpc("set_squad_critter_slot", { p_slot_index: slotIndex, p_user_critter_id: userCritterId });
+type VersionedPlayerMutationRpc =
+  | "set_squad_critter_slot_v2"
+  | "set_critter_skill_slot_v2"
+  | "set_critter_relic_slot_v2"
+  | "set_active_rollcaster_v2"
+  | "set_rollcaster_ability_slot_v2"
+  | "track_collectible_challenge_v2"
+  | "untrack_collectible_challenge_v2"
+  | "unlock_critter_skill_v2"
+  | "unlock_rollcaster_ability_v2";
 
-export const setCritterSkillSlot = (userCritterId: string, slotIndex: number, skillId: string | null) =>
-  callLoadoutRpc("set_critter_skill_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_skill_id: skillId });
+async function callVersionedPlayerMutationRpc(
+  name: VersionedPlayerMutationRpc,
+  args: Record<string, unknown>,
+): Promise<void> {
+  if (!activeGameplaySessionId || latestPlayerStateRevision === null) {
+    throw new Error("SESSION_NOT_READY");
+  }
+  const sessionId = activeGameplaySessionId;
+  const expectedRevision = latestPlayerStateRevision;
+  const requestId = createRequestId();
+  const { data, error } = await enqueuePlayerMutation(playerMutationResourceKey(name, args), async () => requireClient().rpc(name, {
+      ...args,
+      p_session_id: sessionId,
+      p_expected_revision: expectedRevision.toString(),
+      p_request_id: requestId,
+    }));
+  if (error) throw error;
+  const receipt = data as { resulting_revision?: string | number };
+  if (receipt?.resulting_revision != null) latestPlayerStateRevision = BigInt(receipt.resulting_revision);
+}
 
-export const setCritterRelicSlot = (userCritterId: string, slotIndex: number, relicId: string | null) =>
-  callLoadoutRpc("set_critter_relic_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_relic_id: relicId });
+const callVersionedLoadoutRpc = callVersionedPlayerMutationRpc;
 
-export const setRollcasterAbilitySlot = (userRollcasterId: string, slotIndex: number, abilityId: string | null) =>
-  callLoadoutRpc("set_rollcaster_ability_slot", { p_user_rollcaster_id: userRollcasterId, p_slot_index: slotIndex, p_ability_id: abilityId });
+export const setSquadSlot = async (slotIndex: number, userCritterId: string | null) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("set_squad_critter_slot_v2", { p_slot_index: slotIndex, p_user_critter_id: userCritterId });
+    return;
+  }
+  await callLoadoutRpc("set_squad_critter_slot", { p_slot_index: slotIndex, p_user_critter_id: userCritterId });
+};
 
-export const setActiveRollcaster = (userRollcasterId: string) =>
-  callLoadoutRpc("set_active_rollcaster", { p_user_rollcaster_id: userRollcasterId });
+export const setCritterSkillSlot = async (userCritterId: string, slotIndex: number, skillId: string | null) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedLoadoutRpc("set_critter_skill_slot_v2", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_skill_id: skillId });
+    return;
+  }
+  await callLoadoutRpc("set_critter_skill_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_skill_id: skillId });
+};
 
-export const unlockCritterSkill = (userCritterId: string, skillId: string) =>
-  callLoadoutRpc("unlock_critter_skill", { p_user_critter_id: userCritterId, p_skill_id: skillId });
+export const setCritterRelicSlot = async (userCritterId: string, slotIndex: number, relicId: string | null) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("set_critter_relic_slot_v2", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_relic_id: relicId });
+    return;
+  }
+  await callLoadoutRpc("set_critter_relic_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_relic_id: relicId });
+};
 
-export const unlockRollcasterAbility = (userRollcasterId: string, abilityId: string) =>
-  callLoadoutRpc("unlock_rollcaster_ability", { p_user_rollcaster_id: userRollcasterId, p_ability_id: abilityId });
+export const setRollcasterAbilitySlot = async (userRollcasterId: string, slotIndex: number, abilityId: string | null) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedLoadoutRpc("set_rollcaster_ability_slot_v2", { p_user_rollcaster_id: userRollcasterId, p_slot_index: slotIndex, p_ability_id: abilityId });
+    return;
+  }
+  await callLoadoutRpc("set_rollcaster_ability_slot", { p_user_rollcaster_id: userRollcasterId, p_slot_index: slotIndex, p_ability_id: abilityId });
+};
+
+export const setActiveRollcaster = async (userRollcasterId: string) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("set_active_rollcaster_v2", { p_user_rollcaster_id: userRollcasterId });
+    return;
+  }
+  await callLoadoutRpc("set_active_rollcaster", { p_user_rollcaster_id: userRollcasterId });
+};
+
+export const unlockCritterSkill = async (userCritterId: string, skillId: string) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("unlock_critter_skill_v2", { p_user_critter_id: userCritterId, p_skill_id: skillId });
+    return;
+  }
+  await callLoadoutRpc("unlock_critter_skill", { p_user_critter_id: userCritterId, p_skill_id: skillId });
+};
+
+export const unlockRollcasterAbility = async (userRollcasterId: string, abilityId: string) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("unlock_rollcaster_ability_v2", { p_user_rollcaster_id: userRollcasterId, p_ability_id: abilityId });
+    return;
+  }
+  await callLoadoutRpc("unlock_rollcaster_ability", { p_user_rollcaster_id: userRollcasterId, p_ability_id: abilityId });
+};
 
 export async function loadAppData(): Promise<AppData> {
   const [catalog, player] = await Promise.all([loadCatalog(), loadPlayerState()]);
@@ -1061,6 +1225,85 @@ export async function startDungeonRun(
   return run;
 }
 
+type DungeonEntryAttempt = {
+  phase: "starting" | "recovering" | "confirming";
+  attempt: number;
+  maxAttempts: number;
+};
+
+function dungeonEntryErrorText(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return String(error ?? "");
+}
+
+function isRetryableDungeonEntryError(error: unknown): boolean {
+  const code = error && typeof error === "object" && "code" in error ? String(error.code ?? "") : "";
+  const text = dungeonEntryErrorText(error).toLowerCase();
+  return code === "408"
+    || code === "429"
+    || code === "57014"
+    || code.startsWith("5")
+    || text.includes("timeout")
+    || text.includes("timed out")
+    || text.includes("network")
+    || text.includes("fetch")
+    || text.includes("failed to fetch")
+    || text.includes("connection reset")
+    || text.includes("connection closed");
+}
+
+function dungeonEntryDelay(delayMs: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+}
+
+async function withDungeonEntryTimeout<T>(operation: Promise<T>, step: string): Promise<T> {
+  let timer: number | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(`DUNGEON_ENTRY_TIMEOUT:${step}`)), 12_000);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
+  }
+}
+
+async function activeDungeonRunForRecovery(): Promise<ActiveDungeonRun | null> {
+  try {
+    return await getActiveDungeonRun();
+  } catch {
+    // A recovery read is best effort. The original typed or timeout error is
+    // more useful than replacing it with a second network failure.
+    return null;
+  }
+}
+
+export async function startDungeonRunWithRecovery(
+  dungeonId: string,
+  requestId = createRequestId(),
+  onAttempt?: (attempt: DungeonEntryAttempt & { requestId: string }) => void,
+): Promise<DungeonRunSnapshot> {
+  const maxAttempts = 3;
+  let lastError: unknown = new Error("Dungeon entry failed.");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const phase = attempt === 1 ? "starting" : "recovering";
+    onAttempt?.({ phase, attempt, maxAttempts, requestId });
+    if (attempt > 1) await dungeonEntryDelay(250 * 2 ** (attempt - 2));
+    try {
+      return await withDungeonEntryTimeout(startDungeonRun(dungeonId, requestId), "start");
+    } catch (error) {
+      lastError = error;
+      const active = await activeDungeonRunForRecovery();
+      if (active?.run.dungeonId === dungeonId) return active.run;
+      if (!isRetryableDungeonEntryError(error) || attempt === maxAttempts) throw error;
+    }
+  }
+  throw lastError;
+}
+
 export async function recordDungeonBattleResult(
   run: DungeonRunSnapshot,
   submission: {
@@ -1123,6 +1366,35 @@ export async function snapshotDungeonRunEffects(runId: string, snapshot: unknown
   if (error) throw error;
 }
 
+export async function snapshotDungeonRunEffectsWithRecovery(
+  runId: string,
+  snapshot: unknown,
+  onAttempt?: (attempt: DungeonEntryAttempt) => void,
+): Promise<void> {
+  const maxAttempts = 3;
+  let lastError: unknown = new Error("Dungeon effect snapshot failed.");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    onAttempt?.({ phase: attempt === 1 ? "confirming" : "recovering", attempt, maxAttempts });
+    if (attempt > 1) await dungeonEntryDelay(250 * 2 ** (attempt - 2));
+    try {
+      await withDungeonEntryTimeout(snapshotDungeonRunEffects(runId, snapshot), "effects");
+      return;
+    } catch (error) {
+      lastError = error;
+      const active = await activeDungeonRunForRecovery();
+      if (active?.run.id === runId) {
+        // The snapshot RPC is an exactly-once upsert. An active run with the
+        // same id means a timeout may have committed it, so retrying the same
+        // payload is safe and keeps entry deterministic.
+      } else if (!isRetryableDungeonEntryError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+      if (!isRetryableDungeonEntryError(error) && !active) throw error;
+    }
+  }
+  throw lastError;
+}
+
 export async function resolveDungeonRun(runId: string): Promise<void> {
   const client = requireClient();
   const { error } = await client.rpc("resolve_dungeon_run", { p_run_id: runId });
@@ -1130,18 +1402,81 @@ export async function resolveDungeonRun(runId: string): Promise<void> {
 }
 
 export async function trackCollectibleChallenge(challengeId: string): Promise<void> {
-  const { error } = await requireClient().rpc("track_collectible_challenge", { p_challenge_id: challengeId });
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("track_collectible_challenge_v2", { p_challenge_id: challengeId });
+    return;
+  }
+  const { error } = await enqueuePlayerMutation(`rpc:track_collectible_challenge:${challengeId}`, async () => requireClient().rpc("track_collectible_challenge", { p_challenge_id: challengeId }));
   if (error) throw error;
 }
 
 export async function untrackCollectibleChallenge(challengeId: string): Promise<void> {
-  const { error } = await requireClient().rpc("untrack_collectible_challenge", { p_challenge_id: challengeId });
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("untrack_collectible_challenge_v2", { p_challenge_id: challengeId });
+    return;
+  }
+  const { error } = await enqueuePlayerMutation(`rpc:untrack_collectible_challenge:${challengeId}`, async () => requireClient().rpc("untrack_collectible_challenge", { p_challenge_id: challengeId }));
   if (error) throw error;
 }
 
 export async function acknowledgeCollectibleUnlockEvent(eventId: string): Promise<void> {
   const { error } = await requireClient().rpc("acknowledge_collectible_unlock_event", { p_event_id: eventId });
   if (error) throw error;
+}
+
+async function getShopPurchaseReceipt(requestId: string): Promise<ShopPurchaseReceipt | null> {
+  const { data, error } = await requireClient().rpc("get_shop_purchase_receipt", { p_request_id: requestId });
+  if (error) throw error;
+  return data ? data as ShopPurchaseReceipt : null;
+}
+
+function waitForShopPurchaseConfirmation(delayMs: number): Promise<void> {
+  return delayMs > 0 ? new Promise((resolve) => window.setTimeout(resolve, delayMs)) : Promise.resolve();
+}
+
+async function recoverAmbiguousShopPurchase(
+  entryId: string,
+  requestId: string,
+  quantity: number,
+  firstError: unknown,
+): Promise<ShopPurchaseReceipt> {
+  const client = requireClient();
+  // The first lookup is immediate. If the transaction is still in flight, one
+  // replay with the same idempotency key is safe; later passes only look up the
+  // exact receipt. The full window stays bounded so the UI can honestly move
+  // into a durable pending state instead of claiming failure.
+  const confirmationDelays = [0, 250, 750, 1500, 2500, 3500, 750];
+  let lastError: unknown = firstError;
+  for (let index = 0; index < confirmationDelays.length; index += 1) {
+    await waitForShopPurchaseConfirmation(confirmationDelays[index]);
+    if (index === 1) {
+      const retried = await client.rpc("purchase_shop_entry", {
+        p_entry_id: entryId,
+        p_request_id: requestId,
+        p_quantity: quantity,
+      });
+      if (!retried.error) return retried.data as ShopPurchaseReceipt;
+      lastError = retried.error;
+      if (!isAmbiguousShopPurchaseError(retried.error)) {
+        try {
+          const recovered = await getShopPurchaseReceipt(requestId);
+          if (recovered) return recovered;
+        } catch (receiptError) {
+          lastError = receiptError;
+        }
+        throw retried.error;
+      }
+    }
+    try {
+      const receipt = await getShopPurchaseReceipt(requestId);
+      if (receipt) return receipt;
+    } catch (receiptError) {
+      lastError = receiptError;
+    }
+  }
+  const pending = pendingShopPurchaseError(requestId);
+  Object.assign(pending, { cause: lastError });
+  throw pending;
 }
 
 export async function purchaseShopEntry(entryId: string, requestId: string, quantity = 1): Promise<ShopPurchaseReceipt> {
@@ -1155,6 +1490,9 @@ export async function purchaseShopEntry(entryId: string, requestId: string, quan
     p_quantity: quantity,
   });
   const errorDisposition = shopPurchaseRpcErrorDisposition(error, quantity);
+  if (error && isAmbiguousShopPurchaseError(error)) {
+    return recoverAmbiguousShopPurchase(entryId, requestId, quantity, error);
+  }
   if (errorDisposition === "throw") throw error;
   if (errorDisposition === "legacy") {
     const purchaseLegacyUnit = async (unitRequestId: string): Promise<ShopPurchaseReceipt> => {

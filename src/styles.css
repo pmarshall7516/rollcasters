@@ -5607,9 +5607,18 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
     }
 
     .loadout-critter-summary > .stat-grid .stat-cell {
-      padding: clamp(5px, 1.3cqi, 8px) clamp(4px, 0.9cqi, 10px);
+      padding: clamp(5px, 1.3cqi, 8px) max(4.25px, 0.9cqi);
       font-size: clamp(14px, 4cqi, 18px);
     }
+
+  }
+}
+
+/* At the laptop breakpoint the fifth stat lands on a fractional grid track;
+   give its value the same optical inset as the other stat values. */
+@media (min-width: 1200px) and (max-width: 1300px) {
+  .loadout-critter-summary > .stat-grid .stat-cell:nth-child(5) > strong {
+    transform: translateX(-0.55px);
   }
 }
 

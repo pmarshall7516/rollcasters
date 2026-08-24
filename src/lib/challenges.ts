@@ -371,9 +371,9 @@ export function derivedChallengeProgress(data: AppData, challenge: CollectibleUn
     if (category === "rollcaster") return BigInt(player.rollcasters.filter((owned) => collectibleIsUnlocked(data, "rollcaster", owned.rollcaster_id) && (ids.length === 0 || ids.includes(owned.rollcaster_id))).length);
     const rows = player.relicInventory.filter((owned) => collectibleIsUnlocked(data, "relic", owned.relic_id) && (ids.length === 0 || ids.includes(owned.relic_id)) && owned.discovered_at !== null);
     const specificMode = String(p.specific_collectible_mode ?? "");
-    return BigInt((ids.length > 0 && ["all", "count"].includes(specificMode)) || p.require_unique_collectibles !== false
-      ? rows.filter((row) => row.quantity > 0).length
-      : rows.reduce((sum, row) => sum + row.quantity, 0));
+    return BigInt(specificMode === "quantity" || p.require_unique_collectibles === false
+      ? rows.reduce((sum, row) => sum + row.quantity, 0)
+      : rows.length);
   }
   if (challenge.challenge_type === "collection_diversity") {
     return collectionDiversityProgress(

@@ -77,7 +77,9 @@ export function collectibleIsOwned(data: AppData, type: CollectibleType, id: str
   if (!player) return false;
   if (type === "critter") return player.critters.some((row) => row.critter_id === id);
   if (type === "rollcaster") return player.rollcasters.some((row) => row.rollcaster_id === id);
-  return player.relicInventory.some((row) => row.relic_id === id && row.quantity > 0 && row.discovered_at !== null);
+  // Discovery is permanent ownership. Quantity answers whether a usable copy
+  // exists, not whether a unique ownership challenge should still count it.
+  return player.relicInventory.some((row) => row.relic_id === id && row.discovered_at !== null);
 }
 
 /**
@@ -107,6 +109,21 @@ export function collectibleIsUnlocked(data: AppData, type: CollectibleType, id: 
   return completed >= requirement.required_challenges;
 }
 
+/**
+ * Challenge derivation must read the bootstrap's permanent identity
+ * projection directly. Calling collectibleIsUnlocked from this helper would
+ * re-enter progressFor for a gated ownership challenge and recurse forever.
+ */
+function permanentlyUnlockedForProjection(data: AppData, type: CollectibleType, id: string): boolean {
+  if (data.player?.collectibleSnapshot.unlocked_collectibles.some(
+    (row) => row.collectible_type === type && row.collectible_id === id,
+  )) return true;
+  const requirement = data.catalog.collectibleUnlockRequirements.find(
+    (row) => row.collectible_type === type && row.collectible_id === id,
+  );
+  return (!requirement || requirement.required_challenges <= 0) && collectibleIsOwned(data, type, id);
+}
+
 export function challengesFor(data: AppData, type: CollectibleType, id: string): CollectibleUnlockChallenge[] {
   return data.catalog.collectibleUnlockChallenges
     .filter((row) => row.collectible_type === type && row.collectible_id === id)
@@ -130,7 +147,8 @@ function inferredGateEligibility(data: AppData, challenge: CollectibleUnlockChal
     .every((candidate) => {
       if (candidate.challenge_type === "collection_diversity"
         || candidate.challenge_type === "shop_shards"
-        || candidate.challenge_type === "shop_relic") {
+        || candidate.challenge_type === "shop_relic"
+        || candidate.challenge_type === "own_collectible") {
         return derivedChallengeCurrent(data, candidate) >= challengeGoal(candidate);
       }
       const stored = data.player?.collectibleSnapshot.progress.find((row) => row.challenge_id === candidate.id);
@@ -148,7 +166,8 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
     const current = challenge ? derivedChallengeCurrent(data, challenge) : 0n;
     const isDerived = challenge?.challenge_type === "collection_diversity"
       || challenge?.challenge_type === "shop_shards"
-      || challenge?.challenge_type === "shop_relic";
+      || challenge?.challenge_type === "shop_relic"
+      || challenge?.challenge_type === "own_collectible";
     const goalReached = authoredGoal > 0n && current >= authoredGoal;
     return {
       challenge_id: challengeId,
@@ -168,8 +187,12 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
   const eligible = gateEligible && progress.eligible !== false;
   const isDerived = challenge?.challenge_type === "collection_diversity"
     || challenge?.challenge_type === "shop_shards"
-    || challenge?.challenge_type === "shop_relic";
-  const current = isDerived ? derivedChallengeCurrent(data, challenge) : safeBigInt(progress.current);
+    || challenge?.challenge_type === "shop_relic"
+    || challenge?.challenge_type === "own_collectible";
+  const derived = isDerived ? derivedChallengeCurrent(data, challenge) : safeBigInt(progress.current);
+  const current = challenge?.challenge_type === "own_collectible"
+    ? (derived > safeBigInt(progress.current) ? derived : safeBigInt(progress.current))
+    : derived;
   // The published challenge definition is the source of truth for derived
   // goals. A snapshot can outlive a catalog edit and still carry the old
   // compatibility-column goal.
@@ -179,7 +202,7 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
   // different revisions. Treat a reached goal as complete once the challenge
   // is eligible so stale rows cannot consume a tracking slot.
   const completed = eligible && (isDerived
-    ? goalReached
+    ? (goalReached || challenge?.challenge_type === "own_collectible" && (progress.completed || progress.goal_reached === true))
     : (progress.completed || progress.goal_reached === true || goalReached));
   return {
     ...progress,
@@ -328,16 +351,16 @@ function derivedChallengeCurrent(data: AppData, challenge: CollectibleUnlockChal
     const tagIds = new Set(Array.isArray(parameters.critter_tag_ids) ? parameters.critter_tag_ids.filter((id): id is string => typeof id === "string") : []);
     const allowed = (id: string) => ids.size === 0 || ids.has(id);
     if (type === "critter") return BigInt(player.critters.filter((row) => {
-      if (!collectibleIsUnlocked(data, "critter", row.critter_id) || !allowed(row.critter_id)) return false;
+      if (!permanentlyUnlockedForProjection(data, "critter", row.critter_id) || !allowed(row.critter_id)) return false;
       const critter = data.catalog.critters.find((candidate) => candidate.id === row.critter_id);
       return tagIds.size === 0 || Boolean(critter && Array.isArray(critter.tag_ids) && critter.tag_ids.some((tagId) => tagIds.has(tagId)));
     }).length);
-    if (type === "rollcaster") return BigInt(player.rollcasters.filter((row) => collectibleIsUnlocked(data, "rollcaster", row.rollcaster_id) && allowed(row.rollcaster_id)).length);
-    const relics = player.relicInventory.filter((row) => collectibleIsUnlocked(data, "relic", row.relic_id) && row.discovered_at !== null && row.quantity > 0 && allowed(row.relic_id));
+    if (type === "rollcaster") return BigInt(player.rollcasters.filter((row) => permanentlyUnlockedForProjection(data, "rollcaster", row.rollcaster_id) && allowed(row.rollcaster_id)).length);
+    const relics = player.relicInventory.filter((row) => permanentlyUnlockedForProjection(data, "relic", row.relic_id) && row.discovered_at !== null && allowed(row.relic_id));
     const specificMode = String(parameters.specific_collectible_mode ?? "");
-    return (ids.size > 0 && ["all", "count"].includes(specificMode)) || parameters.require_unique_collectibles !== false
-      ? BigInt(relics.length)
-      : BigInt(relics.reduce((sum, row) => sum + row.quantity, 0));
+    return specificMode === "quantity" || parameters.require_unique_collectibles === false
+      ? BigInt(relics.reduce((sum, row) => sum + row.quantity, 0))
+      : BigInt(relics.length);
   }
   if (challenge.challenge_type === "level_up_critter") {
     const id = String(parameters.critter_id ?? challenge.target_id ?? "");
@@ -351,7 +374,11 @@ function derivedChallengeCurrent(data: AppData, challenge: CollectibleUnlockChal
     return collectionDiversityProgress(candidates, parameters);
   }
   if (challenge.challenge_type === "shop_shards") return shardProgress(data, challenge.collectible_type, challenge.collectible_id);
-  if (challenge.challenge_type === "shop_relic") return safeBigInt(player.relicInventory.find((row) => row.relic_id === challenge.collectible_id)?.quantity);
+  if (challenge.challenge_type === "shop_relic") {
+    const quantity = safeBigInt(player.relicInventory.find((row) => row.relic_id === challenge.collectible_id)?.quantity);
+    const stored = safeBigInt(player.collectibleSnapshot.progress.find((row) => row.challenge_id === challenge.id)?.current);
+    return quantity > stored ? quantity : stored;
+  }
   return 0n;
 }
 
@@ -585,6 +612,7 @@ export function shopErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : typeof error === "object" && error && "message" in error ? String(error.message) : String(error);
   const messages: Record<string, string> = {
     AUTH_REQUIRED: "Your session expired. Please sign in again.",
+    SHOP_PURCHASE_PENDING: "Purchase pending—your balance will update automatically.",
     SHOP_ENTRY_UNAVAILABLE: "This offer is no longer available.",
     INSUFFICIENT_FUNDS: "You do not have enough currency for this purchase.",
     COLLECTIBLE_ALREADY_UNLOCKED: "This collectible is already unlocked.",

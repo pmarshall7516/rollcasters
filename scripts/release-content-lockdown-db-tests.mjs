@@ -27,8 +27,25 @@ try {
       "select parameters from public.combat_effects_v1 where owner_type='relic' and owner_id='019' and runtime_kind='critter_xp_modifier'",
     )
   ).rows[0]?.parameters;
-  check(Number(snapshotEffect?.modifier_value) === 0.25, "The published Essence Canister snapshot should remain at 25%.");
-  check(Number(liveEffect?.modifier_value) === 0.5, "The fixture must retain the unpublished 50% authoring edit.");
+  const snapshotModifier = Number(snapshotEffect?.modifier_value);
+  check(Number.isFinite(snapshotModifier), "The published Essence Canister snapshot must contain a numeric XP modifier.");
+  check(Number.isFinite(Number(liveEffect?.modifier_value)), "The live Essence Canister authoring row must contain a numeric XP modifier.");
+  const editedLiveModifier = snapshotModifier + 0.25;
+  await client.query(
+    `update public.relic_effects effect
+     set parameters=jsonb_set(effect.parameters,'{modifier_value}',to_jsonb($1::numeric),true)
+     from public.effect_templates template
+     where effect.template_id=template.id
+       and effect.relic_id='019'
+       and template.runtime_kind='critter_xp_modifier'`,
+    [editedLiveModifier],
+  );
+  const editedLiveEffect = (
+    await client.query(
+      "select parameters from public.combat_effects_v1 where owner_type='relic' and owner_id='019' and runtime_kind='critter_xp_modifier'",
+    )
+  ).rows[0]?.parameters;
+  check(Number(editedLiveEffect?.modifier_value) === editedLiveModifier, "The lockdown fixture must create an authoring edit different from the published snapshot.");
 
   const run = (await client.query("select id from public.dungeon_runs order by started_at desc nulls last limit 1")).rows[0];
   check(run, "A Dungeon run is required for the rollback-safe XP regression.");
@@ -55,7 +72,7 @@ try {
       [run.id, [userCritterId]],
     )
   ).rows[0].result;
-  check(Number(result?.[userCritterId]) === 125, "Dungeon XP must use the released 25% Essence Canister value.");
+  check(Number(result?.[userCritterId]) === 100 * (1 + snapshotModifier), "Dungeon XP must use the immutable published Essence Canister value, not the live authoring edit.");
 
   await client.query("rollback");
   began = false;
