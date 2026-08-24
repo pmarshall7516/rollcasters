@@ -11,6 +11,9 @@ const beginStart = appSource.indexOf("  async function beginDungeon(dungeon: Dun
 const beginEnd = appSource.indexOf("\n  function queueCombatProgressEvents", beginStart);
 check(beginStart >= 0 && beginEnd > beginStart, "Dungeon entry handler should remain easy to audit.");
 const beginSource = appSource.slice(beginStart, beginEnd);
+const launchTransition = beginSource.indexOf("setDungeonEntry({ dungeon, phase: \"starting\"");
+const activeReconciliation = beginSource.indexOf("getActiveDungeonRunWithTimeout()");
+check(launchTransition >= 0 && activeReconciliation > launchTransition, "Dungeon entry must show its launch scene before waiting on reconciliation.");
 
 check(beginSource.includes("dungeonEntryRequestRef.current"), "Dungeon entry must guard against duplicate starts.");
 check(beginSource.includes("startDungeonRunWithRecovery(dungeon.id, requestId"), "Dungeon entry must reuse one request id across retries.");

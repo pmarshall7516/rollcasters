@@ -361,7 +361,7 @@ export function App() {
     await releaseGameplaySession().catch(() => undefined);
     if (isTauriDesktop()) {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().close();
+      await getCurrentWindow().destroy();
       return;
     }
     window.close();
@@ -383,7 +383,7 @@ export function App() {
         await flushCombatSaveRef.current().catch((saveError) => {
           console.warn("Unable to flush the current Dungeon state before closing.", saveError);
         });
-        await getCurrentWindow().close();
+        await getCurrentWindow().destroy();
       }))
       .then((removeListener) => {
         if (disposed) removeListener();
@@ -977,21 +977,6 @@ export function App() {
       return;
     }
     if (dungeonEntryRequestRef.current) return;
-    try {
-      const activeBeforeStart = await getActiveDungeonRunWithTimeout();
-      if (activeBeforeStart) {
-        const activeDungeon = data.catalog.dungeons.find((candidate) => candidate.id === activeBeforeStart.run.dungeonId);
-        if (!activeDungeon) throw new Error("An active Dungeon run is unavailable in this release.");
-        showActiveDungeonPrompt(activeBeforeStart, data.catalog.dungeons);
-        setView("play");
-        return;
-      }
-      await flushPlayerMutationsWithTimeout();
-    } catch (err) {
-      console.error("Unable to check for an existing Dungeon run.", { dungeonId: dungeon.id, error: err });
-      setError(dungeonEntryErrorMessage(err));
-      return;
-    }
     const requestId = createRequestId();
     dungeonEntryRequestRef.current = requestId;
     combatSaveDisabledRef.current = false;
@@ -1000,6 +985,28 @@ export function App() {
     setCombat(null);
     setView("combat");
     setError(null);
+    try {
+      const activeBeforeStart = await getActiveDungeonRunWithTimeout();
+      if (activeBeforeStart) {
+        const activeDungeon = data.catalog.dungeons.find((candidate) => candidate.id === activeBeforeStart.run.dungeonId);
+        if (!activeDungeon) throw new Error("An active Dungeon run is unavailable in this release.");
+        showActiveDungeonPrompt(activeBeforeStart, data.catalog.dungeons);
+        setDungeonEntry(null);
+        setCombat(null);
+        setView("play");
+        if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
+        return;
+      }
+      await flushPlayerMutationsWithTimeout();
+    } catch (err) {
+      console.error("Unable to check for an existing Dungeon run.", { dungeonId: dungeon.id, error: err });
+      setDungeonEntry(null);
+      setCombat(null);
+      setView("play");
+      setError(dungeonEntryErrorMessage(err));
+      if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
+      return;
+    }
     try {
       const run = await startDungeonRunWithRecovery(dungeon.id, requestId, (attempt) => {
         setDungeonEntry((current) => current?.requestId === requestId
@@ -7098,7 +7105,7 @@ function Modal({
     document.addEventListener("keydown", keydown);
     return () => { document.removeEventListener("keydown", keydown); previous?.focus(); };
   }, [title]);
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(event) => {
@@ -7116,7 +7123,8 @@ function Modal({
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

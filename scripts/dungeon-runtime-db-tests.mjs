@@ -35,6 +35,21 @@ try {
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
   await client.query("select public.ensure_user_game_state()");
 
+  const startFunctionDefinition = (await client.query(`
+    select pg_get_functiondef(p.oid) as definition
+    from pg_proc p
+    join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public'
+      and p.proname='start_dungeon_run_v3'
+      and pg_get_function_identity_arguments(p.oid)='p_dungeon_id text, p_request_id uuid'
+  `)).rows[0]?.definition ?? "";
+  check(
+    startFunctionDefinition.includes("release_enemy_rollcasters_for_dungeon")
+      && startFunctionDefinition.includes("release_dungeon_rows")
+      && !startFunctionDefinition.includes("current_game_catalog_snapshot()"),
+    "Dungeon start must use request-scoped release helpers instead of rescanning the full catalog.",
+  );
+
   const starterRollcaster = (await client.query(`
     select rollcaster_id from public.starter_rollcaster_options
     where is_active order by sort_order,rollcaster_id limit 1
@@ -67,6 +82,18 @@ try {
     limit 1
   `, [userId])).rows[0];
   check(dungeon, "The player needs an unlocked active Dungeon.");
+
+  const optimizedStartAt = performance.now();
+  const optimizedStart = (await client.query(
+    "select public.start_dungeon_run_v3($1,$2) as run",
+    [dungeon.id, crypto.randomUUID()],
+  )).rows[0].run;
+  const optimizedStartMs = performance.now() - optimizedStartAt;
+  check(
+    optimizedStartMs < 2_000,
+    `Release-scoped Dungeon start exceeded the 2 second readiness budget: ${Math.round(optimizedStartMs)} ms.`,
+  );
+  await client.query("select public.resolve_dungeon_run($1)", [optimizedStart.id]);
 
   const startRequest = crypto.randomUUID();
   const firstStart = (await client.query(
