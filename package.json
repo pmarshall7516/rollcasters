@@ -48,6 +48,7 @@
     "test:combat-critter-sprite-layout": "node scripts/combat-critter-sprite-layout-tests.mjs",
     "test:combat-result-loading": "node scripts/combat-result-loading-source-tests.mjs && tsc scripts/combat-result-loading-tests.ts src/lib/presentation.ts --outDir /tmp/rollcasters-combat-result-loading-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-combat-result-loading-tests/scripts/combat-result-loading-tests.js",
     "test:combat-latency": "node scripts/combat-latency-source-tests.mjs",
+    "test:dungeon-xp-presentation": "node scripts/dungeon-xp-presentation-source-tests.mjs && tsc scripts/dungeon-xp-presentation-tests.ts src/lib/progression.ts src/lib/types.ts --outDir /tmp/rollcasters-dungeon-xp-presentation-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-dungeon-xp-presentation-tests/scripts/dungeon-xp-presentation-tests.js",
     "test:combat-narration-layout": "node scripts/combat-narration-layout-source-tests.mjs",
     "test:combat-target-emphasis": "node scripts/combat-target-emphasis-tests.mjs",
     "test:dungeons:db": "node scripts/dungeon-runtime-db-tests.mjs",

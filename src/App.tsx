@@ -48,6 +48,7 @@ import {
   purchaseShopEntry,
   recordDungeonBattleResult,
   redeemPromoCode,
+  resolveDungeonRun,
   releaseGameplaySession,
   setActiveRollcaster,
   setCritterRelicSlot,
@@ -116,7 +117,7 @@ import {
   type EffectiveDungeon,
 } from "./lib/dungeons";
 import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
-import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
+import { applyDungeonXpRewards, relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
 import { combatLoadingNarration, combatSwapTravelOffset } from "./lib/presentation";
@@ -157,6 +158,7 @@ import {
 } from "./lib/promo-codes";
 import type {
   AppData,
+  ActiveDungeonRun,
   CombatAction,
   CollectibleUnlockEvent,
   CurrencyDef,
@@ -206,6 +208,10 @@ type DungeonEntryState = {
   attempt: number;
   maxAttempts: number;
   requestId: string;
+};
+type ActiveDungeonPrompt = {
+  active: ActiveDungeonRun;
+  dungeon: Dungeon;
 };
 type PromoRenderState = {
   historyStatus: "idle" | "loading" | "loaded" | "error";
@@ -318,6 +324,8 @@ export function App() {
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
   const [combat, setCombat] = useState<DungeonRunState | null>(null);
   const [dungeonEntry, setDungeonEntry] = useState<DungeonEntryState | null>(null);
+  const [activeDungeonPrompt, setActiveDungeonPrompt] = useState<ActiveDungeonPrompt | null>(null);
+  const [activeDungeonPromptBusy, setActiveDungeonPromptBusy] = useState<"continue" | "abandon" | null>(null);
   const [notificationQueue, setNotificationQueue] = useState<BannerNotification[]>([]);
   const [promoState, setPromoState] = useState<PromoRenderState>({
     historyStatus: "idle",
@@ -543,6 +551,20 @@ export function App() {
     }
   }
 
+  function showActiveDungeonPrompt(active: ActiveDungeonRun | null, dungeons: Dungeon[]): boolean {
+    if (!active) {
+      setActiveDungeonPrompt(null);
+      return false;
+    }
+    const dungeon = dungeons.find((candidate) => candidate.id === active.run.dungeonId);
+    if (!dungeon) {
+      setActiveDungeonPrompt(null);
+      return false;
+    }
+    setActiveDungeonPrompt({ active, dungeon });
+    return true;
+  }
+
   function appKeyboardScope(): HTMLElement | null {
     const root = appKeyboardRootRef.current;
     if (!root) return null;
@@ -741,17 +763,7 @@ export function App() {
         setShopTab(route.shopTab);
         if (route.view === "play") {
           const active = await getActiveDungeonRun();
-          if (active) {
-            const dungeon = loaded.catalog.dungeons.find((candidate) => candidate.id === active.run.dungeonId);
-            if (dungeon) {
-              const persisted = restoreDungeonRunState(active.combatState, loaded.catalog, active.run);
-              const resumed = persisted
-                ?? createDungeonRunState(loaded.catalog, loaded.player!, dungeon, active.run);
-              setCombat(resumed);
-              setView("combat");
-              return;
-            }
-          }
+          showActiveDungeonPrompt(active, loaded.catalog.dungeons);
         }
         setView(route.view);
       }
@@ -763,6 +775,76 @@ export function App() {
     }
   }
 
+  async function openPlay(): Promise<void> {
+    if (dungeonEntryRequestRef.current) return;
+    navigate("play");
+    try {
+      const active = await getActiveDungeonRun();
+      showActiveDungeonPrompt(active, data?.catalog.dungeons ?? []);
+    } catch (err) {
+      setError(errorMessage(err, "Unable to check for an unfinished Dungeon run."));
+    }
+  }
+
+  async function continueActiveDungeon(): Promise<void> {
+    const prompt = activeDungeonPrompt;
+    if (!prompt || activeDungeonPromptBusy) return;
+    if (!data?.player) return;
+    setActiveDungeonPromptBusy("continue");
+    setError(null);
+    const requestId = createRequestId();
+    dungeonEntryRequestRef.current = requestId;
+    try {
+      const active = await getActiveDungeonRun();
+      if (!active) {
+        setActiveDungeonPrompt(null);
+        setView("play");
+        return;
+      }
+      const dungeon = data.catalog.dungeons.find((candidate) => candidate.id === active.run.dungeonId) ?? prompt.dungeon;
+      setActiveDungeonPrompt(null);
+      setDungeonEntry({ dungeon, phase: "recovering", attempt: 1, maxAttempts: 1, requestId });
+      setCombat(null);
+      setView("combat");
+      const persisted = restoreDungeonRunState(active.combatState, data.catalog, active.run);
+      const resumed = persisted
+        ?? createDungeonRunState(data.catalog, data.player, dungeon, active.run);
+      const authoritative = applyAuthoritativeDungeonEffectSnapshot(resumed, active.effectSnapshot);
+      if (dungeonEntryRequestRef.current !== requestId) return;
+      setCombat(authoritative);
+      setDungeonEntry(null);
+    } catch (err) {
+      console.error("Unable to continue Dungeon run.", { runId: prompt.active.run.id, error: err });
+      setActiveDungeonPrompt(null);
+      setCombat(null);
+      setDungeonEntry(null);
+      setError(dungeonEntryErrorMessage(err));
+      setView("play");
+    } finally {
+      if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
+      setActiveDungeonPromptBusy(null);
+    }
+  }
+
+  async function abandonActiveDungeon(): Promise<void> {
+    const prompt = activeDungeonPrompt;
+    if (!prompt || activeDungeonPromptBusy) return;
+    setActiveDungeonPromptBusy("abandon");
+    setError(null);
+    try {
+      await resolveDungeonRun(prompt.active.run.id);
+      setActiveDungeonPrompt(null);
+      setCombat(null);
+      setDungeonEntry(null);
+      setView("play");
+    } catch (err) {
+      console.error("Unable to abandon Dungeon run.", { runId: prompt.active.run.id, error: err });
+      setError(errorMessage(err, "Unable to abandon the Dungeon run."));
+    } finally {
+      setActiveDungeonPromptBusy(null);
+    }
+  }
+
   async function beginDungeon(dungeon: Dungeon) {
     if (!data?.player) return;
     if (desktopUpdate) {
@@ -770,6 +852,21 @@ export function App() {
       return;
     }
     if (dungeonEntryRequestRef.current) return;
+    try {
+      await flushPlayerMutations();
+      const activeBeforeStart = await getActiveDungeonRun();
+      if (activeBeforeStart) {
+        const activeDungeon = data.catalog.dungeons.find((candidate) => candidate.id === activeBeforeStart.run.dungeonId);
+        if (!activeDungeon) throw new Error("An active Dungeon run is unavailable in this release.");
+        showActiveDungeonPrompt(activeBeforeStart, data.catalog.dungeons);
+        setView("play");
+        return;
+      }
+    } catch (err) {
+      console.error("Unable to check for an existing Dungeon run.", { dungeonId: dungeon.id, error: err });
+      setError(errorMessage(err, "Unable to check for an unfinished Dungeon run."));
+      return;
+    }
     const requestId = createRequestId();
     dungeonEntryRequestRef.current = requestId;
     setDungeonEntry({ dungeon, phase: "starting", attempt: 1, maxAttempts: 3, requestId });
@@ -777,20 +874,6 @@ export function App() {
     setView("combat");
     setError(null);
     try {
-      await flushPlayerMutations();
-      const activeBeforeStart = await getActiveDungeonRun();
-      if (activeBeforeStart) {
-        const activeDungeon = data.catalog.dungeons.find((candidate) => candidate.id === activeBeforeStart.run.dungeonId);
-        if (!activeDungeon) throw new Error("An active Dungeon run is unavailable in this release.");
-        const persisted = restoreDungeonRunState(activeBeforeStart.combatState, data.catalog, activeBeforeStart.run);
-        const resumed = persisted
-          ?? createDungeonRunState(data.catalog, data.player, activeDungeon, activeBeforeStart.run);
-        const authoritative = applyAuthoritativeDungeonEffectSnapshot(resumed, activeBeforeStart.effectSnapshot);
-        if (dungeonEntryRequestRef.current !== requestId) return;
-        setCombat(authoritative);
-        setDungeonEntry(null);
-        return;
-      }
       const run = await startDungeonRunWithRecovery(dungeon.id, requestId, (attempt) => {
         setDungeonEntry((current) => current?.requestId === requestId
           ? { ...current, phase: attempt.phase, attempt: attempt.attempt, maxAttempts: attempt.maxAttempts }
@@ -968,6 +1051,12 @@ export function App() {
           attempt: dungeonEntry.attempt,
           maxAttempts: dungeonEntry.maxAttempts,
         } : null,
+        dungeonPrompt: activeDungeonPrompt ? {
+          dungeonId: activeDungeonPrompt.dungeon.id,
+          dungeonName: activeDungeonPrompt.dungeon.name,
+          runId: activeDungeonPrompt.active.run.id,
+          busy: activeDungeonPromptBusy,
+        } : null,
         authed: isAuthed,
         catalogRelease: textData?.catalogRelease ?? null,
         playerStateRevision: textData?.player?.playerStateRevision ?? null,
@@ -1124,7 +1213,7 @@ export function App() {
           : null,
       });
     window.advanceTime = () => undefined;
-  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, notificationQueue, promoState]);
+  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, dungeonEntry, activeDungeonPrompt, activeDungeonPromptBusy, notificationQueue, promoState]);
 
   if (desktopGate === "checking") return <Shell><Loading message="Checking for required Game Updates..." /></Shell>;
   if (desktopGate === "error") return <Shell><DesktopUpdateScreen message={desktopGateError ?? "The secure update check failed."} /></Shell>;
@@ -1211,7 +1300,7 @@ export function App() {
           onCollection={() => navigate("collection")}
           onBag={() => navigate("bag")}
           onShop={() => navigate("shop", "shard")}
-          onPlay={() => navigate("play")}
+          onPlay={() => void openPlay()}
           onRefresh={() => refresh("home")}
         />
       )}
@@ -1258,6 +1347,17 @@ export function App() {
           onStart={beginDungeon}
         />
       )}
+      {view === "play" && activeDungeonPrompt && (
+        <ContinueDungeonDialog
+          dungeon={activeDungeonPrompt.dungeon}
+          busy={activeDungeonPromptBusy}
+          onContinue={() => void continueActiveDungeon()}
+          onAbandon={() => void abandonActiveDungeon()}
+          onClose={() => {
+            if (!activeDungeonPromptBusy) setActiveDungeonPrompt(null);
+          }}
+        />
+      )}
         {view === "combat" && dungeonEntry && (
           <DungeonEntryScreen entry={dungeonEntry} />
         )}
@@ -1297,6 +1397,21 @@ export function App() {
                   },
                 }]);
               }
+              // The result RPC has already committed XP. Project that receipt
+              // into the current client snapshot before mounting the result
+              // screen so the background refresh reconciles to the same
+              // animation target instead of restarting it.
+              setData((current) => current?.player
+                ? {
+                    ...current,
+                    player: applyDungeonXpRewards(
+                      current.player,
+                      result.battleRewards,
+                      current.catalog.critterProgression,
+                      current.catalog.rollcasterProgression,
+                    ),
+                  }
+                : current);
               setCombat(applyDungeonBattleResult(resolved, result, data.catalog, data.player!));
               // Refresh the catalog/player projection after the result screen
               // is visible. The authoritative result already contains the
@@ -4630,6 +4745,44 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
             </details>
           );
         })}
+      </div>
+    </Modal>
+  );
+}
+
+function ContinueDungeonDialog({
+  dungeon,
+  busy,
+  onContinue,
+  onAbandon,
+  onClose,
+}: {
+  dungeon: Dungeon;
+  busy: "continue" | "abandon" | null;
+  onContinue: () => void;
+  onAbandon: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      eyebrow="Dungeon expedition"
+      title="Continue Dungeon?"
+      description={null}
+      onClose={onClose}
+      className="continue-dungeon-modal"
+    >
+      <div className="continue-dungeon-copy">
+        <p>You left off in the middle of <strong>{dungeon.name}</strong> ({dungeon.id}).</p>
+        <p>Do you want to continue from your saved state or abandon the run?</p>
+        <p className="continue-dungeon-warning">Abandoning discards this saved run and returns you to the Dungeon selection grid.</p>
+      </div>
+      <div className="dialog-actions continue-dungeon-actions">
+        <button type="button" className="danger-button" disabled={busy !== null} onClick={onAbandon}>
+          {busy === "abandon" ? "Abandoning…" : "Abandon"}
+        </button>
+        <button type="button" className="primary-button" disabled={busy !== null} onClick={onContinue}>
+          {busy === "continue" ? "Continuing…" : "Continue"}
+        </button>
       </div>
     </Modal>
   );

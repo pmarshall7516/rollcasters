@@ -523,11 +523,21 @@ try {
   await page.goto(`${baseUrl}/play`, { waitUntil: "networkidle" });
   await page.waitForFunction(() => {
     const state = JSON.parse(window.render_game_to_text());
+    return state.view === "play" && state.dungeonPrompt !== null;
+  });
+  check(
+    await page.getByRole("heading", { name: "Continue Dungeon?" }).isVisible()
+      && (await gameState(page)).combat === null,
+    "Opening /play must ask before resuming the unfinished Dungeon.",
+  );
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.waitForFunction(() => {
+    const state = JSON.parse(window.render_game_to_text());
     return state.view === "combat" && state.combat?.phase === "lead_selection";
   });
   check(
     (await gameState(page)).combat.dungeonId === initial.combat.dungeonId,
-    "Opening /play must resume the unfinished Dungeon after Home remains opt-in.",
+    "Continuing the unfinished Dungeon must restore the saved run.",
   );
 
   await selectRequiredLeads(page);

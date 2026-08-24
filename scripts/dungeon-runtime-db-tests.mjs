@@ -259,6 +259,27 @@ try {
     `A loss with no defeated opponents must grant no opponent rewards. Received: ${JSON.stringify(emptyLoss.battleRewards)}`,
   );
 
+  const abandonRun = (await client.query(
+    "select public.start_dungeon_run_v2($1,$2) as run",
+    [dungeon.id, crypto.randomUUID()],
+  )).rows[0].run;
+  await client.query("select public.resolve_dungeon_run($1)", [abandonRun.id]);
+  const abandoned = (await client.query(
+    "select status,combat_state,effect_snapshot,resolved_at from public.dungeon_runs where id=$1",
+    [abandonRun.id],
+  )).rows[0];
+  check(
+    abandoned.status === "abandoned"
+      && JSON.stringify(abandoned.combat_state) === "{}"
+      && abandoned.effect_snapshot === null
+      && abandoned.resolved_at !== null,
+    "Abandoning an unfinished run must clear resumable state without granting rewards.",
+  );
+  check(
+    (await client.query("select public.get_active_dungeon_run_v2() as active")).rows[0].active === null,
+    "An abandoned Dungeon run must no longer be returned as active.",
+  );
+
   const executePrivileges = (await client.query(`
     select
       has_function_privilege('anon','public.start_dungeon_run_v2(text,uuid)','execute') as anon_start,
@@ -268,24 +289,28 @@ try {
       has_function_privilege('anon','public.save_dungeon_run_state(uuid,integer,jsonb,uuid)','execute') as anon_save,
       has_function_privilege('authenticated','public.save_dungeon_run_state(uuid,integer,jsonb,uuid)','execute') as authenticated_save,
       has_function_privilege('anon','public.get_active_dungeon_run_v2()','execute') as anon_resume,
-      has_function_privilege('authenticated','public.get_active_dungeon_run_v2()','execute') as authenticated_resume
+      has_function_privilege('authenticated','public.get_active_dungeon_run_v2()','execute') as authenticated_resume,
+      has_function_privilege('anon','public.resolve_dungeon_run(uuid)','execute') as anon_abandon,
+      has_function_privilege('authenticated','public.resolve_dungeon_run(uuid)','execute') as authenticated_abandon
   `)).rows[0];
   check(
     !executePrivileges.anon_start
       && !executePrivileges.anon_result
       && !executePrivileges.anon_save
-      && !executePrivileges.anon_resume,
+      && !executePrivileges.anon_resume
+      && !executePrivileges.anon_abandon,
     "Anonymous callers must not execute Dungeon runtime or resume RPCs.",
   );
   check(
     executePrivileges.authenticated_start
       && executePrivileges.authenticated_result
       && executePrivileges.authenticated_save
-      && executePrivileges.authenticated_resume,
+      && executePrivileges.authenticated_resume
+      && executePrivileges.authenticated_abandon,
     "Authenticated players need Dungeon runtime and resume RPCs.",
   );
 
-  console.log("Dungeon runtime migration passed run creation, immutable encounter snapshots, versioned resume state, retry safety, per-battle XP/drops, completion, unlock, and failure checks; all changes will be rolled back.");
+  console.log("Dungeon runtime migration passed run creation, immutable encounter snapshots, versioned resume state, abandon handling, retry safety, per-battle XP/drops, completion, unlock, and failure checks; all changes will be rolled back.");
 } finally {
   if (began) await client.query("rollback").catch(() => undefined);
   await client.end().catch(() => undefined);
