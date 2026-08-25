@@ -29,10 +29,19 @@ assert.ok(flushInSignOut < 0 || releaseInSignOut < flushInSignOut, "Logout must 
 
 assert.match(app, /sessionStoppingRef/, "Intentional logout/close must be distinguishable from remote session displacement.");
 assert.match(app, /if \(!sessionStoppingRef\.current && errorMessage\(heartbeatError/, "A delayed heartbeat must not show Account Moved during intentional shutdown.");
+const shutdownCleanupStart = app.indexOf("function startBestEffortShutdownCleanup");
+const shutdownCleanupEnd = app.indexOf("\n  }\n\n  async function closeRollcasters", shutdownCleanupStart);
+assert.ok(shutdownCleanupStart >= 0 && shutdownCleanupEnd > shutdownCleanupStart, "Desktop shutdown cleanup must remain discoverable.");
+const shutdownCleanup = app.slice(shutdownCleanupStart, shutdownCleanupEnd);
+const cleanupRelease = shutdownCleanup.indexOf("void releaseGameplaySession()");
+const cleanupFlush = shutdownCleanup.indexOf("void flushCombatSaveRef.current()");
+assert.ok(cleanupRelease >= 0, "Desktop close must release the gameplay lease.");
+assert.ok(cleanupFlush < 0 || cleanupRelease < cleanupFlush, "Desktop close must start lease release before the best-effort state flush.");
+assert.doesNotMatch(shutdownCleanup, /await releaseGameplaySession\(\)/, "Desktop close must not wait for lease release.");
+assert.doesNotMatch(shutdownCleanup, /await flushCombatSaveRef\.current\(\)/, "Desktop close must not wait for the state flush.");
 const closeHandler = app.slice(app.indexOf("onCloseRequested"));
-const closeRelease = closeHandler.indexOf("await releaseGameplaySession()");
-const closeFlush = closeHandler.indexOf("await flushCombatSaveRef.current()");
-assert.ok(closeRelease >= 0, "Desktop close must release the gameplay lease.");
-assert.ok(closeFlush < 0 || closeRelease < closeFlush, "Desktop close must release the lease before waiting on a best-effort state flush.");
+assert.match(closeHandler, /startBestEffortShutdownCleanup\(\)/, "The native close handler must start best-effort shutdown cleanup.");
+assert.doesNotMatch(closeHandler, /await releaseGameplaySession\(\)/, "The native close handler must not wait for lease release.");
+assert.doesNotMatch(closeHandler, /await flushCombatSaveRef\.current\(\)/, "The native close handler must not wait for the state flush.");
 
 console.log("Gameplay session shutdown and takeover regression contract passed.");

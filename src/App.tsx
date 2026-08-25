@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
   ArrowUp,
@@ -356,11 +357,20 @@ export function App() {
   const closeRequestedRef = useRef(false);
   const sessionStoppingRef = useRef(false);
 
+  function startBestEffortShutdownCleanup(): void {
+    // Closing the desktop window is the higher-priority operation. These
+    // network-backed cleanup calls must never hold either close path open.
+    void releaseGameplaySession().catch(() => undefined);
+    void flushCombatSaveRef.current().catch((saveError) => {
+      console.warn("Unable to flush the current Dungeon state before closing.", saveError);
+    });
+  }
+
   async function closeRollcasters(): Promise<void> {
     sessionStoppingRef.current = true;
-    await releaseGameplaySession().catch(() => undefined);
+    closeRequestedRef.current = true;
+    startBestEffortShutdownCleanup();
     if (isTauriDesktop()) {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().destroy();
       return;
     }
@@ -377,12 +387,7 @@ export function App() {
         closeRequestedRef.current = true;
         sessionStoppingRef.current = true;
         event.preventDefault();
-        // Free the account lease before any best-effort Dungeon-state flush so
-        // another session can acquire the account while the window winds down.
-        await releaseGameplaySession().catch(() => undefined);
-        await flushCombatSaveRef.current().catch((saveError) => {
-          console.warn("Unable to flush the current Dungeon state before closing.", saveError);
-        });
+        startBestEffortShutdownCleanup();
         await getCurrentWindow().destroy();
       }))
       .then((removeListener) => {
