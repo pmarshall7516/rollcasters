@@ -438,3 +438,13 @@ The working progress log is maintained in the shared Obsidian vault:
 - Added `SkillAvailability.selectable` so turn-restricted Skills can be submitted and fizzle after reserving Mana, while exhausted usage caps and recharge remain disabled.
 - Fizzle presentations are negative and actor-targeted so the combat narration and reaction styling explain the failed Skill.
 - `npm run typecheck` and `npm run test:effect-runtime` pass.
+
+## 2026-08-25 — Fullscreen-first windowed display settings
+
+- Reworked the Tauri main window so fullscreen clears the 1280×720 windowed constraints and fills the active display; startup remains hidden until the saved mode is applied.
+- Added namespaced local persistence for fullscreen/windowed mode and the last valid windowed size. Windowed mode uses a borderless custom chrome strip, explicit minimize/fullscreen/close controls, and corner-only 16:9 resizing constrained to the active monitor work area.
+- Added the home Settings button beneath Shop. Settings opens with a read-only Controls tab and a Window tab that applies display mode changes immediately.
+- Added pure geometry regression coverage in `scripts/desktop-window-tests.ts` and updated the desktop research note with the native-window and persistence decisions.
+- `npm run typecheck`, `npm run test:desktop-window`, and the desktop config/security contract checks pass; full browser/layout/build verification remains to run.
+- Added the explicit Tauri `core:window` mutation permissions required by the runtime APIs; `core:window:default` alone is read-only for these operations.
+- Verified the generated local macOS `.app` directly: it opens borderless at the display-sized 1366×768 fullscreen viewport with no native title bar or traffic-light controls. Local packaging completed the app bundle; updater artifact signing remains unavailable without the protected private key.

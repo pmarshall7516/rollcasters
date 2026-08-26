@@ -65,7 +65,8 @@ export const currentGameVersion = gameVersion;
 const gameCatalogReleaseId = (import.meta.env.VITE_GAME_CATALOG_RELEASE_ID as string | undefined) ?? "unversioned";
 const gameClientProtocol = (import.meta.env.VITE_GAME_CLIENT_PROTOCOL_VERSION as string | undefined) ?? "1";
 export const desktopProfile = resolveDesktopProfile(import.meta.env);
-const desktopRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const desktopRuntime = typeof window !== "undefined"
+  && ("__TAURI_INTERNALS__" in window || window.location.protocol === "tauri:");
 const localCatalogPreview = isLocalCatalogPreview(
   desktopProfile.profile,
   import.meta.env.VITE_GAME_LOCAL_CATALOG_PREVIEW === "true",

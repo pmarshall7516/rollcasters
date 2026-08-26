@@ -21,6 +21,8 @@
     "desktop:build:preview": "node scripts/build-desktop-preview.mjs",
     "desktop:build:stable": "node scripts/build-desktop.mjs stable",
     "test:desktop-config": "node scripts/desktop-config-tests.mjs",
+    "test:desktop-window": "tsc scripts/desktop-window-tests.ts src/lib/desktop-window-geometry.ts --outDir /tmp/rollcasters-desktop-window-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node /tmp/rollcasters-desktop-window-tests/scripts/desktop-window-tests.js",
+    "test:desktop-window-source": "node scripts/desktop-window-source-tests.mjs",
     "test:desktop-build-config": "node scripts/desktop-build-config-tests.mjs",
     "test:desktop-session": "node scripts/desktop-session-source-tests.mjs",
     "test:desktop-session-storage": "node scripts/desktop-session-source-tests.mjs",

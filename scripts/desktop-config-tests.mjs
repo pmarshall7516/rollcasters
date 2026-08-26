@@ -22,22 +22,20 @@ assert.deepEqual({
   height: mainWindow.height,
   minWidth: mainWindow.minWidth,
   minHeight: mainWindow.minHeight,
-  maxWidth: mainWindow.maxWidth,
-  maxHeight: mainWindow.maxHeight,
 }, {
   width: 1280,
   height: 720,
   minWidth: 1280,
   minHeight: 720,
-  maxWidth: 1280,
-  maxHeight: 720,
-}, 'Windowed Rollcasters must use the fixed 1280x720 game frame.')
+}, 'Rollcasters must start from the 1280x720 logical game frame.')
 assert.equal(mainWindow.fullscreen, true, 'Stable Rollcasters must open fullscreen by default.')
-assert.equal(mainWindow.resizable, false, 'The windowed game frame must not be resizable.')
+assert.equal(mainWindow.resizable, false, 'Native edge resizing must stay disabled; custom corner handles own resizing.')
+assert.equal(mainWindow.decorations, false, 'Custom desktop chrome requires a borderless native window.')
+assert.equal(mainWindow.visible, false, 'Desktop startup must stay hidden until the saved window mode is applied.')
 assert.equal(mainWindow.maximized, false, 'Stable Rollcasters must use fullscreen rather than a remembered maximized state.')
 const localWindow = local.app.windows.find((window) => window.label === 'main')
 assert.ok(localWindow, 'The local desktop configuration must define the main game window.')
-for (const key of ['width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight', 'fullscreen', 'resizable']) {
+for (const key of ['width', 'height', 'minWidth', 'minHeight', 'fullscreen', 'resizable', 'decorations', 'visible']) {
   assert.equal(localWindow[key], mainWindow[key], `Local desktop window must preserve the Stable ${key} policy.`)
 }
 assert.equal(base.bundle.createUpdaterArtifacts, true)

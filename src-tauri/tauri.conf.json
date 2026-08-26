@@ -15,9 +15,8 @@
     },
     "windows": [{
       "label": "main", "title": "Rollcasters", "width": 1280, "height": 720,
-      "minWidth": 1280, "minHeight": 720, "maxWidth": 1280, "maxHeight": 720,
-      "resizable": false, "fullscreen": true,
-      "maximized": false, "center": true
+      "minWidth": 1280, "minHeight": 720, "resizable": false, "fullscreen": true,
+      "decorations": false, "visible": false, "maximized": false, "center": true
     }]
   },
   "bundle": {

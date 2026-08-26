@@ -23,7 +23,8 @@ export function resolveDesktopUpdateGate(status: DesktopServerUpdateStatus, curr
 }
 
 export function isTauriDesktop(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  return typeof window !== "undefined"
+    && ("__TAURI_INTERNALS__" in window || window.location.protocol === "tauri:");
 }
 
 export async function checkForDesktopUpdate(): Promise<DesktopUpdate | null> {

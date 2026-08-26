@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
   ArrowUp,
@@ -16,10 +16,13 @@ import {
   Info,
   Lock,
   LogOut,
+  Maximize2,
+  Minimize2,
   Play,
   Plus,
   RefreshCw,
   Search,
+  Settings as SettingsIcon,
   Shield,
   ShoppingBag,
   Skull,
@@ -195,6 +198,17 @@ import type {
 import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
 import { checkForDesktopUpdate, isTauriDesktop, resolveDesktopUpdateGate, type DesktopUpdate } from "./lib/desktop-updater";
 import { downloadDiagnosticReport } from "./lib/diagnostics";
+import {
+  closeDesktopWindow,
+  initializeDesktopWindow,
+  minimizeDesktopWindow,
+  setDesktopWindowMode,
+  startDesktopCornerResize,
+  startDesktopWindowDragging,
+  useDesktopWindow,
+  type ResizeCorner,
+  type WindowMode,
+} from "./lib/desktop-window";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type BagTab = "currency" | "shards" | "lootboxes";
@@ -303,6 +317,8 @@ function requiredStarterView(player: PlayerState | null | undefined): View | nul
 }
 
 export function App() {
+  const desktopWindow = useDesktopWindow();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [desktopGate, setDesktopGate] = useState<"checking" | "ready" | "required" | "error">(() => isTauriDesktop() ? "checking" : "ready");
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
   const [desktopGateError, setDesktopGateError] = useState<string | null>(null);
@@ -361,6 +377,10 @@ export function App() {
   const closeRequestedRef = useRef(false);
   const sessionStoppingRef = useRef(false);
 
+  useEffect(() => {
+    void initializeDesktopWindow();
+  }, []);
+
   async function completeShutdownCleanup(): Promise<void> {
     // Release the lease in parallel, but wait briefly for the active Dungeon
     // snapshot so closing the window does not discard the latest game state.
@@ -389,7 +409,7 @@ export function App() {
     // on a remote request. The native window must be allowed to exit now.
     void completeShutdownCleanup();
     if (isTauriDesktop()) {
-      await getCurrentWindow().destroy();
+      void invoke("exit_app").catch((error) => console.error("Unable to exit the Rollcasters desktop app.", error));
       return;
     }
     window.close();
@@ -1495,6 +1515,7 @@ export function App() {
           onCollection={() => navigate("collection")}
           onBag={() => navigate("bag")}
           onShop={() => navigate("shop", "shard")}
+          onSettings={() => setSettingsOpen(true)}
           onPlay={() => void openPlay()}
           onRefresh={() => refresh("home")}
         />
@@ -1650,6 +1671,14 @@ export function App() {
           notification={notificationQueue[0]}
         />
       )}
+      {settingsOpen && (
+        <SettingsModal
+          windowMode={desktopWindow.mode}
+          windowedSize={desktopWindow.windowedSize}
+          onWindowModeChange={setDesktopWindowMode}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </Shell>
   );
 }
@@ -1751,12 +1780,131 @@ function useViewportFitScale(bottomGutter = 4) {
 }
 
 function Shell({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  const desktopWindow = useDesktopWindow();
   return (
-    <main className={`app-shell ${className}`.trim()} data-game-profile={desktopProfile.profile} data-game-environment={desktopProfile.environment}>
+    <main className={`app-shell ${className}`.trim()} data-game-profile={desktopProfile.profile} data-game-environment={desktopProfile.environment} data-window-mode={desktopWindow.mode}>
+      <DesktopWindowChrome mode={desktopWindow.mode} />
       <div className="world-glow" />
       {desktopProfile.badge && <span className={`game-profile-badge ${desktopProfile.profile}`} aria-label={`${desktopProfile.appName} profile`}>{desktopProfile.badge}</span>}
       {children}
     </main>
+  );
+}
+
+function DesktopWindowChrome({ mode }: { mode: WindowMode }) {
+  if (!isTauriDesktop() || mode !== "windowed") return null;
+  const corners: Array<{ corner: ResizeCorner; className: string; label: string }> = [
+    { corner: "north-west", className: "north-west", label: "Resize window from top left corner" },
+    { corner: "north-east", className: "north-east", label: "Resize window from top right corner" },
+    { corner: "south-west", className: "south-west", label: "Resize window from bottom left corner" },
+    { corner: "south-east", className: "south-east", label: "Resize window from bottom right corner" },
+  ];
+  return (
+    <>
+      <div className="desktop-window-chrome" aria-label="Window controls">
+        <div
+          className="desktop-window-drag-region"
+          aria-label="Move Rollcasters window"
+          onPointerDown={() => { void startDesktopWindowDragging().catch((error) => console.error("Unable to move the Rollcasters window.", error)); }}
+        >
+          <span>Rollcasters</span>
+        </div>
+        <div className="desktop-window-controls">
+          <button type="button" aria-label="Minimize Rollcasters" onClick={() => { void minimizeDesktopWindow().catch((error) => console.error("Unable to minimize the Rollcasters window.", error)); }}>
+            <Minimize2 size={14} aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Enter fullscreen" onClick={() => { void setDesktopWindowMode("fullscreen").catch((error) => console.error("Unable to enter fullscreen.", error)); }}>
+            <Maximize2 size={14} aria-hidden="true" />
+          </button>
+          <button type="button" className="desktop-window-close" aria-label="Close Rollcasters" onClick={() => { void closeDesktopWindow().catch((error) => console.error("Unable to close the Rollcasters window.", error)); }}>
+            <X size={14} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      {corners.map(({ corner, className, label }) => (
+        <button
+          key={corner}
+          type="button"
+          className={`desktop-window-resize-handle ${className}`}
+          aria-label={label}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            void startDesktopCornerResize(corner, { screenX: event.screenX, screenY: event.screenY }).catch((error) => console.error("Unable to resize the Rollcasters window.", error));
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+function SettingsModal({
+  windowMode,
+  windowedSize,
+  onWindowModeChange,
+  onClose,
+}: {
+  windowMode: WindowMode;
+  windowedSize: { width: number; height: number };
+  onWindowModeChange: (mode: WindowMode) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"controls" | "window">("controls");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function changeWindowMode(mode: WindowMode) {
+    if (busy || mode === windowMode) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onWindowModeChange(mode);
+    } catch (changeError) {
+      setError(errorMessage(changeError, "Unable to change the window mode."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal eyebrow="Rollcasters" title="Settings" description="Adjust your game window and view the current controls." onClose={onClose} className="settings-modal">
+      <div className="settings-tabs" role="tablist" aria-label="Settings categories">
+        <button type="button" role="tab" aria-selected={tab === "controls"} className={tab === "controls" ? "active" : ""} onClick={() => setTab("controls")}>
+          <CircleHelp size={16} aria-hidden="true" /> Controls
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "window"} className={tab === "window" ? "active" : ""} onClick={() => setTab("window")}>
+          <SettingsIcon size={16} aria-hidden="true" /> Window
+        </button>
+      </div>
+      {tab === "controls" ? (
+        <section className="settings-section" role="tabpanel" aria-label="Controls">
+          <div className="settings-section-heading"><div><p className="eyebrow">Read-only for now</p><h3>Controls</h3></div><span className="settings-status">Remapping coming soon</span></div>
+          <div className="control-list">
+            <div className="control-row"><span>Move</span><strong>W A S D <small>or</small> Arrow Keys</strong></div>
+            <div className="control-row"><span>Interact / Advance</span><strong>Space</strong></div>
+            <div className="control-row"><span>Back</span><strong>Left Shift</strong></div>
+          </div>
+        </section>
+      ) : (
+        <section className="settings-section" role="tabpanel" aria-label="Window">
+          <div className="settings-section-heading"><div><p className="eyebrow">Display mode</p><h3>Window</h3></div>{busy && <span className="settings-status">Applying…</span>}</div>
+          {error && <p className="settings-error" role="alert">{error}</p>}
+          <div className="window-mode-options">
+            <label className={`window-mode-option ${windowMode === "fullscreen" ? "selected" : ""}`}>
+              <input type="radio" name="window-mode" checked={windowMode === "fullscreen"} disabled={busy} onChange={() => void changeWindowMode("fullscreen")} />
+              <span><strong>Fullscreen</strong><small>Fill the active display at its native size.</small></span>
+              <Maximize2 size={18} aria-hidden="true" />
+            </label>
+            <label className={`window-mode-option ${windowMode === "windowed" ? "selected" : ""}`}>
+              <input type="radio" name="window-mode" checked={windowMode === "windowed"} disabled={busy} onChange={() => void changeWindowMode("windowed")} />
+              <span><strong>Windowed</strong><small>Starts at 1280 × 720 and keeps a clean 16:9 shape.</small></span>
+              <Minimize2 size={18} aria-hidden="true" />
+            </label>
+          </div>
+          <p className="settings-note">Windowed size: {windowedSize.width} × {windowedSize.height}. Drag a corner to resize; the side edges stay fixed.</p>
+        </section>
+      )}
+    </Modal>
   );
 }
 
@@ -2217,7 +2365,7 @@ type EquipTarget =
   | { type: "ability"; slotIndex: number; owned: UserRollcaster }
   | { type: "rollcaster"; slotIndex: number };
 
-function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onBag: () => void; onShop: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
+function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onBag: () => void; onShop: () => void; onSettings: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
   const player = data.player!;
   const activeRollcaster = player.rollcasters.find((row) => row.id === player.profile.active_rollcaster_id) ?? player.rollcasters[0];
   const rollcaster = byId(data.catalog.rollcasters, activeRollcaster?.rollcaster_id);
@@ -2336,6 +2484,10 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
         <button className="menu-button" onClick={onShop}>
           <Coins size={24} />
           Shop
+        </button>
+        <button className="menu-button settings-menu-button" onClick={onSettings}>
+          <SettingsIcon size={24} />
+          Settings
         </button>
       </nav>
 
