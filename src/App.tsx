@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   Coins,
+  CircleHelp,
   Dices,
   Gem,
   Gift,
@@ -122,9 +123,11 @@ import {
 } from "./lib/dungeons";
 import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
 import { applyDungeonXpRewards, relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
+import { aggregateDungeonRewardEntries, combineDungeonRewards } from "./lib/dungeon-rewards";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
 import { combatLoadingNarration, combatSwapTravelOffset } from "./lib/presentation";
+import { updateOpponentRevealState } from "./lib/combat-visibility";
 import {
   challengeDescription,
   completedTrackedChallengeIds,
@@ -1592,18 +1595,19 @@ export function App() {
               // into the current client snapshot before mounting the result
               // screen so the background refresh reconciles to the same
               // animation target instead of restarting it.
+              const playerAfterRewards = applyDungeonXpRewards(
+                data.player!,
+                result.battleRewards,
+                data.catalog.critterProgression,
+                data.catalog.rollcasterProgression,
+              );
               setData((current) => current?.player
                 ? {
                     ...current,
-                    player: applyDungeonXpRewards(
-                      current.player,
-                      result.battleRewards,
-                      current.catalog.critterProgression,
-                      current.catalog.rollcasterProgression,
-                    ),
+                    player: playerAfterRewards,
                   }
                 : current);
-              setCombat(applyDungeonBattleResult(resolved, result, data.catalog, data.player!));
+              setCombat(applyDungeonBattleResult(resolved, result, data.catalog, playerAfterRewards));
               // Refresh the catalog/player projection after the result screen
               // is visible. The authoritative result already contains the
               // run and reward state needed for this immediate transition.
@@ -2141,7 +2145,7 @@ function StarterRollcasterScreen({ data, onSelect }: { data: AppData; onSelect: 
                 <Sprite
                   name={rollcaster.name}
                   element="basic"
-                  assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)}
+                  assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["portrait", "card", "thumb"])}
                   size="large"
                   fit="portrait"
                 />
@@ -2180,7 +2184,7 @@ function StarterScreen({ data, onSelect }: { data: AppData; onSelect: (critterId
         {starterCritters.map((critter) => (
           <button key={critter.id} className="catalog-card starter-card" onClick={() => onSelect(critter.id)}>
             <span className="collectible-id">{critter.id}</span>
-            <CardSprite><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="large" /></CardSprite>
+            <CardSprite><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["card", "thumb"])} size="large" /></CardSprite>
             <CardName data={data} name={critter.name} critter={critter} />
             <StatGrid stats={critterStats(data.catalog, critter, 1)} compact />
             <span className="primary-button full-width">Choose {critter.name}</span>
@@ -2284,7 +2288,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
         <aside className="rollcaster-panel">
           <p className="eyebrow">Active Rollcaster</p>
           <button className="portrait-button" onClick={() => setEquipTarget({ type: "rollcaster", slotIndex: 1 })} aria-label="Choose active Rollcaster">
-            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path)} size="hero" fit="portrait" /></CardSprite>
+            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path, ["portrait", "card", "thumb"])} size="hero" fit="portrait" /></CardSprite>
           </button>
           <h1>{rollcaster?.name ?? "Unknown"}</h1>
           {rollcasterProgress && <ProgressBar progress={rollcasterProgress} inline className="rollcaster-xp-progress" />}
@@ -2462,10 +2466,29 @@ function CollectibleSprite({ data, type, id, size = "sm", shard = false }: { dat
   const name = collectibleName(data, type, id);
   const critter = type === "critter" ? byId(data.catalog.critters, id) : undefined;
   const element = critter?.element_1_id ?? (type === "relic" ? "metal" : "basic");
-  const content = <Sprite name={name} element={element} assetPath={catalogAssetPath(data, type, id, collectibleAssetPath(data, type, id))} size="small" fit={type === "rollcaster" ? "portrait" : "contain"} />;
+  const variant = type === "relic"
+    ? size === "xs" ? "icon" : size === "sm" ? "thumb" : "card"
+    : size === "xs" || size === "sm" ? "thumb" : "card";
+  const content = <Sprite name={name} element={element} assetPath={preferredAssetPath(data, type, id, collectibleAssetPath(data, type, id), [variant, "card", "thumb"])} size="small" fit={type === "rollcaster" ? "portrait" : "contain"} />;
   return shard
     ? <span className="shard-sprite-glow" role="img" aria-label={`${name} shards`}><svg className="shard-sprite-outline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon className="shard-outline-glow shard-outline-glow-wide" points="1,50 50,1 99,50 50,99" /><polygon className="shard-outline-glow shard-outline-glow-mid" points="1,50 50,1 99,50 50,99" /><polygon className="shard-outline-border" points="1,50 50,1 99,50 50,99" /></svg><span className="shard-sprite-frame" aria-hidden="true">{content}</span></span>
     : <SpriteFrame size={size}>{content}</SpriteFrame>;
+}
+
+function preferredAssetPath(
+  data: AppData,
+  category: string,
+  ownerId: string | null | undefined,
+  directPath: string | null | undefined,
+  variants: readonly string[],
+): string | null {
+  if (ownerId) {
+    for (const variant of variants) {
+      const path = findAssetPath(data, category, ownerId, variant);
+      if (path) return path;
+    }
+  }
+  return catalogAssetPath(data, category, ownerId, directPath);
 }
 
 function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData; slotIndex: number; owned?: UserCritter; onEquip: (target: EquipTarget) => void }) {
@@ -2491,7 +2514,7 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
     <article className="loadout-slot">
       <div className="loadout-critter-summary">
         <button className="slot-topline slot-button loadout-critter-header" onClick={() => onEquip({ type: "critter", slotIndex })} aria-label={`Change ${critter.name} in squad slot ${slotIndex}`}>
-          <SpriteFrame size="md" className="loadout-critter-frame"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="small" /></SpriteFrame>
+          <SpriteFrame size="md" className="loadout-critter-frame"><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["thumb", "card"])} size="small" /></SpriteFrame>
           <div className="loadout-critter-content">
             <div className="loadout-critter-identity">
               <CritterName data={data} critter={critter} />
@@ -2634,7 +2657,7 @@ function LoadoutRelicSlot({ data, relic, sourceCritter, slotIndex, onClick }: { 
   const tooltip = relic ? <><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments, sourceCritter)}</> : <span className="tooltip-description">Choose a relic for slot {slotIndex}.</span>;
   return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className={`loadout-relic-cell unlocked ${relic ? "equipped" : "empty"}`} onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
     {relic
-      ? <AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield aria-hidden="true" />} />
+      ? <AssetIcon path={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["icon", "thumb", "card"])} alt={relic.name} fallback={<Shield aria-hidden="true" />} />
       : <Plus className="empty-relic-plus" aria-hidden="true" />}
   </button></GameTooltip>;
 }
@@ -2761,7 +2784,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       const inSquad = assigned.has(owned.id);
       const disabled = saving || (inSquad && !selected) || (selected && !canRemoveCurrent);
       return <button className={`candidate-card ${selected ? "selected" : ""} ${inSquad && !selected ? "in-squad" : ""}`} key={owned.id} disabled={disabled} onClick={() => onEquip(() => changeSquadSlot(selected ? target.slotIndex : equipSlotIndex, selected ? null : owned.id))}>
-        <SpriteFrame size="md" selected={selected}><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
+        <SpriteFrame size="md" selected={selected}><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["card", "thumb"])} /></SpriteFrame>
         <CritterName data={data} critter={critter} /><span>Level {owned.level}</span>{selected ? <span className="state-badge remove-badge">Select again to remove</span> : inSquad && <span className="state-badge"><Check size={14} /> In squad</span>}
       </button>;
     })}</div> : <p className="empty-state">No critters available</p>;
@@ -2869,7 +2892,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
           if (unavailable) return;
           onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id));
         }}>
-          <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong><span className="inventory-count relic-availability">Available: {available}</span>
+          <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} /></SpriteFrame><strong>{relic.name}</strong><span className="inventory-count relic-availability">Available: {available}</span>
         </button>
       </GameTooltip>;
     })}</div> : <p className="empty-state">No relics available</p>;
@@ -2888,7 +2911,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     content = <div className="candidate-grid">{sortByCollectibleId(player.rollcasters, (owned) => owned.rollcaster_id).map((owned) => {
       const entry = byId(data.catalog.rollcasters, owned.rollcaster_id)!;
       const selected = player.profile.active_rollcaster_id === owned.id;
-      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", entry.id, entry.asset_path)} size="large" fit="portrait" /></SpriteFrame><strong>{entry.name}</strong><span>Level {owned.level}</span></button>;
+      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", entry.id, entry.asset_path, ["portrait", "card", "thumb"])} size="large" fit="portrait" /></SpriteFrame><strong>{entry.name}</strong><span>Level {owned.level}</span></button>;
     })}</div>;
   }
 
@@ -3398,7 +3421,7 @@ function LootboxPoolArt({ data, entry }: { data: AppData; entry: LootboxPoolEntr
     return <span className="lootbox-pool-art lootbox-pool-shard-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="sm" shard /></span>;
   }
   const relic = byId(data.catalog.relics, entry.target_id);
-  return <span className="lootbox-pool-art"><SpriteFrame size="sm"><Sprite name={relic?.name ?? entry.target_id} element="metal" assetPath={relic ? (findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)) : null} size="small" /></SpriteFrame></span>;
+  return <span className="lootbox-pool-art"><SpriteFrame size="sm"><Sprite name={relic?.name ?? entry.target_id} element="metal" assetPath={relic ? preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["thumb", "icon", "card"]) : null} size="small" /></SpriteFrame></span>;
 }
 
 function lootboxPoolEntryName(data: AppData, entry: LootboxPoolEntry): string {
@@ -4642,7 +4665,7 @@ function DetailModal({
     return (
       <Modal title={critter.name} onClose={onClose}>
         {detailError && <p className="notice error" role="alert">{detailError}</p>}
-        <CollectibleDetailHero data={data} id={critter.id} name={critter.name} critter={critter} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} assetElement={critter.element_1_id} />
+        <CollectibleDetailHero data={data} id={critter.id} name={critter.name} critter={critter} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["portrait", "battle", "card"])} assetElement={critter.element_1_id} />
         <p className="detail-level">{collectibleUnlocked && owned ? `Level ${owned.level}` : "Locked"}</p>
         <CollectibleChallengePanel data={data} type="critter" id={critter.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} />
         {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
@@ -4696,7 +4719,7 @@ function DetailModal({
   return (
     <Modal title={rollcaster.name} onClose={onClose}>
       {detailError && <p className="notice error" role="alert">{detailError}</p>}
-      <CollectibleDetailHero data={data} id={rollcaster.id} name={rollcaster.name} assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} assetElement="basic" />
+      <CollectibleDetailHero data={data} id={rollcaster.id} name={rollcaster.name} assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["portrait", "battle", "card"])} assetElement="basic" />
       <p className="detail-level">{collectibleUnlocked && owned ? `Level ${owned.level}` : "Locked"}</p>
       <CollectibleChallengePanel data={data} type="rollcaster" id={rollcaster.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} />
       {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
@@ -4930,10 +4953,14 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
           return (
             <details className="dungeon-opponent-entry" key={opponent.id}>
               <summary>
-                <SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
+                {entry.encounterPoolRevealed
+                  ? <SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
+                  : <SpriteFrame size="sm"><span className="dungeon-unknown-critter-icon" role="img" aria-label="Unknown Critter"><CircleHelp size={34} aria-hidden="true" /></span></SpriteFrame>}
                 <span className="dungeon-opponent-identity">
-                  <span className="collectible-id">{critter.id}</span>
-                  <CritterName data={data} critter={critter} />
+                  {entry.encounterPoolRevealed && <span className="collectible-id">{critter.id}</span>}
+                  {entry.encounterPoolRevealed
+                    ? <CritterName data={data} critter={critter} />
+                    : <strong className="dungeon-unknown-critter-name">?????</strong>}
                   <small>Level {opponent.critter_level}</small>
                 </span>
                 <strong className="dungeon-opponent-rate">
@@ -5070,7 +5097,14 @@ function CombatScreen({
   const combatRootRef = useRef<HTMLElement>(null);
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
   const [menu, setMenu] = useState<"actions" | "skills" | "swap">("actions");
-  const [revealedOpponentKeys, setRevealedOpponentKeys] = useState<Set<string>>(new Set());
+  const opponentEncounterKey = `${combat.run.id}:${combat.run.battleIndex}`;
+  const [opponentRevealState, setOpponentRevealState] = useState(() => ({
+    encounterKey: opponentEncounterKey,
+    keys: new Set<string>(),
+  }));
+  const revealedOpponentKeys = opponentRevealState.encounterKey === opponentEncounterKey
+    ? opponentRevealState.keys
+    : new Set<string>();
   const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill; phase: "primary" | "swap"; primaryTargetKey?: string } | null>(null);
   const [swapSelection, setSwapSelection] = useState<{ actorKey: string; mode: "regular" | "skill" } | null>(null);
   const [submittingProgress, setSubmittingProgress] = useState(false);
@@ -5120,22 +5154,17 @@ function CombatScreen({
     return byId(data.catalog.rollcasterAbilities, slot?.ability_id);
   });
   useEffect(() => {
-    if (combat.phase === "lead_selection") return;
-    const encounteredOpponentKeys = new Set(
-      battle.opponentUnits.filter((unit) => unit.active).map((unit) => unit.key),
-    );
-    for (const recordedEvent of combat.events) {
-      for (const key of [recordedEvent.actorKey, ...recordedEvent.targetKeys, recordedEvent.swap?.outgoingKey, recordedEvent.swap?.incomingKey]) {
-        if (key?.startsWith("o")) encounteredOpponentKeys.add(key);
-      }
-    }
-    if (!encounteredOpponentKeys.size) return;
-    setRevealedOpponentKeys((current) => {
-      const next = new Set(current);
-      encounteredOpponentKeys.forEach((key) => next.add(key));
-      return next.size === current.size ? current : next;
-    });
-  }, [combat.events, combat.phase, battle.opponentUnits]);
+    const activeOpponentKeys = battle.opponentUnits
+      .filter((unit) => unit.active)
+      .map((unit) => unit.key);
+    setOpponentRevealState((current) => updateOpponentRevealState(
+      current,
+      opponentEncounterKey,
+      combat.phase,
+      activeOpponentKeys,
+      combat.events,
+    ));
+  }, [combat.events, combat.phase, opponentEncounterKey, battle.opponentUnits]);
   const legalTargets = targeting
     ? targeting.phase === "swap"
       ? healthyFriendlySwapTargets(battle, targeting.actorKey)
@@ -5788,14 +5817,13 @@ function CombatScreen({
             <h1>{combat.dungeon.name}</h1>
             <p>Encounter {combat.run.battleIndex} / {combat.run.battleCount} · Turn {battle.turn} · {combat.run.battleFormat}</p>
           </div>
-          <span className="combat-phase-badge">{combat.phase.replace(/_/g, " ")}</span>
         </div>
 
         <div className="combat-board">
           <CombatRollcasterPanel
             data={data}
             name={activeRollcaster?.name ?? "Rollcaster"}
-            assetPath={catalogAssetPath(data, "rollcaster", activeRollcaster?.id, activeRollcaster?.asset_path)}
+            assetPath={preferredAssetPath(data, "rollcaster", activeRollcaster?.id, activeRollcaster?.asset_path, ["battle", "portrait", "card"])}
             mana={displayedPlayerMana}
             manaAssetPath={manaAssetPath}
             manaRefund={playerManaRefund?.amount}
@@ -5879,7 +5907,7 @@ function CombatScreen({
           <CombatRollcasterPanel
             data={data}
             name={enemyRollcaster?.name ?? "Enemy"}
-            assetPath={enemyRollcasterAssetPath}
+            assetPath={preferredAssetPath(data, "eclipse-order", enemyRollcaster?.id, enemyRollcasterAssetPath, ["battle", "portrait", "card"])}
             mana={battle.opponentMana}
             manaAssetPath={manaAssetPath}
             manaRefund={opponentManaRefund?.amount}
@@ -5904,7 +5932,7 @@ function CombatScreen({
                 data-combat-unit-key={candidate.key}
                 onClick={() => selectSkillTarget(candidate.key)}
               >
-                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
+                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path, ["battle", "card", "thumb"])} /></SpriteFrame>
                 <span><strong>{candidate.name}</strong><small>0 / {candidate.maxHp} HP</small></span>
               </button>
             ))}
@@ -6066,7 +6094,7 @@ function CombatSquadGrid({
         const ko = unit.hp <= 0;
         const selectable = selectableSwapKeys.has(unit.key);
         const slot = <span className={`combat-squad-slot ${unit.active ? "active" : "reserve"} ${ko ? "ko" : ""} ${selectable ? "legal-target" : ""}`} data-combat-squad-unit-key={unit.key} aria-label={`${unit.name}: ${unit.hp} / ${unit.maxHp} HP`}>
-          <Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" flipped={opponent} />
+          <Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path, ["battle", "card", "thumb"])} size="small" flipped={opponent} />
         </span>;
         const interactiveSlot = selectable
           ? <button type="button" className="combat-squad-slot-button" data-combat-control="true" data-combat-focus-role="target" data-combat-unit-key={unit.key} aria-label={`Swap to ${unit.name}`} onClick={() => onSwapTarget?.(unit.key)}>{slot}</button>
@@ -6123,7 +6151,7 @@ function CombatLeadDialog({
                 aria-pressed={selected}
                 onClick={() => onToggle(ownedId)}
               >
-                <SpriteFrame size="md"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} /></SpriteFrame>
+                <SpriteFrame size="md"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path, ["battle", "card", "thumb"])} /></SpriteFrame>
                 <span className="combat-lead-option-copy">
                   <CritterName data={data} critter={unit.critter} />
                   <small>Lv {unit.level} · {unit.hp} / {unit.maxHp} HP</small>
@@ -6268,7 +6296,7 @@ function BattleUnit({
             <span className="combat-sprite-frame critter-combat-frame"><Sprite
               name={unit.name}
               element={unit.critter.element_1_id}
-              assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)}
+              assetPath={preferredAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path, ["battle", "card", "thumb"])}
               size="medium"
               flipped={opponent}
             /></span>
@@ -6390,7 +6418,7 @@ function CombatRelicRow({ data, relicIds, sourceCritter }: { data: AppData; reli
     if (!relic) return null;
     const effects = data.catalog.effectsByRelic[id] ?? [];
     return <GameTooltip key={id} label={`${relic.name}. ${relic.description} ${attachmentText(effects)}`} content={<><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
-      <span className="combat-relic-icon"><AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield size={13} />} /></span>
+      <span className="combat-relic-icon"><AssetIcon path={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["icon", "thumb", "card"])} alt={relic.name} fallback={<Shield size={13} />} /></span>
     </GameTooltip>;
   })}</span>;
 }
@@ -6533,7 +6561,7 @@ function CombatResultDialog({ data, title, rewards, actionLabel, onAction }: { d
 }
 
 function RewardSummary({ data, rewards }: { data: AppData; rewards: DungeonRewardSummary }) {
-  const dropEntries = rewards.entries.filter((entry) => entry.kind !== "critter_xp" && entry.kind !== "rollcaster_xp");
+  const dropEntries = aggregateDungeonRewardEntries(rewards.entries);
   if (!dropEntries.length) return <p className="dungeon-no-drops">No encounter drops were earned.</p>;
   return (
     <div className="combat-reward-list">
@@ -6564,10 +6592,10 @@ function xpStateAtTotal(progression: XpThreshold[], totalXp: number): { level: n
   return { level, progress: xpProgress(ordered, level, totalXp) };
 }
 
-const XP_REVEAL_DELAY_MS = 560;
-const XP_FILL_TOTAL_MS = 1800;
-const XP_LEVEL_UP_HOLD_MS = 980;
-const XP_MIN_FILL_SEGMENT_MS = 420;
+const XP_REVEAL_DELAY_MS = 180;
+const XP_FILL_TOTAL_MS = 900;
+const XP_LEVEL_UP_HOLD_MS = 480;
+const XP_MIN_FILL_SEGMENT_MS = 180;
 
 type XpFillSegment = {
   kind: "fill";
@@ -6665,21 +6693,17 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
   useEffect(() => {
     let cancelled = false;
     let frameA = 0;
-    let frameB = 0;
     let timeout = 0;
     // Wait until the rewards UI has painted, then settle briefly so the party cards are readable before XP moves.
     frameA = window.requestAnimationFrame(() => {
-      frameB = window.requestAnimationFrame(() => {
-        timeout = window.setTimeout(() => {
-          if (cancelled) return;
-          setXpReady(true);
-        }, XP_REVEAL_DELAY_MS);
-      });
+      timeout = window.setTimeout(() => {
+        if (cancelled) return;
+        setXpReady(true);
+      }, XP_REVEAL_DELAY_MS);
     });
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(frameA);
-      window.cancelAnimationFrame(frameB);
       window.clearTimeout(timeout);
     };
   }, [rewards]);
@@ -6698,7 +6722,7 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
             gain={rewards.rollcasterXp}
             finalTotal={ownedRollcaster.xp}
             progression={data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id)}
-            sprite={<SpriteFrame size="sm"><Sprite name={rollcaster.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} fit="portrait" /></SpriteFrame>}
+            sprite={<SpriteFrame size="sm"><Sprite name={rollcaster.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["thumb", "card"])} fit="portrait" /></SpriteFrame>}
             identity={<strong>{rollcaster.name}</strong>}
             animate={xpReady}
             rollcaster
@@ -6715,7 +6739,7 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
               gain={gain}
               finalTotal={owned.xp}
               progression={data.catalog.critterProgression.filter((row) => row.critter_id === critter.id)}
-              sprite={<SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>}
+              sprite={<SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["thumb", "card"])} /></SpriteFrame>}
               identity={<CritterName data={data} critter={critter} />}
               animate={xpReady}
             />
@@ -6943,6 +6967,7 @@ function RewardEntryIcon({ data, entry }: { data: AppData; entry: DungeonRewardS
 }
 
 function DungeonOutcomeScreen({ data, combat, complete, keyboardRootRef, onHome, onReplay, onNextDungeon }: { data: AppData; combat: DungeonRunState; complete: boolean; keyboardRootRef: React.RefObject<HTMLElement>; onHome: () => void; onReplay: () => void; onNextDungeon: (id: string) => void }) {
+  const rewards = combineDungeonRewards(combat.lastBattleRewards, combat.dungeonRewards);
   return (
     <section
       ref={keyboardRootRef}
@@ -6954,8 +6979,7 @@ function DungeonOutcomeScreen({ data, combat, complete, keyboardRootRef, onHome,
       <h1>{complete ? `${combat.dungeon.name} cleared!` : "Your squad has fallen."}</h1>
       <p>{complete ? `All ${combat.run.battleCount} encounters are complete. Rewards below are already saved.` : "Rewards from defeated opponents are saved. Retrying starts a fresh run at full HP."}</p>
       <div className="dungeon-outcome-rewards">
-        {combat.lastBattleRewards && <section><h2>Final Encounter</h2><RewardSummary data={data} rewards={combat.lastBattleRewards} /></section>}
-        {combat.dungeonRewards && <section><h2>{combat.dungeonRewards.completionPhase === "first_time" ? "First-clear Rewards" : "Completion Rewards"}</h2><RewardSummary data={data} rewards={combat.dungeonRewards} /></section>}
+        <section><h2>Rewards</h2><RewardSummary data={data} rewards={rewards} /></section>
       </div>
       {combat.lastBattleRewards && <XpGainSection data={data} rewards={combat.lastBattleRewards} />}
       <div className="dungeon-outcome-actions">

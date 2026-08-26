@@ -66,7 +66,7 @@ button:disabled {
 
 .top-bar {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -671,7 +671,8 @@ button.catalog-card:hover,
 }
 
 .sprite.has-asset {
-  background: rgba(255, 255, 255, 0.7);
+  background: transparent;
+  box-shadow: none;
 }
 
 .sprite-small {
@@ -1187,7 +1188,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .sprite-frame, .equipped-sprite-frame, .card-sprite-frame, .combat-sprite-frame {
   --sprite-padding: 5px;
   position: relative; display: grid; place-items: center; flex: 0 0 auto; min-width: 0; min-height: 0; aspect-ratio: 1 / 1; padding: 0 !important; overflow: hidden;
-  border: 1px solid var(--border-bright); border-radius: var(--frame-radius); background: radial-gradient(circle at 50% 42%, rgb(125 121 216 / 24%), rgb(8 10 24 / 80%) 72%);
+  border: 1px solid var(--border-bright); border-radius: var(--frame-radius); background: transparent;
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%), 0 0 18px rgb(121 136 216 / 14%);
 }
 .sprite-frame.selected { border-color: var(--focus); box-shadow: 0 0 0 2px rgb(255 240 168 / 25%), 0 0 24px rgb(167 121 255 / 35%); }
@@ -3126,6 +3127,20 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   height: 62px;
 }
 
+.dungeon-unknown-critter-icon {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-muted);
+  background: radial-gradient(circle, rgb(167 121 255 / 16%), transparent 68%);
+}
+
+.dungeon-unknown-critter-name {
+  color: var(--text-muted);
+  letter-spacing: .12em;
+}
+
 .dungeon-opponent-identity {
   display: grid;
   justify-items: start;
@@ -3305,19 +3320,6 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .combat-header h1 {
   font-size: clamp(23px, 2.4vw, 34px);
   line-height: 1;
-}
-
-.combat-phase-badge {
-  grid-column: 3;
-  justify-self: end;
-  padding: 7px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  color: var(--accent-cyan);
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: .06em;
-  text-transform: uppercase;
 }
 
 .combat-board {
@@ -4865,25 +4867,18 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .dungeon-outcome-rewards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  display: block;
   width: 100%;
   max-width: 900px;
   margin: 4px 0;
 }
 
 .dungeon-outcome-rewards > section {
+  width: 100%;
   padding: 14px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
   background: rgb(8 10 24 / 48%);
-}
-
-.dungeon-outcome-rewards > section:only-child {
-  grid-column: 1 / -1;
-  justify-self: center;
-  width: min(100%, 620px);
 }
 
 .dungeon-outcome-rewards h2 {
@@ -5091,10 +5086,6 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   .combat-header {
     grid-template-columns: auto 1fr;
     min-height: 40px;
-  }
-
-  .combat-phase-badge {
-    display: none;
   }
 
   .combat-header > div {
@@ -5955,6 +5946,50 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 @media (min-width: 1051px) {
   .combat-mana-panel {
     min-height: calc(var(--combat-unit-height) * 3 + 18px);
+  }
+}
+
+/* Desktop combat uses the space available on larger monitors instead of
+   keeping the battlefield at the compact laptop scale. The viewport-fit
+   wrapper still scales the finished layout down when the window is short. */
+@media (min-width: 1051px) {
+  .combat-screen {
+    --combat-unit-height: clamp(152px, calc((100dvh - 250px) / 3), 280px);
+    --combat-sprite-size: clamp(64px, calc((100dvh - 300px) / 7), 124px);
+  }
+
+  .combat-mana-panel {
+    --combat-ability-row-height: clamp(28px, min(10cqi, calc((100dvh - 460px) / 8)), 54px);
+  }
+
+  .rollcaster-combat-frame {
+    width: min(clamp(100px, 16vh, 176px), 100%);
+    height: min(clamp(116px, 20vh, 204px), 100%);
+  }
+
+  .combat-ability-slot {
+    font-size: clamp(11px, .75vw, 15px);
+  }
+
+  .combat-relic-row {
+    gap: clamp(4px, .35vw, 7px);
+  }
+
+  .combat-relic-icon {
+    width: clamp(28px, 2.4vw, 40px);
+    height: clamp(28px, 2.4vw, 40px);
+  }
+}
+
+@media (min-width: 1321px) {
+  .combat-screen {
+    --combat-content-max: 2240px;
+    width: min(100%, var(--combat-content-max));
+    max-width: var(--combat-content-max);
+  }
+
+  .combat-board {
+    grid-template-columns: minmax(150px, clamp(185px, 10vw, 220px)) minmax(330px, 1fr) minmax(330px, 1fr) minmax(150px, clamp(185px, 10vw, 220px));
   }
 }
 /* Build-profile identity remains visible so Development/Beta cannot be mistaken for Stable. */

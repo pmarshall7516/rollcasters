@@ -7,22 +7,21 @@ import { sha256 } from "./catalog-release-utils.mjs";
 const args = parseArgs();
 const env = readEnv();
 const inputRoot = path.resolve(root, String(args.input ?? "output/catalog-release"));
-const provider = String(env.RELEASE_STORAGE_PROVIDER ?? "supabase").toLowerCase();
-const useR2 = provider === "r2";
-if (!useR2 && provider !== "supabase") throw new Error("RELEASE_STORAGE_PROVIDER must be supabase or r2.");
-const bucket = String(useR2 ? env.R2_BUCKET : env.SUPABASE_RELEASE_BUCKET ?? "");
+const provider = String(env.RELEASE_STORAGE_PROVIDER ?? "r2").toLowerCase();
+if (provider !== "r2") throw new Error("Release artifacts, including images, must use the external R2 publisher.");
+const bucket = String(env.R2_BUCKET ?? "");
 const accountId = String(env.R2_ACCOUNT_ID ?? "");
-const endpoint = String(useR2 ? (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "") : env.SUPABASE_STORAGE_S3_ENDPOINT ?? "");
-const accessKeyId = String(useR2 ? env.R2_ACCESS_KEY_ID : env.SUPABASE_STORAGE_S3_ACCESS_KEY_ID ?? "");
-const secretAccessKey = String(useR2 ? env.R2_SECRET_ACCESS_KEY : env.SUPABASE_STORAGE_S3_SECRET_ACCESS_KEY ?? "");
+const endpoint = accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "";
+const accessKeyId = String(env.R2_ACCESS_KEY_ID ?? "");
+const secretAccessKey = String(env.R2_SECRET_ACCESS_KEY ?? "");
 if (!bucket || !endpoint || !accessKeyId || !secretAccessKey) {
-  throw new Error(`Set the server-only ${useR2 ? "R2" : "Supabase Storage S3"} release credentials.`);
+  throw new Error("Set the server-only R2 release credentials.");
 }
 
 const client = new S3Client({
-  region: useR2 ? "auto" : String(env.SUPABASE_STORAGE_S3_REGION ?? "local"),
+  region: "auto",
   endpoint,
-  forcePathStyle: !useR2,
+  forcePathStyle: false,
   credentials: { accessKeyId, secretAccessKey },
 });
 

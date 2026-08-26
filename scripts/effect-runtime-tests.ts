@@ -39,6 +39,7 @@ import {
   type DungeonRunState,
 } from "../src/lib/dungeon-run.js";
 import { battlefieldSlotsForCount, effectiveDungeon, parseBattleFormat, sortDungeonsNaturally } from "../src/lib/dungeons.js";
+import { applyDungeonXpRewards } from "../src/lib/progression.js";
 import type { BattleFormat, Catalog, CombatAction, DungeonOpponent, DungeonRunSnapshot, EffectOwnerType, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -1274,21 +1275,45 @@ check(
   firstClearDungeon.mode === "boss"
     && firstClearDungeon.logoPath === "boss.png"
     && firstClearDungeon.battleCount === 2
-    && firstClearDungeon.difficulty === 7,
-  "An uncleared Boss Dungeon must derive its lineup, count, logo, and average difficulty from ordered Boss rows.",
+    && firstClearDungeon.difficulty === 12
+    && !firstClearDungeon.encounterPoolRevealed,
+  "An uncleared Boss Dungeon must derive its lineup, count, logo, and maximum difficulty from ordered Boss rows while hiding its encounter identities.",
 );
 const repeatDungeon = effectiveDungeon(
   bossDungeon,
   bossOpponents,
   { ...bossProgress, completed_at: "now", clear_count: 1 },
-  makePlayer(),
+  { ...makePlayer(), dungeonRunHistory: [{ dungeon_id: "boss", status: "won" }] },
 );
 check(
   repeatDungeon.mode === "regular"
     && repeatDungeon.logoPath === "regular.png"
     && repeatDungeon.battleCount === 4
-    && repeatDungeon.difficulty === 7,
-  "A cleared Boss Dungeon must switch to its authored regular pool while preserving authored Battle Count.",
+    && repeatDungeon.difficulty === 9
+    && repeatDungeon.encounterPoolRevealed,
+  "A cleared Boss Dungeon must switch to its authored regular pool, use its maximum difficulty, and reveal identities after a completed run.",
+);
+const lostDungeon = effectiveDungeon(
+  bossDungeon,
+  bossOpponents,
+  bossProgress,
+  { ...makePlayer(), dungeonRunHistory: [{ dungeon_id: "boss", status: "lost" }] },
+);
+check(
+  lostDungeon.encounterPoolRevealed
+    && !effectiveDungeon(
+    bossDungeon,
+    bossOpponents,
+    bossProgress,
+    { ...makePlayer(), dungeonRunHistory: [{ dungeon_id: "boss", status: "abandoned" }] },
+  ).encounterPoolRevealed
+    && !effectiveDungeon(
+      bossDungeon,
+      bossOpponents,
+      { ...bossProgress, is_unlocked: false },
+      { ...makePlayer(), dungeonRunHistory: [{ dungeon_id: "boss", status: "lost" }] },
+    ).encounterPoolRevealed,
+  "Abandoned runs and locked Dungeons must not reveal encounter identities.",
 );
 
 check(
@@ -1800,6 +1825,65 @@ check(
     && carriedDungeon.battle.statuses.some((status) => status.holderKey === "p1" && status.statusId === "aura" && status.duration === null)
     && carriedDungeon.battle.playerUnits.find((unit) => unit.key === "p1")?.stats.atk === 33,
   "Dungeon encounters must carry surviving finite and indefinite Statuses, their current HP, and their attached modifiers into the next encounter.",
+);
+
+const levelUpCatalog = structuredClone(mechCoreCatalog);
+levelUpCatalog.critterProgression = [
+  {
+    critter_id: "p1", level: 1, total_required_xp: 0, grant_skill_points: 0,
+    hp_delta: 0, atk_delta: 0, def_delta: 0, spd_delta: 0, dice_min_delta: 0, dice_max_delta: 0,
+    block_cost_delta: 0, swap_cost_delta: 0, total_unlocked_relic_slots: 1,
+  },
+  {
+    critter_id: "p1", level: 2, total_required_xp: 100, grant_skill_points: 1,
+    hp_delta: 25, atk_delta: 3, def_delta: 2, spd_delta: 1, dice_min_delta: 0, dice_max_delta: 1,
+    block_cost_delta: 0, swap_cost_delta: 0, total_unlocked_relic_slots: 1,
+  },
+];
+const levelUpPlayer = makePlayer();
+levelUpPlayer.critters = levelUpPlayer.critters.map((owned) => owned.id === "up1" ? { ...owned, xp: 90 } : owned);
+const levelUpRun = {
+  ...mechRun,
+  id: "level-up-run",
+  battleCount: 2,
+  selectedOpponents: mechRun.selectedOpponents.map((opponent) => ({ ...opponent, battleIndex: 0 })),
+};
+const levelUpState = createDungeonRunState(levelUpCatalog, levelUpPlayer, levelUpCatalog.dungeons[0], levelUpRun);
+const levelUpStateWithDamage = {
+  ...levelUpState,
+  battle: {
+    ...levelUpState.battle,
+    playerUnits: levelUpState.battle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 77 } : unit),
+  },
+};
+const levelUpPlayerAfterRewards = applyDungeonXpRewards(
+  levelUpPlayer,
+  { critterXp: { up1: 10 }, rollcasterXp: 0 },
+  levelUpCatalog.critterProgression,
+  levelUpCatalog.rollcasterProgression,
+);
+const levelUpNextRun = {
+  ...levelUpRun,
+  battleIndex: 1,
+  selectedOpponents: levelUpRun.selectedOpponents.map((opponent) => ({ ...opponent, battleIndex: 1 })),
+};
+const levelUpNextEncounter = applyDungeonBattleResult(
+  levelUpStateWithDamage,
+  {
+    run: levelUpNextRun,
+    battleRewards: { entries: [], defeatedOpponentInstanceIds: [], critterXp: { up1: 10 }, rollcasterXp: 0 },
+  },
+  levelUpCatalog,
+  levelUpPlayerAfterRewards,
+);
+const leveledUnit = levelUpNextEncounter.battle.playerUnits.find((unit) => unit.key === "p1");
+check(
+  leveledUnit?.level === 2
+    && leveledUnit.baseStats.hp === 125
+    && leveledUnit.stats.hp === 125
+    && leveledUnit.maxHp === 125
+    && leveledUnit.hp === 77,
+  "A Critter that levels up after an encounter must keep its new level and level-derived base stats in the next encounter while preserving current HP.",
 );
 const enemyDefeatedDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "defeat" as const };
 check(currentDungeonDialogue(enemyDefeatedDialogue)?.line === "This is not over." && continueDungeonDialogue(enemyDefeatedDialogue).phase === "battle_result", "A user victory must show the enemy Defeat line before encounter results.");

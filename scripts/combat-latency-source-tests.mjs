@@ -12,8 +12,8 @@ const progressQueue = source.match(/function queueCombatProgressEvents\([\s\S]*?
 
 check(!source.includes("onTurnResolved="),
   "Local combat turns must not invoke a server-backed progress callback.");
-check(resultHandler.includes("applyDungeonBattleResult(resolved, result, data.catalog, data.player!)"),
-  "Encounter result presentation must apply from the current client snapshot before refreshing in the background.");
+check(resultHandler.includes("applyDungeonBattleResult(resolved, result, data.catalog, playerAfterRewards)"),
+  "Encounter result presentation must apply from the projected client snapshot before refreshing in the background.");
 check(!resultHandler.includes("await loadAppData()"),
   "Encounter result presentation must not block on a full app-data reload before showing rewards or Dungeon complete.");
 check(!source.includes("saveDungeonRunState(latest.run, latestSerialized)"),

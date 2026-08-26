@@ -2,7 +2,7 @@
 
 Rollcasters is an online-required Tauri 2 desktop game. The React/Vite application remains the local development and browser-test harness; only the Tauri packages are versioned player-facing releases. Combat stays canonical in `src/lib/`.
 
-There is one player distribution profile: Stable/Production (`com.rollcasters.game`). `npm run dev` remains the local browser harness and reads saved authoring content. It synchronizes its read/write RPC compatibility headers to the currently active Production Game Update, so an older `.env` version does not hit the required-update gate. `npm run dev:catalog -- --release <id>` pins one exact local immutable Catalog for parity testing; when the matching `release/game-update-candidate.json` exists, it also uses that candidate's Game version.
+There is one player distribution profile: Stable/Production (`com.rollcasters.game`). `npm run dev` is a local browser harness that automatically selects the newest local immutable Catalog Release and serves only its bundled `game-assets`; it never reads the workspace master-art directory. It synchronizes its read/write RPC compatibility headers to the currently active Production Game Update, so an older `.env` version does not hit the required-update gate. `npm run dev:catalog -- --release <id>` pins one exact local immutable Catalog for parity testing; when the matching `release/game-update-candidate.json` exists, it also uses that candidate's Game version.
 
 Use the exact-candidate preview before publishing or activating a Game Update:
 

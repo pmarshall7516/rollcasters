@@ -616,6 +616,11 @@ export type DungeonOpponentStatOverride = {
 
 export type DungeonRunStatus = "started" | "won" | "lost" | "abandoned";
 
+export type DungeonRunHistoryEntry = {
+  dungeon_id: string;
+  status: DungeonRunStatus;
+};
+
 export type DungeonRunSnapshot = {
   id: string;
   dungeonId: string;
@@ -691,7 +696,6 @@ export type StarterRollcasterOption = {
 
 export type GameAsset = {
   id: string;
-  bucket_id: string;
   path: string;
   category: "critter" | "rollcaster" | "relic" | "lootbox" | "status" | "element" | "currency" | "mana" | "ui" | "eclipse-order" | "other";
   owner_table: string | null;
@@ -836,6 +840,7 @@ export type PlayerState = {
   unlockedSkillIdsByCritter: Record<string, string[]>;
   unlockedAbilityIdsByRollcaster: Record<string, string[]>;
   dungeonProgress: UserDungeonProgress[];
+  dungeonRunHistory?: DungeonRunHistoryEntry[];
   collectibleSnapshot: CollectiblePlayerSnapshot;
   playerStateRevision?: string;
   serverCatalogVersion?: string | null;

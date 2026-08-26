@@ -5,6 +5,7 @@ import { chromium } from "playwright";
 const root = path.resolve(import.meta.dirname, "..");
 const outputDir = path.join(root, "output", "combat-critter-sprite-layout");
 const styles = fs.readFileSync(path.join(root, "src", "styles.css"), "utf8");
+const testSpriteSrc = `data:image/png;base64,${fs.readFileSync(path.join(root, "..", "assets", "critters", "001-ramber.png")).toString("base64")}`;
 
 fs.mkdirSync(outputDir, { recursive: true });
 
@@ -20,7 +21,7 @@ function battleUnit(opponent) {
           <span class="combat-effect-hover-zone">
             <span class="combat-sprite-frame critter-combat-frame">
               <span class="sprite sprite-medium element-basic${opponent ? " flipped" : ""}" data-sprite-box>
-                <img class="sprite-box__image" data-sprite-image alt="${opponent ? "Enemy" : "Player"} Critter" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='120' viewBox='0 0 160 120'%3E%3Crect width='160' height='120' fill='%234fe4e1'/%3E%3C/svg%3E" />
+                <img class="sprite-box__image" data-sprite-image alt="${opponent ? "Enemy" : "Player"} Critter" src="${testSpriteSrc}" />
               </span>
             </span>
           </span>
@@ -59,6 +60,7 @@ try {
   `);
 
   const viewports = [
+    { name: "ultra-wide-desktop", width: 2560, height: 1440 },
     { name: "wide-desktop", width: 1500, height: 900 },
     { name: "narrow-desktop", width: 1100, height: 780 },
     { name: "tablet", width: 960, height: 720 },

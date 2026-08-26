@@ -4,6 +4,7 @@ import type {
   DungeonCompletionDrop,
   DungeonOpponent,
   DungeonRunSnapshot,
+  DungeonRunHistoryEntry,
   PlayerState,
   UserDungeonProgress,
 } from "./types.js";
@@ -25,8 +26,15 @@ export type EffectiveDungeon = {
   progress?: UserDungeonProgress;
   unlocked: boolean;
   enterable: boolean;
+  encounterPoolRevealed: boolean;
   lockedReason: string | null;
 };
+
+export function hasCompletedDungeonRun(history: DungeonRunHistoryEntry[] | undefined, dungeonId: string): boolean {
+  return (history ?? []).some((run) =>
+    run.dungeon_id === dungeonId && (run.status === "won" || run.status === "lost"),
+  );
+}
 
 export function parseBattleFormat(format: BattleFormat): {
   playerActiveCount: number;
@@ -67,9 +75,7 @@ export function effectiveDungeon(
   const battleCount = mode === "boss"
     ? pool.length / format.opponentActiveCount
     : dungeon.battle_count;
-  const difficulty = pool.length
-    ? Math.round(pool.reduce((total, opponent) => total + opponent.critter_level, 0) / pool.length)
-    : 0;
+  const difficulty = pool.length ? Math.max(...pool.map((opponent) => opponent.critter_level)) : 0;
   const unlocked = Boolean(progress?.is_unlocked);
   const hasSquad = Boolean(player?.squadSlots.some((slot) => slot.user_critter_id));
   const hasRollcaster = Boolean(player?.profile.active_rollcaster_id);
@@ -86,6 +92,7 @@ export function effectiveDungeon(
             ? "This Dungeon has an incomplete encounter setup."
             : null;
 
+  const enterable = lockedReason === null;
   return {
     dungeon,
     mode,
@@ -97,7 +104,8 @@ export function effectiveDungeon(
     pool,
     progress,
     unlocked,
-    enterable: lockedReason === null,
+    enterable,
+    encounterPoolRevealed: unlocked && enterable && hasCompletedDungeonRun(player?.dungeonRunHistory, dungeon.id),
     lockedReason,
   };
 }

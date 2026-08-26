@@ -8,6 +8,7 @@ const DESKTOP_ASSET_SERVER = "http://127.0.0.1:1430";
 
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  const localCatalogDir = process.env.VITE_LOCAL_CATALOG_DIR ?? env.VITE_LOCAL_CATALOG_DIR;
   const buildProfile = command === "build" ? resolveBuildProfile(mode, env) : undefined;
   const desktopBuild = Boolean(process.env.TAURI_ENV_PLATFORM);
   if (desktopBuild && !fs.existsSync(path.resolve("public/desktop-catalog/game-data/latest.json"))) {
@@ -33,10 +34,10 @@ export default defineConfig(({ command, mode }) => {
   // The game does not use client-side HMR. Keeping the dev server from
   // injecting an HMR WebSocket avoids noisy/disconnected socket failures when
   // the app is opened through a forwarded or shared desktop port.
-  server: {
-    hmr: false,
-    ...(env.VITE_LOCAL_CATALOG_DIR ? {
-      fs: { allow: [process.cwd(), path.resolve(env.VITE_LOCAL_CATALOG_DIR)] },
+    server: {
+      hmr: false,
+    ...(localCatalogDir ? {
+      fs: { allow: [process.cwd(), path.resolve(localCatalogDir)] },
     } : {}),
   },
   build: {

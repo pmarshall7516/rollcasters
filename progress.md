@@ -1,6 +1,13 @@
 # Rollcasters progress
 Original prompt: On the main page, show level-eligible Critter skills in skill-slot popups and allow unlocking them with skill points.
 
+## 2026-08-25 — Faster Dungeon completion rewards
+
+- Dungeon encounter and completion reward presentation now aggregates identical drops by kind and target, and the final Dungeon outcome uses one combined `Rewards` section instead of separate encounter/first-clear panels.
+- Reduced the completion XP reveal pause and animation timings while keeping the authoritative result RPC and projected player XP path unchanged.
+- Added focused reward aggregation/source coverage and updated the outcome layout fixture. Reward/XP presentation, combat latency/result loading, Dungeon entry/exit source checks, responsive layout, typecheck, production build, and generic web-game smoke capture pass.
+- The authenticated live Dungeon browser flow was not run because the disposable fixture requires the configured Supabase environment; the inspected browser smoke capture was the local auth screen, and the responsive outcome captures were inspected at desktop and mobile sizes.
+
 ## 2026-08-15 — Unified Shop cards and derived progress
 
 - Aligned Shard, Relic, and Lootbox cards around the same art/name/purchase/action rows; Shard names retain Critter element logos, price lines contain one item count and the saved currency asset, and Shard/Relic cards share progress bars.

@@ -19,6 +19,7 @@ import type {
   DungeonOpponent,
   DungeonOpponentStatOverride,
   DungeonRegularEncounter,
+  DungeonRunHistoryEntry,
   DungeonRunSnapshot,
   ElementDef,
   ElementEffectiveness,
@@ -54,8 +55,11 @@ import {
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
   import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
-const configuredGameAssetBaseUrl = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
-const gameCatalogBaseUrl = (import.meta.env.VITE_GAME_CATALOG_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const isSupabaseStorageUrl = (value: string | undefined) => Boolean(value && /supabase\.co\/storage\/v1/i.test(value));
+const configuredGameAssetBaseCandidate = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const configuredGameAssetBaseUrl = isSupabaseStorageUrl(configuredGameAssetBaseCandidate) ? undefined : configuredGameAssetBaseCandidate;
+const gameCatalogBaseCandidate = (import.meta.env.VITE_GAME_CATALOG_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const gameCatalogBaseUrl = isSupabaseStorageUrl(gameCatalogBaseCandidate) ? undefined : gameCatalogBaseCandidate;
 const gameVersion = (import.meta.env.VITE_GAME_VERSION as string | undefined) ?? "0.1.0";
 export const currentGameVersion = gameVersion;
 const gameCatalogReleaseId = (import.meta.env.VITE_GAME_CATALOG_RELEASE_ID as string | undefined) ?? "unversioned";
@@ -72,14 +76,16 @@ const localCatalogPreview = isLocalCatalogPreview(
 const gameCatalogMode = (import.meta.env.VITE_GAME_CATALOG_MODE as string | undefined) === "live" ? "live" : "release";
 const playerBootstrapMode = (import.meta.env.VITE_GAME_PLAYER_BOOTSTRAP_MODE as string | undefined) === "v1" ? "v1" : "legacy";
 const allowLegacyPlayerBootstrap = import.meta.env.VITE_ALLOW_LEGACY_PLAYER_BOOTSTRAP === "true";
-let activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
+// Both release-backed and explicitly local live-catalog development runs must
+// provide their own asset base. There is intentionally no mutable remote
+// fallback for artwork.
+let activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
 const liveAssetVersions = new Map<string, string>();
 const gameplaySessionId = createRequestId();
 let activeGameplaySessionId: string | null = null;
 let latestPlayerStateRevision: bigint | null = null;
 const playerMutationOutbox = createPlayerMutationOutbox<null>(null);
 
-export const GAME_ASSETS_BUCKET = "game-assets";
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 const gameCompatibilityHeaders: Record<string, string> = {
   "x-rollcasters-version": gameVersion,
@@ -226,7 +232,7 @@ const LIVE_CATALOG_COLUMNS: Record<string, string> = {
   dungeon_completion_drops: "id,dungeon_id,completion_phase,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
   starter_rollcaster_options: "rollcaster_id,sort_order,is_active",
   starter_options: "critter_id,sort_order,is_active",
-  game_assets: "id,bucket_id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,metadata,is_active,sort_order,updated_at",
+  game_assets: "id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,metadata,is_active,sort_order,updated_at",
   statuses: "id,name,description,classification,asset_path,sort_order,is_active,is_archived,version",
 };
 
@@ -558,12 +564,13 @@ export async function selectStarterRollcaster(rollcasterId: string): Promise<voi
 
 export function getGameAssetUrl(assetPath: string | null | undefined): string | null {
   if (!assetPath) return null;
-  if (/^https?:\/\//i.test(assetPath)) return assetPath;
+  if (/^https?:\/\//i.test(assetPath)) {
+    return isSupabaseStorageUrl(assetPath) ? null : assetPath;
+  }
   const [objectPath, query = ""] = assetPath.split("?", 2);
   const normalizedPath = objectPath.replace(/^\/+/, "");
-  const publicUrl = activeGameAssetBaseUrl
-    ? `${activeGameAssetBaseUrl}/${normalizedPath.split("/").map(encodeURIComponent).join("/")}`
-    : requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(normalizedPath).data.publicUrl;
+  if (!activeGameAssetBaseUrl) return null;
+  const publicUrl = `${activeGameAssetBaseUrl}/${normalizedPath.split("/").map(encodeURIComponent).join("/")}`;
   const version = gameCatalogMode === "live" ? liveAssetVersions.get(normalizedPath) : undefined;
   if (!query && !version) return publicUrl;
   // Local exact-catalog previews use Vite's relative `/@fs/...` asset root.
@@ -579,13 +586,7 @@ export function getGameAssetUrl(assetPath: string | null | undefined): string | 
 // in the current release registry.
 export function getSnapshotGameAssetUrl(assetPath: string | null | undefined): string | null {
   if (!assetPath) return null;
-  if (/^https?:\/\//i.test(assetPath)) return assetPath;
-  const [objectPath, query = ""] = assetPath.split("?", 2);
-  const publicUrl = requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(objectPath).data.publicUrl;
-  if (!query) return publicUrl;
-  const url = new URL(publicUrl);
-  url.search = query;
-  return url.toString();
+  return getGameAssetUrl(assetPath);
 }
 
 function groupBy<T>(rows: readonly T[], keyFor: (row: T) => string): Map<string, T[]> {
@@ -837,7 +838,7 @@ export function loadCatalog({ force = false }: { force?: boolean } = {}): Promis
       }
       // Live catalog rows contain source-master paths. This branch is reserved
       // for an explicitly configured development build.
-      activeGameAssetBaseUrl = undefined;
+      activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
       const catalog = await fetchLiveCatalog();
       currentCatalogRelease = {
         schemaVersion: 0,
@@ -860,7 +861,7 @@ export function clearCatalogCache(): void {
   catalogPromise = null;
   currentCatalogRelease = undefined;
   liveAssetVersions.clear();
-  activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
+  activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
 }
 
 export function getCurrentCatalogRelease(): CatalogReleaseInfo | undefined {
@@ -879,6 +880,7 @@ type PlayerBootstrapPayload = {
   unlocked_skills: Array<{ user_critter_id: string; skill_id: string }>;
   unlocked_abilities: Array<{ user_rollcaster_id: string; ability_id: string }>;
   dungeon_progress: PlayerState["dungeonProgress"];
+  dungeon_run_history?: PlayerState["dungeonRunHistory"];
   collectible_snapshot: CollectiblePlayerSnapshot;
   player_state_revision: string;
   server_catalog_version: string | null;
@@ -911,6 +913,7 @@ function playerStateFromBootstrap(payload: PlayerBootstrapPayload): PlayerState 
     unlockedSkillIdsByCritter,
     unlockedAbilityIdsByRollcaster,
     dungeonProgress: payload.dungeon_progress ?? [],
+    dungeonRunHistory: payload.dungeon_run_history ?? [],
     collectibleSnapshot: { ...emptyCollectibleSnapshot(), ...(payload.collectible_snapshot ?? {}) },
     playerStateRevision: payload.player_state_revision,
     serverCatalogVersion: payload.server_catalog_version,
@@ -919,16 +922,19 @@ function playerStateFromBootstrap(payload: PlayerBootstrapPayload): PlayerState 
 
 async function loadPlayerBootstrapV1(): Promise<PlayerState> {
   const client = requireClient();
-  const [{ data, error }, lootboxResult] = await Promise.all([
+  const [{ data, error }, lootboxResult, dungeonRunHistoryResult] = await Promise.all([
     client.rpc("player_bootstrap_v1"),
     client.from("user_lootboxes").select("lootbox_id,quantity").gt("quantity", 0),
+    client.from("dungeon_runs").select("dungeon_id,status").in("status", ["won", "lost"]),
   ]);
   if (error) throw error;
   if (lootboxResult.error) throw lootboxResult.error;
+  if (dungeonRunHistoryResult.error) throw dungeonRunHistoryResult.error;
   if (!data || typeof data !== "object") throw new Error("Player bootstrap returned no state.");
   const payload = data as PlayerBootstrapPayload;
   return playerStateFromBootstrap({
     ...payload,
+    dungeon_run_history: (dungeonRunHistoryResult.data ?? []) as DungeonRunHistoryEntry[],
     collectible_snapshot: {
       ...payload.collectible_snapshot,
       lootboxes: (lootboxResult.data ?? []).map((row) => ({
@@ -954,6 +960,7 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
     unlockedSkills,
     unlockedAbilities,
     dungeonProgress,
+    dungeonRunHistory,
   ] = await Promise.all([
     client.from("profiles").select("user_id,username,coins,starter_rollcaster_selected_at,starter_selected_at,active_rollcaster_id").single(),
     client.from("user_rollcasters").select("id,user_id,rollcaster_id,level,xp,ability_points").order("unlocked_at", { ascending: true }),
@@ -966,6 +973,7 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
     client.from("user_critter_skills").select("user_critter_id,skill_id"),
     client.from("user_rollcaster_abilities").select("user_rollcaster_id,ability_id"),
     client.from("user_dungeon_progress").select("user_id,dungeon_id,is_unlocked,completed_at,clear_count"),
+    client.from("dungeon_runs").select("dungeon_id,status").in("status", ["won", "lost"]),
   ]);
 
   for (const result of [
@@ -980,6 +988,7 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
     unlockedSkills,
     unlockedAbilities,
     dungeonProgress,
+    dungeonRunHistory,
   ]) {
     if (result.error) throw result.error;
   }
@@ -1011,6 +1020,7 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
     unlockedSkillIdsByCritter,
     unlockedAbilityIdsByRollcaster,
     dungeonProgress: dungeonProgress.data ?? [],
+    dungeonRunHistory: (dungeonRunHistory.data ?? []) as DungeonRunHistoryEntry[],
     collectibleSnapshot,
   } as PlayerState;
 }

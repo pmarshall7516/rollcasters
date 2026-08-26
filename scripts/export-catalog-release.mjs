@@ -25,7 +25,7 @@ const minimumGameVersion = String(args["minimum-game-version"] ?? "0.1.0");
 const outputRoot = path.resolve(root, String(args.output ?? "output/catalog-release"));
 const publishedAt = String(args["published-at"] ?? new Date().toISOString());
 const assetBaseUrl = String(args["asset-base-url"] ?? "../../../game-assets");
-const supabaseUrl = String(env.VITE_SUPABASE_URL ?? "").replace(/\/+$/, "");
+const assetRoot = path.resolve(env.ROLLCASTER_ASSETS_DIR ?? path.join(root, "..", "assets"));
 
 try {
   const existing = await fs.readdir(outputRoot);
@@ -126,7 +126,7 @@ async function readCatalog(client) {
   data.dungeonCompletionDrops = (await q(`select id,dungeon_id,completion_phase,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order from public.dungeon_completion_drops order by dungeon_id,completion_phase,sort_order,id`)).map((row) => ({ id: `${row.dungeon_id}:${row.id}`, phase: row.completion_phase, kind: row.drop_type, ...(row.target_category ? { targetCategory: row.target_category } : {}), targetId: row.target_id, minAmount: row.min_amount, maxAmount: row.max_amount, probability: Number(row.probability), ...(row.dupe_currency_id ? { dupeCurrencyId: row.dupe_currency_id, dupeCurrencyAmount: row.dupe_currency_amount } : {}) }));
   data.starterRollcasterOptions = await q(`select rollcaster_id,sort_order,is_active from public.starter_rollcaster_options where is_active order by sort_order,rollcaster_id`);
   data.starterOptions = await q(`select critter_id,sort_order,is_active from public.starter_options where is_active order by sort_order,critter_id`);
-  data.gameAssets = await q(`select id,bucket_id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,is_active,sort_order,updated_at from public.game_assets where is_active order by category,owner_id,variant,path`);
+  data.gameAssets = await q(`select id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,is_active,sort_order,updated_at from public.game_assets where is_active order by category,owner_id,variant,path`);
   data.statuses = await q(`select id,name,description,asset_path,sort_order,is_active,is_archived,version from public.statuses where is_active and not is_archived order by sort_order,id`);
   const effects = groupEffects(await q(`select owner_type,owner_id,id,name,description,sort_order,template_id,runtime_kind,runtime_version,parameters,classification,execution from public.combat_effects_v1 order by owner_type,owner_id,sort_order,id`));
   data.effectsBySkill = effects.skill;
@@ -148,7 +148,6 @@ const budgetFor = (variant) => ({ icon: 80_000, thumb: 180_000, card: 300_000, b
 
 async function processAssets(catalog) {
   if (args["skip-assets"]) return { manifest: { schemaVersion: CATALOG_SCHEMA_VERSION, catalogVersion: releaseId, assets: [] }, replacements: new Map() };
-  if (!supabaseUrl) throw new Error("VITE_SUPABASE_URL is required to download source assets.");
   const output = [];
   const replacements = new Map();
   const dedupe = new Map();
@@ -157,11 +156,9 @@ async function processAssets(catalog) {
     if (!dedupe.has(asset.path)) dedupe.set(asset.path, asset);
   }
   for (const asset of dedupe.values()) {
-    const sourceUrl = new URL(`${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(asset.bucket_id)}/${asset.path.split("/").map(encodeURIComponent).join("/")}`);
-    sourceUrl.searchParams.set("cacheNonce", `${asset.id}-${Date.now()}`);
-    const response = await fetch(sourceUrl, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Unable to download ${asset.path}: HTTP ${response.status}.`);
-    const source = Buffer.from(await response.arrayBuffer());
+    const normalizedPath = String(asset.path).replaceAll("\\", "/");
+    if (!normalizedPath || path.posix.isAbsolute(normalizedPath) || normalizedPath.split("/").includes("..")) throw new Error(`Asset path must be relative to the local workspace: ${asset.path}`);
+    const source = await fs.readFile(path.resolve(assetRoot, normalizedPath));
     const image = sharp(source, { animated: false });
     for (const [variant, width] of Object.entries(variantsFor(asset.category))) {
       let bytes = await image.clone().resize({ width, height: width, fit: "inside", withoutEnlargement: true }).webp({ quality: 82, alphaQuality: 90, effort: 5 }).toBuffer();
@@ -193,7 +190,7 @@ function applyAssetPaths(catalog, manifest, replacements) {
   const sourceByPath = new Map(catalog.gameAssets.map((asset) => [asset.path, asset]));
   catalog.gameAssets = manifest.assets.map((asset, index) => {
     const source = sourceByPath.get(asset.sourcePath);
-    return { id: `${source?.id ?? "asset"}:${asset.variant}`, bucket_id: "static-release", path: asset.path, category: asset.owner.category, owner_table: asset.owner.table, owner_id: asset.owner.id, variant: asset.variant, display_name: source?.display_name ?? null, alt_text: source?.alt_text ?? null, content_type: "image/webp", width: asset.width, height: asset.height, checksum: asset.sha256, is_active: true, sort_order: index, updated_at: publishedAt };
+    return { id: `${source?.id ?? "asset"}:${asset.variant}`, path: asset.path, category: asset.owner.category, owner_table: asset.owner.table, owner_id: asset.owner.id, variant: asset.variant, display_name: source?.display_name ?? null, alt_text: source?.alt_text ?? null, content_type: "image/webp", width: asset.width, height: asset.height, checksum: asset.sha256, is_active: true, sort_order: index, updated_at: publishedAt };
   });
 }
 

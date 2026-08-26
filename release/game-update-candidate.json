@@ -13,7 +13,7 @@
     "id": "2026.08.23.2",
     "manifestPath": "game-data/releases/2026.08.23.2/release-manifest.d2f3e799696d.json",
     "manifestSha256": "d2f3e799696d07590ea93c7abdaefce8f25976284cb5737e4a9a541b3019b1fb",
-    "publicBaseUrl": "https://vmmakykjoougmnlwkout.supabase.co/storage/v1/object/public/game-releases/"
+    "publicBaseUrl": "https://YOUR_PUBLIC_CATALOG_BASE_URL/"
   },
   "channel": "stable",
   "clientProtocolVersion": 1,

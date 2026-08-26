@@ -78,7 +78,7 @@ const outcomeHtml = `<!doctype html><html><head><style>${css}</style></head><bod
     <h1>Your squad has fallen.</h1>
     <p>Rewards from defeated opponents are saved. Retrying starts a fresh run at full HP.</p>
     <div class="dungeon-outcome-rewards">
-      <section><h2>Final Encounter</h2><p class="dungeon-no-drops">No encounter drops were earned.</p></section>
+      <section><h2>Rewards</h2><p class="dungeon-no-drops">No encounter drops were earned.</p></section>
     </div>
     <section class="combat-xp-section" aria-label="Party experience">
       <div class="combat-xp-heading"><h3>Party XP</h3></div>
@@ -236,7 +236,7 @@ try {
       && Math.abs(result.logo.height - result.homeLogo.height) < .1
       && result.titleFontSize <= 46
       && result.titleContained
-      && result.rewardWidth <= 620.1
+      && result.rewardWidth <= 900.1
       && result.rewardCenterDelta < .6
       && result.bottomInset <= 36
       && result.noHorizontalOverflow
