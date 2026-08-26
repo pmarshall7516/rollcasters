@@ -1864,50 +1864,58 @@ function chooseEnemyActions(state: CombatState): { actions: CombatAction[]; rngS
 function resolveActionStage(state: CombatState, actions: CombatAction[], stage: CombatAction["type"]): CombatState {
   if (combatIsTerminal(state)) return state;
   let rngState = state.rngState;
-  const ordered = actions
-    .filter((action) => action.type === stage)
-    .map((action) => {
-      const tieRoll = nextRandom(rngState);
-      rngState = tieRoll.state;
-      return { action, tieBreaker: tieRoll.value };
-    })
-    .sort((left, right) =>
-      (stage === "skill"
-        ? skillPriorityFor(state, right.action) - skillPriorityFor(state, left.action)
-        : 0)
-      || speedFor(state, right.action.actorKey) - speedFor(state, left.action.actorKey)
-      || right.tieBreaker - left.tieBreaker,
-    )
-    .map(({ action }) => action);
+  const pending = actions.filter((action) => action.type === stage);
+  const tieBreakers = new Map<CombatAction, number>();
+  const targetKeysByAction = new Map<CombatAction, string[]>();
+  for (const action of pending) {
+    const tieRoll = nextRandom(rngState);
+    rngState = tieRoll.state;
+    tieBreakers.set(action, tieRoll.value);
+    targetKeysByAction.set(action, actionSkillTargetKeys(state, action));
+  }
 
-  const positionByActorKey = new Map(ordered.map((action, position) => [action.actorKey, position]));
-  return ordered.reduce((current, action, position) => {
+  // An earlier action can apply a Status or stat modifier that changes the
+  // order of actions which have not resolved yet. Keep each tie roll stable,
+  // but choose the next action from the current combat state so those updates
+  // take effect immediately. Resolved actions stay resolved and are never
+  // reordered retroactively.
+  const resolvedActorKeys = new Set<string>();
+  let next = { ...state, rngState };
+  let position = 0;
+  while (pending.length > 0 && !combatIsTerminal(next)) {
+    pending.sort((left, right) =>
+      (stage === "skill"
+        ? skillPriorityFor(next, right) - skillPriorityFor(next, left)
+        : 0)
+      || speedFor(next, right.actorKey) - speedFor(next, left.actorKey)
+      || (tieBreakers.get(right) ?? 0) - (tieBreakers.get(left) ?? 0),
+    );
+    const action = pending.shift()!;
     // A terminal action must finish resolving its own effects and reactions,
     // but no later action belongs to the completed turn. Checking at the start
     // of the next reducer step preserves the current action's synchronous
     // effect chain while preventing queued follow-up actions.
-    if (combatIsTerminal(current)) return current;
-    const actor = findUnit(current, action.actorKey);
-    const effectSequenceBeforeAction = current.effectSequence;
-    const actionTargetKeys = action.type === "skill" ? actionSkillTargetKeys(current, action) : [];
-    const targetPositions = stage === "skill" ? actionSkillTargetKeys(state, action)
-      .map((targetKey) => positionByActorKey.get(targetKey))
-      .filter((targetPosition): targetPosition is number => targetPosition !== undefined) : [];
-    const targetPosition = targetPositions[0];
-    const resolved = recomputeCombatStats(resolveAction(current, action, stage === "skill"
+    const actor = findUnit(next, action.actorKey);
+    const effectSequenceBeforeAction = next.effectSequence;
+    const actionTargetKeys = action.type === "skill" ? actionSkillTargetKeys(next, action) : [];
+    const targetKeys = targetKeysByAction.get(action) ?? [];
+    const actionOrder = stage === "skill" ? {
+      position,
+      total: pending.length + position + 1,
+      first: position === 0,
+      last: pending.length === 0,
+      beforeSkillTarget: targetKeys.some((targetKey) => pending.some((candidate) => candidate.actorKey === targetKey)),
+      afterSkillTarget: targetKeys.some((targetKey) => resolvedActorKeys.has(targetKey)),
+    } : undefined;
+    next = recomputeCombatStats(resolveAction(next, action, stage === "skill"
       ? {
-          actionOrder: {
-            position,
-            total: ordered.length,
-            first: position === 0,
-            last: position === ordered.length - 1,
-            beforeSkillTarget: targetPosition !== undefined && position < targetPosition,
-            afterSkillTarget: targetPosition !== undefined && position > targetPosition,
-          },
+          actionOrder,
         }
       : undefined));
-    if (!actor || !actor.active || actor.hp <= 0) return resolved;
-    let next = decrementTargetTurnRuntimeEffects(resolved, action.actorKey);
+    resolvedActorKeys.add(action.actorKey);
+    position += 1;
+    if (!actor || !actor.active || actor.hp <= 0) continue;
+    next = decrementTargetTurnRuntimeEffects(next, action.actorKey);
     const delayedEvents: DelayedAdvanceEvent[] = [{ delayType: "actions", ignoreAppliedAfter: effectSequenceBeforeAction }];
     if (action.type === "skill") {
       delayedEvents.push({ delayType: "skills_used", actorKey: action.actorKey, ignoreAppliedAfter: effectSequenceBeforeAction });
@@ -1918,8 +1926,9 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
     } else if (action.type === "swap" && findUnit(next, action.actorKey)?.active === false) {
       delayedEvents.push({ delayType: "swaps_performed", actorKey: action.actorKey, ignoreAppliedAfter: effectSequenceBeforeAction });
     }
-    return delayedEvents.reduce((currentState, event) => advanceDelayedEffects(currentState, event), next);
-  }, { ...state, rngState });
+    next = delayedEvents.reduce((currentState, event) => advanceDelayedEffects(currentState, event), next);
+  }
+  return next;
 }
 
 function combatIsTerminal(state: CombatState): boolean {
@@ -2386,14 +2395,15 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
     }
     let damageDone = 0;
     let next = targets.reduce((current, originalTarget) => {
+      const currentActor = findUnit(current, actor.key) ?? actor;
       const target = findUnit(current, originalTarget.key);
       if (!target || target.hp <= 0) return current;
       if (skill.skill_type === "attack") {
         const damageRoll = nextRandom(current.rngState);
-        const resolvedDamage = calculateSkillDamage(current.catalog, actor, target, skill, () => damageRoll.value, targets.length);
+        const resolvedDamage = calculateSkillDamage(current.catalog, currentActor, target, skill, () => damageRoll.value, targets.length);
         const damage = resolveIncomingDamage(
           { ...current, rngState: damageRoll.state },
-          actor,
+          currentActor,
           target,
           resolvedDamage.damage,
           { sourceOwnerType: "skill", sourceOwnerId: skill.id, sourceCritterKey: actor.key, skillTargetKeys: targets.map((item) => item.key), damageSource: "skill", ...actionContext },
@@ -2440,7 +2450,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
             },
           );
         }
-        let progress = appendDamageProgressEvents(withPresentation, actor, target, damage.hpDamage, damage.shieldDamage, afterHp <= 0, skill);
+        let progress = appendDamageProgressEvents(withPresentation, currentActor, target, damage.hpDamage, damage.shieldDamage, afterHp <= 0, skill);
         if (damage.blockPrevented > 0 && target.side === "player") {
           progress = annotateBlockAction(progress, target, actor);
           progress = appendProgressEvent(progress, {
@@ -2464,9 +2474,9 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         // The incoming damage must be visible before any equipment/status
         // reaction it causes. The reaction is still resolved synchronously,
         // so it is available before the next queued action is processed.
-        const reacted = resolveReactiveEffects(progress, "owner_attacked", actor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true);
+        const reacted = resolveReactiveEffects(progress, "owner_attacked", currentActor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true);
         return afterHp <= 0
-          ? resolveReactiveEffects(reacted, "owner_defeats_enemy", actor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true)
+          ? resolveReactiveEffects(reacted, "owner_defeats_enemy", currentActor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true)
           : reacted;
       }
       return { ...current, log: [`${combatantName(actor)} used ${skill.name} on ${combatantName(target, false)}.`, ...current.log] };

@@ -3150,6 +3150,85 @@ for (const [statusId, statusName] of [["paralysis", "Paralysis"], ["frostbite", 
   check(!statusSkipped.presentationEvents.some((event) => /reserved mana|mana was lost/i.test(event.message)), `${statusName} action skips must not narrate reserved Mana as lost.`);
 }
 
+const sameTurnTimingCatalog = makeCatalog();
+sameTurnTimingCatalog.critters = sameTurnTimingCatalog.critters.map((critter) => (
+  critter.id === "p1" ? { ...critter, base_spd: 100 } : critter.id === "o1" ? { ...critter, base_spd: 70 } : critter
+));
+sameTurnTimingCatalog.statuses.push({ id: "paralysis", name: "Paralysis", description: "Paralysis.", asset_path: null, sort_order: 10, version: 1, classification: "negative" });
+sameTurnTimingCatalog.skills = [
+  ...sameTurnTimingCatalog.skills,
+  { ...sameTurnTimingCatalog.skills[1], id: "enemy-observe", name: "Enemy Observe", mana_cost: 0, priority: 0 },
+];
+sameTurnTimingCatalog.dungeonOpponents = sameTurnTimingCatalog.dungeonOpponents.map((opponent) => (
+  opponent.id === "opp1" ? { ...opponent, skill_ids: ["enemy-observe"] } : opponent
+));
+sameTurnTimingCatalog.skills = sameTurnTimingCatalog.skills.map((skill) => skill.id === "mark" ? { ...skill, priority: 6 } : skill);
+sameTurnTimingCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "mark-paralysis",
+  "apply_status",
+  { status_id: "paralysis", chance: 1, target: "targets", indefinite: true },
+)];
+sameTurnTimingCatalog.effectsByStatus.paralysis = [
+  effect("status", "paralysis", "paralysis-skip", "skip_action_chance", { chance: 1, combat_action: "skill", target: "status_holder" }),
+  { ...effect("status", "paralysis", "paralysis-speed", "stat_modifier", { stat: "spd", value_mode: "percentage", amount: -0.5, chance: 1, application_mode: "single_application", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" },
+];
+const sameTurnTimingInitial = startTurn({ ...battle(sameTurnTimingCatalog, makePlayer(), "same-turn-status-timing"), phase: "ready" });
+const sameTurnTimingResult = resolveCombatActions(
+  { ...sameTurnTimingInitial, phase: "selecting", playerMana: 50, opponentMana: 50 },
+  [
+    { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 },
+    { actorKey: "p2", type: "skill", skillId: "mark", targetKey: "p1", cost: 0 },
+  ],
+  [{ actorKey: "o1", type: "skill", skillId: "enemy-observe", targetKey: "p1", cost: 0 }],
+);
+const sameTurnTimingEnemyIndex = sameTurnTimingResult.presentationEvents.findIndex((event) => event.actorKey === "o1" && event.skillId === "enemy-observe");
+const sameTurnTimingSkipIndex = sameTurnTimingResult.presentationEvents.findIndex((event) => event.actorKey === "p1" && event.message === "Your Player One could not move due to Paralysis!");
+check(sameTurnTimingResult.playerUnits[0].stats.spd === 50, "A Status stat modifier must be active immediately when the Status is applied during the same turn.");
+check(sameTurnTimingEnemyIndex >= 0 && sameTurnTimingSkipIndex > sameTurnTimingEnemyIndex, "A same-turn Speed reduction must reorder a not-yet-acted Critter behind an enemy with the newly higher effective Speed.");
+check(sameTurnTimingSkipIndex >= 0 && !sameTurnTimingResult.presentationEvents.some((event) => event.actorKey === "p1" && event.kind === "skill" && event.skillId === "strike"), "A Status applied before a Critter's action must affect that same-turn action's skip check.");
+
+const sameTurnDamageCatalog = makeCatalog();
+sameTurnDamageCatalog.skills = sameTurnDamageCatalog.skills.map((skill) => skill.id === "mark" ? { ...skill, priority: 6 } : skill);
+sameTurnDamageCatalog.statuses.push({ id: "empowered", name: "Empowered", description: "Empowered.", asset_path: null, sort_order: 10, version: 1, classification: "positive" });
+sameTurnDamageCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "mark-empowered",
+  "apply_status",
+  { status_id: "empowered", chance: 1, target: "targets", indefinite: true },
+)];
+sameTurnDamageCatalog.effectsByStatus.empowered = [{
+  ...effect("status", "empowered", "empowered-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 10, chance: 1, application_mode: "single_application", target: "status_holder" }),
+  runtimeVersion: 2,
+  classification: "positive",
+  execution: "root",
+}];
+const sameTurnDamageBaseCatalog = structuredClone(sameTurnDamageCatalog);
+sameTurnDamageBaseCatalog.effectsBySkill.mark = [];
+sameTurnDamageBaseCatalog.effectsByStatus.empowered = [];
+const sameTurnDamageActions = [
+  { actorKey: "p1", type: "skill" as const, skillId: "strike", targetKey: "o1", cost: 0 },
+  { actorKey: "p2", type: "skill" as const, skillId: "mark", targetKey: "p1", cost: 0 },
+];
+const sameTurnDamageInitial = startTurn({ ...battle(sameTurnDamageCatalog, makePlayer(), "same-turn-damage-stat"), phase: "ready" });
+const sameTurnDamageResult = resolveCombatActions(
+  { ...sameTurnDamageInitial, phase: "selecting", playerMana: 50, opponentMana: 0 },
+  sameTurnDamageActions,
+  [],
+);
+const sameTurnDamageBaselineInitial = startTurn({ ...battle(sameTurnDamageBaseCatalog, makePlayer(), "same-turn-damage-stat"), phase: "ready" });
+const sameTurnDamageBaselineResult = resolveCombatActions(
+  { ...sameTurnDamageBaselineInitial, phase: "selecting", playerMana: 50, opponentMana: 0 },
+  sameTurnDamageActions,
+  [],
+);
+const sameTurnDamageTaken = sameTurnDamageInitial.opponentUnits[0].hp - sameTurnDamageResult.opponentUnits[0].hp;
+const sameTurnDamageBaseline = sameTurnDamageBaselineInitial.opponentUnits[0].hp - sameTurnDamageBaselineResult.opponentUnits[0].hp;
+check(sameTurnDamageResult.playerUnits[0].stats.atk === 35, "A same-turn Status ATK modifier must be active before the affected Critter's later Skill resolves.");
+check(sameTurnDamageTaken > sameTurnDamageBaseline, "A later same-turn attack must calculate damage from the affected Critter's updated ATK.");
+
 const noTargetCatalog = makeCatalog();
 const noTargetState = battle(noTargetCatalog, makePlayer(), "no-target-fizzle");
 const noTargetResult = takeTurn({
