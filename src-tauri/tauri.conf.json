@@ -14,8 +14,9 @@
       "csp": "default-src 'self'; img-src 'self' http://127.0.0.1:1430 asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:1430 https://*.supabase.co wss://*.supabase.co"
     },
     "windows": [{
-      "label": "main", "title": "Rollcasters", "width": 1280, "height": 800,
-      "minWidth": 1024, "minHeight": 700, "resizable": true, "fullscreen": false,
+      "label": "main", "title": "Rollcasters", "width": 1280, "height": 720,
+      "minWidth": 1280, "minHeight": 720, "maxWidth": 1280, "maxHeight": 720,
+      "resizable": false, "fullscreen": true,
       "maximized": false, "center": true
     }]
   },

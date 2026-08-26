@@ -186,6 +186,19 @@ export type CombatPresentationEvent = {
   state?: CombatPresentationState;
 };
 
+/**
+ * Combat narration is advanced one event at a time. Treat semicolon-separated
+ * clauses as separate sentences so they receive separate narration steps.
+ */
+export function splitCombatNarration(message: string): string[] {
+  if (!message.includes(";")) return [message];
+  const parts = message.split(/\s*;\s*/).map((part) => part.trim()).filter(Boolean);
+  return parts.map((part, index) => {
+    if (index === parts.length - 1 || /[.!?…]$/.test(part)) return part;
+    return `${part}.`;
+  });
+}
+
 export type CombatPresentationState = {
   playerMana: number;
   opponentMana: number;
@@ -1811,6 +1824,7 @@ function chooseEnemyActions(state: CombatState): { actions: CombatAction[]; rngS
 }
 
 function resolveActionStage(state: CombatState, actions: CombatAction[], stage: CombatAction["type"]): CombatState {
+  if (combatIsTerminal(state)) return state;
   let rngState = state.rngState;
   const ordered = actions
     .filter((action) => action.type === stage)
@@ -1830,6 +1844,11 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
 
   const positionByActorKey = new Map(ordered.map((action, position) => [action.actorKey, position]));
   return ordered.reduce((current, action, position) => {
+    // A terminal action must finish resolving its own effects and reactions,
+    // but no later action belongs to the completed turn. Checking at the start
+    // of the next reducer step preserves the current action's synchronous
+    // effect chain while preventing queued follow-up actions.
+    if (combatIsTerminal(current)) return current;
     const actor = findUnit(current, action.actorKey);
     const effectSequenceBeforeAction = current.effectSequence;
     const actionTargetKeys = action.type === "skill" ? actionSkillTargetKeys(current, action) : [];
@@ -1863,6 +1882,11 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
     }
     return delayedEvents.reduce((currentState, event) => advanceDelayedEffects(currentState, event), next);
   }, { ...state, rngState });
+}
+
+function combatIsTerminal(state: CombatState): boolean {
+  return !state.playerUnits.some((unit) => unit.hp > 0)
+    || !state.opponentUnits.some((unit) => unit.hp > 0);
 }
 
 function actionSkillTargetKeys(state: CombatState, action: CombatAction): string[] {
@@ -4546,31 +4570,33 @@ function appendPresentationEvent(
   event: CombatPresentationEvent,
 ): CombatState {
   const units = [...state.playerUnits, ...state.opponentUnits];
+  const presentationState: CombatPresentationState = {
+    playerMana: state.playerMana,
+    opponentMana: state.opponentMana,
+    units: units.map((unit) => ({
+      key: unit.key,
+      hp: unit.hp,
+      maxHp: unit.maxHp,
+      shield: unit.shield,
+      maxShield: unit.maxShield,
+      blocking: unit.blocking,
+      blockStreak: unit.blockStreak,
+      active: unit.active,
+      battlefieldSlot: unit.battlefieldSlot,
+      persistentStats: { ...unit.persistentStats },
+      stats: { ...unit.stats },
+    })),
+    statuses: structuredClone(state.statuses),
+    modifiers: structuredClone(state.modifiers),
+    runtimeEffects: structuredClone(state.runtimeEffects),
+  };
+  const messages = splitCombatNarration(event.message);
   return {
     ...state,
-    presentationEvents: [...state.presentationEvents, {
-      ...event,
-      state: {
-        playerMana: state.playerMana,
-        opponentMana: state.opponentMana,
-        units: units.map((unit) => ({
-          key: unit.key,
-          hp: unit.hp,
-          maxHp: unit.maxHp,
-          shield: unit.shield,
-          maxShield: unit.maxShield,
-          blocking: unit.blocking,
-          blockStreak: unit.blockStreak,
-          active: unit.active,
-          battlefieldSlot: unit.battlefieldSlot,
-          persistentStats: { ...unit.persistentStats },
-          stats: { ...unit.stats },
-        })),
-        statuses: structuredClone(state.statuses),
-        modifiers: structuredClone(state.modifiers),
-        runtimeEffects: structuredClone(state.runtimeEffects),
-      },
-    }],
+    presentationEvents: [
+      ...state.presentationEvents,
+      ...messages.map((message) => ({ ...event, message, state: presentationState })),
+    ],
   };
 }
 

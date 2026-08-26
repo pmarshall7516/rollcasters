@@ -2,6 +2,10 @@
   "productName": "Rollcasters Local",
   "identifier": "com.rollcasters.local",
   "build": { "beforeBuildCommand": "npm run build:local" },
-  "app": { "windows": [{ "label": "main", "title": "Rollcasters Local" }] },
+  "app": { "windows": [{
+    "label": "main", "title": "Rollcasters Local", "width": 1280, "height": 720,
+    "minWidth": 1280, "minHeight": 720, "maxWidth": 1280, "maxHeight": 720,
+    "resizable": false, "fullscreen": true, "maximized": false, "center": true
+  }] },
   "plugins": { "updater": { "active": false } }
 }

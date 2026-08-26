@@ -15,6 +15,31 @@ assert.deepEqual(base.bundle.icon, [
   'icons/icon.ico',
 ], 'macOS and Windows bundles must use the generated Rollcasters icon assets.')
 for (const icon of base.bundle.icon) assert.ok(fs.existsSync(`src-tauri/${icon}`), `Configured desktop icon is missing: ${icon}`)
+const mainWindow = base.app.windows.find((window) => window.label === 'main')
+assert.ok(mainWindow, 'The desktop configuration must define the main game window.')
+assert.deepEqual({
+  width: mainWindow.width,
+  height: mainWindow.height,
+  minWidth: mainWindow.minWidth,
+  minHeight: mainWindow.minHeight,
+  maxWidth: mainWindow.maxWidth,
+  maxHeight: mainWindow.maxHeight,
+}, {
+  width: 1280,
+  height: 720,
+  minWidth: 1280,
+  minHeight: 720,
+  maxWidth: 1280,
+  maxHeight: 720,
+}, 'Windowed Rollcasters must use the fixed 1280x720 game frame.')
+assert.equal(mainWindow.fullscreen, true, 'Stable Rollcasters must open fullscreen by default.')
+assert.equal(mainWindow.resizable, false, 'The windowed game frame must not be resizable.')
+assert.equal(mainWindow.maximized, false, 'Stable Rollcasters must use fullscreen rather than a remembered maximized state.')
+const localWindow = local.app.windows.find((window) => window.label === 'main')
+assert.ok(localWindow, 'The local desktop configuration must define the main game window.')
+for (const key of ['width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight', 'fullscreen', 'resizable']) {
+  assert.equal(localWindow[key], mainWindow[key], `Local desktop window must preserve the Stable ${key} policy.`)
+}
 assert.equal(base.bundle.createUpdaterArtifacts, true)
 assert.equal(base.bundle.windows.nsis.installMode, 'currentUser')
 assert.deepEqual(base.bundle.macOS.dmg, {

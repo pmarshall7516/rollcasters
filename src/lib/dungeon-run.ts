@@ -4,6 +4,7 @@ import {
   refreshSetupRuntimeEffects,
   resolveTurn,
   startTurn,
+  splitCombatNarration,
   type CombatModifier,
   type CombatPresentationState,
   type CombatStatus,
@@ -458,6 +459,24 @@ function startTurnPlaybackBase(before: CombatState, resolved: CombatState, playe
 function resolvedMessages(before: CombatState, after: CombatState): string[] {
   const addedCount = Math.max(0, after.log.length - before.log.length);
   return after.log.slice(0, addedCount).reverse();
+}
+
+function restoreNarrationEvents(events: DungeonCombatEvent[], eventCursor: number): { events: DungeonCombatEvent[]; eventCursor: number } {
+  const restored: DungeonCombatEvent[] = [];
+  let restoredCursor = eventCursor < 0 ? -1 : 0;
+  for (const [index, event] of events.entries()) {
+    const messages = splitCombatNarration(event.message);
+    if (index < eventCursor) restoredCursor += messages.length;
+    else if (index === eventCursor) restoredCursor = restored.length;
+    messages.forEach((message, messageIndex) => {
+      restored.push({
+        ...event,
+        id: messageIndex === 0 ? event.id : `${event.id}:sentence:${messageIndex + 1}`,
+        message,
+      });
+    });
+  }
+  return { events: restored, eventCursor: restoredCursor };
 }
 
 function applyEventState(battle: CombatState, event: DungeonCombatEvent | undefined, preserveFormation = false): CombatState {
@@ -920,9 +939,15 @@ export function restoreDungeonRunState(
     || typeof persisted.phase !== "string"
     || persisted.dungeon.id !== run.dungeonId
   ) return null;
+  const restoredNarration = restoreNarrationEvents(
+    Array.isArray(persisted.events) ? persisted.events : [],
+    typeof persisted.eventCursor === "number" ? persisted.eventCursor : -1,
+  );
   return {
     ...(persisted as DungeonRunState),
     run,
+    events: restoredNarration.events,
+    eventCursor: restoredNarration.eventCursor,
     battle: {
       ...persisted.battle,
       catalog,

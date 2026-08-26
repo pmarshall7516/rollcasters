@@ -1901,6 +1901,50 @@ const noOutcomeDialogue = {
   },
 };
 check(outcomePhaseForBattle(noOutcomeDialogue, "defeat").phase === "battle_result", "An encounter without authored outcome dialogue must skip the extra Continue step.");
+const terminalOutcomeBattle = {
+  ...confirmedMechDungeon.battle,
+  opponentUnits: confirmedMechDungeon.battle.opponentUnits.map((unit) => ({ ...unit, hp: 0 })),
+};
+const terminalOutcomeDialogue = advanceDungeonEvent({
+  ...confirmedMechDungeon,
+  phase: "event_playback",
+  battle: confirmedMechDungeon.battle,
+  pendingBattle: terminalOutcomeBattle,
+  events: [{
+    id: "terminal-outcome",
+    turn: 1,
+    phase: "resolution",
+    message: "The enemy Opponent One took 100 damage.",
+    requiresAdvance: true,
+    kind: "damage",
+    actorKey: "p1",
+    targetKeys: ["o1"],
+    hpChanges: [],
+  }],
+  eventCursor: 0,
+});
+check(
+  terminalOutcomeDialogue.phase === "outcome_dialogue"
+    && currentDungeonDialogue(terminalOutcomeDialogue)?.line === "This is not over."
+    && continueDungeonDialogue(terminalOutcomeDialogue).phase === "battle_result",
+  "A terminal encounter must show the enemy Defeat line before exposing the battle result.",
+);
+const terminalBattleResult = applyDungeonBattleResult(
+  continueDungeonDialogue(terminalOutcomeDialogue),
+  {
+    run: { ...mechRun, status: "won" },
+    battleRewards: { entries: [], defeatedOpponentInstanceIds: ["mech-opponent-0"], critterXp: { p1: 10 }, rollcasterXp: 5 },
+    dungeonRewards: { entries: [], defeatedOpponentInstanceIds: [], critterXp: {}, rollcasterXp: 0 },
+  },
+  mechCoreCatalog,
+  mechCorePlayer,
+);
+check(
+  terminalBattleResult.phase === "dungeon_complete"
+    && terminalBattleResult.lastBattleRewards?.critterXp.p1 === 10
+    && terminalBattleResult.lastBattleRewards?.rollcasterXp === 5,
+  "After terminal outcome narration, the saved battle result must advance to the dungeon completion rewards screen.",
+);
 const opponentReserve = { ...confirmedMechDungeon.battle.opponentUnits[1], key: "opponent-reserve", active: false, battlefieldSlot: null };
 const opponentAfterKnockout = confirmedMechDungeon.battle.opponentUnits
   .map((unit, index) => index === 0 ? { ...unit, hp: 0 } : unit)
@@ -2410,6 +2454,93 @@ check(
   "A knocked-out opponent must emit exactly one normalized knockout progress event.",
 );
 
+const terminalTurnCatalog = makeCatalog();
+terminalTurnCatalog.dungeons[0] = {
+  ...terminalTurnCatalog.dungeons[0],
+  battle_format: "2v1",
+  player_active_count: 2,
+  opponent_active_count: 1,
+};
+terminalTurnCatalog.dungeonOpponents = [
+  { ...terminalTurnCatalog.dungeonOpponents[0], skill_ids: ["strike"] },
+];
+terminalTurnCatalog.effectsBySkill.strike = [
+  effect("skill", "strike", "after-lethal", "apply_status", { status_id: "finite", chance: 1, target: "self", indefinite: true }),
+];
+const terminalBattle = createInitialCombatState(
+  terminalTurnCatalog,
+  makePlayer(),
+  terminalTurnCatalog.dungeons[0],
+  "terminal-turn",
+);
+const terminalStart = startTurn({
+  ...terminalBattle,
+  opponentUnits: terminalBattle.opponentUnits.map((unit) => ({ ...unit, hp: 1 })),
+  phase: "ready",
+});
+const terminalResolved = resolveCombatActions(
+  { ...terminalStart, phase: "selecting", playerMana: 50, opponentMana: 50 },
+  [
+    { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 },
+    { actorKey: "p2", type: "skill", skillId: "ritual", cost: 0 },
+  ],
+  [{ actorKey: "o1", type: "skill", skillId: "strike", targetKey: "p1", cost: 0 }],
+);
+const terminalSkillMessages = terminalResolved.presentationEvents
+  .filter((event) => event.kind === "skill")
+  .map((event) => event.message);
+check(
+  terminalResolved.phase === "won"
+    && terminalResolved.playerUnits.find((unit) => unit.key === "p1")?.hp === terminalStart.playerUnits.find((unit) => unit.key === "p1")?.hp
+    && terminalResolved.statuses.some((status) => status.statusId === "finite" && status.holderKey === "p1")
+    && terminalSkillMessages.some((message) => message === "Your Player One used Strike!")
+    && !terminalSkillMessages.some((message) => message === "Your Player Two used Ritual!")
+    && !terminalSkillMessages.some((message) => message === "The enemy Opponent One used Strike!"),
+  `A final Critter knockout must resolve the lethal Skill's effects, then skip later actions in the turn. Received: ${JSON.stringify(terminalSkillMessages)}`,
+);
+
+const playerTerminalCatalog = structuredClone(terminalTurnCatalog);
+playerTerminalCatalog.dungeons[0] = {
+  ...playerTerminalCatalog.dungeons[0],
+  battle_format: "2v2",
+  opponent_active_count: 2,
+};
+playerTerminalCatalog.dungeonOpponents = terminalTurnCatalog.dungeonOpponents.concat({
+  ...makeCatalog().dungeonOpponents[1],
+  skill_ids: ["ritual"],
+});
+const playerTerminalBattle = createInitialCombatState(
+  playerTerminalCatalog,
+  makePlayer(),
+  playerTerminalCatalog.dungeons[0],
+  "player-terminal-turn",
+);
+const playerTerminalStart = startTurn({
+  ...playerTerminalBattle,
+  playerUnits: playerTerminalBattle.playerUnits.map((unit) => (
+    unit.key === "p1" ? { ...unit, hp: 1 } : { ...unit, hp: 0 }
+  )),
+  phase: "ready",
+});
+const playerTerminalResolved = resolveCombatActions(
+  { ...playerTerminalStart, phase: "selecting", playerMana: 50, opponentMana: 50 },
+  [{ actorKey: "p1", type: "skip", cost: 0 }],
+  [
+    { actorKey: "o1", type: "skill", skillId: "strike", targetKey: "p1", cost: 0 },
+    { actorKey: "o2", type: "skill", skillId: "ritual", cost: 0 },
+  ],
+);
+const playerTerminalSkillMessages = playerTerminalResolved.presentationEvents
+  .filter((event) => event.kind === "skill")
+  .map((event) => event.message);
+check(
+  playerTerminalResolved.phase === "lost"
+    && playerTerminalResolved.statuses.some((status) => status.statusId === "finite" && status.holderKey === "o1")
+    && playerTerminalSkillMessages.includes("The enemy Opponent One used Strike!")
+    && !playerTerminalSkillMessages.includes("The enemy Opponent Two used Ritual!"),
+  `A final player Critter knockout must also stop later actions after the decisive Skill's effects. Received: ${JSON.stringify(playerTerminalSkillMessages)}`,
+);
+
 const debuffCatalog = makeCatalog();
 debuffCatalog.effectsBySkill.ritual = [
   effect("skill", "ritual", "menace", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.2, chance: 1, target: "all_enemies" }),
@@ -2531,13 +2662,16 @@ let duplicateSkillState = takeTurn(
 const duplicateTargetHp = duplicateSkillState.opponentUnits[0].hp;
 const duplicateDuration = duplicateSkillState.statuses.find((status) => status.statusId === "finite")?.duration;
 duplicateSkillState = takeTurn(startTurn(duplicateSkillState), [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 }], 50);
+const duplicateFailureNarrations = duplicateSkillState.presentationEvents
+  .filter((event) => event.message.includes("already afflicted with Finite") || event.message.includes("Strike failed"))
+  .map((event) => event.message);
 check(
-    duplicateSkillState.opponentUnits[0].hp === duplicateTargetHp
+  duplicateSkillState.opponentUnits[0].hp === duplicateTargetHp
     && duplicateSkillState.statuses.length === 1
     && duplicateSkillState.statuses[0].duration === Number(duplicateDuration) - 1
-    && duplicateSkillState.presentationEvents.some((event) => event.message.includes("already afflicted with Finite") && event.message.includes("Strike failed"))
+    && JSON.stringify(duplicateFailureNarrations) === JSON.stringify(["The enemy Opponent One is already afflicted with Finite.", "Strike failed."])
     && !duplicateSkillState.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "strike"),
-  "A Skill that cannot apply its duplicate Status must fail atomically without dealing damage or refreshing the Status.",
+  `A Skill that cannot apply its duplicate Status must fail atomically, with one sentence per narration step. Received: ${JSON.stringify(duplicateFailureNarrations)}`,
 );
 
 const freshDifferentStatusCatalog = makeCatalog();
@@ -2850,9 +2984,16 @@ incrementalStatusState = takeTurn(incrementalStatusState, [{ actorKey: "p1", typ
 incrementalStatusState = startTurn(incrementalStatusState);
 check(incrementalStatusState.playerUnits[0].stats.atk === 27, "Spacing 2 must apply an incremental Status Stat Modifier every other turn.");
 const incrementalTriggerEvent = incrementalStatusState.presentationEvents.find((event) => event.kind === "status" && event.message.includes("ATK"));
-const incrementalCountdownEvent = incrementalStatusState.presentationEvents.find((event) => event.kind === "status" && event.message.includes("turn") && event.message.includes("Aura"));
+const incrementalCountdownNarrations = incrementalStatusState.presentationEvents
+  .filter((event) => event.kind === "status" && (event.message.includes("affected by Aura") || event.message.includes("turn")))
+  .map((event) => event.message);
 check(Boolean(incrementalTriggerEvent), "A start-of-turn Status stat change must emit a presentation event for text and animation playback.");
-check(Boolean(incrementalCountdownEvent), "A finite start-of-turn Status checkup must narrate its remaining duration.");
+check(
+  incrementalCountdownNarrations.length === 2
+    && incrementalCountdownNarrations[0]?.includes("affected by Aura.")
+    && incrementalCountdownNarrations[1] === "2 turns remain.",
+  `A finite start-of-turn Status checkup must narrate its remaining duration as separate steps. Received: ${JSON.stringify(incrementalCountdownNarrations)}`,
+);
 check(
   incrementalStatusState.playerUnits[0].manaRoll > 0
     && Number(incrementalTriggerEvent?.state?.playerMana ?? 0) > 0,

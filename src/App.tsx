@@ -385,7 +385,9 @@ export function App() {
   async function closeRollcasters(): Promise<void> {
     sessionStoppingRef.current = true;
     closeRequestedRef.current = true;
-    await completeShutdownCleanup();
+    // Start the best-effort persistence work, but never hold the close action
+    // on a remote request. The native window must be allowed to exit now.
+    void completeShutdownCleanup();
     if (isTauriDesktop()) {
       await getCurrentWindow().destroy();
       return;
@@ -398,11 +400,13 @@ export function App() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     void import("@tauri-apps/api/window")
-      .then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(async () => {
+      .then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(() => {
         if (closeRequestedRef.current) return;
         closeRequestedRef.current = true;
         sessionStoppingRef.current = true;
-        await completeShutdownCleanup();
+        // Returning from this callback lets Tauri finish the OS close
+        // immediately; persistence continues as a best-effort operation.
+        void completeShutdownCleanup();
       }))
       .then((removeListener) => {
         if (disposed) removeListener();
@@ -5105,6 +5109,7 @@ function CombatScreen({
   onNextDungeon: (dungeonId: string) => void;
 }) {
   const NARRATION_TYPEWRITER_INTERVAL_MS = 22;
+  const INTERACT_HOLD_REPEAT_INTERVAL_MS = 80;
   const combatRootRef = useRef<HTMLElement>(null);
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
   const [menu, setMenu] = useState<"actions" | "skills" | "swap">("actions");
@@ -5130,6 +5135,9 @@ function CombatScreen({
   const keyboardFocusRef = useRef<HTMLElement | null>(null);
   const keyboardFocusProxyRef = useRef<HTMLElement | null>(null);
   const invalidKeyboardFocusTimerRef = useRef<number | null>(null);
+  const interactHeldRef = useRef(false);
+  const interactHoldTimerRef = useRef<number | null>(null);
+  const interactActionRef = useRef<(showInvalidFeedback?: boolean) => void>(() => undefined);
   const lastActionMenuFocusKeyRef = useRef("");
   const lastCommandFocusKeyRef = useRef("");
   const lastSkillByActorKeyRef = useRef<Record<string, string>>({});
@@ -5373,13 +5381,55 @@ function CombatScreen({
     }, 360);
   }
 
-  function activateCombatKeyboardControl(control: HTMLElement) {
-    if (control.matches(":disabled") || control.getAttribute("aria-disabled") === "true") {
-      flashInvalidKeyboardControl(control);
+  function isEnabledCombatControl(control: HTMLElement): boolean {
+    return !control.matches(":disabled") && control.getAttribute("aria-disabled") !== "true";
+  }
+
+  function heldInteractControl(): HTMLElement | null {
+    const controls = combatKeyboardControls();
+    const enabledControls = controls.filter(isEnabledCombatControl);
+    if (!enabledControls.length) return null;
+
+    if (combat.phase === "lead_selection" || combat.phase === "forced_replacements") {
+      if (combat.selectedLeadIds.length < combat.requiredLeadCount) {
+        return enabledControls.find((control) => (
+          control.dataset.combatFocusRole === "lead"
+          && control.getAttribute("aria-pressed") !== "true"
+        )) ?? null;
+      }
+      return enabledControls.find((control) => control.dataset.combatFocusRole === "lead-confirm") ?? null;
+    }
+
+    if (combat.phase === "select_player_actions") {
+      if (targeting || swapSelection) {
+        return enabledControls.find((control) => control.dataset.combatFocusRole === "target" || control.dataset.combatFocusRole === "swap") ?? null;
+      }
+      if (menu === "skills" && currentActor) {
+        return enabledControls.find((control) => (
+          control.dataset.combatFocusRole === "skill"
+          && control.dataset.combatSkillId === lastSkillByActorKeyRef.current[currentActor.key]
+        ))
+          ?? enabledControls.find((control) => control.dataset.combatFocusRole === "skill")
+          ?? null;
+      }
+      if (currentActor) return enabledControls.find((control) => control.dataset.combatFocusRole === "action-primary") ?? null;
+      return enabledControls.find((control) => control.dataset.combatFocusRole === "submit") ?? null;
+    }
+
+    return enabledControls.find((control) => control.dataset.combatFocusRole === defaultCombatFocusRole()) ?? enabledControls[0] ?? null;
+  }
+
+  function activateHeldInteract(showInvalidFeedback = false) {
+    const control = heldInteractControl();
+    if (!control) {
+      const focused = keyboardFocusRef.current;
+      if (showInvalidFeedback && focused && !isEnabledCombatControl(focused)) flashInvalidKeyboardControl(focused);
       return;
     }
     control.click();
   }
+
+  interactActionRef.current = activateHeldInteract;
 
   useEffect(() => {
     function handleMouseMove() {
@@ -5524,18 +5574,49 @@ function CombatScreen({
   }
 
   useEffect(() => {
-    if (!narrationAdvanceable) return;
-    function handleSpacebar(event: KeyboardEvent) {
-      if (event.code !== "Space" || event.repeat) return;
-      const target = event.target;
-      if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
-      if (target instanceof HTMLElement && target.closest("button, [role='button'], [data-combat-control]")) return;
-      event.preventDefault();
-      advanceNarration();
+    function stopInteractHold() {
+      interactHeldRef.current = false;
+      if (interactHoldTimerRef.current !== null) {
+        window.clearInterval(interactHoldTimerRef.current);
+        interactHoldTimerRef.current = null;
+      }
     }
-    window.addEventListener("keydown", handleSpacebar);
-    return () => window.removeEventListener("keydown", handleSpacebar);
-  }, [narrationAdvanceable, combat.phase, diceSettled, eventSettled, loadingNarration]);
+
+    function handleInteractKeyDown(event: KeyboardEvent) {
+      if (event.code !== "Space") return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")) return;
+      const targetCombatControl = target?.closest("[data-combat-control]");
+      if (target?.closest("button, [role='button']") && !targetCombatControl) return;
+      const root = combatRootRef.current;
+      const active = document.activeElement;
+      const focusInsideCombat = (active instanceof HTMLElement && root?.contains(active))
+        || Boolean(keyboardFocusRef.current && root?.contains(keyboardFocusRef.current));
+      if (!focusInsideCombat && active !== document.body) return;
+
+      event.preventDefault();
+      if (event.repeat || interactHeldRef.current) return;
+      interactHeldRef.current = true;
+      interactActionRef.current(true);
+      interactHoldTimerRef.current = window.setInterval(() => {
+        if (interactHeldRef.current) interactActionRef.current();
+      }, INTERACT_HOLD_REPEAT_INTERVAL_MS);
+    }
+
+    function handleInteractKeyUp(event: KeyboardEvent) {
+      if (event.code === "Space") stopInteractHold();
+    }
+
+    window.addEventListener("keydown", handleInteractKeyDown);
+    window.addEventListener("keyup", handleInteractKeyUp);
+    window.addEventListener("blur", stopInteractHold);
+    return () => {
+      stopInteractHold();
+      window.removeEventListener("keydown", handleInteractKeyDown);
+      window.removeEventListener("keyup", handleInteractKeyUp);
+      window.removeEventListener("blur", stopInteractHold);
+    };
+  }, []);
 
   const keyboardFocusSignature = [
     combat.phase,
@@ -5624,15 +5705,6 @@ function CombatScreen({
         moveCombatFocus(direction);
         return;
       }
-
-      if (event.code !== "Space" || event.repeat) return;
-      if (target?.closest("button, [role='button'], [data-combat-control]")) return;
-      if (narrationAdvanceable) return;
-      const control = keyboardFocusRef.current
-        ?? focusCombatControl(defaultCombatFocusRole());
-      if (!control) return;
-      event.preventDefault();
-      activateCombatKeyboardControl(control);
     }
     window.addEventListener("keydown", handleCombatKeyboard);
     return () => window.removeEventListener("keydown", handleCombatKeyboard);
@@ -6586,7 +6658,13 @@ function RewardSummary({ data, rewards }: { data: AppData; rewards: DungeonRewar
               : entry.kind === "lootbox"
                 ? `${entry.amount} ${data.catalog.lootboxes.find((lootbox) => lootbox.id === entry.targetId)?.name ?? entry.targetId}`
                 : `${entry.amount} ${entry.kind === "shard" ? `${collectibleName(data, (entry.targetCategory ?? "relic") as CollectibleType, entry.targetId)} Shards` : collectibleName(data, "relic", entry.targetId)}`;
-        return <span key={entry.id}><RewardEntryIcon data={data} entry={entry} /><strong>{label}</strong>{entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}</span>;
+        return (
+          <article key={entry.id} className={`combat-reward-card combat-reward-card-${entry.kind}`}>
+            <span className="combat-reward-art"><RewardEntryIcon data={data} entry={entry} /></span>
+            <strong>{label}</strong>
+            {entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}
+          </article>
+        );
       })}
     </div>
   );

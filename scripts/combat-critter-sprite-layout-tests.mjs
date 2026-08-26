@@ -101,7 +101,7 @@ try {
         && Math.abs(player.image.height - enemy.image.height) <= 0.01,
       `Enemy Critter frame and sprite must match the player at ${viewport.name}: ${JSON.stringify(measurements)}`,
     );
-    check(player.imageBottomGap <= 0.01 && enemy.imageBottomGap <= 0.01, `Combat Critter canvases must share the sprite frame bottom edge at ${viewport.name}: ${JSON.stringify(measurements)}`);
+    check(Math.abs(player.imageBottomGap - 4) <= 0.01 && Math.abs(enemy.imageBottomGap - 4) <= 0.01, `Combat Critter canvases must share the inset bottom edge at ${viewport.name}: ${JSON.stringify(measurements)}`);
     check(player.gridColumn === "auto" && player.gridRow === "auto", `Player sprite must remain an ordinary frame grid item at ${viewport.name}: ${JSON.stringify(player)}`);
     check(enemy.gridColumn === "auto" && enemy.gridRow === "auto", `Enemy sprite must not inherit the outer opponent grid placement at ${viewport.name}: ${JSON.stringify(enemy)}`);
     check(player.transform === "none", `Player Critter art must not be flipped at ${viewport.name}: ${JSON.stringify(player)}`);
