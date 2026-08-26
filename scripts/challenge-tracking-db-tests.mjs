@@ -49,6 +49,7 @@ try {
   const { user_id: userId, tiny_blade_challenge_id: tinyBladeChallengeId } = fixture;
   await db.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
   await db.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
+  await db.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, tinyBladeChallengeId]);
 
   const trackingDefinition = (await db.query(
     "select pg_get_functiondef('public.track_collectible_challenge(uuid)'::regprocedure) as definition",
@@ -106,6 +107,9 @@ try {
       on first_template.id=first_challenge.challenge_type
     join public.release_unlock_challenge_templates(public.current_game_catalog_release_id()) second_template
       on second_template.id=second_challenge.challenge_type
+    join public.collectible_unlock_requirements requirement
+      on requirement.collectible_type=first_challenge.collectible_type
+      and requirement.collectible_id=first_challenge.collectible_id
     join lateral public.collectible_challenge_states($1,first_challenge.collectible_type,first_challenge.collectible_id) first_state
       on first_state.challenge_id=first_challenge.id and first_state.trackable
     join lateral public.collectible_challenge_states($1,second_challenge.collectible_type,second_challenge.collectible_id) second_state
@@ -120,9 +124,12 @@ try {
       and second_state.eligible
       and not first_state.complete
       and not second_state.complete
+      and requirement.required_challenges>1
+      and first_challenge.id<>$2
+      and second_challenge.id<>$2
     order by first_challenge.collectible_type,first_challenge.collectible_id,first_challenge.sort_order,second_challenge.sort_order
     limit 1
-  `, [userId])).rows[0];
+  `, [userId, tinyBladeChallengeId])).rows[0];
   check(sameCollectiblePair, "The published release needs two eligible tracked challenges on one collectible.");
 
   await db.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
@@ -146,6 +153,25 @@ try {
       && sameCollectibleTrackedRows[1].challenge_id === sameCollectiblePair.second_challenge_id
       && sameCollectibleTrackedRows[0].slot_order !== sameCollectibleTrackedRows[1].slot_order,
     "Two challenges for the same collectible must occupy two tracking slots together.",
+  );
+
+  const firstSameCollectibleGoal = (await db.query(
+    "select public.collectible_challenge_goal($1)::text as goal",
+    [sameCollectiblePair.first_challenge_id],
+  )).rows[0].goal;
+  await db.query(`
+    insert into public.user_collectible_challenge_progress(user_id,challenge_id,progress,completed_at,updated_at)
+    values($1,$2,$3::bigint,now(),now())
+    on conflict(user_id,challenge_id) do update set progress=excluded.progress,completed_at=excluded.completed_at,updated_at=excluded.updated_at
+  `, [userId, sameCollectiblePair.first_challenge_id, firstSameCollectibleGoal]);
+  const afterSiblingCompletion = (await db.query(
+    "select public.get_collectible_player_snapshot() as snapshot",
+  )).rows[0].snapshot;
+  const remainingAfterSiblingCompletion = afterSiblingCompletion.tracked.map((row) => row.challenge_id);
+  check(
+    !remainingAfterSiblingCompletion.includes(sameCollectiblePair.first_challenge_id)
+      && remainingAfterSiblingCompletion.includes(sameCollectiblePair.second_challenge_id),
+    "Completing one tracked challenge must release only that challenge's slot while the same-collectible sibling remains tracked.",
   );
 
   await db.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);

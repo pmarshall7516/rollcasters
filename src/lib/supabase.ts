@@ -44,6 +44,15 @@ import {
   pendingShopPurchaseError,
   shopPurchaseRpcErrorDisposition,
 } from "./shop";
+import {
+  applyLocalChallengeEvents,
+  emptyLocalChallengePreviewState,
+  mergeLocalChallengeSnapshot,
+  readLocalChallengePreviewState,
+  trackLocalChallenge,
+  untrackLocalChallenge,
+  writeLocalChallengePreviewState,
+} from "./local-challenge-preview";
 import { resolveDesktopProfile } from "./desktop-profile";
 import {
   isLocalCatalogPreview,
@@ -51,6 +60,7 @@ import {
   shouldSyncLocalServerCompatibility,
   type LocalServerCompatibilityIdentity,
 } from "./local-release-preview";
+import { isTrackableChallenge } from "./collectibles";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
@@ -85,6 +95,7 @@ const liveAssetVersions = new Map<string, string>();
 const gameplaySessionId = createRequestId();
 let activeGameplaySessionId: string | null = null;
 let latestPlayerStateRevision: bigint | null = null;
+let localPreviewUserId: string | null = null;
 const playerMutationOutbox = createPlayerMutationOutbox<null>(null);
 
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
@@ -148,6 +159,28 @@ function requireClient(): SupabaseClient {
     throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY.");
   }
   return supabase;
+}
+
+function localChallengePreviewStorage(): Storage | null {
+  if (!localCatalogPreview || typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function localChallengePreviewStorageKey(): string {
+  const userKey = localPreviewUserId ?? "anonymous";
+  return `${desktopProfile.dataNamespace}.challenge-preview.${gameCatalogReleaseId}.${userKey}`;
+}
+
+function readLocalChallengeState() {
+  return readLocalChallengePreviewState(localChallengePreviewStorage(), localChallengePreviewStorageKey());
+}
+
+function writeLocalChallengeState(state: ReturnType<typeof emptyLocalChallengePreviewState>): void {
+  writeLocalChallengePreviewState(localChallengePreviewStorage(), localChallengePreviewStorageKey(), state);
 }
 
 export type GameUpdateStatus = {
@@ -388,7 +421,7 @@ async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
   };
 }
 
-export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
+async function getServerCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
   const client = requireClient();
   const [snapshotResult, lootboxResult] = await Promise.all([
     client.rpc("get_collectible_player_snapshot"),
@@ -409,6 +442,13 @@ export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerS
   };
 }
 
+export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
+  const serverSnapshot = await getServerCollectiblePlayerSnapshot();
+  return localCatalogPreview
+    ? mergeLocalChallengeSnapshot(serverSnapshot, readLocalChallengeState())
+    : serverSnapshot;
+}
+
 async function loadCombatEffects(): Promise<CombatEffectRow[]> {
   const { data, error } = await requireClient()
     .from("combat_effects_v1")
@@ -427,19 +467,23 @@ export async function getSession(): Promise<Session | null> {
   if (error) throw error;
   if (data.session && !(await isGameAccount(client))) {
     await client.auth.signOut({ scope: "local" });
+    localPreviewUserId = null;
     throw new Error("This is a dev-tool account. Sign in with a dedicated Rollcasters game account.");
   }
+  localPreviewUserId = data.session?.user.id ?? null;
   return data.session;
 }
 
 export async function signIn(email: string, password: string): Promise<void> {
   const client = requireClient();
-  const { error } = await client.auth.signInWithPassword({ email, password });
+  const { data, error } = await client.auth.signInWithPassword({ email, password });
   if (error) throw error;
   if (!(await isGameAccount(client))) {
     await client.auth.signOut({ scope: "local" });
+    localPreviewUserId = null;
     throw new Error("This is a dev-tool account. Sign in with a dedicated Rollcasters game account.");
   }
+  localPreviewUserId = data.user?.id ?? data.session?.user.id ?? null;
 }
 
 async function isGameAccount(client: SupabaseClient): Promise<boolean> {
@@ -456,6 +500,7 @@ export async function signUp(email: string, password: string, username: string):
     options: { data: { username } },
   });
   if (error) throw error;
+  localPreviewUserId = data.user?.id ?? data.session?.user.id ?? null;
   return Boolean(data.session);
 }
 
@@ -468,6 +513,7 @@ export async function signOut(): Promise<void> {
   await flushPlayerMutations().catch(() => undefined);
   const { error } = await client.auth.signOut();
   if (error) throw error;
+  localPreviewUserId = null;
 }
 
 export type GameplaySessionResult = {
@@ -915,7 +961,12 @@ function playerStateFromBootstrap(payload: PlayerBootstrapPayload): PlayerState 
     unlockedAbilityIdsByRollcaster,
     dungeonProgress: payload.dungeon_progress ?? [],
     dungeonRunHistory: payload.dungeon_run_history ?? [],
-    collectibleSnapshot: { ...emptyCollectibleSnapshot(), ...(payload.collectible_snapshot ?? {}) },
+    collectibleSnapshot: localCatalogPreview
+      ? mergeLocalChallengeSnapshot(
+        { ...emptyCollectibleSnapshot(), ...(payload.collectible_snapshot ?? {}) },
+        readLocalChallengeState(),
+      )
+      : { ...emptyCollectibleSnapshot(), ...(payload.collectible_snapshot ?? {}) },
     playerStateRevision: payload.player_state_revision,
     serverCatalogVersion: payload.server_catalog_version,
   };
@@ -1439,6 +1490,15 @@ export function resolveDungeonRunWithTimeout(runId: string): Promise<void> {
 }
 
 export async function trackCollectibleChallenge(challengeId: string): Promise<void> {
+  if (localCatalogPreview) {
+    const catalog = await loadCatalog();
+    const challenge = catalog.collectibleUnlockChallenges.find((row) => row.id === challengeId);
+    if (!challenge || !isTrackableChallenge(challenge, catalog.unlockChallengeTemplates)) {
+      throw new Error("LOCAL_PREVIEW_CHALLENGE_NOT_TRACKABLE");
+    }
+    writeLocalChallengeState(trackLocalChallenge(readLocalChallengeState(), challenge));
+    return;
+  }
   if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
     await callVersionedPlayerMutationRpc("track_collectible_challenge_v2", { p_challenge_id: challengeId });
     return;
@@ -1448,6 +1508,10 @@ export async function trackCollectibleChallenge(challengeId: string): Promise<vo
 }
 
 export async function untrackCollectibleChallenge(challengeId: string): Promise<void> {
+  if (localCatalogPreview) {
+    writeLocalChallengeState(untrackLocalChallenge(readLocalChallengeState(), challengeId));
+    return;
+  }
   if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
     await callVersionedPlayerMutationRpc("untrack_collectible_challenge_v2", { p_challenge_id: challengeId });
     return;
@@ -1663,6 +1727,19 @@ export async function submitCollectibleCombatEvents(
   events: CombatProgressEvent[],
 ): Promise<CollectiblePlayerSnapshot> {
   if (events.length === 0) return getCollectiblePlayerSnapshot();
+  if (localCatalogPreview) {
+    const [catalog, serverSnapshot] = await Promise.all([
+      loadCatalog(),
+      getServerCollectiblePlayerSnapshot(),
+    ]);
+    const nextState = applyLocalChallengeEvents(
+      readLocalChallengeState(),
+      catalog.collectibleUnlockChallenges,
+      events,
+    );
+    writeLocalChallengeState(nextState);
+    return mergeLocalChallengeSnapshot(serverSnapshot, nextState);
+  }
   const { data, error } = await requireClient().rpc("submit_collectible_combat_events", {
     p_run_id: runId,
     p_turn_number: turnNumber,

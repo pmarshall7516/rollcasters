@@ -12,6 +12,14 @@ npm run dev:catalog -- --release YYYY.MM.DD.N
 
 This serves the candidate Catalog and artwork locally while leaving the Production Catalog pointer and Stable Game Update unchanged. The browser harness uses the active Production tuple only for server RPC compatibility; rendered Catalog data, client runtime, and asset paths come from the selected local release. Pass `--game-version X.Y.Z` when the candidate is not recorded in `release/game-update-candidate.json`. New server-authoritative content is not active until the matching Game Update is published and activated.
 
+While `VITE_GAME_LOCAL_CATALOG_PREVIEW=true` is enabled, tracked unlock
+challenges from the selected candidate also use an account-and-catalog-scoped
+local preview state. This allows unpublished challenge IDs to be tracked and
+to receive local combat progress without weakening Production RPC validation.
+That preview progress is not written to the server and does not grant a live
+collectible; publish and activate the matching Game Update to test the
+server-authoritative unlock path.
+
 Before packaging, stage an immutable verified Catalog Release with `npm run desktop:stage-catalog -- <release-directory>`. Stable packaging requires protected environment configuration, `ROLLCASTERS_GAME_VERSION`, the correct Supabase project reference, and the paired `TAURI_UPDATER_PUBLIC_KEY`; signing private keys are supplied only through protected CI.
 
 For a packaged pre-publication playtest, build the local preview against the exact
