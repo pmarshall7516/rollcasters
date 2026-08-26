@@ -1402,6 +1402,38 @@ export async function recordDungeonBattleResult(
   };
 }
 
+type DungeonResultAttempt = {
+  attempt: number;
+  maxAttempts: number;
+};
+
+export async function recordDungeonBattleResultWithRecovery(
+  run: DungeonRunSnapshot,
+  submission: Parameters<typeof recordDungeonBattleResult>[1],
+  requestId = createRequestId(),
+  onAttempt?: (attempt: DungeonResultAttempt) => void,
+): Promise<DungeonBattleResult> {
+  const maxAttempts = 3;
+  let lastError: unknown = new Error("Encounter result could not be saved.");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    onAttempt?.({ attempt, maxAttempts });
+    if (attempt > 1) await dungeonEntryDelay(400 * 2 ** (attempt - 2));
+    try {
+      // Keep the request ID stable. If the server committed before a timeout
+      // or lost response, the retry returns the original result instead of
+      // applying rewards twice.
+      return await withDungeonEntryTimeout(
+        recordDungeonBattleResult(run, submission, requestId),
+        "result",
+      );
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableDungeonEntryError(error) || attempt === maxAttempts) throw error;
+    }
+  }
+  throw lastError;
+}
+
 export async function getActiveDungeonRun(): Promise<ActiveDungeonRun | null> {
   const { data, error } = await requireClient().rpc("get_active_dungeon_run_v2");
   if (error) throw error;

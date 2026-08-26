@@ -1603,6 +1603,10 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .modal.abandon-dungeon-modal { width: min(460px, calc(100vw - 32px)); height: auto; min-height: 0; }
 .modal.abandon-dungeon-modal .modal-header { justify-content: center; border-bottom: 0; text-align: center; }
 .modal.abandon-dungeon-modal .abandon-dungeon-actions { justify-content: center; border-top: 0; }
+.modal.dungeon-result-save-modal { width: min(560px, calc(100vw - 32px)); height: auto; min-height: 0; max-height: calc(100vh - 32px); }
+.dungeon-result-save-warning { display: flex; align-items: flex-start; gap: 10px; margin: 4px 0 16px; padding: 14px 16px; border: 1px solid rgb(255 110 134 / 42%); border-radius: 12px; background: rgb(90 28 54 / 24%); color: var(--danger); text-align: left; }
+.dungeon-result-save-warning p { margin: 0; color: var(--text-secondary); line-height: 1.5; }
+.dungeon-result-save-actions { justify-content: flex-end; margin-top: 0; }
 .abandon-dungeon-actions { margin-top: 4px; }
 .abandon-dungeon-actions > button { min-width: 84px; }
 .candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }

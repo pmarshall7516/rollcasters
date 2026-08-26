@@ -943,6 +943,7 @@ export function restoreDungeonRunState(
     Array.isArray(persisted.events) ? persisted.events : [],
     typeof persisted.eventCursor === "number" ? persisted.eventCursor : -1,
   );
+  const restoredEnemyRollcasterType = enemyEncounterForBattle(run)?.enemyRollcaster?.eclipse_order_type;
   return {
     ...(persisted as DungeonRunState),
     run,
@@ -951,6 +952,10 @@ export function restoreDungeonRunState(
     battle: {
       ...persisted.battle,
       catalog,
+      // Older saved battles predate the explicit rank field. Recover it from
+      // the server-owned encounter so a resumed win still emits the context
+      // required by Defeat Rollcaster Type challenges.
+      enemyRollcasterType: persisted.battle.enemyRollcasterType ?? restoredEnemyRollcasterType,
       presentationEvents: persisted.battle.presentationEvents ?? [],
       effectActivations: persisted.battle.effectActivations ?? [],
       effectActivationKeys: persisted.battle.effectActivationKeys ?? [],
@@ -965,6 +970,7 @@ export function restoreDungeonRunState(
       ? {
           ...persisted.pendingBattle,
           catalog,
+          enemyRollcasterType: persisted.pendingBattle.enemyRollcasterType ?? restoredEnemyRollcasterType,
           presentationEvents: persisted.pendingBattle.presentationEvents ?? [],
           effectActivations: persisted.pendingBattle.effectActivations ?? [],
           effectActivationKeys: persisted.pendingBattle.effectActivationKeys ?? [],

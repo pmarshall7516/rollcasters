@@ -100,6 +100,7 @@
     "test:ownership-projection": "tsc scripts/ownership-projection-tests.ts src/lib/collectibles.ts src/lib/collection-diversity.ts src/lib/types.ts --outDir /tmp/rollcasters-ownership-projection-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-ownership-projection-tests/scripts/ownership-projection-tests.js",
     "test:player-mutations": "tsc scripts/player-mutations-tests.ts src/lib/player-mutations.ts --outDir /tmp/rollcasters-player-mutation-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-player-mutation-tests/scripts/player-mutations-tests.js",
     "test:dungeon-entry:source": "node scripts/dungeon-entry-source-tests.mjs",
+    "test:dungeon-result-recovery:source": "node scripts/dungeon-result-recovery-source-tests.mjs",
     "test:dungeon-result-timeout:db": "node scripts/dungeon-result-timeout-db-tests.mjs",
     "test:dungeon-home-exit-race:source": "node scripts/dungeon-home-exit-race-source-tests.mjs",
     "test:dungeon-exit:source": "node scripts/dungeon-exit-source-tests.mjs",

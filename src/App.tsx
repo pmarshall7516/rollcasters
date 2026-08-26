@@ -52,7 +52,7 @@ import {
   loadAppData,
   openLootbox,
   purchaseShopEntry,
-  recordDungeonBattleResult,
+  recordDungeonBattleResultWithRecovery,
   redeemPromoCode,
   resolveDungeonRunWithTimeout,
   releaseGameplaySession,
@@ -1629,13 +1629,14 @@ export function App() {
           controlBindings={controlBindings}
           setCombat={setCombat}
           onCombatTurnResolved={(runId, turnNumber, events) => queueCombatProgressEvents(runId, turnNumber, events)}
-          onBattleResult={async (resolved) => {
+          onBattleResult={async (resolved, requestId) => {
             setLoading(true);
             setError(null);
             try {
-              const result = await recordDungeonBattleResult(
+              const result = await recordDungeonBattleResultWithRecovery(
                 resolved.run,
                 dungeonBattleSubmission(resolved),
+                requestId,
               );
               if (result.run.status === "won") {
                 const activatedRelicIds = [...new Set(resolved.battle.runtimeEffects
@@ -1682,7 +1683,14 @@ export function App() {
               // run and reward state needed for this immediate transition.
               void refresh("combat", { showLoading: false });
             } catch (resultError) {
-              setError(errorMessage(resultError, "Unable to record the encounter result."));
+              // Keep the resolved battle state durable while the result RPC is
+              // pending. CombatScreen owns the visible recovery dialog, so a
+              // timeout cannot become a softlocking app banner or expose raw
+              // server text to the player.
+              combatSaveDisabledRef.current = false;
+              combatSaveSignatureRef.current = null;
+              scheduleCombatSave();
+              throw resultError;
             } finally {
               setLoading(false);
             }
@@ -1716,6 +1724,13 @@ export function App() {
 }
 
 function errorMessage(error: unknown, fallback: string): string {
+  const raw = rawErrorMessage(error, fallback);
+  return isStatementTimeoutMessage(raw)
+    ? "The save service is busy right now. Please try again."
+    : raw;
+}
+
+function rawErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
   if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
     return error.message;
@@ -1723,12 +1738,16 @@ function errorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isStatementTimeoutMessage(message: string): boolean {
+  return message.toLowerCase().includes("canceling statement due to statement timeout");
+}
+
 function dungeonEntryErrorMessage(error: unknown): string {
-  const raw = errorMessage(error, "Unable to start dungeon.");
-  if (raw.includes("DUNGEON_ENTRY_TIMEOUT") || raw.toLowerCase().includes("canceling statement due to statement timeout")) {
+  const raw = rawErrorMessage(error, "Unable to start dungeon.");
+  if (raw.includes("DUNGEON_ENTRY_TIMEOUT") || isStatementTimeoutMessage(raw)) {
     return "Dungeon entry is taking longer than expected. No combat was started; please try again.";
   }
-  return raw;
+  return errorMessage(error, "Unable to start dungeon.");
 }
 
 function applyAuthoritativeDungeonEffectSnapshot(
@@ -5379,7 +5398,7 @@ function CombatScreen({
   controlBindings: ControlBindings;
   setCombat: Dispatch<SetStateAction<DungeonRunState | null>>;
   onCombatTurnResolved: (runId: string, turnNumber: number, events: DungeonRunState["battle"]["turnEvents"]) => void;
-  onBattleResult: (state: DungeonRunState) => Promise<void>;
+  onBattleResult: (state: DungeonRunState, requestId: string) => Promise<void>;
   onBack: () => void;
   onHome: () => void;
   onReplay: () => void;
@@ -5406,6 +5425,8 @@ function CombatScreen({
   const [loadingDots, setLoadingDots] = useState(1);
   const [recordingResult, setRecordingResult] = useState(false);
   const [resultAttempt, setResultAttempt] = useState(0);
+  const [resultError, setResultError] = useState<string | null>(null);
+  const resultRequestIdRef = useRef<string | null>(null);
   const [diceSettled, setDiceSettled] = useState(true);
   const [eventSettled, setEventSettled] = useState(true);
   const [visibleNarration, setVisibleNarration] = useState("");
@@ -5753,9 +5774,21 @@ function CombatScreen({
   }, [combat.run.battleIndex, battle.turn, combat.phase === "select_player_actions"]);
 
   useLayoutEffect(() => {
-    if (combat.phase !== "battle_result" || recordingResult) return;
+    if (combat.phase !== "battle_result") {
+      resultRequestIdRef.current = null;
+      setResultError(null);
+      return;
+    }
+    if (recordingResult) return;
+    const requestId = resultRequestIdRef.current ?? createRequestId();
+    resultRequestIdRef.current = requestId;
     setRecordingResult(true);
-    void onBattleResult(combat).finally(() => setRecordingResult(false));
+    void onBattleResult(combat, requestId)
+      .catch((error) => {
+        console.warn("Unable to save the encounter result; retry remains available.", error);
+        setResultError("We couldn’t save this encounter result yet. Your completed battle is still here; retry saving to continue.");
+      })
+      .finally(() => setRecordingResult(false));
   }, [combat.phase, combat.run.battleIndex, resultAttempt]);
 
   useEffect(() => {
@@ -6349,13 +6382,6 @@ function CombatScreen({
           {!loadingNarration && !manaRefundNarration && (["event_playback", "roll_result", "entry_dialogue", "outcome_dialogue"].includes(combat.phase)) && <ChevronRight size={24} aria-label="Next" />}
         </button>
 
-        {combat.phase === "battle_result" && !recordingResult && (
-          <div className="combat-command-row">
-            <button className="primary-button" data-combat-control="true" data-combat-focus-role="retry" onClick={() => setResultAttempt((attempt) => attempt + 1)}>
-              <RefreshCw size={17} /> Retry Save
-            </button>
-          </div>
-        )}
       </div>
       {combat.phase === "encounter_rewards" && combat.lastBattleRewards && (
         <CombatResultDialog
@@ -6372,6 +6398,15 @@ function CombatScreen({
           combat={combat}
           onToggle={(id) => setCombat((current) => current ? toggleDungeonLead(current, id) : current)}
           onConfirm={() => setCombat((current) => current ? confirmDungeonLeads(current) : current)}
+        />
+      )}
+      {combat.phase === "battle_result" && resultError && (
+        <DungeonResultSaveDialog
+          busy={recordingResult}
+          onRetry={() => {
+            setResultError(null);
+            setResultAttempt((attempt) => attempt + 1);
+          }}
         />
       )}
     </section>
@@ -7380,6 +7415,29 @@ function DungeonOutcomeScreen({ data, combat, controlBindings, complete, keyboar
         {complete && combat.nextDungeonId && <button className="primary-button next-dungeon-button" data-combat-control="true" data-combat-focus-role="outcome" onClick={() => onNextDungeon(combat.nextDungeonId!)}>Next Dungeon <ChevronRight size={16} /></button>}
       </div>
     </section>
+  );
+}
+
+function DungeonResultSaveDialog({ busy, onRetry }: { busy: boolean; onRetry: () => void }) {
+  return (
+    <Modal
+      eyebrow="Encounter complete"
+      title="Encounter result needs a retry"
+      description="Your completed battle is still open on this screen. Keep the game open and retry the save so your rewards and Dungeon progress can be recorded."
+      onClose={() => undefined}
+      className="dungeon-result-save-modal"
+      dismissible={false}
+    >
+      <div className="dungeon-result-save-warning" role="alert">
+        <AlertTriangle size={24} aria-hidden="true" />
+        <p>We’re having trouble reaching the save service. We’ll keep your battle here until it saves successfully.</p>
+      </div>
+      <div className="dialog-actions dungeon-result-save-actions">
+        <button type="button" className="primary-button" disabled={busy} onClick={onRetry}>
+          {busy ? "Saving…" : <><RefreshCw size={17} /> Retry Save</>}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
