@@ -10,8 +10,8 @@ assert.match(
 );
 assert.match(
   app,
-  /const resolved = submitDungeonActions\(combat, selectedActions\);[\s\S]*?onCombatTurnResolved\(combat\.run\.id, combat\.battle\.turn, resolved\.battle\.turnEvents\);/,
-  "Every resolved combat turn must submit its normalized progress events before the turn is discarded.",
+  /const resolved = submitDungeonActions\(combat, selectedActions\);[\s\S]*?onCombatTurnResolved\(combat\.run\.id, combat\.battle\.turn, \(resolved\.pendingBattle \?\? resolved\.battle\)\.turnEvents\);/,
+  "Every resolved combat turn must submit the normalized events from the pending resolved battle before the turn is discarded.",
 );
 assert.match(
   app,
