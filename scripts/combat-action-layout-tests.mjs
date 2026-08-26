@@ -150,6 +150,22 @@ try {
   );
   await page.screenshot({ path: path.join(outputDir, "skills.png"), animations: "disabled", fullPage: true });
 
+  const skillSizing = [];
+  for (const viewport of [{ width: 900, height: 720 }, { width: 1920, height: 1080 }]) {
+    await page.setViewportSize(viewport);
+    skillSizing.push(await page.evaluate(() => {
+      const title = document.querySelector(".combat-skill-actions .skill-title");
+      const icon = title?.querySelector(".asset-icon");
+      return {
+        titleFontSize: title ? Number.parseFloat(getComputedStyle(title).fontSize) : 0,
+        iconSize: icon ? icon.getBoundingClientRect().width : 0,
+      };
+    }));
+  }
+  check(skillSizing[0].titleFontSize >= 10 && skillSizing[0].iconSize >= 17, `Narrow-PC skill labels must remain readable: ${JSON.stringify(skillSizing)}`);
+  check(skillSizing[1].titleFontSize > skillSizing[0].titleFontSize && skillSizing[1].iconSize > skillSizing[0].iconSize, `Skill labels and Element logos must scale up with the available desktop space: ${JSON.stringify(skillSizing)}`);
+  await page.setViewportSize({ width: 382, height: 119 });
+
   const swapSelection = await page.evaluate(() => {
     const column = document.querySelector(".player-column");
     column.style.gridTemplateRows = "178px 78px 78px";

@@ -10,6 +10,8 @@ function assertEqual(actual: unknown, expected: unknown, message: string) {
   }
 }
 
+assertEqual(DEFAULT_WINDOWED_SIZE, { width: 1600, height: 900 }, "Windowed mode must use the larger 16:9 default frame.");
+
 const desktopLimits = limitsForWorkArea({ x: 0, y: 0, width: 1920, height: 1040 });
 assertEqual(desktopLimits, {
   minWidth: DEFAULT_WINDOWED_SIZE.width,
@@ -32,6 +34,6 @@ const grownNorthWest = resizeFromCorner(startNorthWest, "north-west", -320, -180
 assertEqual(grownNorthWest, { x: 0, y: 140, width: 1600, height: 900 }, "North-west resizing must preserve the bottom-right anchor and aspect ratio.");
 
 const minimumNorthEast = resizeFromCorner(startNorthWest, "north-east", -2000, 2000, desktopLimits);
-assertEqual(minimumNorthEast, { x: 320, y: 320, width: 1280, height: 720 }, "Corner resizing must clamp to the minimum clean frame.");
+assertEqual(minimumNorthEast, { x: 320, y: 140, width: 1600, height: 900 }, "Corner resizing must clamp to the minimum clean frame.");
 
 console.log("Desktop window geometry and preference checks passed.");

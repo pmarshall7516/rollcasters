@@ -21,8 +21,10 @@ import {
   rollManaDie,
   resolveCombatActions,
   MULTI_TARGET_DAMAGE_MULTIPLIER,
+  MAX_STATUSES_PER_CRITTER,
   skillTargets,
   skillAvailability,
+  splitCombatNarration,
 } from "../src/lib/game.js";
 import {
   advanceDungeonEvent,
@@ -2644,6 +2646,47 @@ indefiniteCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "indefinite
 const indefinite = takeTurn(battle(indefiniteCatalog, makePlayer(), "indefinite-status"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
 check(indefinite.statuses[0].duration === null, "Indefinite Status applications must not synthesize a Status-owned duration.");
 
+const statusLimitCatalog = makeCatalog();
+const extraStatusIds = ["status-four", "status-five", "status-six"];
+statusLimitCatalog.statuses.push(...extraStatusIds.map((id, index) => ({
+  id,
+  name: id.replace("status-", "Status ").replace(/^./, (letter) => letter.toUpperCase()),
+  description: `${id}.`,
+  asset_path: null,
+  sort_order: 10 + index,
+  version: 1,
+})));
+const statusLimitIds = ["finite", "aura", "stun", ...extraStatusIds];
+statusLimitCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "status-limit-application",
+  "apply_status",
+  { status_id: statusLimitIds[MAX_STATUSES_PER_CRITTER], chance: 1, target: "self", indefinite: true },
+)];
+let statusLimitState = battle(statusLimitCatalog, makePlayer(), "status-limit");
+for (const statusId of statusLimitIds.slice(0, MAX_STATUSES_PER_CRITTER)) statusLimitState = simApplyStatus(statusLimitState, statusId, "p1", null);
+check(
+  statusLimitState.statuses.filter((status) => status.holderKey === "p1").length === MAX_STATUSES_PER_CRITTER,
+  `A Critter must be able to carry exactly ${MAX_STATUSES_PER_CRITTER} simultaneous Statuses.`,
+);
+const rejectedLimitStatus = simApplyStatus(statusLimitState, statusLimitIds[MAX_STATUSES_PER_CRITTER]!, "p1", null);
+check(
+  rejectedLimitStatus.statuses.filter((status) => status.holderKey === "p1").length === MAX_STATUSES_PER_CRITTER,
+  `A sixth Status must be rejected when a Critter already has ${MAX_STATUSES_PER_CRITTER} Statuses.`,
+);
+const failedLimitSkill = takeTurn(statusLimitState, [{ actorKey: "p1", type: "skill", skillId: "mark", cost: 0 }]);
+const limitFailureNarrations = failedLimitSkill.presentationEvents.map((event) => event.message);
+check(
+  failedLimitSkill.statuses.filter((status) => status.holderKey === "p1").length === MAX_STATUSES_PER_CRITTER
+    && JSON.stringify(limitFailureNarrations.slice(-2)) === JSON.stringify([
+      `Your Player One already has the maximum of ${MAX_STATUSES_PER_CRITTER} statuses.`,
+      "Mark failed.",
+    ])
+    && !failedLimitSkill.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "mark"),
+  `A Skill that exceeds the Status limit must fail atomically with a clear limit message. Received: ${JSON.stringify(limitFailureNarrations)}`,
+);
+
 const selectedCatalog = makeCatalog();
 selectedCatalog.effectsBySkill.wave = [effect("skill", "wave", "target-status", "apply_status", { status_id: "finite", chance: 1, target: "target_enemies", indefinite: false, turns: 3 })];
 const selected = takeTurn(battle(selectedCatalog, makePlayer(), "target-enemies"), [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }]);
@@ -3021,13 +3064,13 @@ incrementalStatusState = startTurn(incrementalStatusState);
 check(incrementalStatusState.playerUnits[0].stats.atk === 27, "Spacing 2 must apply an incremental Status Stat Modifier every other turn.");
 const incrementalTriggerEvent = incrementalStatusState.presentationEvents.find((event) => event.kind === "status" && event.message.includes("ATK"));
 const incrementalCountdownNarrations = incrementalStatusState.presentationEvents
-  .filter((event) => event.kind === "status" && (event.message.includes("affected by Aura") || event.message.includes("turn")))
+  .filter((event) => event.kind === "status" && (event.message.includes("affected by Aura") || event.message.toLowerCase().includes("turn")))
   .map((event) => event.message);
 check(Boolean(incrementalTriggerEvent), "A start-of-turn Status stat change must emit a presentation event for text and animation playback.");
 check(
   incrementalCountdownNarrations.length === 2
     && incrementalCountdownNarrations[0]?.includes("affected by Aura.")
-    && incrementalCountdownNarrations[1] === "2 turns remain.",
+    && incrementalCountdownNarrations[1] === "2 Turns remain.",
   `A finite start-of-turn Status checkup must narrate its remaining duration as separate steps. Received: ${JSON.stringify(incrementalCountdownNarrations)}`,
 );
 check(
@@ -3095,6 +3138,38 @@ allySkipCatalog.effectsByStatus.stun = [effect("status", "stun", "ally-skip", "s
 let allySkipped = takeTurn(battle(allySkipCatalog, makePlayer(), "ally-skip"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
 allySkipped = takeTurn(allySkipped, [{ actorKey: "p2", type: "block", cost: 2 }], 10);
 check(allySkipped.playerMana === 8 && !allySkipped.playerUnits[1].blocking, "Status skip targeting must resolve holder-relative recipients, cancel Swap/Block/Skill, and retain the submitted Mana cost.");
+
+for (const [statusId, statusName] of [["paralysis", "Paralysis"], ["frostbite", "Frostbite"]] as const) {
+  const statusSkipCatalog = makeCatalog();
+  statusSkipCatalog.statuses.push({ id: statusId, name: statusName, description: `${statusName}.`, asset_path: null, sort_order: 10, version: 1 });
+  statusSkipCatalog.effectsByStatus[statusId] = [effect("status", statusId, `${statusId}-skip`, "skip_action_chance", { chance: 1, combat_action: "skill", target: "status_holder" })];
+  const afflicted = simApplyStatus(battle(statusSkipCatalog, makePlayer(), `${statusId}-skip`), statusId, "p1");
+  const statusSkipped = takeTurn(afflicted, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }], 10);
+  const skipNarration = statusSkipped.presentationEvents.at(-1)?.message;
+  check(skipNarration === `Your Player One could not move due to ${statusName}!`, `${statusName} action skips must use the Status name and explain that the Critter could not move.`);
+  check(!statusSkipped.presentationEvents.some((event) => /reserved mana|mana was lost/i.test(event.message)), `${statusName} action skips must not narrate reserved Mana as lost.`);
+}
+
+const noTargetCatalog = makeCatalog();
+const noTargetState = battle(noTargetCatalog, makePlayer(), "no-target-fizzle");
+const noTargetResult = takeTurn({
+  ...noTargetState,
+  opponentUnits: noTargetState.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, hp: 1 } : unit),
+}, [
+  { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 },
+  { actorKey: "p2", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 },
+], 10);
+const noTargetNarrations = noTargetResult.presentationEvents.map((event) => event.message);
+check(
+  JSON.stringify(noTargetNarrations.slice(-2)) === JSON.stringify(["Your Player Two's Strike fizzled.", "It had no valid target."]),
+  "A Skill with no valid target must fizzle without mentioning reserved Mana.",
+);
+check(!noTargetResult.presentationEvents.some((event) => /reserved mana|mana was lost/i.test(event.message)), "A no-target fizzle must not narrate reserved Mana as lost.");
+
+check(
+  JSON.stringify(splitCombatNarration("your critter moved; the enemy critter was hit.")) === JSON.stringify(["Your critter moved.", "The enemy critter was hit."]),
+  "Every narration step must begin with a capital letter, including semicolon-separated authored text.",
+);
 
 const slotCatalog = makeCatalog();
 let slotted = battle(slotCatalog, makePlayer(), "slot-following");

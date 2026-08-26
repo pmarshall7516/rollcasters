@@ -15,6 +15,7 @@ function icon(label, color) {
 
 const toxic = icon("T", "#5b9c55");
 const dazed = icon("D", "#8a61d8");
+const marked = icon("M", "#b47842");
 const critter = icon("C", "#3d9ca5");
 const browser = await chromium.launch({ headless: true });
 
@@ -35,9 +36,10 @@ try {
     <section class="battlefield"><div class="battle-column"><article class="battle-unit">
       <span class="combat-sprite-stack">
         <span class="combat-sprite-frame critter-combat-frame"><span class="sprite"><img class="preview-art" src="${critter}" alt="Bloomling"></span></span>
-        <span class="status-icon-row" aria-label="Active statuses">
+        <span class="status-icon-row crowded" aria-label="Active statuses">
           <span class="tooltip-anchor" tabindex="0" data-status="toxic"><span class="status-icon"><span class="asset-icon"><img class="asset-icon__image" src="${toxic}" alt="Toxic"></span><small>2</small></span><span class="game-tooltip"><span class="tooltip-heading"><strong>Toxic</strong></span><span class="tooltip-description"><strong>Poison:</strong> Deals 8% maximum HP damage at the end of each turn.</span><span class="status-duration">2 turns remaining</span></span></span>
-          <span class="tooltip-anchor" tabindex="0" data-status="dazed"><span class="status-icon"><span class="asset-icon"><img class="asset-icon__image" src="${dazed}" alt="Dazed"></span><small>∞</small></span><span class="game-tooltip"><span class="tooltip-heading"><strong>Dazed</strong></span><span class="tooltip-description"><strong>Stagger:</strong> Has a 30% chance to skip any combat action.</span><span class="status-duration">Indefinite</span></span></span>
+          <span class="tooltip-anchor" tabindex="0" data-status="dazed"><span class="status-icon"><span class="asset-icon"><img class="asset-icon__image" src="${dazed}" alt="Dazed"></span></span><span class="game-tooltip"><span class="tooltip-heading"><strong>Dazed</strong></span><span class="tooltip-description"><strong>Stagger:</strong> Has a 30% chance to skip any combat action.</span><span class="status-duration">Indefinite</span></span></span>
+          <span class="tooltip-anchor" tabindex="0" data-status="marked"><span class="status-icon"><span class="asset-icon"><img class="asset-icon__image" src="${marked}" alt="Marked"></span></span><span class="game-tooltip"><span class="tooltip-heading"><strong>Marked</strong></span><span class="status-duration">Indefinite</span></span></span>
         </span>
       </span>
       <div class="battle-unit-info"><span class="critter-name"><strong>Bloomling</strong></span><p>Lv 8 / Mana 2–6: 4</p><div class="hp-bar"><span style="width:72%"></span></div><p>72 / 100 HP</p></div>
@@ -54,20 +56,44 @@ try {
   const geometry = await page.evaluate(() => {
     const frame = document.querySelector(".critter-combat-frame").getBoundingClientRect();
     const row = document.querySelector(".status-icon-row").getBoundingClientRect();
+    const statusIcons = [...document.querySelectorAll(".status-icon")].map((node) => {
+      const icon = node.querySelector(".asset-icon");
+      const style = getComputedStyle(node);
+      return {
+        width: node.getBoundingClientRect().width,
+        iconWidth: icon.getBoundingClientRect().width,
+        borderWidth: style.borderWidth,
+        background: style.backgroundColor,
+        boxShadow: style.boxShadow,
+        counter: Boolean(node.querySelector("small")),
+      };
+    });
     const icons = [...document.querySelectorAll("[data-status]")].map((node) => {
       const rect = node.getBoundingClientRect();
       return { id: node.dataset.status, left: rect.left, right: rect.right };
     });
-    return { frame: { top: frame.top, right: frame.right }, row: { top: row.top, right: row.right }, icons };
+    return { frame: { top: frame.top, right: frame.right }, row: { top: row.top, right: row.right }, icons, statusIcons };
   });
   if (!(geometry.row.top < geometry.frame.top && geometry.row.right >= geometry.frame.right)) {
     throw new Error(`Status icons are not anchored above the combat sprite's top-right corner: ${JSON.stringify(geometry)}`);
   }
-  if (!(geometry.icons[0].right < geometry.icons[1].left)) {
-    throw new Error(`Status icons overlap or are not consistently ordered: ${JSON.stringify(geometry.icons)}`);
+  if (!geometry.icons.every((icon, index) => index === 0 || geometry.icons[index - 1].left < icon.left)) {
+    throw new Error(`Status icons are not consistently ordered: ${JSON.stringify(geometry.icons)}`);
+  }
+  if (geometry.statusIcons[0].width <= 30 || geometry.statusIcons[0].iconWidth <= 30) {
+    throw new Error(`Status icons should be larger than the previous 30px container: ${JSON.stringify(geometry.statusIcons)}`);
+  }
+  if (geometry.statusIcons.some((status) => status.borderWidth !== "0px" || status.background !== "rgba(0, 0, 0, 0)" || status.boxShadow !== "none")) {
+    throw new Error(`Status icons should not be contained in a spritebox: ${JSON.stringify(geometry.statusIcons)}`);
+  }
+  if (geometry.statusIcons.map((status) => status.counter).join(",") !== "true,false,false") {
+    throw new Error(`Only finite Statuses should show a counter: ${JSON.stringify(geometry.statusIcons)}`);
+  }
+  if (geometry.icons[0].right <= geometry.icons[1].left || geometry.icons[1].right <= geometry.icons[2].left) {
+    throw new Error(`Crowded Status icons should overlap slightly while remaining in one row: ${JSON.stringify(geometry.icons)}`);
   }
   const statusNames = await page.locator("[data-status]").evaluateAll((nodes) => nodes.map((node) => node.dataset.status));
-  if (statusNames.join(",") !== "toxic,dazed") throw new Error(`Unexpected Status icon order: ${statusNames.join(",")}`);
+  if (statusNames.join(",") !== "toxic,dazed,marked") throw new Error(`Unexpected Status icon order: ${statusNames.join(",")}`);
 
   await page.locator("[data-status='toxic']").focus();
   await page.waitForTimeout(650);

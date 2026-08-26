@@ -10,7 +10,7 @@ export type WindowedLimits = {
 };
 
 export const WINDOW_ASPECT_RATIO = 16 / 9;
-export const DEFAULT_WINDOWED_SIZE: WindowedSize = { width: 1280, height: 720 };
+export const DEFAULT_WINDOWED_SIZE: WindowedSize = { width: 1600, height: 900 };
 
 export function normalizeSize(size: WindowedSize): WindowedSize {
   const width = Math.max(1, Math.round(size.width));

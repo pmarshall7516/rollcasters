@@ -107,6 +107,8 @@ export type CombatStatus = {
   effects: ResolvedEffectRef[];
 };
 
+export const MAX_STATUSES_PER_CRITTER = 5;
+
 export type RuntimeEffectInstance = {
   instanceId: string;
   sourceEffectId: string;
@@ -191,12 +193,20 @@ export type CombatPresentationEvent = {
  * clauses as separate sentences so they receive separate narration steps.
  */
 export function splitCombatNarration(message: string): string[] {
-  if (!message.includes(";")) return [message];
+  if (!message.includes(";")) return [capitalizeNarrationStep(message)];
   const parts = message.split(/\s*;\s*/).map((part) => part.trim()).filter(Boolean);
   return parts.map((part, index) => {
-    if (index === parts.length - 1 || /[.!?…]$/.test(part)) return part;
-    return `${part}.`;
+    const normalized = capitalizeNarrationStep(part);
+    if (index === parts.length - 1 || /[.!?…]$/.test(normalized)) return normalized;
+    return `${normalized}.`;
   });
+}
+
+function capitalizeNarrationStep(message: string): string {
+  const firstLetterIndex = message.search(/\p{L}/u);
+  if (firstLetterIndex < 0) return message;
+  const firstLetter = message.match(/\p{L}/u)?.[0] ?? "";
+  return `${message.slice(0, firstLetterIndex)}${firstLetter.toUpperCase()}${message.slice(firstLetterIndex + firstLetter.length)}`;
 }
 
 export type CombatPresentationState = {
@@ -307,10 +317,11 @@ export type CombatState = {
   actedSkillKeys?: string[];
   /** Critters that have been flinched and will lose their pending Skill action. */
   stunnedSkillKeys?: string[];
-  /** Set only while resolving a Skill that attempted a duplicate Status application. */
+  /** Set only while resolving a Skill that could not apply a Status. */
   statusApplicationFailure?: {
     statusId: string;
     holderKey: string;
+    reason: "duplicate" | "limit";
   };
 };
 
@@ -2203,7 +2214,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
     state = skip.state;
     if (skip.skipped) {
       if (action.type === "block") state = clearBlockStreak(state, actor.key);
-      const message = `${combatantPossessive(actor)} ${action.type} was skipped by ${skip.effectName}; the reserved mana was spent.`;
+      const message = `${combatantName(actor)} could not move due to ${skip.statusName}!`;
       return appendPresentationEvent(
         { ...state, log: [message, ...state.log] },
         { kind: "status", message, actorKey: actor.key, targetKeys: [actor.key], hpChanges: [] },
@@ -2325,7 +2336,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       : undefined;
     const targets = skillTargets(state, actor.key, skill, action.targetKey, targetSlot);
     if (!targets.length) {
-      const message = `${combatantPossessive(actor)} ${skill.name} had no valid target; the reserved mana was spent.`;
+      const message = `${combatantPossessive(actor)} ${skill.name} fizzled; it had no valid target.`;
       return appendPresentationEvent(
         { ...state, log: [message, ...state.log] },
         { kind: "other", message, actorKey: actor.key, targetKeys: [], skillId: skill.id, hpChanges: [] },
@@ -2507,14 +2518,18 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         ...actionContext,
       });
     }
-    const duplicateStatusFailure = (failedState: CombatState): CombatState | null => {
+    const statusApplicationFailure = (failedState: CombatState): CombatState | null => {
       const failure = failedState.statusApplicationFailure;
       if (!failure) return null;
       const failedStatus = failedState.statusRegistry[failure.statusId];
       const failedTarget = findUnit(skillStartState, failure.holderKey);
-      const message = failedTarget && failedStatus
-        ? `${combatantName(failedTarget)} is already afflicted with ${failedStatus.name}; ${skill.name} failed.`
-        : `${skill.name} failed because it could not apply a duplicate Status.`;
+      const message = failure.reason === "limit"
+        ? failedTarget
+          ? `${combatantName(failedTarget)} already has the maximum of ${MAX_STATUSES_PER_CRITTER} statuses; ${skill.name} failed.`
+          : `${skill.name} failed because the target already has the maximum of ${MAX_STATUSES_PER_CRITTER} statuses.`
+        : failedTarget && failedStatus
+          ? `${combatantName(failedTarget)} is already afflicted with ${failedStatus.name}; ${skill.name} failed.`
+          : `${skill.name} failed because it could not apply a duplicate Status.`;
       return appendPresentationEvent(
         {
           ...skillStartState,
@@ -2532,7 +2547,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         },
       );
     };
-    const failedBeforeSkillUseReactions = duplicateStatusFailure(next);
+    const failedBeforeSkillUseReactions = statusApplicationFailure(next);
     if (failedBeforeSkillUseReactions) return failedBeforeSkillUseReactions;
     // Resolve Skill-use subscriptions after the Skill itself. A Quick
     // Link-style stat change therefore cannot modify the Skill that caused it
@@ -2551,7 +2566,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       true,
     );
     next = resolveCombinedStunChance(next, stunAggregation);
-    const failedAfterSkillUseReactions = duplicateStatusFailure(next);
+    const failedAfterSkillUseReactions = statusApplicationFailure(next);
     if (failedAfterSkillUseReactions) return failedAfterSkillUseReactions;
     return recordSkillUseAndRestrictions(expireCurrentActionEffects(next, actor.key), actor.key, skill.id, effects);
   }
@@ -4122,7 +4137,13 @@ function applyStatus(
     // Status attempt; Skill-owned attempts are surfaced to the enclosing Skill
     // resolver so the entire Skill can be rolled back atomically.
     return context.failOnDuplicateStatus
-      ? { ...state, statusApplicationFailure: { statusId, holderKey } }
+      ? { ...state, statusApplicationFailure: { statusId, holderKey, reason: "duplicate" } }
+      : state;
+  }
+  const holderStatusCount = state.statuses.filter((item) => item.holderKey === holderKey).length;
+  if (holderStatusCount >= MAX_STATUSES_PER_CRITTER) {
+    return context.failOnDuplicateStatus
+      ? { ...state, statusApplicationFailure: { statusId, holderKey, reason: "limit" } }
       : state;
   }
   const adjustedDuration = duration !== null
@@ -4403,7 +4424,7 @@ function resolveSkipCheck(
   state: CombatState,
   actorKey: string,
   actionType: Exclude<CombatAction["type"], "skip">,
-): { state: CombatState; skipped: boolean; effectName: string } {
+): { state: CombatState; skipped: boolean; statusName: string } {
   let next = state;
   for (const instance of state.statuses) {
     const holder = findUnit(next, instance.holderKey);
@@ -4419,10 +4440,14 @@ function resolveSkipCheck(
       if (!targets.some((target) => target.key === actorKey)) continue;
       const chance = rollChance(next, Number(effect.parameters.chance));
       next = chance.state;
-      if (chance.activated) return { state: next, skipped: true, effectName: effect.name };
+      if (chance.activated) return {
+        state: next,
+        skipped: true,
+        statusName: next.statusRegistry[instance.statusId]?.name ?? effect.name,
+      };
     }
   }
-  return { state: next, skipped: false, effectName: "a status effect" };
+  return { state: next, skipped: false, statusName: "a status effect" };
 }
 
 function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey: string): CombatState {

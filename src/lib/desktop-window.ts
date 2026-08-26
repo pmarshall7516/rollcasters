@@ -54,8 +54,9 @@ export function readWindowPreferences(storage?: Storage | null): { mode: WindowM
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as { mode?: unknown; width?: unknown; height?: unknown };
     const mode = parsed.mode === "windowed" ? "windowed" : "fullscreen";
-    const width = finitePositiveNumber(parsed.width) ? parsed.width : DEFAULT_WINDOWED_SIZE.width;
-    const height = finitePositiveNumber(parsed.height) ? parsed.height : width / WINDOW_ASPECT_RATIO;
+    const isPreviousDefault = parsed.width === 1280 && parsed.height === 720;
+    const width = !isPreviousDefault && finitePositiveNumber(parsed.width) ? parsed.width : DEFAULT_WINDOWED_SIZE.width;
+    const height = !isPreviousDefault && finitePositiveNumber(parsed.height) ? parsed.height : width / WINDOW_ASPECT_RATIO;
     return { mode, windowedSize: normalizeSize({ width, height }) };
   } catch {
     return fallback;

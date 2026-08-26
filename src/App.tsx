@@ -2527,6 +2527,19 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
     }
   }
 
+  async function unlockAbility(owned: UserRollcaster, abilityId: string) {
+    setSaving(true);
+    setEquipError(null);
+    try {
+      await unlockRollcasterAbility(owned.id, abilityId);
+      await onRefresh();
+    } catch (err) {
+      setEquipError(errorMessage(err, "Unable to unlock this ability."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <><section className="home-layout">
       <div className="home-rollcaster-column">
@@ -2588,7 +2601,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
         })}
       </section>
     </section>
-    {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} error={equipError} onClose={() => setEquipTarget(null)} onEquip={equip} onUnlockSkill={unlockSkill} />}
+    {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} error={equipError} onClose={() => setEquipTarget(null)} onEquip={equip} onUnlockSkill={unlockSkill} onUnlockAbility={unlockAbility} />}
     </>
   );
 }
@@ -3045,7 +3058,7 @@ function useUnlockButtonFlash() {
   return { flashingId, flash };
 }
 
-function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSkill }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void> }) {
+function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSkill, onUnlockAbility }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void>; onUnlockAbility: (owned: UserRollcaster, abilityId: string) => Promise<void> }) {
   const player = data.player!;
   const title = target.type === "rollcaster" ? "Choose active Rollcaster" : `Equip ${target.type} · Slot ${target.slotIndex}`;
   const [query, setQuery] = useState("");
@@ -3054,6 +3067,9 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
   const normalizedQuery = query.trim().toLowerCase();
   const currentSkillOwner = target.type === "skill"
     ? player.critters.find((owned) => owned.id === target.owned.id) ?? target.owned
+    : null;
+  const currentAbilityOwner = target.type === "ability"
+    ? player.rollcasters.find((owned) => owned.id === target.owned.id) ?? target.owned
     : null;
   let content: React.ReactNode;
 
@@ -3196,16 +3212,87 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       </GameTooltip>;
     })}</div> : <p className="empty-state">No relics available</p>;
   } else if (target.type === "ability") {
-    const ids = player.unlockedAbilityIdsByRollcaster[target.owned.id] ?? [];
-    const rows = player.abilitySlots.filter((row) => row.user_rollcaster_id === target.owned.id);
+    const abilityOwner = currentAbilityOwner!;
+    const ids = new Set(player.unlockedAbilityIdsByRollcaster[abilityOwner.id] ?? []);
+    const rows = player.abilitySlots.filter((row) => row.user_rollcaster_id === abilityOwner.id);
     const current = rows.find((row) => row.slot_index === target.slotIndex)?.ability_id;
-    const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex).map((row) => row.ability_id));
-    const eligible = ids.map((id) => byId(data.catalog.rollcasterAbilities, id)).filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
-    content = eligible.length ? <div className="ability-candidates">{eligible.map((ability) => {
+    const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex && row.ability_id).map((row) => row.ability_id));
+    const equippedCount = rows.filter((row) => row.ability_id).length;
+    const eligible = data.catalog.rollcasterAbilityUnlocks
+      .filter((unlock) => unlock.rollcaster_id === abilityOwner.rollcaster_id)
+      .map((unlock) => ({ ability: byId(data.catalog.rollcasterAbilities, unlock.ability_id), unlock }))
+      .filter((candidate): candidate is { ability: RollcasterAbility; unlock: typeof data.catalog.rollcasterAbilityUnlocks[number] } => Boolean(candidate.ability))
+      .filter(({ ability }) => !normalizedQuery || `${ability.name} ${ability.description}`.toLowerCase().includes(normalizedQuery))
+      .sort((left, right) =>
+        left.unlock.unlock_level - right.unlock.unlock_level ||
+        left.unlock.sort_order - right.unlock.sort_order ||
+        left.ability.sort_order - right.ability.sort_order ||
+        left.ability.id.localeCompare(right.ability.id),
+      );
+    const unlockedEligible = eligible.filter(({ ability }) => ids.has(ability.id));
+    const lockedEligible = eligible.filter(({ ability }) => !ids.has(ability.id));
+    const renderAbility = ({ ability, unlock }: { ability: RollcasterAbility; unlock: typeof data.catalog.rollcasterAbilityUnlocks[number] }) => {
       const selected = current === ability.id;
       const equipped = selected || equippedElsewhere.has(ability.id);
-      return <button className={`ability-candidate ${selected ? "selected" : ""} ${equipped ? "equipped" : ""}`} key={ability.id} disabled={saving || equippedElsewhere.has(ability.id)} onClick={() => onEquip(() => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, selected ? null : ability.id))}><span><strong>{ability.name}</strong><small>{ability.description}</small>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [])}</span>{equipped && <Check size={18} />}</button>;
-    })}</div> : <p className="empty-state">No abilities available</p>;
+      const cannotRemoveLast = selected && equippedCount <= 1;
+      const locked = !ids.has(ability.id);
+      const levelEligible = abilityOwner.level >= unlock.unlock_level;
+      const unlockCost = unlock.unlock_cost ?? 0;
+      const canUnlock = levelEligible && abilityOwner.ability_points >= unlockCost;
+      const effects = data.catalog.effectsByAbility[ability.id] ?? [];
+      const disabledReason = cannotRemoveLast
+        ? "At least one ability must remain equipped."
+        : equippedElsewhere.has(ability.id)
+          ? "Equipped in another slot."
+          : locked && !levelEligible
+            ? `Unlocks at level ${unlock.unlock_level}.`
+            : locked && !canUnlock
+              ? `Need ${unlockCost - abilityOwner.ability_points} more ability point${unlockCost - abilityOwner.ability_points === 1 ? "" : "s"}.`
+              : undefined;
+      const label = `${ability.name}. ${ability.description} ${attachmentText(effects)} ${disabledReason ?? ""}`.trim();
+      const card = <button
+        type="button"
+        className={`ability-candidate ${selected ? "selected" : ""} ${equipped ? "equipped" : ""}`.trim()}
+        disabled={saving || locked || equippedElsewhere.has(ability.id) || cannotRemoveLast}
+        onClick={locked ? undefined : () => onEquip(() => setRollcasterAbilitySlot(abilityOwner.id, target.slotIndex, selected ? null : ability.id))}
+      >
+        <span><strong>{ability.name}</strong><small>{ability.description}</small>{attachmentRows(effects)}</span>
+        {equipped && <Check size={18} />}
+      </button>;
+      if (locked) {
+        return <div className={`equip-ability-option locked ${levelEligible ? "unlockable" : "level-locked"}`.trim()} key={ability.id}>
+          <GameTooltip label={label} content={<><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(effects)}{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</>}>{card}</GameTooltip>
+          <div className="equip-ability-unlock-row">
+            <span className="equip-ability-unlock-requirement">Unlock at level {unlock.unlock_level} · {unlockCost} ability point{unlockCost === 1 ? "" : "s"}</span>
+            {levelEligible && <button
+              type="button"
+              className={`primary-button ability-unlock-button ${flashingId === ability.id ? "insufficient-points" : ""}`.trim()}
+              disabled={saving}
+              title={!canUnlock ? disabledReason : undefined}
+              onClick={() => {
+                if (!canUnlock) {
+                  flash(ability.id);
+                  return;
+                }
+                void onUnlockAbility(abilityOwner, ability.id);
+              }}
+            >Unlock · {unlockCost}</button>}
+          </div>
+        </div>;
+      }
+      return <GameTooltip key={ability.id} label={label} content={<><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(effects)}{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</>}>{card}</GameTooltip>;
+    };
+    content = eligible.length ? <div className="equip-ability-sections">
+      {unlockedEligible.length > 0 && <section className="equip-ability-section" aria-label="Unlocked abilities">
+        <p className="equip-skill-section-label">Unlocked abilities</p>
+        <div className="ability-candidates">{unlockedEligible.map(renderAbility)}</div>
+      </section>}
+      {lockedEligible.length > 0 && <section className="equip-ability-section" aria-label="Locked abilities">
+        <p className="equip-skill-section-label">Locked abilities</p>
+        {unlockedEligible.length > 0 && <div className="equip-skill-divider" role="separator" aria-label="Locked abilities divider" />}
+        <div className="ability-candidates">{lockedEligible.map(renderAbility)}</div>
+      </section>}
+    </div> : <p className="empty-state">No abilities available</p>;
   } else {
     content = <div className="candidate-grid">{sortByCollectibleId(player.rollcasters, (owned) => owned.rollcaster_id).map((owned) => {
       const entry = byId(data.catalog.rollcasters, owned.rollcaster_id)!;
@@ -3215,8 +3302,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
   }
 
   const currentRelic = target.type === "relic" ? player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id : null;
-  const currentAbility = target.type === "ability" ? player.abilitySlots.find((row) => row.user_rollcaster_id === target.owned.id && row.slot_index === target.slotIndex)?.ability_id : null;
-  const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && Boolean(currentAbility));
+  const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && player.abilitySlots.filter((row) => row.user_rollcaster_id === target.owned.id && row.ability_id).length > 1);
   const clear = target.type === "critter" ? () => setSquadSlot(target.slotIndex, null) : target.type === "skill" ? () => setCritterSkillSlot(target.owned.id, target.slotIndex, null) : target.type === "relic" ? () => setCritterRelicSlot(target.owned.id, target.slotIndex, null) : target.type === "ability" ? () => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, null) : null;
   const dialogClass = target.type === "skill"
     ? "equip-dialog equip-dialog-skill"
@@ -3232,10 +3318,11 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       : target.type === "ability"
         ? <div className="equip-ability-list">{content}</div>
         : content;
-  return <Modal className={dialogClass} title={title} description={target.type === "skill" ? "Choose an unlocked skill or unlock one available at this Critter's level." : "Choose an eligible item for this loadout slot."} onClose={onClose}>
+  return <Modal className={dialogClass} title={title} description={target.type === "skill" ? "Choose an unlocked skill or unlock one available at this Critter's level." : target.type === "ability" ? "Choose an unlocked ability or unlock one available at this Rollcaster's level." : "Choose an eligible item for this loadout slot."} onClose={onClose}>
     {error && <p className="notice error" role="alert">{error}</p>}
     {target.type === "skill" && currentSkillOwner && <div className="equip-dialog-point-summary"><PointCounter kind="skill" points={currentSkillOwner.skill_points} inline /></div>}
-    {(target.type === "skill" || target.type === "relic") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : "Search relics by name"} /></label>}
+    {target.type === "ability" && currentAbilityOwner && <div className="equip-dialog-point-summary"><PointCounter kind="ability" points={currentAbilityOwner.ability_points} inline /></div>}
+    {(target.type === "skill" || target.type === "relic" || target.type === "ability") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : target.type === "ability" ? "Search abilities by name…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : target.type === "ability" ? "Search abilities by name" : "Search relics by name"} /></label>}
     {scrollableContent}
     <div className="dialog-actions">{canUnequip && clear && <button className="danger-button" disabled={saving} onClick={() => onEquip(clear)}>Unequip</button>}<button className="secondary-button" onClick={onClose}>Cancel</button></div>
   </Modal>;
@@ -7452,13 +7539,14 @@ function StatusIconRow({ data, statuses }: { data: AppData; statuses: CombatStat
     .filter((entry): entry is { instance: CombatState["statuses"][number]; status: NonNullable<typeof entry.status> } => Boolean(entry.status))
     .sort((left, right) => (left.status.sort_order ?? 0) - (right.status.sort_order ?? 0) || left.status.id.localeCompare(right.status.id));
   if (!ordered.length) return null;
-  return <span className="status-icon-row" aria-label="Active statuses">{ordered.map(({ instance, status }) => {
+  const crowded = ordered.length > 2;
+  return <span className={`status-icon-row${crowded ? " crowded" : ""}`} aria-label="Active statuses">{ordered.map(({ instance, status }) => {
     const effects = data.catalog.effectsByStatus[status.id] ?? [];
     const duration = instance.duration === null ? "Indefinite" : `${instance.duration} turn${instance.duration === 1 ? "" : "s"} remaining`;
     const iconPath = catalogAssetPath(data, "status", status.id, status.asset_path);
     const label = `${status.name}. ${duration}. ${attachmentText(effects)}`.trim();
     return <GameTooltip key={instance.instanceId} label={label} content={<><span className="tooltip-heading"><AssetIcon path={iconPath} alt="" fallback={<Sparkles size={16} />} /><strong>{status.name}</strong></span>{attachmentRows(effects)}<span className="status-duration">{duration}</span></>}>
-      <span className="status-icon"><AssetIcon path={iconPath} alt={status.name} fallback={<Sparkles size={16} />} /><small>{instance.duration === null ? "∞" : instance.duration}</small></span>
+      <span className="status-icon"><AssetIcon path={iconPath} alt={status.name} fallback={<Sparkles size={20} />} />{instance.duration !== null && <small>{instance.duration}</small>}</span>
     </GameTooltip>;
   })}</span>;
 }

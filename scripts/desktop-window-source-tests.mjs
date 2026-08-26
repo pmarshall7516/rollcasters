@@ -13,6 +13,8 @@ assert.match(windowSource, /localStorage/, "Window mode and size must persist lo
 assert.doesNotMatch(app, /desktop-window-chrome|DesktopWindowChrome/, "The custom top windowed bar must not be rendered.");
 assert.doesNotMatch(app, /startDesktopWindowDragging|closeDesktopWindow|minimizeDesktopWindow/, "Removed custom bar controls must not remain wired into the app shell.");
 assert.match(geometry, /WINDOW_ASPECT_RATIO = 16 \/ 9/, "Window geometry must use the shared 16:9 ratio.");
+assert.match(geometry, /DEFAULT_WINDOWED_SIZE: WindowedSize = \{ width: 1600, height: 900 \}/, "Windowed mode must start from the larger 1600x900 frame.");
+assert.match(windowSource, /isPreviousDefault/, "Existing 1280x720 default preferences must upgrade to the larger windowed frame.");
 assert.match(geometry, /ResizeCorner = "north-west" \| "north-east" \| "south-west" \| "south-east"/, "Only four corner resize directions may be supported.");
 
 const shopButton = app.indexOf("<Coins size={24} />");
