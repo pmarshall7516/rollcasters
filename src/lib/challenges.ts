@@ -1,5 +1,5 @@
 import { critterElementIds } from "./game.js";
-import { collectibleIsUnlocked, safeBigInt } from "./collectibles.js";
+import { collectibleIsUnlocked, safeBigInt, TRACKED_CHALLENGE_TYPES } from "./collectibles.js";
 import { collectionDiversityProgress } from "./collection-diversity.js";
 import { maximumDistinctElementMatches } from "./element-matching.js";
 import type {
@@ -51,14 +51,6 @@ export type ChallengeEvent = {
   amount?: number;
   payload?: Record<string, unknown>;
 };
-
-const trackedTypes = new Set([
-  "knock_out_critters", "deal_damage", "take_damage", "use_skill",
-  "squad_composition", "dungeon_clear", "resource_spending",
-  "swap_action", "block_action", "dice_roll",
-  "heal_hp", "afflict_status", "stun_activation",
-  "shields_shattered",
-]);
 
 function parametersOf(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
   if (challenge.parameters && typeof challenge.parameters === "object") return challenge.parameters;
@@ -416,7 +408,7 @@ export function derivedChallengeProgress(data: AppData, challenge: CollectibleUn
 }
 
 export function isTrackedChallengeType(challenge: CollectibleUnlockChallenge): boolean {
-  return trackedTypes.has(challenge.challenge_type)
+  return TRACKED_CHALLENGE_TYPES.has(challenge.challenge_type)
     && parametersOf(challenge).tracking_required !== false;
 }
 

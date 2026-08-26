@@ -1,0 +1,130 @@
+import crypto from "node:crypto";
+import { createDbClient } from "./db-utils.mjs";
+
+function check(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+const db = createDbClient();
+await db.connect();
+
+try {
+  await db.query("begin");
+
+  const fixture = (await db.query(`
+    select
+      player.id as user_id,
+      challenge.id as tiny_blade_challenge_id,
+      dungeon.dungeon_id
+    from auth.users player
+    cross join lateral (
+      select c.id,c.collectible_type,c.collectible_id
+      from public.release_collectible_challenges(public.current_game_catalog_release_id()) c
+      where c.collectible_type='relic'
+        and c.collectible_id='017'
+        and c.challenge_type='defeat_rollcaster_type'
+      order by c.sort_order,c.id
+      limit 1
+    ) challenge
+    join lateral (
+      select state.trackable,state.eligible,state.complete
+      from public.collectible_challenge_states(player.id,challenge.collectible_type,challenge.collectible_id) state
+      where state.challenge_id=challenge.id
+    ) state on state.trackable
+    join lateral (
+      select dungeon_id
+      from public.user_dungeon_progress
+      where user_id=player.id and is_unlocked
+      order by dungeon_id
+      limit 1
+    ) dungeon on true
+    where not public.is_dev_tool_identity(player.id)
+      and state.eligible
+      and not state.complete
+    order by player.created_at
+    limit 1
+  `)).rows[0];
+  check(fixture, "The development database needs an eligible Tiny Blade Defeat Rollcaster Type challenge.");
+
+  const { user_id: userId, tiny_blade_challenge_id: tinyBladeChallengeId } = fixture;
+  await db.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
+  await db.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
+
+  const trackingDefinition = (await db.query(
+    "select pg_get_functiondef('public.track_collectible_challenge(uuid)'::regprocedure) as definition",
+  )).rows[0].definition;
+  check(
+    trackingDefinition.includes("collectible_challenge_requires_tracking(p_challenge_id)")
+      && !trackingDefinition.includes("challenge_type in ("),
+    "The tracking RPC must derive eligibility from the published template policy, not a hard-coded type list.",
+  );
+
+  const candidates = (await db.query(`
+    select distinct on (c.challenge_type)
+      c.challenge_type,c.id as challenge_id,c.collectible_type,c.collectible_id
+    from public.release_collectible_challenges(public.current_game_catalog_release_id()) c
+    join public.release_unlock_challenge_templates(public.current_game_catalog_release_id()) template
+      on template.id=c.challenge_type
+    join lateral public.collectible_challenge_states($1,c.collectible_type,c.collectible_id) state
+      on state.challenge_id=c.id and state.trackable
+    where template.challenge_category='tracked'
+      and template.progress_mode='tracked_event'
+      and coalesce(c.parameters->>'tracking_required','true')='true'
+    order by c.challenge_type,c.collectible_type,c.collectible_id,c.sort_order,c.id
+  `, [userId])).rows;
+  check(candidates.length > 0, "The published release needs at least one eligible tracked challenge.");
+
+  for (const candidate of candidates) {
+    await db.query("savepoint challenge_tracking_family");
+    try {
+      const tracked = (await db.query(
+        "select public.track_collectible_challenge($1) as value",
+        [candidate.challenge_id],
+      )).rows[0].value;
+      check(tracked?.challenge_id === candidate.challenge_id, `${candidate.challenge_type} must be accepted by the tracking RPC.`);
+    } finally {
+      await db.query("rollback to savepoint challenge_tracking_family");
+    }
+  }
+
+  const tracked = (await db.query(
+    "select public.track_collectible_challenge($1) as value",
+    [tinyBladeChallengeId],
+  )).rows[0].value;
+  check(tracked?.challenge_id === tinyBladeChallengeId, "Tiny Blade's Acolyte challenge must be trackable.");
+
+  const run = (await db.query(
+    "select public.start_dungeon_run_v3($1,$2) as value",
+    [fixture.dungeon_id, crypto.randomUUID()],
+  )).rows[0].value;
+  const runId = run.id;
+  const encounter = run.selectedEnemyEncounters.find((row) => Number(row.battleIndex) === Number(run.battleIndex));
+  check(encounter?.enemyRollcaster?.eclipse_order_type === "acolyte", "The combat fixture must select an Acolyte encounter.");
+
+  const submit = (eventKey, won) => db.query(
+    "select public.submit_collectible_combat_events($1,1,$2::jsonb) as value",
+    [runId, JSON.stringify([{
+      event_key: eventKey,
+      event_type: "battle_completed",
+      source_critter_id: null,
+      target_critter_id: null,
+      skill_id: null,
+      amount: 1,
+      payload: { won, enemy_rollcaster_type: "spoofed" },
+    }])],
+  );
+
+  let snapshot = (await submit("tiny-blade-acolyte-win", true)).rows[0].value;
+  check(snapshot.progress.find((row) => row.challenge_id === tinyBladeChallengeId)?.current === "1", "A winning Acolyte battle must advance Tiny Blade progress.");
+
+  snapshot = (await submit("tiny-blade-acolyte-win", true)).rows[0].value;
+  check(snapshot.progress.find((row) => row.challenge_id === tinyBladeChallengeId)?.current === "1", "A duplicate battle event must not double-count Tiny Blade progress.");
+
+  snapshot = (await submit("tiny-blade-acolyte-loss", false)).rows[0].value;
+  check(snapshot.progress.find((row) => row.challenge_id === tinyBladeChallengeId)?.current === "1", "A lost battle must not advance Tiny Blade progress.");
+
+  console.log(`Challenge tracking database regression passed for ${candidates.length} tracked families and Tiny Blade ${tinyBladeChallengeId}; all fixture changes will be rolled back.`);
+} finally {
+  await db.query("rollback").catch(() => undefined);
+  await db.end().catch(() => undefined);
+}
