@@ -11,6 +11,7 @@ const beginStart = appSource.indexOf("  async function beginDungeon(dungeon: Dun
 const beginEnd = appSource.indexOf("\n  function queueCombatProgressEvents", beginStart);
 check(beginStart >= 0 && beginEnd > beginStart, "Dungeon entry handler should remain easy to audit.");
 const beginSource = appSource.slice(beginStart, beginEnd);
+const infoDialogSource = appSource.match(/function DungeonInfoDialog\([\s\S]*?\n}\n\nfunction ContinueDungeonDialog/)?.[0] ?? "";
 const launchTransition = beginSource.indexOf("setDungeonEntry({ dungeon, phase: \"starting\"");
 const activeReconciliation = beginSource.indexOf("getActiveDungeonRunWithTimeout()");
 check(launchTransition >= 0 && activeReconciliation > launchTransition, "Dungeon entry must show its launch scene before waiting on reconciliation.");
@@ -28,6 +29,9 @@ check(appSource.includes("ContinueDungeonDialog"), "An unfinished Dungeon must u
 check(appSource.includes("resolveDungeonRun"), "The abandon action must resolve the active Dungeon run.");
 check(appSource.includes("title=\"Continue Dungeon?\""), "The resume dialog must clearly ask whether to continue the Dungeon.");
 check(appSource.includes("setActiveDungeonPrompt(null)"), "Continue and abandon must dismiss the unfinished-run prompt.");
+check(!infoDialogSource.includes("Opponents arrive in fixed Boss Order."), "Boss dungeon briefings must not explain that opponents arrive in fixed order.");
+check(infoDialogSource.includes('className="dungeon-boss-position"'), "Boss entries must use the dedicated circular position badge.");
+check(infoDialogSource.includes('<span className="sr-only">Boss position </span>'), "Boss position badges must retain an accessible position label.");
 
 check(supabaseSource.includes("export async function startDungeonRunWithRecovery"), "Start recovery helper is missing.");
 check(supabaseSource.includes("export async function snapshotDungeonRunEffectsWithRecovery"), "Snapshot recovery helper is missing.");

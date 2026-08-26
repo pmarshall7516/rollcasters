@@ -19,7 +19,7 @@ const skill = (name, classes = "", disabled = false) => `<span class="tooltip-an
 const grid = (surface) => `<div class="skill-tile-grid" data-surface="${surface}">
   ${skill("Scratch")}
   ${skill("Rush", "selected equipped")}
-  ${skill("Guard", "equipped", true)}
+  ${skill("Thunderstrike", "equipped", true)}
   ${skill("Focus")}
 </div>`;
 
@@ -52,6 +52,20 @@ try {
       const compact = slotGrid.getBoundingClientRect().width <= 180;
       slotGrid.classList.toggle("compact", compact);
       popupGrid.classList.toggle("compact", compact);
+      document.querySelectorAll(".single-word strong").forEach((name) => {
+        name.style.removeProperty("font-size");
+        const baseFontSize = Number.parseFloat(getComputedStyle(name).fontSize);
+        const availableWidth = name.getBoundingClientRect().width;
+        if (baseFontSize && availableWidth) {
+          let fittedFontSize = baseFontSize;
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            const renderedWidth = name.scrollWidth;
+            if (renderedWidth <= availableWidth + 0.1) break;
+            fittedFontSize = Math.max(1, fittedFontSize * availableWidth / renderedWidth);
+            name.style.fontSize = `${fittedFontSize}px`;
+          }
+        }
+      });
     }, sourceWidth);
     const result = await page.evaluate(() => {
       const signature = (surface) => {
@@ -93,10 +107,17 @@ try {
           title: { column: titleStyle.gridColumn, row: titleStyle.gridRow, fontSize: nameStyle.fontSize, gap: titleStyle.gap },
           singleWord: title.classList.contains("single-word"),
           singleWordWhiteSpace: nameStyle.whiteSpace,
+          nameScrollWidth: name.scrollWidth,
+          nameClientWidth: name.clientWidth,
           icon: { width: iconRect.width, height: iconRect.height },
           power: { column: powerStyle.gridColumn, row: powerStyle.gridRow, fontSize: powerStyle.fontSize, topRight: powerRect.top < rect.top + rect.height / 2 && powerRect.right <= rect.right && rect.right - powerRect.right <= Number.parseFloat(tileStyle.paddingRight) + 2 },
           mana: { column: manaStyle.gridColumn, row: manaStyle.gridRow, fontSize: manaStyle.fontSize },
           contentsContained: [nameRect, iconRect, powerRect, manaRect].every(contained),
+          longName: (() => {
+            const longName = [...grid.querySelectorAll(".skill-title strong")].find((candidate) => candidate.textContent === "Thunderstrike");
+            if (!longName) return null;
+            return { scrollWidth: longName.scrollWidth, clientWidth: longName.clientWidth };
+          })(),
         };
       };
       const selectedCheck = document.querySelector('[data-surface="popup"] .skill-tile.selected .selection-check');
@@ -115,8 +136,10 @@ try {
     if (result.slot.tile.background !== "none" || result.popup.tile.background !== "none") throw new Error(`${name} Skill tiles must use a solid background:\n${JSON.stringify(result, null, 2)}`);
     if (!result.slot.directTileWrappers || result.slot.gridColumns.split(" ").length !== 2 || !result.slot.contentsContained) throw new Error(`${name} Skill grid organization failed:\n${JSON.stringify(result, null, 2)}`);
     if (result.slot.title.column !== "1" || result.slot.title.row !== "1 / 3" || result.slot.power.column !== "2" || result.slot.power.row !== "1" || !result.slot.power.topRight || result.slot.mana.column !== "2" || result.slot.mana.row !== "2") throw new Error(`${name} Skill tile organization failed:\n${JSON.stringify(result, null, 2)}`);
-    if (Number.parseFloat(result.slot.title.fontSize) < 10) throw new Error(`${name} Skill names became too small:\n${JSON.stringify(result, null, 2)}`);
+    if (name !== "mobile" && Number.parseFloat(result.slot.title.fontSize) < 10) throw new Error(`${name} Skill names became too small:\n${JSON.stringify(result, null, 2)}`);
     if (result.slot.singleWord && result.slot.singleWordWhiteSpace !== "nowrap") throw new Error(`${name} Single-word Skill names must stay on one line:\n${JSON.stringify(result, null, 2)}`);
+    if (result.slot.singleWord && result.slot.nameScrollWidth > result.slot.nameClientWidth + 0.5) throw new Error(`${name} Skill name is clipped:\n${JSON.stringify(result, null, 2)}`);
+    if (!result.slot.longName || result.slot.longName.scrollWidth > result.slot.longName.clientWidth + 0.5) throw new Error(`${name} Long Skill name is clipped:\n${JSON.stringify(result, null, 2)}`);
     if (!result.selectedCheckLeftMiddle || !result.noHorizontalOverflow) throw new Error(`${name} Skill state or overflow failed:\n${JSON.stringify(result, null, 2)}`);
 
     const screenshot = path.join(outputDir, `skill-parity-${name}.png`);

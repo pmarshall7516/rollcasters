@@ -74,6 +74,7 @@
     "test:collection-layout": "node scripts/collection-layout-tests.mjs",
     "test:home-loadout-layout": "node scripts/home-loadout-layout-tests.mjs",
     "test:dungeon-grid-layout": "node scripts/dungeon-grid-layout-tests.mjs",
+    "test:dungeon-opponent-layout": "node scripts/dungeon-opponent-layout-tests.mjs",
     "test:skill-equip-layout": "node scripts/skill-equip-layout-tests.mjs",
     "test:responsive-shell-layout": "node scripts/responsive-shell-layout-tests.mjs",
     "test:user-menu-layering": "node scripts/user-menu-layering-tests.mjs",

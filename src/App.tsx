@@ -2511,7 +2511,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
           <button className="portrait-button" onClick={() => setEquipTarget({ type: "rollcaster", slotIndex: 1 })} aria-label="Choose active Rollcaster">
             <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path, ["portrait", "card", "thumb"])} size="hero" fit="portrait" /></CardSprite>
           </button>
-          <h1>{rollcaster?.name ?? "Unknown"}</h1>
+          <h1 className="collectible-name">{rollcaster?.name ?? "Unknown"}</h1>
           {rollcasterProgress && <ProgressBar progress={rollcasterProgress} inline className="rollcaster-xp-progress" />}
           <p className="rollcaster-level">Level {activeRollcaster?.level ?? 1}</p>
           <div className="ability-list" aria-label="Rollcaster abilities">
@@ -2635,7 +2635,7 @@ function TrackedChallengeSlots({
           >
             <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="sm" />
             <div className="tracked-challenge-copy">
-              <strong>{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong>
+              <strong className="collectible-name">{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong>
               <span>{challengeDescription(data, challenge)}</span>
               <span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span>
             </div>
@@ -2677,7 +2677,7 @@ function ChallengeReplacementModal({
     <Modal eyebrow="Challenge tracking" title="Replace a tracked challenge" description={null} onClose={onClose} className="challenge-replacement-modal">
       <div className="tracked-challenge-card challenge-replacement-target">
         <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="sm" />
-        <div className="tracked-challenge-copy"><strong>{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong><span>{challengeDescription(data, challenge)}</span><span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span></div>
+        <div className="tracked-challenge-copy"><strong className="collectible-name">{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong><span>{challengeDescription(data, challenge)}</span><span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span></div>
       </div>
       <p className="challenge-note">Select a tracked slot to replace it with this challenge.</p>
       <TrackedChallengeSlots data={data} tracked={tracked} busyId={busyId} onSelect={selectReplacement} />
@@ -2885,16 +2885,25 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
       animationFrame = window.requestAnimationFrame(() => {
         name.style.removeProperty("font-size");
         const baseFontSize = Number.parseFloat(window.getComputedStyle(name).fontSize);
-        const availableWidth = name.clientWidth;
-        const naturalWidth = name.scrollWidth;
-        if (!baseFontSize || !availableWidth || !naturalWidth) return;
-        const fittedFontSize = naturalWidth > availableWidth + 0.1
-          ? Math.max(7, baseFontSize * availableWidth / naturalWidth)
-          : null;
-        setSingleWordFontSize((current) => current === null && fittedFontSize === null
-          || current !== null && fittedFontSize !== null && Math.abs(current - fittedFontSize) < 0.05
+        const availableWidth = name.getBoundingClientRect().width;
+        if (!baseFontSize || !availableWidth) return;
+        let fittedFontSize = baseFontSize;
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const renderedWidth = name.scrollWidth;
+          if (renderedWidth <= availableWidth + 0.1) break;
+          fittedFontSize = Math.max(1, fittedFontSize * availableWidth / renderedWidth);
+          name.style.fontSize = `${fittedFontSize}px`;
+        }
+        if (name.scrollWidth > availableWidth + 0.1) {
+          fittedFontSize = Math.max(1, fittedFontSize * availableWidth / name.scrollWidth);
+          name.style.fontSize = `${fittedFontSize}px`;
+        }
+        const needsFit = fittedFontSize < baseFontSize - 0.05;
+        const nextFontSize = needsFit ? fittedFontSize : null;
+        setSingleWordFontSize((current) => current === null && nextFontSize === null
+          || current !== null && nextFontSize !== null && Math.abs(current - nextFontSize) < 0.05
           ? current
-          : fittedFontSize);
+          : nextFontSize);
       });
     };
     fit();
@@ -2920,7 +2929,7 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
 function LoadoutRelicSlot({ data, relic, sourceCritter, slotIndex, onClick }: { data: AppData; relic?: Relic | null; sourceCritter?: Critter; slotIndex: number; onClick: () => void }) {
   const attachments = relic ? data.catalog.effectsByRelic[relic.id] ?? [] : [];
   const details = relic ? `${relic.name}. ${relic.description} ${attachmentText(attachments)}` : `Choose a relic for slot ${slotIndex}.`;
-  const tooltip = relic ? <><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments, sourceCritter)}</> : <span className="tooltip-description">Choose a relic for slot {slotIndex}.</span>;
+  const tooltip = relic ? <><span className="tooltip-heading"><strong className="collectible-name">{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments, sourceCritter)}</> : <span className="tooltip-description">Choose a relic for slot {slotIndex}.</span>;
   return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className={`loadout-relic-cell unlocked ${relic ? "equipped" : "empty"}`} onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
     {relic
       ? <AssetIcon path={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["icon", "thumb", "card"])} alt={relic.name} fallback={<Shield aria-hidden="true" />} />
@@ -3153,12 +3162,12 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       const effects = data.catalog.effectsByRelic[relic.id] ?? [];
       const sourceCritter = byId(data.catalog.critters, target.owned.critter_id);
       const details = `${relic.name}. ${relic.description} ${attachmentText(effects)}`.trim();
-      return <GameTooltip key={relic.id} label={details} content={<><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
+      return <GameTooltip key={relic.id} label={details} content={<><span className="tooltip-heading"><strong className="collectible-name">{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
         <button className={`candidate-card relic-candidate ${selected ? "selected" : ""} ${unavailable ? "unavailable" : ""}`} disabled={saving || selected || unavailable} onClick={() => {
           if (unavailable) return;
           onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id));
         }}>
-          <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} /></SpriteFrame><strong>{relic.name}</strong><span className="inventory-count relic-availability">Available: {available}</span>
+          <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} /></SpriteFrame><strong className="collectible-name">{relic.name}</strong><span className="inventory-count relic-availability">Available: {available}</span>
         </button>
       </GameTooltip>;
     })}</div> : <p className="empty-state">No relics available</p>;
@@ -3177,7 +3186,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
     content = <div className="candidate-grid">{sortByCollectibleId(player.rollcasters, (owned) => owned.rollcaster_id).map((owned) => {
       const entry = byId(data.catalog.rollcasters, owned.rollcaster_id)!;
       const selected = player.profile.active_rollcaster_id === owned.id;
-      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", entry.id, entry.asset_path, ["portrait", "card", "thumb"])} size="large" fit="portrait" /></SpriteFrame><strong>{entry.name}</strong><span>Level {owned.level}</span></button>;
+      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", entry.id, entry.asset_path, ["portrait", "card", "thumb"])} size="large" fit="portrait" /></SpriteFrame><strong className="collectible-name">{entry.name}</strong><span>Level {owned.level}</span></button>;
     })}</div>;
   }
 
@@ -3451,7 +3460,7 @@ function BagShardCard({ data, type, id }: { data: AppData; type: CollectibleType
     <article className={`shop-entry-card bag-shard-card ${complete ? "complete" : ""}`.trim()} data-collectible-type={type} data-collectible-id={id} data-shard-status={complete ? "complete" : "in-progress"}>
       <CollectibleSprite data={data} type={type} id={id} size="md" shard />
       <div className="shop-entry-copy">
-        <h3>{targetName}</h3>
+        <h3 className="collectible-name">{targetName}</h3>
         <p className="shop-target">{id}</p>
       </div>
       <ShopProgressBar current={progress.current} goal={progress.goal} type="Shards" showCompletion={complete} />
@@ -4049,12 +4058,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
           <button className={`lootbox-click-target ${phase==="shaking"?"shaking":""}`} disabled><LootboxSprite lootbox={lootbox} variant={phase==="shaking"?"closed":"open"} /></button>
         </div>
         <div className="lootbox-opening-reel-slot">
-          {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
+          {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small className="collectible-name">{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
         </div>
         <div className="lootbox-opening-result-slot">
           {phase === "result" && receipt && <div className={`lootbox-result ${duplicateUnits > 0n ? "has-duplicate" : ""}`.trim()} data-reward-type={receipt.reward.type}>
             <span>YOU WON</span>
-            <h3>x{formatAmount(receipt.reward.amount)} {rewardName}</h3>
+            <h3>x{formatAmount(receipt.reward.amount)} <span className="collectible-name">{rewardName}</span></h3>
             {rewardProgress ? <LootboxRewardProgress data={data} progress={rewardProgress} duplicateAmount={duplicateUnits} duplicateCurrency={duplicateCurrency} convertedCurrencyAmount={receipt.reward.convertedCurrencyAmount} /> : duplicateUnits > 0n && <div className="lootbox-duplicate-conversion">
               <span className="lootbox-duplicate-currency" aria-hidden="true">
                 <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
@@ -4077,7 +4086,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
           <ShopQuantityControl label={`Quantity of ${lootbox.name}`} quantity={selectedPurchaseQuantity} max={99} disabled={busy || purchasePending} onChange={setSelectedPurchaseQuantity} />
           <button className="primary-button lootbox-purchase-button" disabled={busy || purchasePending} onClick={() => void purchaseBox()}>Purchase</button>
         </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts={controlBindings.interact}>{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={sendToBag}>Send to Bag</button>}</>}</footer>
-        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
+        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong className="collectible-name">{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
       </>}
     </section>
   </div>;
@@ -4336,7 +4345,7 @@ function PromoRewardGrid({ data, rewards }: { data: AppData; rewards: PromoCodeR
           >
             <PromoRewardArt data={data} reward={reward} />
             <div className="promo-reward-copy">
-              <h3>{reward.name}</h3>
+              <h3 className="collectible-name">{reward.name}</h3>
               <span>{outcome}</span>
             </div>
             <strong>×{formatAmount(reward.quantity)}</strong>
@@ -5224,7 +5233,6 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
         <div>
           <p className="eyebrow">{entry.mode === "boss" ? "First-clear lineup" : "Regular encounter pool"}</p>
           <h3>{entry.pool.length} opponent{entry.pool.length === 1 ? "" : "s"}</h3>
-          {entry.mode === "boss" && <p>Opponents arrive in fixed Boss Order.</p>}
         </div>
       </div>
       <div className="dungeon-opponent-list">
@@ -5244,9 +5252,9 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
                     : <strong className="dungeon-unknown-critter-name">?????</strong>}
                   <small>Level {opponent.critter_level}</small>
                 </span>
-                <strong className="dungeon-opponent-rate">
-                  {entry.mode === "boss" ? `Boss position ${index + 1}` : formatProbability(opponent.probability ?? 0)}
-                </strong>
+                {entry.mode === "boss"
+                  ? <span className="dungeon-boss-position"><span className="sr-only">Boss position </span>{index + 1}</span>
+                  : <strong className="dungeon-opponent-rate">{formatProbability(opponent.probability ?? 0)}</strong>}
                 <ChevronDown aria-hidden="true" />
               </summary>
               <div className="dungeon-opponent-drop-panel">
@@ -5347,9 +5355,8 @@ function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
           ? <LootboxSprite lootbox={data.catalog.lootboxes.find((lootbox) => lootbox.id === drop.targetId)!} variant="closed" />
         : <CollectibleSprite data={data} type={(drop.targetCategory ?? "relic") as CollectibleType} id={drop.targetId} size="xs" shard={drop.kind === "shard"} />}
       <span>
-        <strong>{dropAmountLabel(drop.minAmount, drop.maxAmount)} {drop.kind === "shard" ? `${targetName} Shards` : targetName}</strong>
+        <strong>{dropAmountLabel(drop.minAmount, drop.maxAmount)} x <span className="collectible-name">{drop.kind === "shard" ? `${targetName} Shards` : targetName}</span></strong>
         <small>{Math.round(drop.probability * 10000) / 100}% chance</small>
-        {(drop.kind === "shard" || drop.kind === "relic") && drop.dupeCurrencyId && <small>Duplicates convert to {drop.dupeCurrencyAmount ?? 0} {currencyFor(data, drop.dupeCurrencyId)?.name ?? drop.dupeCurrencyId} each.</small>}
       </span>
     </div>
   );
@@ -6302,7 +6309,7 @@ function CombatScreen({
                 onClick={() => selectSkillTarget(candidate.key)}
               >
                 <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path, ["battle", "card", "thumb"])} /></SpriteFrame>
-                <span><strong>{candidate.name}</strong><small>0 / {candidate.maxHp} HP</small></span>
+                <span><strong className="collectible-name">{candidate.name}</strong><small>0 / {candidate.maxHp} HP</small></span>
               </button>
             ))}
           </div>
@@ -6407,7 +6414,7 @@ function CombatRollcasterPanel({
       <span className="combat-sprite-frame rollcaster-combat-frame">
         <Sprite name={name} element="basic" assetPath={assetPath} size="large" fit="portrait" flipped={opponent} />
       </span>
-      <h3>{name}</h3>
+      <h3 className="collectible-name">{name}</h3>
       <div className="combat-mana-total-wrap">
         <strong
           className={`combat-mana-total ${manaRefund ? "mana-refund-counter" : ""} ${manaReserved && !manaSubmitting ? "mana-reserved" : ""} ${manaSubmitting ? "mana-submit-shake" : ""}`.trim()}
@@ -6471,7 +6478,7 @@ function CombatSquadGrid({
         return <GameTooltip
           key={unit.key}
           label={`${unit.name}: ${unit.hp} / ${unit.maxHp} HP`}
-          content={<><span className="tooltip-heading"><CritterElementLogos data={data} critter={unit.critter} /><strong>{unit.name}</strong></span><span>{unit.hp} / {unit.maxHp} HP</span></>}
+          content={<><span className="tooltip-heading"><CritterElementLogos data={data} critter={unit.critter} /><strong className="collectible-name">{unit.name}</strong></span><span>{unit.hp} / {unit.maxHp} HP</span></>}
         >
           {interactiveSlot}
         </GameTooltip>;
@@ -6786,7 +6793,7 @@ function CombatRelicRow({ data, relicIds, sourceCritter }: { data: AppData; reli
     const relic = byId(data.catalog.relics, id);
     if (!relic) return null;
     const effects = data.catalog.effectsByRelic[id] ?? [];
-    return <GameTooltip key={id} label={`${relic.name}. ${relic.description} ${attachmentText(effects)}`} content={<><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
+    return <GameTooltip key={id} label={`${relic.name}. ${relic.description} ${attachmentText(effects)}`} content={<><strong className="collectible-name">{relic.name}</strong><span>{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
       <span className="combat-relic-icon"><AssetIcon path={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["icon", "thumb", "card"])} alt={relic.name} fallback={<Shield size={13} />} /></span>
     </GameTooltip>;
   })}</span>;
@@ -6829,7 +6836,7 @@ function combatActionSummary(
     const target = data.player!.critters.find((owned) => owned.id === action.swapToId);
     const critter = byId(data.catalog.critters, target?.critter_id);
     return {
-      content: <>Swapping to <strong className="combat-action-target friendly">{critter?.name ?? "Critter"}</strong></>,
+      content: <>Swapping to <strong className="collectible-name combat-action-target friendly">{critter?.name ?? "Critter"}</strong></>,
     };
   }
   const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
@@ -6842,7 +6849,7 @@ function combatActionSummary(
       <>
         <strong>{skill?.name ?? "Skill"}</strong>
         <span aria-hidden="true">→</span>
-        <strong className={`combat-action-target ${targetTone}`}>
+        <strong className={`collectible-name combat-action-target ${targetTone}`}>
           {target?.name ?? (skill ? targetingDescription(skill) : "target")}
         </strong>
       </>
@@ -6909,7 +6916,7 @@ function CombatDie({ data, unit, rolling, manaAssetPath, opponent = false }: { d
   return (
     <span className={`combat-die ${rolling ? "rolling" : "landed"}`}>
       <span className="combat-die-value"><strong>{rolling ? "?" : unit.manaRoll || "–"}</strong><AssetIcon path={manaAssetPath} alt="Mana" fallback={<Gem />} /></span>
-      <span className="combat-die-label"><CritterElementLogos data={data} critter={unit.critter} /><small>{opponent ? "Enemy " : ""}{unit.name}</small></span>
+      <span className="combat-die-label"><CritterElementLogos data={data} critter={unit.critter} /><small className="collectible-name">{opponent ? "Enemy " : ""}{unit.name}</small></span>
     </span>
   );
 }
@@ -6957,7 +6964,7 @@ function RewardSummary({ data, rewards, layout }: { data: AppData; rewards: Dung
             <span className="combat-reward-art"><RewardEntryIcon data={data} entry={entry} /></span>
             {layout === "dungeon-outcome"
               ? <strong aria-label={`${entry.amount} x ${name}`}><span className="combat-reward-count">{entry.amount}</span><span aria-hidden="true"> x </span><span className="combat-reward-name">{name}</span></strong>
-              : <strong>{entry.amount} {name}</strong>}
+              : <strong>{entry.amount} <span className="collectible-name">{name}</span></strong>}
             {entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}
           </article>
         );
@@ -7108,7 +7115,7 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
             finalTotal={ownedRollcaster.xp}
             progression={data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id)}
             sprite={<SpriteFrame size="sm"><Sprite name={rollcaster.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["thumb", "card"])} fit="portrait" /></SpriteFrame>}
-            identity={<strong>{rollcaster.name}</strong>}
+            identity={<strong className="collectible-name">{rollcaster.name}</strong>}
             animate={xpReady}
             rollcaster
           />
@@ -7405,7 +7412,7 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
         <CollectibleSprite data={data} type={event.collectible_type} id={event.collectible_id} size="xs" />
         <div className="unlock-notification-copy">
           <span className="unlock-notification-label"><Sparkles size={14} aria-hidden="true" /> Collectible unlocked</span>
-          <h2>{critter ? <><CritterName data={data} critter={critter} /> <span>unlocked!</span></> : `${name} unlocked!`}</h2>
+          <h2>{critter ? <><CritterName data={data} critter={critter} /> <span>unlocked!</span></> : <><span className="collectible-name">{name}</span> unlocked!</>}</h2>
         </div>
       </aside>
     );
@@ -7421,7 +7428,7 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
         <div className="unlock-notification-copy">
           <span className="unlock-notification-label"><Check size={14} aria-hidden="true" /> Challenge completed</span>
           <h2>{challengeDescription(data, challenge)}</h2>
-          <p className="unlock-notification-detail">{collectible} challenge completed</p>
+          <p className="unlock-notification-detail"><span className="collectible-name">{collectible}</span> challenge completed</p>
         </div>
       </aside>
     );
@@ -7435,7 +7442,7 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
         <CollectibleSprite data={data} type={notification.targetCategory} id={notification.targetId} size="xs" />
         <div className="unlock-notification-copy">
           <span className="unlock-notification-label"><ShoppingBag size={14} aria-hidden="true" /> Shop reward</span>
-          <h2>×{formatAmount(notification.granted)} {rewardName} added</h2>
+          <h2>×{formatAmount(notification.granted)} <span className="collectible-name">{rewardName}</span> added</h2>
           {notification.discarded !== "0" && (
             <p className="unlock-notification-detail">×{formatAmount(notification.discarded)} overflow discarded</p>
           )}
