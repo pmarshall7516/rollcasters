@@ -19,7 +19,10 @@ try {
       challenge.id as challenge_id,
       challenge.collectible_type,
       challenge.collectible_id,
-      dungeon.dungeon_id
+      dungeon.dungeon_id,
+      deal_challenge.id as deal_challenge_id,
+      deal_challenge.collectible_type as deal_collectible_type,
+      deal_challenge.collectible_id as deal_collectible_id
     from auth.users player
     join lateral (
       select critter_id
@@ -50,13 +53,28 @@ try {
       order by dungeon_id
       limit 1
     ) dungeon on true
+    join lateral (
+      select c.id,c.collectible_type,c.collectible_id
+      from public.collectible_unlock_challenges c
+      where c.challenge_type='deal_damage'
+        and c.collectible_type='relic'
+        and c.collectible_id='017'
+        and c.parameters->>'tracking_required'='true'
+        and exists (
+          select 1
+          from public.collectible_challenge_states(player.id,c.collectible_type,c.collectible_id) state
+          where state.challenge_id=c.id and state.eligible and not state.complete
+        )
+      order by c.collectible_type,c.collectible_id,c.sort_order,c.id
+      limit 1
+    ) deal_challenge on true
     where not public.is_dev_tool_identity(player.id)
     order by player.created_at
     limit 1
   `);
   check(fixture.rowCount === 1, "The development database needs an unstarted tracked Receive Damage challenge with no stored progress.");
 
-  const { user_id: userId, target_critter_id: targetCritterId, challenge_id: challengeId, collectible_type: collectibleType, collectible_id: collectibleId, dungeon_id: dungeonId } = fixture.rows[0];
+  const { user_id: userId, target_critter_id: targetCritterId, challenge_id: challengeId, collectible_type: collectibleType, collectible_id: collectibleId, dungeon_id: dungeonId, deal_challenge_id: dealChallengeId } = fixture.rows[0];
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
   await client.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
   await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, challengeId]);
@@ -134,22 +152,31 @@ try {
   }
   check(malformedRejected, "Damage receipts must reject component totals that do not equal amount.");
 
+  await client.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
+  await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, dealChallengeId]);
   await client.query(
-    "update public.collectible_unlock_challenges set challenge_type='deal_damage', parameters=$1::jsonb where id=$2",
-    [JSON.stringify({ source_critter_ids: [], source_element_ids: [], source_critter_tag_ids: [], source_skill_tag_ids: [], target_critter_ids: [], target_element_ids: [], target_critter_tag_ids: [], damage_mode: "shield_only", required_amount: 10, tracking_scope: "lifetime", tracking_required: true }), challengeId],
+    "insert into public.user_tracked_collectible_challenges(user_id,challenge_id,slot_order) values($1,$2,1)",
+    [userId, dealChallengeId],
   );
-  await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, challengeId]);
+  await client.query(
+    "update public.collectible_unlock_challenges set parameters=jsonb_set(parameters,'{damage_mode}',to_jsonb('shield_only'::text),true) where id=$1",
+    [dealChallengeId],
+  );
   await submit("deal-shield-shield-only", "hp_damage_dealt", targetCritterId, opponentId, 6, { hp_damage: 0, shield_damage: 6 });
-  check(await progressValue() === "6", "Shield-only Deal Damage must count actual enemy Shield damage.");
+  const dealProgressValue = async () => (await client.query(
+    "select coalesce(progress,0)::text as progress from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2",
+    [userId, dealChallengeId],
+  )).rows[0]?.progress ?? "0";
+  check(await dealProgressValue() === "6", "Shield-only Deal Damage must count actual enemy Shield damage.");
 
-  await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, challengeId]);
-  await client.query("update public.collectible_unlock_challenges set parameters=jsonb_set(parameters,'{damage_mode}',to_jsonb('hp_only'::text),true) where id=$1", [challengeId]);
+  await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, dealChallengeId]);
+  await client.query("update public.collectible_unlock_challenges set parameters=jsonb_set(parameters,'{damage_mode}',to_jsonb('hp_only'::text),true) where id=$1", [dealChallengeId]);
   await submit("deal-hp-hp-only", "hp_damage_dealt", targetCritterId, opponentId, 6, { hp_damage: 6, shield_damage: 0 });
-  check(await progressValue() === "6", "HP-only Deal Damage must count actual enemy HP damage.");
+  check(await dealProgressValue() === "6", "HP-only Deal Damage must count actual enemy HP damage.");
   await submit("deal-hp-hp-only", "hp_damage_dealt", targetCritterId, opponentId, 6, { hp_damage: 6, shield_damage: 0 });
-  check(await progressValue() === "6", "Duplicate damage event receipts must not double-count progress.");
+  check(await dealProgressValue() === "6", "Duplicate damage event receipts must not double-count progress.");
 
-  console.log(`Damage Mode challenge progress regression passed for ${challengeId}; all fixture changes will be rolled back.`);
+  console.log(`Tiny Blade and Receive Damage challenge progress regression passed for ${dealChallengeId} and ${challengeId}; all fixture changes will be rolled back.`);
 } finally {
   if (began) await client.query("rollback").catch(() => undefined);
   await client.end().catch(() => undefined);

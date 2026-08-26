@@ -99,6 +99,7 @@
     "test:dungeon-exit:source": "node scripts/dungeon-exit-source-tests.mjs",
     "test:challenge-runtime:db": "node scripts/challenge-runtime-db-tests.mjs",
     "test:challenge-progress:db": "node scripts/challenge-progress-db-tests.mjs",
+    "test:all-unlock-challenge-runtime:db": "node scripts/all-unlock-challenge-runtime-db-tests.mjs",
     "test:challenge-persistence:db": "node scripts/challenge-persistence-db-tests.mjs",
     "test:gate-challenges:browser": "RUN_LIVE_GATE_CHALLENGE_BROWSER_TEST=true node scripts/gate-challenges-playwright.mjs",
     "test:challenge-release:browser": "RUN_LIVE_CHALLENGE_RELEASE_TEST=true node scripts/challenge-release-playwright.mjs",
