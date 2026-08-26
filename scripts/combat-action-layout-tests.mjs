@@ -113,12 +113,27 @@ try {
     space.innerHTML = `
       <button class="combat-back-row">‹ Back to Action Menu</button>
       <div class="combat-skill-actions">
-        ${["Slam", "-----", "-----", "-----"].map((label) => `<span class="tooltip-anchor"><button class="skill-tile">${label}</button></span>`).join("")}
+        ${["Slam", "-----", "-----", "-----"].map((label) => `<span class="tooltip-anchor"><button class="skill-tile"><span class="skill-title"><span class="asset-icon">✦</span><strong>${label}</strong></span><span class="skill-power">PWR 50</span><span class="skill-mana"><span class="asset-icon">◆</span>3</span></button></span>`).join("")}
       </div>
     `;
     const buttons = [...space.querySelectorAll(".combat-skill-actions .skill-tile")].map((button) => {
       const rect = button.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom, height: rect.height };
+      const title = button.querySelector(".skill-title");
+      const power = button.querySelector(".skill-power");
+      const mana = button.querySelector(".skill-mana");
+      const powerRect = power.getBoundingClientRect();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        height: rect.height,
+        titleColumn: getComputedStyle(title).gridColumn,
+        titleRow: getComputedStyle(title).gridRow,
+        powerColumn: getComputedStyle(power).gridColumn,
+        powerRow: getComputedStyle(power).gridRow,
+        powerTopRight: powerRect.top < rect.top + rect.height / 2 && powerRect.right <= rect.right && rect.right - powerRect.right <= Number.parseFloat(getComputedStyle(button).paddingRight) + 2,
+        manaColumn: getComputedStyle(mana).gridColumn,
+        manaRow: getComputedStyle(mana).gridRow,
+      };
     });
     return { buttons };
   });
@@ -128,6 +143,10 @@ try {
   check(
     Math.abs(skills.buttons[0].top - layout.buttons[0].top) <= 1,
     `Primary actions must stay anchored to the same action row as skills: ${JSON.stringify({ layout, skills })}`,
+  );
+  check(
+    skills.buttons.every((button) => button.titleColumn === "1" && button.titleRow === "1 / 3" && button.powerColumn === "2" && button.powerRow === "1" && button.powerTopRight && button.manaColumn === "2" && button.manaRow === "2"),
+    `Combat skill tile contents must match the main-page top-right power layout: ${JSON.stringify(skills)}`,
   );
   await page.screenshot({ path: path.join(outputDir, "skills.png"), animations: "disabled", fullPage: true });
 

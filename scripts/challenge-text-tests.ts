@@ -154,6 +154,87 @@ const legacyDamage = challenge("deal_damage", { target_mode: "species", target_i
 check(challengeEventIncrement(legacyDamage, { eventId: "damage:legacy", type: "hp_damage_dealt", targetCritterId: "001", amount: 7, payload: {} }) === 7, "Legacy damage events without components must remain HP-compatible and count as Any damage.");
 check(challengeEventIncrement(challenge("deal_damage", { target_mode: "species", target_ids: ["001"], damage_mode: "shield_only", required_amount: 100 }), { eventId: "damage:none", type: "hp_damage_dealt", targetCritterId: "001", amount: 7, payload: {} }) === 0, "Legacy damage events must not be interpreted as Shield damage.");
 
+const incomingSwap = {
+  eventId: "swap:incoming",
+  type: "swap_completed" as const,
+  sourceCritterId: "001",
+  targetCritterId: "002",
+  dungeonId: "002",
+  sourceElementIds: ["basic"],
+  targetElementIds: ["vile", "frost"],
+  amount: 1,
+  payload: {
+    dungeon_id: "002",
+    incoming_critter_id: "002",
+    incoming_element_ids: ["vile", "frost"],
+    unique: true,
+  },
+};
+check(challengeEventIncrement(challenge("swap_action", { tracked_action: "unique_critters_swapped_in", critter_ids: ["002"], element_ids: ["frost"], dungeon_ids: ["002"], required_amount: 1 }), incomingSwap) === 1, "Swap filters must describe the Critter and Elements swapped in, including Element 2.");
+check(challengeEventIncrement(challenge("swap_action", { tracked_action: "unique_critters_swapped_in", critter_ids: ["001"], required_amount: 1 }), incomingSwap) === 0, "Swap-in filters must reject the outgoing Critter.");
+
+const multiTargetSkill = challenge("use_skill", { skill_type: "attack", target_critter_ids: ["002"], required_amount: 1 });
+check(challengeEventIncrement(multiTargetSkill, {
+  eventId: "skill:multi-target",
+  type: "skill_resolved",
+  sourceCritterId: "001",
+  targetCritterId: "001",
+  skillId: "vile-injection",
+  payload: {
+    skill_type: "attack",
+    target_critter_ids: ["001", "002"],
+    target_element_ids: ["basic", "vile", "frost"],
+  },
+}) === 1, "Use Skill target filters must match any target of a multi-target Skill.");
+
+const filteredBlock = {
+  eventId: "block:filtered",
+  type: "block_completed" as const,
+  sourceCritterId: "001",
+  targetCritterId: "002",
+  sourceElementIds: ["basic"],
+  targetElementIds: ["vile", "frost"],
+  dungeonId: "002",
+  amount: 3,
+  payload: { dungeon_id: "002", damage_prevented: 3, fully_blocked: true, survived: true, source_element_ids: ["basic"], target_element_ids: ["vile", "frost"] },
+};
+check(challengeEventIncrement(challenge("block_action", { tracked_action: "damage_prevented", critter_ids: ["001"], element_ids: ["basic"], enemy_critter_ids: ["002"], enemy_element_ids: ["frost"], dungeon_ids: ["002"], required_amount: 10 }), filteredBlock) === 3, "Block challenges must apply friendly and enemy Element filters.");
+check(challengeEventIncrement(challenge("block_action", { tracked_action: "damage_prevented", element_ids: ["vile"], required_amount: 10 }), filteredBlock) === 0, "Block friendly Element filters must reject an enemy-only Element.");
+check(challengeEventIncrement(challenge("block_action", { tracked_action: "blocks_performed", required_amount: 1 }), {
+  ...filteredBlock,
+  payload: {
+    dungeon_id: "002",
+    blocks_performed: 1,
+    block_action: true,
+    source_element_ids: ["basic"],
+    target_element_ids: ["vile", "frost"],
+  },
+}) === 1, "Block action events must count Blocks performed once.");
+check(challengeEventIncrement(challenge("block_action", { tracked_action: "blocks_performed", required_amount: 1 }), filteredBlock) === 0, "Block prevention result events must not double-count Blocks performed.");
+
+const filteredDice = {
+  eventId: "dice:filtered",
+  type: "dice_resolved" as const,
+  sourceCritterId: "001",
+  dungeonId: "002",
+  rollcasterId: "rc-1",
+  amount: 4,
+  payload: {
+    dungeon_id: "002",
+    rollcaster_id: "rc-1",
+    die_type: "d6",
+    natural_value: 4,
+    modified_value: 9,
+    natural_maximum: 6,
+    turn_mana_total: 8,
+    turn_mana_total_event: true,
+  },
+};
+check(challengeEventIncrement(challenge("dice_roll", { tracked_result: "die_value", comparison: "equal", target_value: 4, include_modifiers: false, rollcaster_ids: ["rc-1"], dungeon_ids: ["002"], required_amount: 1 }), filteredDice) === 1, "Dice challenges must be able to use the natural die value and filter Rollcaster and Dungeon context.");
+check(challengeEventIncrement(challenge("dice_roll", { tracked_result: "die_value", comparison: "equal", target_value: 4, include_modifiers: true, rollcaster_ids: ["rc-1"], dungeon_ids: ["002"], required_amount: 1 }), filteredDice) === 0, "Dice challenges that include modifiers must compare the modified die value.");
+check(challengeEventIncrement(challenge("dice_roll", { tracked_result: "die_value", comparison: "equal", target_value: 9, include_modifiers: true, rollcaster_ids: ["other"], dungeon_ids: ["002"], required_amount: 1 }), filteredDice) === 0, "Dice challenges must reject a non-selected Rollcaster.");
+check(challengeEventIncrement(challenge("dice_roll", { tracked_result: "turn_mana_total", comparison: "greater_than_or_equal", target_value: 8, required_amount: 1 }), { ...filteredDice, payload: { ...filteredDice.payload, turn_mana_total_event: false } }) === 0, "Turn Mana totals must count only on their explicitly marked once-per-turn event.");
+
 for (const [side, targetSide, expected] of [
   ["any", "player", 1],
   ["friendlies", "player", 1],

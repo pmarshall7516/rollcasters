@@ -272,6 +272,8 @@ export type CombatState = {
   log: string[];
   phase: "ready" | "selecting" | "resolved" | "won" | "lost";
   runId?: string;
+  /** Catalog ID of the player's active Rollcaster for challenge event context. */
+  playerRollcasterId?: string;
   catalog: Catalog;
   statuses: CombatStatus[];
   modifiers: CombatModifier[];
@@ -297,6 +299,10 @@ export type CombatState = {
   rechargeUntilTurn: Record<string, number>;
   /** Number of turns each Critter has been active since its most recent swap-in. */
   activeTurnCounts?: Record<string, number>;
+  /** Turn in which each combat unit was last swapped in, for challenge correlations. */
+  swapInTurns?: Record<string, number>;
+  /** Same-turn target redirects caused by a successful Swap. */
+  swapRedirects?: Record<string, { outgoingKey: string; incomingKey: string; turn: number }>;
   /** Skill actions that have actually begun this turn. */
   actedSkillKeys?: string[];
   /** Critters that have been flinched and will lose their pending Skill action. */
@@ -543,6 +549,7 @@ export function createInitialCombatState(
   );
   validateRunEffects(runEffects, statusRegistry);
 
+  const activeRollcaster = player.rollcasters.find((owned) => owned.id === player.profile.active_rollcaster_id);
   const setupSources: SetupEffectSource[] = [];
   for (const [unitIndex, unit] of playerUnits.entries()) {
     if (!unit.userCritter) continue;
@@ -557,7 +564,6 @@ export function createInitialCombatState(
       setupSources.push({ ownerType: "relic", ownerId: relicId, side: "opponent", sourceKey: `o${index + 1}`, effects: runEffects.relic[relicId] ?? [], sourceOrder: 10_000 + index * 100 + slotIndex });
     });
   });
-  const activeRollcaster = player.rollcasters.find((owned) => owned.id === player.profile.active_rollcaster_id);
   if (activeRollcaster) {
     for (const slot of player.abilitySlots
       .filter((candidate) => candidate.user_rollcaster_id === activeRollcaster.id && candidate.ability_id)
@@ -615,6 +621,7 @@ export function createInitialCombatState(
     log: [`Entered ${dungeon.id} - ${dungeon.name}.`],
     phase: "ready",
     runId,
+    playerRollcasterId: activeRollcaster?.rollcaster_id,
     catalog,
     statuses: [],
     modifiers: [],
@@ -655,6 +662,8 @@ export function createInitialCombatState(
     skillUsage: { encounter: {}, dungeon: {} },
     rechargeUntilTurn: {},
     activeTurnCounts: {},
+    swapInTurns: {},
+    swapRedirects: {},
     actedSkillKeys: [],
     stunnedSkillKeys: [],
   };
@@ -1442,6 +1451,11 @@ export function startTurn(state: CombatState): CombatState {
       : { ...unit, blocking: false, blockStreak: 0 },
   );
   const playerRoll = playerUnits.reduce((sum, unit) => sum + (unit.active && unit.hp > 0 ? unit.manaRoll : 0), 0);
+  const playerDice = playerUnits.filter((candidate) => candidate.active && candidate.hp > 0);
+  const matchingCount = Math.max(0, ...Object.values(playerDice.reduce<Record<string, number>>((counts, unit) => {
+    counts[String(unit.manaRoll)] = (counts[String(unit.manaRoll)] ?? 0) + 1;
+    return counts;
+  }, {})));
   const opponentRoll = opponentUnits.reduce(
     (sum, unit) => sum + (unit.active && unit.hp > 0 ? unit.manaRoll : 0),
     0,
@@ -1470,14 +1484,26 @@ export function startTurn(state: CombatState): CombatState {
     if (sideAnchor) withDice = resolveReactiveEffects(withDice, "turn_start", sideAnchor, sideAnchor, 0, 0, 0, undefined, undefined, undefined, true);
   }
   withDice = resolveTimedEffects(withDice, "start_of_turn");
-  for (const unit of playerUnits.filter((candidate) => candidate.active && candidate.hp > 0)) {
+  const playerAbilityIds = [...new Set(withDice.setupSources
+    .filter((source) => source.ownerType === "ability" && source.side === "player")
+    .map((source) => source.ownerId))];
+  for (const [index, unit] of playerDice.entries()) {
     withDice = appendProgressEvent(withDice, {
       event_type: "dice_resolved",
       source_critter_id: unit.critter.id,
       target_critter_id: null,
       skill_id: null,
       amount: unit.manaRoll,
-      payload: { die_type: `d${unit.stats.diceMax}`, natural_value: unit.manaRoll, modified_value: unit.manaRoll, natural_maximum: unit.stats.diceMax, turn_mana_total: playerRoll },
+      payload: {
+        die_type: `d${unit.stats.diceMax}`,
+        natural_value: unit.manaRoll,
+        modified_value: unit.manaRoll,
+        natural_maximum: unit.stats.diceMax,
+        turn_mana_total: playerRoll,
+        turn_mana_total_event: index === playerDice.length - 1,
+        matching_count: matchingCount,
+        ability_ids: playerAbilityIds,
+      },
     });
   }
 
@@ -1550,6 +1576,7 @@ export function resolveCombatActions(
         spending_context: "combat",
         resource_type: "mana",
         dungeon_id: state.dungeon.id,
+        rollcaster_id: state.playerRollcasterId ?? null,
         critter_id: actor.critter.id,
         ability_id: null,
         action_type: action.type,
@@ -2237,7 +2264,12 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       target_critter_id: null,
       skill_id: null,
       amount: 1,
-      payload: { blocks_performed: 1 },
+      payload: {
+        blocks_performed: 1,
+        block_action: true,
+        source_element_ids: critterElementIds(actor.critter),
+        source_critter_tag_ids: critterTagIds(actor.critter),
+      },
     }) : blockedState;
     const announced = appendPresentationEvent(
       succeeded ? blocked : { ...blocked, log: [failureMessage, blockMessage, ...state.log] },
@@ -2269,6 +2301,8 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       payload: {
         incoming_critter_id: incoming.critter.id,
         incoming_element_ids: critterElementIds(incoming.critter),
+        outgoing_critter_id: actor.critter.id,
+        outgoing_element_ids: critterElementIds(actor.critter),
         unique: true,
       },
     }) : swapped;
@@ -2397,13 +2431,23 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         }
         let progress = appendDamageProgressEvents(withPresentation, actor, target, damage.hpDamage, damage.shieldDamage, afterHp <= 0, skill);
         if (damage.blockPrevented > 0 && target.side === "player") {
+          progress = annotateBlockAction(progress, target, actor);
           progress = appendProgressEvent(progress, {
             event_type: "block_completed",
             source_critter_id: target.critter.id,
             target_critter_id: actor.critter.id,
             skill_id: skill.id,
             amount: damage.blockPrevented,
-            payload: { damage_prevented: damage.blockPrevented, fully_blocked: damage.finalDamage === 0, survived: afterHp > 0 },
+            payload: {
+              damage_prevented: damage.blockPrevented,
+              fully_blocked: damage.finalDamage === 0,
+              survived: afterHp > 0,
+              source_element_ids: critterElementIds(target.critter),
+              target_element_ids: critterElementIds(actor.critter),
+              source_critter_tag_ids: critterTagIds(target.critter),
+              target_critter_tag_ids: critterTagIds(actor.critter),
+              skill_tag_ids: skill.tag_ids,
+            },
           });
         }
         // The incoming damage must be visible before any equipment/status
@@ -2425,7 +2469,8 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         amount: 1,
         payload: {
           source_element_ids: critterElementIds(actor.critter),
-          target_element_ids: targets.flatMap((target) => critterElementIds(target.critter)),
+          target_critter_ids: targets.map((target) => target.critter.id),
+          target_element_ids: [...new Set(targets.flatMap((target) => critterElementIds(target.critter)))],
           source_critter_tag_ids: critterTagIds(actor.critter),
           target_critter_tag_ids: [...new Set(targets.flatMap((target) => critterTagIds(target.critter)))],
           skill_tag_ids: skill.tag_ids,
@@ -4409,6 +4454,11 @@ function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey
     opponentUnits: actor.side === "opponent" ? units : state.opponentUnits,
     log: [message, ...state.log],
     activeTurnCounts,
+    swapInTurns: { ...(state.swapInTurns ?? {}), [swapTargetKey]: state.turn },
+    swapRedirects: {
+      ...(state.swapRedirects ?? {}),
+      [swapTargetKey]: { outgoingKey: actorKey, incomingKey: swapTargetKey, turn: state.turn },
+    },
     actedSkillKeys: (state.actedSkillKeys ?? []).filter((key) => !resetKeys.has(key)),
     stunnedSkillKeys: (state.stunnedSkillKeys ?? []).filter((key) => !resetKeys.has(key)),
   };
@@ -4432,7 +4482,7 @@ function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey
 
 function resolvePostTurn(state: CombatState): CombatState {
   const next = resolveTimedEffects(state, "end_of_turn");
-  return { ...next, log: ["Post-turn effects resolved.", ...next.log] };
+  return { ...next, swapRedirects: {}, log: ["Post-turn effects resolved.", ...next.log] };
 }
 
 export function elementEffectiveness(
@@ -4602,13 +4652,83 @@ function appendPresentationEvent(
 
 function appendProgressEvent(state: CombatState, event: Omit<CombatProgressEvent, "event_key">): CombatState {
   const sequence = state.turnEvents.length + 1;
+  const payload = {
+    dungeon_id: state.dungeon.id,
+    battle_id: state.runId ?? null,
+    rollcaster_id: state.playerRollcasterId ?? null,
+    ability_ids: [...new Set(state.setupSources
+      .filter((source) => source.ownerType === "ability" && source.side === "player")
+      .map((source) => source.ownerId))],
+    ...(event.payload ?? {}),
+  };
   return {
     ...state,
     turnEvents: [...state.turnEvents, {
       ...event,
-      event_key: `turn:${state.turn}:${sequence}:${event.event_type}`,
+      payload,
+      event_key: `${state.runId ?? "combat"}:turn:${state.turn}:${sequence}:${event.event_type}`,
     }],
   };
+}
+
+function addSwapDamageAvoided(state: CombatState, incomingCritterId: string, amount: number): CombatState {
+  if (amount <= 0) return state;
+  for (let index = state.turnEvents.length - 1; index >= 0; index -= 1) {
+    const event = state.turnEvents[index];
+    if (event.event_type !== "swap_completed" || event.payload?.incoming_critter_id !== incomingCritterId) continue;
+    const payload = event.payload ?? {};
+    const existing = Number(payload.damage_avoided ?? 0);
+    return {
+      ...state,
+      turnEvents: state.turnEvents.map((candidate, candidateIndex) => candidateIndex === index
+        ? { ...candidate, payload: { ...payload, damage_avoided: existing + amount } }
+        : candidate),
+    };
+  }
+  return state;
+}
+
+function annotateBlockAction(
+  state: CombatState,
+  defender: CombatUnit,
+  attacker: CombatUnit,
+): CombatState {
+  for (let index = state.turnEvents.length - 1; index >= 0; index -= 1) {
+    const event = state.turnEvents[index];
+    if (event.event_type !== "block_completed"
+      || event.payload?.block_action !== true
+      || event.source_critter_id !== defender.critter.id
+      || event.payload?.battle_id !== (state.runId ?? null)) continue;
+    const payload = event.payload ?? {};
+    const enemyIds = [...new Set([
+      ...(Array.isArray(payload.target_critter_ids) ? payload.target_critter_ids.filter((id): id is string => typeof id === "string") : []),
+      attacker.critter.id,
+    ])];
+    const enemyElements = [...new Set([
+      ...(Array.isArray(payload.target_element_ids) ? payload.target_element_ids.filter((id): id is string => typeof id === "string") : []),
+      ...critterElementIds(attacker.critter),
+    ])];
+    const enemyTags = [...new Set([
+      ...(Array.isArray(payload.target_critter_tag_ids) ? payload.target_critter_tag_ids.filter((id): id is string => typeof id === "string") : []),
+      ...critterTagIds(attacker.critter),
+    ])];
+    return {
+      ...state,
+      turnEvents: state.turnEvents.map((candidate, candidateIndex) => candidateIndex === index
+        ? {
+            ...candidate,
+            target_critter_id: candidate.target_critter_id ?? attacker.critter.id,
+            payload: {
+              ...payload,
+              target_critter_ids: enemyIds,
+              target_element_ids: enemyElements,
+              target_critter_tag_ids: enemyTags,
+            },
+          }
+        : candidate),
+    };
+  }
+  return state;
 }
 
 function appendDamageProgressEvents(
@@ -4623,6 +4743,10 @@ function appendDamageProgressEvents(
   const actualDamage = Math.max(0, hpDamage) + Math.max(0, shieldDamage);
   if (actualDamage <= 0 || source.side === target.side) return state;
   let next = state;
+  if (source.side === "opponent" && target.side === "player"
+    && state.swapRedirects?.[target.key]?.turn === state.turn) {
+    next = addSwapDamageAvoided(next, target.critter.id, actualDamage);
+  }
   const shieldShattered = target.shield > 0 && shieldDamage >= target.shield;
   if (shieldShattered) {
     next = appendProgressEvent(next, {
@@ -4670,6 +4794,22 @@ function appendDamageProgressEvents(
       amount: actualDamage,
       payload: { hp_damage: Math.max(0, hpDamage), shield_damage: Math.max(0, shieldDamage), source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter), source_critter_tag_ids: critterTagIds(source.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
     });
+    const swappedInAt = next.swapInTurns?.[target.key];
+    if (knockedOut && swappedInAt !== undefined) {
+      next = appendProgressEvent(next, {
+        event_type: "swap_completed",
+        source_critter_id: source.critter.id,
+        target_critter_id: target.critter.id,
+        skill_id: skill?.id ?? null,
+        amount: 1,
+        payload: {
+          incoming_critter_id: target.critter.id,
+          incoming_element_ids: critterElementIds(target.critter),
+          knockout_after_swap: true,
+          turns_since_swap: Math.max(0, next.turn - swappedInAt),
+        },
+      });
+    }
   }
   return next;
 }

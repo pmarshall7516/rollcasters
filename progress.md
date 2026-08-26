@@ -455,3 +455,11 @@ The working progress log is maintained in the shared Obsidian vault:
 - Enlarged the Settings popup to a 940×620 desktop frame with a vertical left navigation rail and a dedicated right-side content pane for the selected tab.
 - Kept Controls as the default read-only tab and removed the requested fullscreen/windowed explanatory lines and window-size note.
 - Added `npm run test:settings-layout` with measured split-pane geometry and screenshot coverage. Typecheck, source/geometry regressions, browser smoke, and production build pass.
+
+## 2026-08-26 — Complete combat challenge event contract
+
+- Audited every tracked combat challenge family and confirmed global ownership, level, diversity, and Shop challenges remain on their authoritative derived-state paths rather than being treated as combat events.
+- Normalized canonical combat progress events with Dungeon, battle, active Rollcaster, Ability, Critter element/tag, and Skill context. Damage events carry actual HP plus Shield durability removed, so Any damage counts either component while HP-only and Shield-only modes remain distinct.
+- Multi-target Skill events now expose every resolved target. Successful Block action events are enriched with the enemy context they actually blocked, while per-attack Block prevention events no longer double-count Blocks performed. Server-side tags are derived from authoritative catalog relations.
+- Added and applied `20260826235900_complete_combat_challenge_event_contract`, `20260827000000_fix_combat_challenge_skill_tag_source`, `20260827003000_use_published_challenge_rows`, `20260827020000_fix_scoped_challenge_current_fallback`, `20260827030000_complete_multi_target_and_block_challenge_context`, and `20260827031000_authoritative_challenge_tag_context`; verified the recorded IDs and live matcher behavior.
+- Runtime, published 60-row matcher matrix, damage, tag, scope, typecheck, production build, and synced simulator checks pass. Authenticated browser gameplay remains a separate environment check when a signed-in test session is available.

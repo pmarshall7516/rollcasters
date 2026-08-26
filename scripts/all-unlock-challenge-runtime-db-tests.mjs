@@ -137,8 +137,8 @@ function eventFor(row, critters, skills, dungeons) {
 
   if (row.challenge_type === "swap_action") {
     const action = p.tracked_action;
-    const payload = { ...basePayload, dungeon_id: firstOr(p.dungeon_ids, ""), incoming_critter_id: source.id, incoming_element_ids: sourceElements, unique: true, damage_avoided: 1, knockout_after_swap: true };
-    return { eventType: "swap_completed", sourceId: source.id, targetId: null, skillId: null, amount: 1, payload: { ...payload, tracked_action: action } };
+    const payload = { ...basePayload, dungeon_id: firstOr(p.dungeon_ids, ""), incoming_critter_id: source.id, incoming_element_ids: sourceElements, unique: true, damage_avoided: 1, knockout_after_swap: true, turns_since_swap: 0 };
+    return { eventType: "swap_completed", sourceId: target.id, targetId: source.id, skillId: null, amount: 1, payload: { ...payload, tracked_action: action } };
   }
 
   if (row.challenge_type === "block_action") {
@@ -148,7 +148,7 @@ function eventFor(row, critters, skills, dungeons) {
   if (row.challenge_type === "dice_roll") {
     const trackedResult = p.tracked_result;
     const targetValue = Number(p.target_value ?? 0);
-    const payload = { die_type: firstOr(p.die_types, "d6"), ability_id: firstOr(p.ability_ids, ""), dungeon_id: firstOr(p.dungeon_ids, ""), turn_mana_total: targetValue, modified_value: targetValue, natural_value: targetValue, natural_maximum: targetValue, matching_count: targetValue };
+    const payload = { die_type: firstOr(p.die_types, "d6"), ability_id: firstOr(p.ability_ids, ""), ability_ids: arrayOf(p.ability_ids), rollcaster_id: firstOr(p.rollcaster_ids, "fixture-rollcaster"), dungeon_id: firstOr(p.dungeon_ids, "fixture-dungeon"), turn_mana_total: targetValue, turn_mana_total_event: true, modified_value: targetValue, natural_value: targetValue, natural_maximum: targetValue, matching_count: targetValue };
     if (trackedResult === "maximum_die_result") payload.natural_value = payload.natural_maximum = 6;
     if (trackedResult === "matching_dice") payload.matching_count = targetValue;
     return { eventType: "dice_resolved", sourceId: source.id, targetId: null, skillId: null, amount: 1, payload };

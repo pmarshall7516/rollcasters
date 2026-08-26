@@ -242,6 +242,42 @@ check(eventResult.turnEvents.some((event) => event.event_type === "resource_spen
 check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0 && event.payload?.hp_damage === event.amount && event.payload?.shield_damage === 0), "Unshielded player damage must emit HP-only normalized damage components.");
 check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
+check(eventResult.turnEvents.every((event) => event.payload?.dungeon_id === "d" && event.payload?.battle_id === "progress-events" && event.payload?.rollcaster_id === "rc"), "Combat progress events must carry the active Dungeon, battle, and Rollcaster context.");
+const multiTargetResult = takeTurn(
+  { ...battle(eventCatalog, makePlayer(), "multi-target-progress-events"), opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }],
+);
+const multiTargetSkillEvent = multiTargetResult.turnEvents.find((event) => event.event_type === "skill_resolved" && event.skill_id === "wave");
+check(
+  Array.isArray(multiTargetSkillEvent?.payload?.target_critter_ids)
+    && multiTargetSkillEvent.payload.target_critter_ids.length === 2
+    && multiTargetSkillEvent.payload.target_critter_ids.includes("o1")
+    && multiTargetSkillEvent.payload.target_critter_ids.includes("o2"),
+  "Multi-target Skill progress events must expose every resolved target for challenge filters.",
+);
+const blockContextBase = battle(eventCatalog, makePlayer(), "block-context-progress-events");
+const blockContextState = resolveCombatActions(
+  {
+    ...startTurn({ ...blockContextBase, phase: "ready" }),
+    phase: "selecting",
+    playerMana: 50,
+    opponentMana: 50,
+    opponentUnits: blockContextBase.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, skills: [eventCatalog.skills[0]] } : unit),
+  },
+  [{ actorKey: "p1", type: "block", cost: 0 }],
+  [{ actorKey: "o1", type: "skill", skillId: "strike", targetKey: "p1", cost: 0 }],
+);
+check(
+  blockContextState.turnEvents.some((event) => event.event_type === "block_completed"
+    && event.payload?.block_action === true
+    && event.target_critter_id === "o1"
+    && Array.isArray(event.payload?.target_element_ids)
+    && event.payload.target_element_ids.includes("basic")),
+  "Successful Block action events must be enriched with the enemy that the Block prevented damage from.",
+);
+const diceEventState = startTurn({ ...battle(eventCatalog, makePlayer(), "dice-progress-events"), phase: "ready" });
+const diceEvents = diceEventState.turnEvents.filter((event) => event.event_type === "dice_resolved");
+check(diceEvents.length > 0 && diceEvents.filter((event) => event.payload?.turn_mana_total_event === true).length === 1 && diceEvents.every((event) => typeof event.payload?.matching_count === "number" && event.payload?.dungeon_id === "d" && event.payload?.rollcaster_id === "rc"), "Dice progress events must carry matching-dice context and mark exactly one committed Turn Mana total.");
 const statusBattle = battle(eventCatalog, makePlayer(), "status-progress-events");
 const statusTarget = statusBattle.opponentUnits[0];
 const statusResult = takeTurn(statusBattle, [{ actorKey: statusBattle.playerUnits[0].key, type: "skill", skillId: "mark", targetKey: statusTarget.key, cost: 1 }]);

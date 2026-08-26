@@ -1268,7 +1268,9 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .skill-tile.equipped:disabled { filter: grayscale(.72); }
 .skill-tile.read-only { cursor: default; }
 .skill-title { grid-column: 1; grid-row: 1 / 3; display: flex; align-items: center; align-self: center; gap: 10px; min-width: 0; padding-right: 10px; font-size: 21px; line-height: 1.06; }
-.skill-title strong { overflow-wrap: anywhere; }
+.skill-title strong { min-width: 0; }
+.skill-title:not(.single-word) strong { overflow-wrap: anywhere; }
+.skill-title.single-word strong { overflow: hidden; overflow-wrap: normal; white-space: nowrap; }
 .skill-title .asset-icon { flex: 0 0 auto; width: 38px; height: 38px; }
 .skill-power { grid-column: 2; grid-row: 1; align-self: center; color: var(--accent-gold); font: 900 var(--skill-meta-size)/1.1 ui-monospace, monospace; white-space: nowrap; }
 .skill-mana { grid-column: 2; grid-row: 2; align-self: center; display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--accent-cyan); font-size: var(--skill-meta-size); line-height: 1; font-weight: 950; }
@@ -1923,6 +1925,21 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   font-size: clamp(18px, 5cqi, 22px);
 }
 
+.collection-grid .critter-card .card-name-row {
+  align-items: center;
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.1;
+}
+
+.collection-grid .critter-card .critter-element-logos {
+  gap: 1px;
+}
+
+.collection-grid .critter-card .critter-element-logos .asset-icon {
+  width: 30px;
+  height: 30px;
+}
+
 .collection-grid .stat-grid > span {
   padding-inline: clamp(3px, 1cqi, 5px);
   font-size: clamp(12px, 3.2cqi, 14px);
@@ -2567,6 +2584,11 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   .collection-grid .card-name-row .asset-icon {
     width: calc(26 / 320 * 100cqi);
     height: calc(26 / 320 * 100cqi);
+  }
+
+  .collection-grid .critter-card .critter-element-logos .asset-icon {
+    width: calc(30 / 320 * 100cqi);
+    height: calc(30 / 320 * 100cqi);
   }
 
   .collection-grid .collection-progression {
@@ -4170,8 +4192,8 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .combat-skill-actions .skill-title {
-  grid-column: 1 / -1;
-  grid-row: 1;
+  grid-column: 1;
+  grid-row: 1 / 3;
   gap: 4px;
   min-width: 0;
   padding-right: 4px;
@@ -4179,9 +4201,10 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .combat-skill-actions .skill-power {
-  grid-column: 1;
-  grid-row: 2;
-  justify-self: start;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
 }
 
 .combat-skill-actions .skill-mana {
@@ -4196,9 +4219,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .combat-skill-actions .skill-title strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .combat-swap-actions {
