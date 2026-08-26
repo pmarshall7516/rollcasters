@@ -29,7 +29,7 @@ assert.ok(flushInSignOut < 0 || releaseInSignOut < flushInSignOut, "Logout must 
 
 assert.match(app, /sessionStoppingRef/, "Intentional logout/close must be distinguishable from remote session displacement.");
 assert.match(app, /if \(!sessionStoppingRef\.current && errorMessage\(heartbeatError/, "A delayed heartbeat must not show Account Moved during intentional shutdown.");
-const shutdownCleanupStart = app.indexOf("function startBestEffortShutdownCleanup");
+const shutdownCleanupStart = app.indexOf("async function completeShutdownCleanup");
 const shutdownCleanupEnd = app.indexOf("\n  }\n\n  async function closeRollcasters", shutdownCleanupStart);
 assert.ok(shutdownCleanupStart >= 0 && shutdownCleanupEnd > shutdownCleanupStart, "Desktop shutdown cleanup must remain discoverable.");
 const shutdownCleanup = app.slice(shutdownCleanupStart, shutdownCleanupEnd);
@@ -38,10 +38,14 @@ const cleanupFlush = shutdownCleanup.indexOf("void flushCombatSaveRef.current()"
 assert.ok(cleanupRelease >= 0, "Desktop close must release the gameplay lease.");
 assert.ok(cleanupFlush < 0 || cleanupRelease < cleanupFlush, "Desktop close must start lease release before the best-effort state flush.");
 assert.doesNotMatch(shutdownCleanup, /await releaseGameplaySession\(\)/, "Desktop close must not wait for lease release.");
-assert.doesNotMatch(shutdownCleanup, /await flushCombatSaveRef\.current\(\)/, "Desktop close must not wait for the state flush.");
-const closeHandler = app.slice(app.indexOf("onCloseRequested"));
-assert.match(closeHandler, /startBestEffortShutdownCleanup\(\)/, "The native close handler must start best-effort shutdown cleanup.");
+assert.match(shutdownCleanup, /await Promise\.race\(\[[\s\S]*flushCombatSaveRef\.current\(\)/, "Desktop close must wait for the active state flush.");
+const closeHandlerStart = app.indexOf("onCloseRequested");
+const closeHandlerEnd = app.indexOf("\n      }))", closeHandlerStart);
+assert.ok(closeHandlerStart >= 0 && closeHandlerEnd > closeHandlerStart, "The native close handler must remain discoverable.");
+const closeHandler = app.slice(closeHandlerStart, closeHandlerEnd);
+assert.match(closeHandler, /await completeShutdownCleanup\(\)/, "The native close handler must await shutdown cleanup.");
 assert.doesNotMatch(closeHandler, /await releaseGameplaySession\(\)/, "The native close handler must not wait for lease release.");
-assert.doesNotMatch(closeHandler, /await flushCombatSaveRef\.current\(\)/, "The native close handler must not wait for the state flush.");
+assert.doesNotMatch(closeHandler, /event\.preventDefault\(\)/, "The native close handler must not cancel Tauri's close completion.");
+assert.doesNotMatch(closeHandler, /getCurrentWindow\(\)\.destroy\(\)/, "The native close handler must let Tauri close after the callback returns.");
 
 console.log("Gameplay session shutdown and takeover regression contract passed.");

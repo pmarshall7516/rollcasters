@@ -265,6 +265,7 @@ type BannerNotification =
     };
 
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
+const DESKTOP_CLOSE_SAVE_TIMEOUT_MS = 4_000;
 
 function createShopErrorNotification(error: unknown): BannerNotification {
   return {
@@ -360,19 +361,31 @@ export function App() {
   const closeRequestedRef = useRef(false);
   const sessionStoppingRef = useRef(false);
 
-  function startBestEffortShutdownCleanup(): void {
-    // Closing the desktop window is the higher-priority operation. These
-    // network-backed cleanup calls must never hold either close path open.
+  async function completeShutdownCleanup(): Promise<void> {
+    // Release the lease in parallel, but wait briefly for the active Dungeon
+    // snapshot so closing the window does not discard the latest game state.
     void releaseGameplaySession().catch(() => undefined);
-    void flushCombatSaveRef.current().catch((saveError) => {
+
+    let timeoutId: number | null = null;
+    try {
+      await Promise.race([
+        flushCombatSaveRef.current(),
+        new Promise<void>((resolve) => {
+          timeoutId = window.setTimeout(resolve, DESKTOP_CLOSE_SAVE_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (saveError) {
       console.warn("Unable to flush the current Dungeon state before closing.", saveError);
-    });
+    } finally {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      combatSaveDisabledRef.current = true;
+    }
   }
 
   async function closeRollcasters(): Promise<void> {
     sessionStoppingRef.current = true;
     closeRequestedRef.current = true;
-    startBestEffortShutdownCleanup();
+    await completeShutdownCleanup();
     if (isTauriDesktop()) {
       await getCurrentWindow().destroy();
       return;
@@ -385,13 +398,11 @@ export function App() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     void import("@tauri-apps/api/window")
-      .then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(async (event) => {
+      .then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(async () => {
         if (closeRequestedRef.current) return;
         closeRequestedRef.current = true;
         sessionStoppingRef.current = true;
-        event.preventDefault();
-        startBestEffortShutdownCleanup();
-        await getCurrentWindow().destroy();
+        await completeShutdownCleanup();
       }))
       .then((removeListener) => {
         if (disposed) removeListener();

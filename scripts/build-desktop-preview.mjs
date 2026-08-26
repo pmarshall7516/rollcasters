@@ -50,5 +50,6 @@ run('build-desktop.mjs', ['local'], {
   ...process.env,
   ROLLCASTERS_GAME_VERSION: version,
   VITE_GAME_PLAYER_BOOTSTRAP_MODE: 'v1',
+  VITE_GAME_LOCAL_CATALOG_PREVIEW: 'true',
 })
 console.log(`Built the local Rollcasters preview for Catalog ${pointer.catalogVersion} and Game ${version}.`)
