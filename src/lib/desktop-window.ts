@@ -244,16 +244,6 @@ export async function setDesktopWindowMode(mode: WindowMode): Promise<void> {
   publish({ mode, windowedSize: appliedSize, ready: true });
 }
 
-export async function minimizeDesktopWindow(): Promise<void> {
-  const appWindow = await nativeWindow();
-  await appWindow?.minimize();
-}
-
-export async function startDesktopWindowDragging(): Promise<void> {
-  const appWindow = await nativeWindow();
-  await appWindow?.startDragging();
-}
-
 export async function startDesktopCornerResize(corner: ResizeCorner, event: PointerScreenPosition): Promise<void> {
   const appWindow = await nativeWindow();
   if (!appWindow || snapshot.mode !== "windowed") return;
@@ -315,9 +305,4 @@ export async function startDesktopCornerResize(corner: ResizeCorner, event: Poin
   window.addEventListener("pointercancel", onStop, { once: true });
   latest = resizeFromCorner(start, corner, 0, 0, limits);
   void flush();
-}
-
-export async function closeDesktopWindow(): Promise<void> {
-  const appWindow = await nativeWindow();
-  await appWindow?.close();
 }

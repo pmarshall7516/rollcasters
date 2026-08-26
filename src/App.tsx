@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -199,16 +199,23 @@ import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
 import { checkForDesktopUpdate, isTauriDesktop, resolveDesktopUpdateGate, type DesktopUpdate } from "./lib/desktop-updater";
 import { downloadDiagnosticReport } from "./lib/diagnostics";
 import {
-  closeDesktopWindow,
   initializeDesktopWindow,
-  minimizeDesktopWindow,
   setDesktopWindowMode,
   startDesktopCornerResize,
-  startDesktopWindowDragging,
   useDesktopWindow,
   type ResizeCorner,
   type WindowMode,
 } from "./lib/desktop-window";
+import {
+  CONTROL_ACTIONS,
+  controlLabel,
+  isBindableKeyboardEvent,
+  resetControlBindings,
+  setControlBinding,
+  useControlBindings,
+  type ControlAction,
+  type ControlBindings,
+} from "./lib/control-preferences";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type BagTab = "currency" | "shards" | "lootboxes";
@@ -318,6 +325,7 @@ function requiredStarterView(player: PlayerState | null | undefined): View | nul
 
 export function App() {
   const desktopWindow = useDesktopWindow();
+  const controlBindings = useControlBindings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [desktopGate, setDesktopGate] = useState<"checking" | "ready" | "required" | "error">(() => isTauriDesktop() ? "checking" : "ready");
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
@@ -872,7 +880,7 @@ export function App() {
       const focusInsideApp = (active instanceof HTMLElement && root.contains(active)) || Boolean(appKeyboardFocusRef.current && root.contains(appKeyboardFocusRef.current));
       if (!focusInsideApp && active !== document.body) return;
 
-      if (event.code === "ShiftLeft") {
+      if (event.code === controlBindings.back) {
         if (event.repeat) return;
         event.preventDefault();
         const dialog = root.querySelector<HTMLElement>("[role='dialog'][aria-modal='true']");
@@ -890,10 +898,10 @@ export function App() {
         return;
       }
 
-      const direction = event.code === "ArrowUp" || event.code === "KeyW" ? "up"
-        : event.code === "ArrowDown" || event.code === "KeyS" ? "down"
-          : event.code === "ArrowLeft" || event.code === "KeyA" ? "left"
-            : event.code === "ArrowRight" || event.code === "KeyD" ? "right"
+      const direction = event.code === controlBindings["move-up"] ? "up"
+        : event.code === controlBindings["move-down"] ? "down"
+          : event.code === controlBindings["move-left"] ? "left"
+            : event.code === controlBindings["move-right"] ? "right"
               : null;
       if (direction) {
         event.preventDefault();
@@ -901,7 +909,7 @@ export function App() {
         return;
       }
 
-      if (event.code !== "Space" || event.repeat) return;
+      if (event.code !== controlBindings.interact || event.repeat) return;
       if (target?.closest("button, summary, [role='button'], [role='tab'], [role='option']")) return;
       const control = appKeyboardFocusRef.current && scope?.contains(appKeyboardFocusRef.current)
         ? appKeyboardFocusRef.current
@@ -912,7 +920,7 @@ export function App() {
     }
     window.addEventListener("keydown", handleAppKeyboard);
     return () => window.removeEventListener("keydown", handleAppKeyboard);
-  }, [view]);
+  }, [controlBindings, view]);
 
   async function refresh(nextView?: View, options: { showLoading?: boolean } = {}) {
     if (!hasSupabaseConfig) return;
@@ -1475,7 +1483,7 @@ export function App() {
         onSignOut={endSession}
         onClose={closeRollcasters}
       />
-      <div ref={appKeyboardRootRef} className="app-keyboard-root" aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft">
+      <div ref={appKeyboardRootRef} className="app-keyboard-root" aria-keyshortcuts={Object.values(controlBindings).join(" ")}>
         {error && <div className="notice error">{error}</div>}
         {view === "starter-rollcaster" && (
           <StarterRollcasterScreen
@@ -1595,6 +1603,7 @@ export function App() {
         <CombatScreen
           data={data}
           combat={combat}
+          controlBindings={controlBindings}
           setCombat={setCombat}
           onBattleResult={async (resolved) => {
             setLoading(true);
@@ -1674,7 +1683,6 @@ export function App() {
       {settingsOpen && (
         <SettingsModal
           windowMode={desktopWindow.mode}
-          windowedSize={desktopWindow.windowedSize}
           onWindowModeChange={setDesktopWindowMode}
           onClose={() => setSettingsOpen(false)}
         />
@@ -1783,7 +1791,7 @@ function Shell({ children, className = "" }: { children: React.ReactNode; classN
   const desktopWindow = useDesktopWindow();
   return (
     <main className={`app-shell ${className}`.trim()} data-game-profile={desktopProfile.profile} data-game-environment={desktopProfile.environment} data-window-mode={desktopWindow.mode}>
-      <DesktopWindowChrome mode={desktopWindow.mode} />
+      <DesktopWindowResizeHandles mode={desktopWindow.mode} />
       <div className="world-glow" />
       {desktopProfile.badge && <span className={`game-profile-badge ${desktopProfile.profile}`} aria-label={`${desktopProfile.appName} profile`}>{desktopProfile.badge}</span>}
       {children}
@@ -1791,7 +1799,7 @@ function Shell({ children, className = "" }: { children: React.ReactNode; classN
   );
 }
 
-function DesktopWindowChrome({ mode }: { mode: WindowMode }) {
+function DesktopWindowResizeHandles({ mode }: { mode: WindowMode }) {
   if (!isTauriDesktop() || mode !== "windowed") return null;
   const corners: Array<{ corner: ResizeCorner; className: string; label: string }> = [
     { corner: "north-west", className: "north-west", label: "Resize window from top left corner" },
@@ -1800,28 +1808,7 @@ function DesktopWindowChrome({ mode }: { mode: WindowMode }) {
     { corner: "south-east", className: "south-east", label: "Resize window from bottom right corner" },
   ];
   return (
-    <>
-      <div className="desktop-window-chrome" aria-label="Window controls">
-        <div
-          className="desktop-window-drag-region"
-          aria-label="Move Rollcasters window"
-          onPointerDown={() => { void startDesktopWindowDragging().catch((error) => console.error("Unable to move the Rollcasters window.", error)); }}
-        >
-          <span>Rollcasters</span>
-        </div>
-        <div className="desktop-window-controls">
-          <button type="button" aria-label="Minimize Rollcasters" onClick={() => { void minimizeDesktopWindow().catch((error) => console.error("Unable to minimize the Rollcasters window.", error)); }}>
-            <Minimize2 size={14} aria-hidden="true" />
-          </button>
-          <button type="button" aria-label="Enter fullscreen" onClick={() => { void setDesktopWindowMode("fullscreen").catch((error) => console.error("Unable to enter fullscreen.", error)); }}>
-            <Maximize2 size={14} aria-hidden="true" />
-          </button>
-          <button type="button" className="desktop-window-close" aria-label="Close Rollcasters" onClick={() => { void closeDesktopWindow().catch((error) => console.error("Unable to close the Rollcasters window.", error)); }}>
-            <X size={14} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-      {corners.map(({ corner, className, label }) => (
+    <>{corners.map(({ corner, className, label }) => (
         <button
           key={corner}
           type="button"
@@ -1833,25 +1820,25 @@ function DesktopWindowChrome({ mode }: { mode: WindowMode }) {
             void startDesktopCornerResize(corner, { screenX: event.screenX, screenY: event.screenY }).catch((error) => console.error("Unable to resize the Rollcasters window.", error));
           }}
         />
-      ))}
-    </>
+      ))}</>
   );
 }
 
 function SettingsModal({
   windowMode,
-  windowedSize,
   onWindowModeChange,
   onClose,
 }: {
   windowMode: WindowMode;
-  windowedSize: { width: number; height: number };
   onWindowModeChange: (mode: WindowMode) => Promise<void>;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<"controls" | "window">("controls");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const controlBindings = useControlBindings();
+  const [selectedAction, setSelectedAction] = useState<ControlAction | null>(null);
+  const [controlError, setControlError] = useState<string | null>(null);
 
   async function changeWindowMode(mode: WindowMode) {
     if (busy || mode === windowMode) return;
@@ -1866,44 +1853,91 @@ function SettingsModal({
     }
   }
 
+  function selectControl(action: ControlAction) {
+    setSelectedAction((current) => current === action ? null : action);
+    setControlError(null);
+  }
+
+  function bindSelectedControl(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!selectedAction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isBindableKeyboardEvent(event.nativeEvent)) {
+      setControlError("That key cannot be used for a control.");
+      return;
+    }
+    const conflict = CONTROL_ACTIONS.find(({ id }) => id !== selectedAction && controlBindings[id] === event.code);
+    if (conflict) {
+      setControlError(`${controlLabel(event.code)} is already assigned to ${conflict.label}.`);
+      return;
+    }
+    setControlBinding(selectedAction, event.code);
+    setSelectedAction(null);
+    setControlError(null);
+  }
+
+  function restoreDefaultControls() {
+    resetControlBindings();
+    setSelectedAction(null);
+    setControlError(null);
+  }
+
   return (
-    <Modal eyebrow="Rollcasters" title="Settings" description="Adjust your game window and view the current controls." onClose={onClose} className="settings-modal">
-      <div className="settings-tabs" role="tablist" aria-label="Settings categories">
-        <button type="button" role="tab" aria-selected={tab === "controls"} className={tab === "controls" ? "active" : ""} onClick={() => setTab("controls")}>
-          <CircleHelp size={16} aria-hidden="true" /> Controls
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "window"} className={tab === "window" ? "active" : ""} onClick={() => setTab("window")}>
-          <SettingsIcon size={16} aria-hidden="true" /> Window
-        </button>
+    <Modal eyebrow="Rollcasters" title="Settings" description="Adjust your game window and configure local controls." onClose={onClose} className="settings-modal">
+      <div className="settings-layout" onKeyDownCapture={bindSelectedControl}>
+        <nav className="settings-tabs" role="tablist" aria-orientation="vertical" aria-label="Settings categories">
+          <button id="settings-tab-controls" type="button" role="tab" aria-selected={tab === "controls"} aria-controls="settings-panel-controls" className={tab === "controls" ? "active" : ""} onClick={() => setTab("controls")}>
+            <CircleHelp size={16} aria-hidden="true" /> Controls
+          </button>
+          <button id="settings-tab-window" type="button" role="tab" aria-selected={tab === "window"} aria-controls="settings-panel-window" className={tab === "window" ? "active" : ""} onClick={() => setTab("window")}>
+            <SettingsIcon size={16} aria-hidden="true" /> Window
+          </button>
+        </nav>
+        <div className="settings-content">
+          {tab === "controls" ? (
+            <section id="settings-panel-controls" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-controls">
+              <div className="settings-section-heading"><div><p className="eyebrow">Saved on this device</p><h3>Controls</h3></div><span className="settings-status">{selectedAction ? "Press a key" : "Keyboard"}</span></div>
+              <p className="settings-help">Select a control, then press the keyboard key you want to use. Mouse clicks always activate the same controls and cannot be remapped.</p>
+              {controlError && <p className="settings-error" role="alert">{controlError}</p>}
+              <div className="control-list">
+                {CONTROL_ACTIONS.map(({ id, label }) => {
+                  const selected = selectedAction === id;
+                  return <button
+                    key={id}
+                    type="button"
+                    className={`control-row ${selected ? "selected" : ""}`}
+                    aria-pressed={selected}
+                    onClick={() => selectControl(id)}
+                  >
+                    <span>{label}</span>
+                    <strong>{selected ? "Press a key…" : controlLabel(controlBindings[id])}</strong>
+                  </button>;
+                })}
+              </div>
+              <div className="settings-control-actions">
+                <button type="button" className="secondary-button" onClick={restoreDefaultControls}>Reset Defaults</button>
+              </div>
+            </section>
+          ) : (
+            <section id="settings-panel-window" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-window">
+              <div className="settings-section-heading"><div><p className="eyebrow">Display mode</p><h3>Window</h3></div>{busy && <span className="settings-status">Applying…</span>}</div>
+              {error && <p className="settings-error" role="alert">{error}</p>}
+              <div className="window-mode-options">
+                <label className={`window-mode-option ${windowMode === "fullscreen" ? "selected" : ""}`}>
+                  <input type="radio" name="window-mode" checked={windowMode === "fullscreen"} disabled={busy} onChange={() => void changeWindowMode("fullscreen")} />
+                  <span><strong>Fullscreen</strong></span>
+                  <Maximize2 size={18} aria-hidden="true" />
+                </label>
+                <label className={`window-mode-option ${windowMode === "windowed" ? "selected" : ""}`}>
+                  <input type="radio" name="window-mode" checked={windowMode === "windowed"} disabled={busy} onChange={() => void changeWindowMode("windowed")} />
+                  <span><strong>Windowed</strong></span>
+                  <Minimize2 size={18} aria-hidden="true" />
+                </label>
+              </div>
+            </section>
+          )}
+        </div>
       </div>
-      {tab === "controls" ? (
-        <section className="settings-section" role="tabpanel" aria-label="Controls">
-          <div className="settings-section-heading"><div><p className="eyebrow">Read-only for now</p><h3>Controls</h3></div><span className="settings-status">Remapping coming soon</span></div>
-          <div className="control-list">
-            <div className="control-row"><span>Move</span><strong>W A S D <small>or</small> Arrow Keys</strong></div>
-            <div className="control-row"><span>Interact / Advance</span><strong>Space</strong></div>
-            <div className="control-row"><span>Back</span><strong>Left Shift</strong></div>
-          </div>
-        </section>
-      ) : (
-        <section className="settings-section" role="tabpanel" aria-label="Window">
-          <div className="settings-section-heading"><div><p className="eyebrow">Display mode</p><h3>Window</h3></div>{busy && <span className="settings-status">Applying…</span>}</div>
-          {error && <p className="settings-error" role="alert">{error}</p>}
-          <div className="window-mode-options">
-            <label className={`window-mode-option ${windowMode === "fullscreen" ? "selected" : ""}`}>
-              <input type="radio" name="window-mode" checked={windowMode === "fullscreen"} disabled={busy} onChange={() => void changeWindowMode("fullscreen")} />
-              <span><strong>Fullscreen</strong><small>Fill the active display at its native size.</small></span>
-              <Maximize2 size={18} aria-hidden="true" />
-            </label>
-            <label className={`window-mode-option ${windowMode === "windowed" ? "selected" : ""}`}>
-              <input type="radio" name="window-mode" checked={windowMode === "windowed"} disabled={busy} onChange={() => void changeWindowMode("windowed")} />
-              <span><strong>Windowed</strong><small>Starts at 1280 × 720 and keeps a clean 16:9 shape.</small></span>
-              <Minimize2 size={18} aria-hidden="true" />
-            </label>
-          </div>
-          <p className="settings-note">Windowed size: {windowedSize.width} × {windowedSize.height}. Drag a corner to resize; the side edges stay fixed.</p>
-        </section>
-      )}
     </Modal>
   );
 }
@@ -3724,6 +3758,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   onOpened?: () => void;
   onClose: () => void;
 }) {
+  const controlBindings = useControlBindings();
   const lootbox = data.catalog.lootboxes.find((row) => row.id === lootboxId);
   const pool = data.catalog.lootboxPoolEntries.filter((entry) => entry.lootbox_id === lootboxId).sort((left,right) => left.sort_order-right.sort_order);
   const [purchased, setPurchased] = useState(mode === "owned" || initialPurchased);
@@ -3837,12 +3872,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (event.code !== "Space" || event.repeat || target?.matches("input,textarea,select,button,[contenteditable=true]")) return;
+      if (event.code !== controlBindings.interact || event.repeat || target?.matches("input,textarea,select,button,[contenteditable=true]")) return;
       if (canOpen) { event.preventDefault(); void openBox(); }
     };
     window.addEventListener("keydown",onKey);
     return () => window.removeEventListener("keydown",onKey);
-  }, [canOpen,lootbox?.id]);
+  }, [canOpen, controlBindings.interact, lootbox?.id]);
 
   useEffect(() => {
     if (purchased && phase === "idle" && !busy) {
@@ -3962,7 +3997,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
           <div className="shop-purchase-row lootbox-modal-purchase-row">
           <ShopQuantityControl label={`Quantity of ${lootbox.name}`} quantity={selectedPurchaseQuantity} max={99} disabled={busy || purchasePending} onChange={setSelectedPurchaseQuantity} />
           <button className="primary-button lootbox-purchase-button" disabled={busy || purchasePending} onClick={() => void purchaseBox()}>Purchase</button>
-        </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={sendToBag}>Send to Bag</button>}</>}</footer>
+        </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts={controlBindings.interact}>{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={sendToBag}>Send to Bag</button>}</>}</footer>
         <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
       </>}
     </section>
@@ -5244,6 +5279,7 @@ function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
 function CombatScreen({
   data,
   combat,
+  controlBindings,
   setCombat,
   onBattleResult,
   onBack,
@@ -5253,6 +5289,7 @@ function CombatScreen({
 }: {
   data: AppData;
   combat: DungeonRunState;
+  controlBindings: ControlBindings;
   setCombat: Dispatch<SetStateAction<DungeonRunState | null>>;
   onBattleResult: (state: DungeonRunState) => Promise<void>;
   onBack: () => void;
@@ -5261,6 +5298,7 @@ function CombatScreen({
   onNextDungeon: (dungeonId: string) => void;
 }) {
   const NARRATION_TYPEWRITER_INTERVAL_MS = 22;
+  const INTERACT_HOLD_START_DELAY_MS = 2_000;
   const INTERACT_HOLD_REPEAT_INTERVAL_MS = 80;
   const combatRootRef = useRef<HTMLElement>(null);
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
@@ -5288,6 +5326,7 @@ function CombatScreen({
   const keyboardFocusProxyRef = useRef<HTMLElement | null>(null);
   const invalidKeyboardFocusTimerRef = useRef<number | null>(null);
   const interactHeldRef = useRef(false);
+  const interactHoldDelayTimerRef = useRef<number | null>(null);
   const interactHoldTimerRef = useRef<number | null>(null);
   const interactActionRef = useRef<(showInvalidFeedback?: boolean) => void>(() => undefined);
   const lastActionMenuFocusKeyRef = useRef("");
@@ -5728,6 +5767,10 @@ function CombatScreen({
   useEffect(() => {
     function stopInteractHold() {
       interactHeldRef.current = false;
+      if (interactHoldDelayTimerRef.current !== null) {
+        window.clearTimeout(interactHoldDelayTimerRef.current);
+        interactHoldDelayTimerRef.current = null;
+      }
       if (interactHoldTimerRef.current !== null) {
         window.clearInterval(interactHoldTimerRef.current);
         interactHoldTimerRef.current = null;
@@ -5735,7 +5778,7 @@ function CombatScreen({
     }
 
     function handleInteractKeyDown(event: KeyboardEvent) {
-      if (event.code !== "Space") return;
+      if (event.code !== controlBindings.interact) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")) return;
       const targetCombatControl = target?.closest("[data-combat-control]");
@@ -5750,13 +5793,18 @@ function CombatScreen({
       if (event.repeat || interactHeldRef.current) return;
       interactHeldRef.current = true;
       interactActionRef.current(true);
-      interactHoldTimerRef.current = window.setInterval(() => {
-        if (interactHeldRef.current) interactActionRef.current();
-      }, INTERACT_HOLD_REPEAT_INTERVAL_MS);
+      interactHoldDelayTimerRef.current = window.setTimeout(() => {
+        interactHoldDelayTimerRef.current = null;
+        if (!interactHeldRef.current) return;
+        interactActionRef.current();
+        interactHoldTimerRef.current = window.setInterval(() => {
+          if (interactHeldRef.current) interactActionRef.current();
+        }, INTERACT_HOLD_REPEAT_INTERVAL_MS);
+      }, INTERACT_HOLD_START_DELAY_MS);
     }
 
     function handleInteractKeyUp(event: KeyboardEvent) {
-      if (event.code === "Space") stopInteractHold();
+      if (event.code === controlBindings.interact) stopInteractHold();
     }
 
     window.addEventListener("keydown", handleInteractKeyDown);
@@ -5768,7 +5816,7 @@ function CombatScreen({
       window.removeEventListener("keyup", handleInteractKeyUp);
       window.removeEventListener("blur", stopInteractHold);
     };
-  }, []);
+  }, [controlBindings.interact]);
 
   const keyboardFocusSignature = [
     combat.phase,
@@ -5840,17 +5888,17 @@ function CombatScreen({
       const focusInsideCombat = (active instanceof HTMLElement && root.contains(active)) || Boolean(keyboardFocusRef.current && root.contains(keyboardFocusRef.current));
       if (!focusInsideCombat && active !== document.body) return;
 
-      if (event.code === "ShiftLeft") {
+      if (event.code === controlBindings.back) {
         if (event.repeat) return;
         event.preventDefault();
         keyboardBack();
         return;
       }
 
-      const direction = event.code === "ArrowUp" || event.code === "KeyW" ? "up"
-        : event.code === "ArrowDown" || event.code === "KeyS" ? "down"
-          : event.code === "ArrowLeft" || event.code === "KeyA" ? "left"
-            : event.code === "ArrowRight" || event.code === "KeyD" ? "right"
+      const direction = event.code === controlBindings["move-up"] ? "up"
+        : event.code === controlBindings["move-down"] ? "down"
+          : event.code === controlBindings["move-left"] ? "left"
+            : event.code === controlBindings["move-right"] ? "right"
               : null;
       if (direction) {
         event.preventDefault();
@@ -5860,7 +5908,7 @@ function CombatScreen({
     }
     window.addEventListener("keydown", handleCombatKeyboard);
     return () => window.removeEventListener("keydown", handleCombatKeyboard);
-  }, [combat.phase, menu, targeting, swapSelection, currentActor?.key, currentActorIndex, actions, narrationAdvanceable, loadingNarration]);
+  }, [controlBindings, combat.phase, menu, targeting, swapSelection, currentActor?.key, currentActorIndex, actions, narrationAdvanceable, loadingNarration]);
 
   useLayoutEffect(() => {
     setSwapMotion(null);
@@ -6028,6 +6076,7 @@ function CombatScreen({
       <DungeonOutcomeScreen
         data={data}
         combat={combat}
+        controlBindings={controlBindings}
         complete={complete}
         keyboardRootRef={combatRootRef}
         onHome={onHome}
@@ -6042,7 +6091,7 @@ function CombatScreen({
       ref={combatRootRef}
       className="combat-screen"
       data-combat-loading={loadingNarration ? "true" : "false"}
-      aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft"
+      aria-keyshortcuts={Object.values(controlBindings).join(" ")}
     >
       <div ref={viewportFitRef} className="combat-viewport-fit">
         <div className="combat-header">
@@ -6196,8 +6245,8 @@ function CombatScreen({
           tabIndex={loadingNarration || manaRefundNarration ? -1 : undefined}
           aria-label={loadingNarration ? (recordingResult ? "Waiting for encounter results" : "Loading") : manaRefundNarration ? "Mana restored" : undefined}
           disabled={loadingNarration || manaRefundNarration || !narrationAdvanceable}
-          aria-keyshortcuts="Space"
-          title={!loadingNarration && !manaRefundNarration && narrationAdvanceable ? "Click or press Space to continue" : undefined}
+          aria-keyshortcuts={controlBindings.interact}
+          title={!loadingNarration && !manaRefundNarration && narrationAdvanceable ? `Click or press ${controlLabel(controlBindings.interact)} to continue` : undefined}
           onClick={loadingNarration || manaRefundNarration ? undefined : advanceNarration}
         >
           <span className={`combat-narration-copy ${narrationComplete && narrationText !== "Rolling…" && !loadingNarration ? "" : "typing"}`}>
@@ -7207,13 +7256,13 @@ function RewardEntryIcon({ data, entry }: { data: AppData; entry: DungeonRewardS
   />;
 }
 
-function DungeonOutcomeScreen({ data, combat, complete, keyboardRootRef, onHome, onReplay, onNextDungeon }: { data: AppData; combat: DungeonRunState; complete: boolean; keyboardRootRef: React.RefObject<HTMLElement>; onHome: () => void; onReplay: () => void; onNextDungeon: (id: string) => void }) {
+function DungeonOutcomeScreen({ data, combat, controlBindings, complete, keyboardRootRef, onHome, onReplay, onNextDungeon }: { data: AppData; combat: DungeonRunState; controlBindings: ControlBindings; complete: boolean; keyboardRootRef: React.RefObject<HTMLElement>; onHome: () => void; onReplay: () => void; onNextDungeon: (id: string) => void }) {
   const rewards = combineDungeonRewards(combat.lastBattleRewards, combat.dungeonRewards);
   return (
     <section
       ref={keyboardRootRef}
       className={`combat-screen dungeon-outcome-screen ${complete ? "victory" : "failure"}`}
-      aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft"
+      aria-keyshortcuts={Object.values(controlBindings).join(" ")}
     >
       <div className="dungeon-outcome-emblem">{complete ? <Sparkles size={42} /> : <Skull size={42} />}</div>
       <p className="eyebrow">{complete ? "Dungeon complete" : "Expedition failed"}</p>

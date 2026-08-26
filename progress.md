@@ -448,3 +448,10 @@ The working progress log is maintained in the shared Obsidian vault:
 - `npm run typecheck`, `npm run test:desktop-window`, and the desktop config/security contract checks pass; full browser/layout/build verification remains to run.
 - Added the explicit Tauri `core:window` mutation permissions required by the runtime APIs; `core:window:default` alone is read-only for these operations.
 - Verified the generated local macOS `.app` directly: it opens borderless at the display-sized 1366×768 fullscreen viewport with no native title bar or traffic-light controls. Local packaging completed the app bundle; updater artifact signing remains unavailable without the protected private key.
+- Follow-up: removed the visible custom top windowed bar and its drag/minimize/close controls. Windowed mode remains borderless with only the four proportional corner resize handles.
+
+## 2026-08-26 — Settings split-pane layout
+
+- Enlarged the Settings popup to a 940×620 desktop frame with a vertical left navigation rail and a dedicated right-side content pane for the selected tab.
+- Kept Controls as the default read-only tab and removed the requested fullscreen/windowed explanatory lines and window-size note.
+- Added `npm run test:settings-layout` with measured split-pane geometry and screenshot coverage. Typecheck, source/geometry regressions, browser smoke, and production build pass.
