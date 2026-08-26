@@ -4586,7 +4586,7 @@ function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }:
           const progress = progressFor(data, challenge.id);
           const blocked = progress.eligible === false;
           const slot = progress.completed ? null : trackedSlotFor(data, challenge.id);
-          const trackedFamily = isTrackableChallenge(challenge);
+          const trackedFamily = isTrackableChallenge(challenge, data.catalog.unlockChallengeTemplates);
           const trackable = trackedFamily && !progress.completed && progress.trackable !== false;
           return (
             <Fragment key={challenge.id}>
@@ -4866,7 +4866,7 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
         {challenges.map((challenge) => {
           const progress = progressFor(data, challenge.id);
           const slot = progress.completed ? null : trackedSlotFor(data, challenge.id);
-          const trackedFamily = isTrackableChallenge(challenge);
+          const trackedFamily = isTrackableChallenge(challenge, data.catalog.unlockChallengeTemplates);
           const trackable = trackedFamily && !progress.completed && progress.trackable !== false;
           const blocked = progress.eligible === false;
           return (

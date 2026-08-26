@@ -177,10 +177,11 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
       eligible: gateEligible,
       completed: Boolean(isDerived && gateEligible && goalReached),
       blocked_by_gate_order: null,
-      // A missing authoritative state usually means the published definition
-      // is older than the live server definition. Do not allow tracking a row
-      // the server cannot resolve.
-      trackable: false,
+      // A zero-progress row may be absent while a local candidate is ahead of
+      // the active server projection. Derive the visible action from the
+      // catalog definition and gate state; the tracking RPC remains the final
+      // authority when the player selects it.
+      trackable: gateEligible && Boolean(challenge && isTrackableChallenge(challenge, data.catalog.unlockChallengeTemplates)),
     };
   }
 
@@ -506,8 +507,15 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
   return "";
 }
 
-export function isTrackableChallenge(challenge: CollectibleUnlockChallenge): boolean {
-  return TRACKED_CHALLENGE_TYPES.has(challenge.challenge_type)
+export function isTrackableChallenge(
+  challenge: CollectibleUnlockChallenge,
+  templates: AppData["catalog"]["unlockChallengeTemplates"] = [],
+): boolean {
+  const template = templates?.find((candidate) => candidate.id === challenge.challenge_type);
+  const isTrackedEvent = template
+    ? template.challenge_category === "tracked" && template.progress_mode === "tracked_event"
+    : TRACKED_CHALLENGE_TYPES.has(challenge.challenge_type);
+  return isTrackedEvent
     && challenge.parameters?.tracking_required !== false;
 }
 

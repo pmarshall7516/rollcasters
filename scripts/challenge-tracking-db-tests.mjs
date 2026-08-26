@@ -93,6 +93,68 @@ try {
   )).rows[0].value;
   check(tracked?.challenge_id === tinyBladeChallengeId, "Tiny Blade's Acolyte challenge must be trackable.");
 
+  const sameCollectiblePair = (await db.query(`
+    select
+      first_challenge.id as first_challenge_id,
+      second_challenge.id as second_challenge_id
+    from public.release_collectible_challenges(public.current_game_catalog_release_id()) first_challenge
+    join public.release_collectible_challenges(public.current_game_catalog_release_id()) second_challenge
+      on second_challenge.collectible_type=first_challenge.collectible_type
+      and second_challenge.collectible_id=first_challenge.collectible_id
+      and second_challenge.id>first_challenge.id
+    join public.release_unlock_challenge_templates(public.current_game_catalog_release_id()) first_template
+      on first_template.id=first_challenge.challenge_type
+    join public.release_unlock_challenge_templates(public.current_game_catalog_release_id()) second_template
+      on second_template.id=second_challenge.challenge_type
+    join lateral public.collectible_challenge_states($1,first_challenge.collectible_type,first_challenge.collectible_id) first_state
+      on first_state.challenge_id=first_challenge.id and first_state.trackable
+    join lateral public.collectible_challenge_states($1,second_challenge.collectible_type,second_challenge.collectible_id) second_state
+      on second_state.challenge_id=second_challenge.id and second_state.trackable
+    where first_template.challenge_category='tracked'
+      and first_template.progress_mode='tracked_event'
+      and second_template.challenge_category='tracked'
+      and second_template.progress_mode='tracked_event'
+      and coalesce(first_challenge.parameters->>'tracking_required','true')='true'
+      and coalesce(second_challenge.parameters->>'tracking_required','true')='true'
+      and first_state.eligible
+      and second_state.eligible
+      and not first_state.complete
+      and not second_state.complete
+    order by first_challenge.collectible_type,first_challenge.collectible_id,first_challenge.sort_order,second_challenge.sort_order
+    limit 1
+  `, [userId])).rows[0];
+  check(sameCollectiblePair, "The published release needs two eligible tracked challenges on one collectible.");
+
+  await db.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
+  const firstSameCollectible = (await db.query(
+    "select public.track_collectible_challenge($1) as value",
+    [sameCollectiblePair.first_challenge_id],
+  )).rows[0].value;
+  const secondSameCollectible = (await db.query(
+    "select public.track_collectible_challenge($1) as value",
+    [sameCollectiblePair.second_challenge_id],
+  )).rows[0].value;
+  const sameCollectibleTrackedRows = (await db.query(
+    "select challenge_id,slot_order from public.user_tracked_collectible_challenges where user_id=$1 order by slot_order",
+    [userId],
+  )).rows;
+  check(
+    firstSameCollectible?.challenge_id === sameCollectiblePair.first_challenge_id
+      && secondSameCollectible?.challenge_id === sameCollectiblePair.second_challenge_id
+      && sameCollectibleTrackedRows.length === 2
+      && sameCollectibleTrackedRows[0].challenge_id === sameCollectiblePair.first_challenge_id
+      && sameCollectibleTrackedRows[1].challenge_id === sameCollectiblePair.second_challenge_id
+      && sameCollectibleTrackedRows[0].slot_order !== sameCollectibleTrackedRows[1].slot_order,
+    "Two challenges for the same collectible must occupy two tracking slots together.",
+  );
+
+  await db.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
+  const restoredTinyBladeTracking = (await db.query(
+    "select public.track_collectible_challenge($1) as value",
+    [tinyBladeChallengeId],
+  )).rows[0].value;
+  check(restoredTinyBladeTracking?.challenge_id === tinyBladeChallengeId, "The combat fixture challenge must be restored after the same-collectible tracking assertion.");
+
   const run = (await db.query(
     "select public.start_dungeon_run_v3($1,$2) as value",
     [fixture.dungeon_id, crypto.randomUUID()],
