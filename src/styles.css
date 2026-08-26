@@ -1261,7 +1261,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .tooltip-cost-breakdown strong:first-child { color: var(--text-primary); }
 .tooltip-cost-breakdown .positive { color: var(--success); font-weight: 950; }
 .tooltip-cost-breakdown .negative { color: var(--danger); font-weight: 950; }
-.skill-tile { --skill-meta-size: 17px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; width: 100%; min-height: 84px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 11px; background: var(--skill-ability-card); color: var(--text-primary); text-align: left; }
+.skill-tile { --skill-meta-size: 20px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr 1fr; width: 100%; min-height: 84px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 11px; background: var(--skill-ability-card); color: var(--text-primary); text-align: left; }
 .skill-tile:hover:not(:disabled) { border-color: var(--accent-magic); box-shadow: 0 0 20px rgb(167 121 255 / 18%); }
 .skill-tile.selected { border-color: var(--success); box-shadow: 0 0 0 2px rgb(97 221 160 / 14%), 0 0 20px rgb(97 221 160 / 20%); }
 .skill-tile:disabled { opacity: .48; }
@@ -1285,8 +1285,8 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .relic-slot .sprite-frame { --sprite-padding: 1px; }
 .relic-slot .asset-icon { width: 100%; height: 100%; }
 .skill-tile-grid .skill-tile {
-  --skill-meta-size: clamp(8px, 3.5cqi, 17px);
-  --skill-mana-icon-size: clamp(10px, 4.5cqi, 22px);
+  --skill-meta-size: clamp(9px, 4cqi, 20px);
+  --skill-mana-icon-size: clamp(12px, 5cqi, 26px);
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: repeat(2, minmax(0, 1fr));
   height: clamp(54px, 18cqi, 86px);
@@ -1327,8 +1327,8 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .skill-tile-grid.compact .skill-tile {
-  --skill-meta-size: 7px;
-  --skill-mana-icon-size: clamp(7px, 4cqi, 12px);
+  --skill-meta-size: 9px;
+  --skill-mana-icon-size: clamp(9px, 4.5cqi, 15px);
 }
 .skill-tile-grid.compact .skill-title { display: contents; }
 .skill-tile-grid.compact .skill-title .asset-icon {
@@ -4117,13 +4117,13 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   align-items: center;
   gap: 2px;
   color: var(--accent-cyan);
-  font-size: clamp(11px, min(.72vw, calc(var(--combat-unit-height) * .055)), 16px);
+  font-size: clamp(12px, min(.82vw, calc(var(--combat-unit-height) * .06)), 18px);
   font-weight: 950;
 }
 
 .combat-mana-cost .asset-icon {
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
 }
 
 .combat-skill-actions > .tooltip-anchor {
@@ -4133,7 +4133,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 }
 
 .combat-skill-actions .skill-tile {
-  --skill-meta-size: clamp(10px, .82vw, 13px);
+  --skill-meta-size: clamp(11px, .92vw, 15px);
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: repeat(2, minmax(0, 1fr));
   height: 100%;
@@ -5382,16 +5382,16 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   }
 
   .combat-mana-cost {
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .combat-mana-cost .asset-icon {
-    width: 11px;
-    height: 11px;
+    width: 14px;
+    height: 14px;
   }
 
   .combat-skill-actions .skill-tile {
-    --skill-meta-size: 8px;
+    --skill-meta-size: 10px;
     min-height: 29px;
     padding: 3px 4px;
   }

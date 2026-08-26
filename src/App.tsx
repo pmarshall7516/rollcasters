@@ -216,6 +216,7 @@ import {
   type ControlAction,
   type ControlBindings,
 } from "./lib/control-preferences";
+import { focusedEnabledControl } from "./lib/keyboard-controls";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type BagTab = "currency" | "shards" | "lootboxes";
@@ -5580,6 +5581,9 @@ function CombatScreen({
     const controls = combatKeyboardControls();
     const enabledControls = controls.filter(isEnabledCombatControl);
     if (!enabledControls.length) return null;
+
+    const focusedControl = focusedEnabledControl(controls, keyboardFocusRef.current, isEnabledCombatControl);
+    if (focusedControl) return focusedControl;
 
     if (combat.phase === "lead_selection" || combat.phase === "forced_replacements") {
       if (combat.selectedLeadIds.length < combat.requiredLeadCount) {

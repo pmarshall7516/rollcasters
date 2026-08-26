@@ -24,6 +24,7 @@
     "test:desktop-window": "tsc scripts/desktop-window-tests.ts src/lib/desktop-window-geometry.ts --outDir /tmp/rollcasters-desktop-window-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node /tmp/rollcasters-desktop-window-tests/scripts/desktop-window-tests.js",
     "test:desktop-window-source": "node scripts/desktop-window-source-tests.mjs",
     "test:control-preferences": "tsc scripts/control-preferences-tests.ts src/lib/control-preferences.ts src/vite-env.d.ts --outDir output/control-preference-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node output/control-preference-tests/scripts/control-preferences-tests.js",
+    "test:keyboard-interact-focus": "tsc scripts/keyboard-interact-focus-tests.ts src/lib/keyboard-controls.ts src/vite-env.d.ts --outDir output/keyboard-interact-focus-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node output/keyboard-interact-focus-tests/scripts/keyboard-interact-focus-tests.js",
     "test:settings-layout": "node scripts/settings-layout-tests.mjs",
     "test:desktop-build-config": "node scripts/desktop-build-config-tests.mjs",
     "test:desktop-session": "node scripts/desktop-session-source-tests.mjs",
