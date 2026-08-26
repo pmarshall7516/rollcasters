@@ -1633,6 +1633,11 @@ export function App() {
             setLoading(true);
             setError(null);
             try {
+              // The final battle result can arrive in the same render tick as
+              // the battle_completed challenge event. Wait for that receipt
+              // before applying the authoritative result snapshot so its
+              // refresh cannot overwrite the fresh challenge progress.
+              await combatProgressQueue.current;
               const result = await recordDungeonBattleResultWithRecovery(
                 resolved.run,
                 dungeonBattleSubmission(resolved),
