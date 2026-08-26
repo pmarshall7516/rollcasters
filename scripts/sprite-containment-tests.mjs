@@ -89,6 +89,7 @@ try {
         intrinsicAspectPreserved: Math.abs(
           imageRect.width / imageRect.height - image.naturalWidth / image.naturalHeight,
         ) <= 0.01,
+        bottomAligned: Math.abs(imageRect.bottom - boxRect.bottom) <= epsilon,
         contained:
           imageRect.left >= boxRect.left - epsilon &&
           imageRect.top >= boxRect.top - epsilon &&
@@ -115,6 +116,7 @@ try {
     result.padding !== 0 ||
     !result.squareBox ||
     !result.intrinsicAspectPreserved ||
+    !result.bottomAligned ||
     !result.contained
   );
 

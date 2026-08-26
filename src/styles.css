@@ -1211,10 +1211,10 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
    space) intact. The frame stays square; only the image canvas is contained. */
 .sprite-box__image {
   position: absolute !important;
-  top: 50%;
+  top: auto;
   left: 50%;
   right: auto;
-  bottom: auto;
+  bottom: 0;
   display: block;
   box-sizing: border-box;
   width: auto !important;
@@ -1225,7 +1225,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
   max-height: calc(100% - var(--sprite-padding, 2px) - var(--sprite-padding, 2px)) !important;
   margin: 0 !important;
   padding: 0;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   object-fit: contain !important;
   object-position: center !important;
 }
