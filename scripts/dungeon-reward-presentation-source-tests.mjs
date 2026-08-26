@@ -12,6 +12,10 @@ const outcomeSource = appSource.match(/function DungeonOutcomeScreen\([\s\S]*?\n
 check(appSource.includes('aggregateDungeonRewardEntries(rewards.entries)'), "Reward rows must aggregate identical drops before rendering.");
 check(outcomeSource.includes("combineDungeonRewards(combat.lastBattleRewards, combat.dungeonRewards)"), "Dungeon completion must combine encounter and completion rewards.");
 check(outcomeSource.includes("<h2>Rewards</h2>"), "Dungeon completion must use one Rewards section.");
+check(outcomeSource.includes('"All encounters are complete."'), "Completed Dungeons must use the concise completion message.");
+check(outcomeSource.includes('layout="dungeon-outcome"'), "Dungeon completion rewards must use the dedicated responsive reward layout.");
+check(appSource.includes('className="combat-reward-count"'), "Reward rows must render a separate count component.");
+check(appSource.includes('className="combat-reward-name"'), "Reward rows must render a separate reward-name component.");
 check(!outcomeSource.includes("Final Encounter"), "Dungeon completion must not split out Final Encounter rewards.");
 check(!outcomeSource.includes("First-clear Rewards"), "Dungeon completion must not split out first-clear rewards.");
 

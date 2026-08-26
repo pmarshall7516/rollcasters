@@ -369,6 +369,7 @@ export function App() {
   const seenChallengeCompletions = useRef(new Set<string>());
   const seenChallengeCompletionUserId = useRef<string | null>(null);
   const combatRef = useRef<DungeonRunState | null>(null);
+  const navigationRevisionRef = useRef(0);
   const appKeyboardRootRef = useRef<HTMLDivElement>(null);
   const appKeyboardFocusRef = useRef<HTMLElement | null>(null);
   const appKeyboardFocusProxyRef = useRef<HTMLElement | null>(null);
@@ -617,6 +618,7 @@ export function App() {
   }
 
   function navigate(nextView: View, nextShopTab = shopTab, replace = false) {
+    navigationRevisionRef.current += 1;
     if (nextView !== "combat") setError(null);
     if (nextView === "shop") setShopTab(nextShopTab);
     setView(nextView);
@@ -927,6 +929,7 @@ export function App() {
     if (!hasSupabaseConfig) return;
     const showLoading = options.showLoading ?? true;
     if (showLoading) setLoading(true);
+    const navigationRevisionAtStart = navigationRevisionRef.current;
     setError(null);
     const shopPurchaseRevisionAtStart = shopPurchaseRevisionRef.current;
     try {
@@ -934,6 +937,7 @@ export function App() {
       const loaded = await loadAppData();
       if (shopPurchaseRevisionAtStart !== shopPurchaseRevisionRef.current) return;
       commitLoadedData(loaded);
+      if (navigationRevisionRef.current !== navigationRevisionAtStart) return;
       const requiredView = requiredStarterView(loaded.player);
       if (requiredView) {
         setView(requiredView);
@@ -944,13 +948,18 @@ export function App() {
         setShopTab(route.shopTab);
         if (route.view === "play") {
           const active = await getActiveDungeonRunWithTimeout();
+          if (navigationRevisionRef.current !== navigationRevisionAtStart) return;
           showActiveDungeonPrompt(active, loaded.catalog.dungeons);
         }
+        if (navigationRevisionRef.current !== navigationRevisionAtStart) return;
         setView(route.view);
       }
     } catch (err) {
       console.error("Unable to load game data.", err);
-      setError(errorMessage(err, "Unable to load game data."));
+      // A background reconciliation must not cover an already-authoritative
+      // reward/outcome screen with a transient refresh failure. Interactive
+      // refreshes still surface the error normally.
+      if (showLoading) setError(errorMessage(err, "Unable to load game data."));
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -1104,7 +1113,19 @@ export function App() {
   function queueCombatProgressEvents(runId: string, turnNumber: number, events: Parameters<typeof submitCollectibleCombatEvents>[2]) {
     if (events.length === 0) return;
     const work = combatProgressQueue.current.then(async () => {
-      await submitCollectibleCombatEvents(runId, turnNumber, events);
+      const snapshot = await submitCollectibleCombatEvents(runId, turnNumber, events);
+      // Combat progress is returned by the same authoritative receipt. Apply
+      // it immediately so the Collection/Bag UI does not wait for a later
+      // bootstrap refresh (or race that refresh with the queued write).
+      setData((current) => current?.player
+        ? {
+            ...current,
+            player: {
+              ...current.player,
+              collectibleSnapshot: snapshot,
+            },
+          }
+        : current);
     });
     combatProgressQueue.current = work.catch((progressError) => {
       // Challenge progress is a non-critical post-combat projection. Combat
@@ -1199,6 +1220,7 @@ export function App() {
     function popstate() {
       if (!isAuthed || !data?.player) return;
       if (dungeonEntryRequestRef.current) return;
+      navigationRevisionRef.current += 1;
       const requiredView = requiredStarterView(data.player);
       if (requiredView) {
         setView(requiredView);
@@ -1606,6 +1628,7 @@ export function App() {
           combat={combat}
           controlBindings={controlBindings}
           setCombat={setCombat}
+          onCombatTurnResolved={(runId, turnNumber, events) => queueCombatProgressEvents(runId, turnNumber, events)}
           onBattleResult={async (resolved) => {
             setLoading(true);
             setError(null);
@@ -3121,11 +3144,25 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
   const currentAbility = target.type === "ability" ? player.abilitySlots.find((row) => row.user_rollcaster_id === target.owned.id && row.slot_index === target.slotIndex)?.ability_id : null;
   const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && Boolean(currentAbility));
   const clear = target.type === "critter" ? () => setSquadSlot(target.slotIndex, null) : target.type === "skill" ? () => setCritterSkillSlot(target.owned.id, target.slotIndex, null) : target.type === "relic" ? () => setCritterRelicSlot(target.owned.id, target.slotIndex, null) : target.type === "ability" ? () => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, null) : null;
-  return <Modal className={target.type === "skill" ? "equip-dialog equip-dialog-skill" : target.type === "relic" ? "equip-dialog equip-dialog-relic" : "equip-dialog"} title={title} description={target.type === "skill" ? "Choose an unlocked skill or unlock one available at this Critter's level." : "Choose an eligible item for this loadout slot."} onClose={onClose}>
+  const dialogClass = target.type === "skill"
+    ? "equip-dialog equip-dialog-skill"
+    : target.type === "relic"
+      ? "equip-dialog equip-dialog-relic"
+      : target.type === "ability"
+        ? "equip-dialog equip-dialog-ability"
+        : "equip-dialog";
+  const scrollableContent = target.type === "skill"
+    ? <div className="equip-skill-list">{content}</div>
+    : target.type === "relic"
+      ? <div className="equip-relic-list">{content}</div>
+      : target.type === "ability"
+        ? <div className="equip-ability-list">{content}</div>
+        : content;
+  return <Modal className={dialogClass} title={title} description={target.type === "skill" ? "Choose an unlocked skill or unlock one available at this Critter's level." : "Choose an eligible item for this loadout slot."} onClose={onClose}>
     {error && <p className="notice error" role="alert">{error}</p>}
     {target.type === "skill" && currentSkillOwner && <div className="equip-dialog-point-summary"><PointCounter kind="skill" points={currentSkillOwner.skill_points} inline /></div>}
     {(target.type === "skill" || target.type === "relic") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : "Search relics by name"} /></label>}
-    {target.type === "skill" ? <div className="equip-skill-list">{content}</div> : content}
+    {scrollableContent}
     <div className="dialog-actions">{canUnequip && clear && <button className="danger-button" disabled={saving} onClick={() => onEquip(clear)}>Unequip</button>}<button className="secondary-button" onClick={onClose}>Cancel</button></div>
   </Modal>;
 }
@@ -5282,6 +5319,7 @@ function CombatScreen({
   combat,
   controlBindings,
   setCombat,
+  onCombatTurnResolved,
   onBattleResult,
   onBack,
   onHome,
@@ -5292,6 +5330,7 @@ function CombatScreen({
   combat: DungeonRunState;
   controlBindings: ControlBindings;
   setCombat: Dispatch<SetStateAction<DungeonRunState | null>>;
+  onCombatTurnResolved: (runId: string, turnNumber: number, events: DungeonRunState["battle"]["turnEvents"]) => void;
   onBattleResult: (state: DungeonRunState) => Promise<void>;
   onBack: () => void;
   onHome: () => void;
@@ -6060,6 +6099,7 @@ function CombatScreen({
     // rules into a worker prematurely.
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     const resolved = submitDungeonActions(combat, selectedActions);
+    onCombatTurnResolved(combat.run.id, combat.battle.turn, resolved.battle.turnEvents);
     try {
       // Keep the resolved presentation out of the tree until turn loading has
       // finished. Presentation classes start their animations on mount.
@@ -6848,25 +6888,35 @@ function CombatResultDialog({ data, title, rewards, actionLabel, onAction }: { d
   );
 }
 
-function RewardSummary({ data, rewards }: { data: AppData; rewards: DungeonRewardSummary }) {
+function RewardSummary({ data, rewards, layout }: { data: AppData; rewards: DungeonRewardSummary; layout?: "dungeon-outcome" }) {
   const dropEntries = aggregateDungeonRewardEntries(rewards.entries);
   if (!dropEntries.length) return <p className="dungeon-no-drops">No encounter drops were earned.</p>;
+  const layoutClass = layout === "dungeon-outcome"
+    ? `dungeon-outcome-reward-list reward-count-${Math.min(dropEntries.length, 3)}`
+    : "";
   return (
-    <div className="combat-reward-list">
+    <div className={`combat-reward-list ${layoutClass}`.trim()}>
       {dropEntries.map((entry) => {
-        const label = entry.kind === "critter_xp"
-          ? `${entry.amount} Critter XP`
-          : entry.kind === "rollcaster_xp"
-            ? `${entry.amount} Rollcaster XP`
-            : entry.kind === "currency"
-              ? `${entry.amount} ${currencyFor(data, entry.targetId)?.name ?? entry.targetId}`
-              : entry.kind === "lootbox"
-                ? `${entry.amount} ${data.catalog.lootboxes.find((lootbox) => lootbox.id === entry.targetId)?.name ?? entry.targetId}`
-                : `${entry.amount} ${entry.kind === "shard" ? `${collectibleName(data, (entry.targetCategory ?? "relic") as CollectibleType, entry.targetId)} Shards` : collectibleName(data, "relic", entry.targetId)}`;
+        const name = entry.kind === "currency"
+          ? currencyFor(data, entry.targetId)?.name ?? entry.targetId
+          : entry.kind === "lootbox"
+            ? data.catalog.lootboxes.find((lootbox) => lootbox.id === entry.targetId)?.name ?? entry.targetId
+            : entry.kind === "shard"
+              ? `${collectibleName(data, (entry.targetCategory ?? "relic") as CollectibleType, entry.targetId)} Shards`
+              : collectibleName(data, "relic", entry.targetId);
+        const tone = entry.kind === "currency" && entry.targetId === "coins"
+          ? "reward-tone-coins"
+          : entry.kind === "shard"
+            ? "reward-tone-shard"
+            : entry.kind === "relic"
+              ? "reward-tone-relic"
+              : "";
         return (
-          <article key={entry.id} className={`combat-reward-card combat-reward-card-${entry.kind}`}>
+          <article key={entry.id} className={`combat-reward-card combat-reward-card-${entry.kind} ${tone}`.trim()}>
             <span className="combat-reward-art"><RewardEntryIcon data={data} entry={entry} /></span>
-            <strong>{label}</strong>
+            {layout === "dungeon-outcome"
+              ? <strong aria-label={`${entry.amount} x ${name}`}><span className="combat-reward-count">{entry.amount}</span><span aria-hidden="true"> x </span><span className="combat-reward-name">{name}</span></strong>
+              : <strong>{entry.amount} {name}</strong>}
             {entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}
           </article>
         );
@@ -7271,9 +7321,9 @@ function DungeonOutcomeScreen({ data, combat, controlBindings, complete, keyboar
       <div className="dungeon-outcome-emblem">{complete ? <Sparkles size={42} /> : <Skull size={42} />}</div>
       <p className="eyebrow">{complete ? "Dungeon complete" : "Expedition failed"}</p>
       <h1>{complete ? `${combat.dungeon.name} cleared!` : "Your squad has fallen."}</h1>
-      <p>{complete ? `All ${combat.run.battleCount} encounters are complete. Rewards below are already saved.` : "Rewards from defeated opponents are saved. Retrying starts a fresh run at full HP."}</p>
+      <p>{complete ? "All encounters are complete." : "Rewards from defeated opponents are saved. Retrying starts a fresh run at full HP."}</p>
       <div className="dungeon-outcome-rewards">
-        <section><h2>Rewards</h2><RewardSummary data={data} rewards={rewards} /></section>
+        <section><h2>Rewards</h2><RewardSummary data={data} rewards={rewards} layout="dungeon-outcome" /></section>
       </div>
       {combat.lastBattleRewards && <XpGainSection data={data} rewards={combat.lastBattleRewards} />}
       <div className="dungeon-outcome-actions">

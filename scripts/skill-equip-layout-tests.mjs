@@ -59,11 +59,13 @@ try {
         const tile = grid.querySelector(".skill-tile");
         const title = tile.querySelector(".skill-title");
         const icon = title.querySelector(".asset-icon");
+        const name = title.querySelector("strong");
         const power = tile.querySelector(".skill-power");
         const mana = tile.querySelector(".skill-mana");
         const gridStyle = getComputedStyle(grid);
         const tileStyle = getComputedStyle(tile);
         const titleStyle = getComputedStyle(title);
+        const nameStyle = getComputedStyle(name);
         const powerStyle = getComputedStyle(power);
         const manaStyle = getComputedStyle(mana);
         const rect = tile.getBoundingClientRect();
@@ -88,7 +90,7 @@ try {
             columns: tileStyle.gridTemplateColumns,
             rows: tileStyle.gridTemplateRows,
           },
-          title: { column: titleStyle.gridColumn, row: titleStyle.gridRow, fontSize: titleStyle.fontSize, gap: titleStyle.gap },
+          title: { column: titleStyle.gridColumn, row: titleStyle.gridRow, fontSize: nameStyle.fontSize, gap: titleStyle.gap },
           icon: { width: iconRect.width, height: iconRect.height },
           power: { column: powerStyle.gridColumn, row: powerStyle.gridRow, fontSize: powerStyle.fontSize, topRight: powerRect.top < rect.top + rect.height / 2 && powerRect.right <= rect.right && rect.right - powerRect.right <= Number.parseFloat(tileStyle.paddingRight) + 2 },
           mana: { column: manaStyle.gridColumn, row: manaStyle.gridRow, fontSize: manaStyle.fontSize },
@@ -111,6 +113,7 @@ try {
     if (result.slot.tile.background !== "none" || result.popup.tile.background !== "none") throw new Error(`${name} Skill tiles must use a solid background:\n${JSON.stringify(result, null, 2)}`);
     if (!result.slot.directTileWrappers || result.slot.gridColumns.split(" ").length !== 2 || !result.slot.contentsContained) throw new Error(`${name} Skill grid organization failed:\n${JSON.stringify(result, null, 2)}`);
     if (result.slot.title.column !== "1" || result.slot.title.row !== "1 / 3" || result.slot.power.column !== "2" || result.slot.power.row !== "1" || !result.slot.power.topRight || result.slot.mana.column !== "2" || result.slot.mana.row !== "2") throw new Error(`${name} Skill tile organization failed:\n${JSON.stringify(result, null, 2)}`);
+    if (Number.parseFloat(result.slot.title.fontSize) < 10) throw new Error(`${name} Skill names became too small:\n${JSON.stringify(result, null, 2)}`);
     if (!result.selectedCheckLeftMiddle || !result.noHorizontalOverflow) throw new Error(`${name} Skill state or overflow failed:\n${JSON.stringify(result, null, 2)}`);
 
     const screenshot = path.join(outputDir, `skill-parity-${name}.png`);
@@ -119,10 +122,12 @@ try {
   }
 
   const desktop = await inspect("desktop", 1200, 760);
+  const roomyMobile = await inspect("roomy-mobile", 390, 844, 243);
   const mobile = await inspect("mobile", 390, 844, 155);
   if (!desktop.popupParentWider || desktop.slot.gridWidth !== desktop.popup.gridWidth) throw new Error(`Popup size handoff failed:\n${JSON.stringify(desktop, null, 2)}`);
+  if (Number.parseFloat(roomyMobile.slot.title.fontSize) < 12) throw new Error(`Roomy mobile Skill names became too small:\n${JSON.stringify(roomyMobile, null, 2)}`);
   if (desktop.slot.tile.height <= mobile.slot.tile.height || desktop.slot.title.fontSize === mobile.slot.title.fontSize) throw new Error(`Responsive Skill scaling failed:\n${JSON.stringify({ desktop, mobile }, null, 2)}`);
-  console.log(JSON.stringify({ desktop, mobile }, null, 2));
+  console.log(JSON.stringify({ desktop, roomyMobile, mobile }, null, 2));
 } finally {
   await browser.close();
 }

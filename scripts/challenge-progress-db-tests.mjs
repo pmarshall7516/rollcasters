@@ -22,7 +22,8 @@ try {
       dungeon.dungeon_id,
       deal_challenge.id as deal_challenge_id,
       deal_challenge.collectible_type as deal_collectible_type,
-      deal_challenge.collectible_id as deal_collectible_id
+      deal_challenge.collectible_id as deal_collectible_id,
+      deal_challenge.parameters as deal_challenge_parameters
     from auth.users player
     join lateral (
       select critter_id
@@ -54,7 +55,7 @@ try {
       limit 1
     ) dungeon on true
     join lateral (
-      select c.id,c.collectible_type,c.collectible_id
+      select c.id,c.collectible_type,c.collectible_id,c.parameters
       from public.collectible_unlock_challenges c
       where c.challenge_type='deal_damage'
         and c.collectible_type='relic'
@@ -74,7 +75,8 @@ try {
   `);
   check(fixture.rowCount === 1, "The development database needs an unstarted tracked Receive Damage challenge with no stored progress.");
 
-  const { user_id: userId, target_critter_id: targetCritterId, challenge_id: challengeId, collectible_type: collectibleType, collectible_id: collectibleId, dungeon_id: dungeonId, deal_challenge_id: dealChallengeId } = fixture.rows[0];
+  const { user_id: userId, target_critter_id: targetCritterId, challenge_id: challengeId, collectible_type: collectibleType, collectible_id: collectibleId, dungeon_id: dungeonId, deal_challenge_id: dealChallengeId, deal_challenge_parameters: dealChallengeParameters } = fixture.rows[0];
+  check(dealChallengeParameters?.damage_mode === "any", "Tiny Blade Deal Damage must author Any damage so HP and Shield damage both count.");
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
   await client.query("delete from public.user_tracked_collectible_challenges where user_id=$1", [userId]);
   await client.query("delete from public.user_collectible_challenge_progress where user_id=$1 and challenge_id=$2", [userId, challengeId]);

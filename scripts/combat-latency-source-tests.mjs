@@ -16,6 +16,8 @@ check(resultHandler.includes("applyDungeonBattleResult(resolved, result, data.ca
   "Encounter result presentation must apply from the projected client snapshot before refreshing in the background.");
 check(!resultHandler.includes("await loadAppData()"),
   "Encounter result presentation must not block on a full app-data reload before showing rewards or Dungeon complete.");
+check(source.includes("if (showLoading) setError(errorMessage(err, \"Unable to load game data.\"));"),
+  "A detached result reconciliation failure must not replace the authoritative outcome screen with a transient error banner.");
 check(!source.includes("saveDungeonRunState(latest.run, latestSerialized)"),
   "Local combat must not persist every turn through save_dungeon_run_state.");
 check(source.includes("serializeDungeonRunState(combat)") && source.includes("saveDungeonRunStateWithTimeout(latest.run, serialized)"),
