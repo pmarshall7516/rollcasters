@@ -108,6 +108,7 @@
     "test:challenge-runtime:db": "node scripts/challenge-runtime-db-tests.mjs",
     "test:dungeon-clear-global:db": "node scripts/dungeon-clear-global-db-tests.mjs",
     "test:challenge-progress:db": "node scripts/challenge-progress-db-tests.mjs",
+    "test:critter-level-challenge:db": "node scripts/critter-level-challenge-db-tests.mjs",
     "test:challenge-tracking:db": "node scripts/challenge-tracking-db-tests.mjs",
     "test:all-unlock-challenge-runtime:db": "node scripts/all-unlock-challenge-runtime-db-tests.mjs",
     "test:challenge-persistence:db": "node scripts/challenge-persistence-db-tests.mjs",

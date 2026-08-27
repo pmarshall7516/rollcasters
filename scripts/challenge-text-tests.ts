@@ -72,6 +72,34 @@ const override = challenge("collection_diversity", {
 check(challengeDescription(data, override) === override.display_text, "Authored player-facing text must be used verbatim.");
 check(challengeDescription(data, { ...diversity, display_text: "  " }) === "Own 1 Critter from each of: Basic, Vile, Frost.", "Blank overrides must fall back to the generated default.");
 
+const levelChallenge = {
+  ...challenge("level_up_critter", { required_level: 12 }),
+  id: "walbrute-level-challenge",
+  collectible_id: "011",
+  target_id: "010",
+};
+const levelChallengeData = {
+  ...data,
+  catalog: { ...data.catalog, collectibleUnlockChallenges: [levelChallenge], collectibleUnlockRequirements: [] },
+  player: {
+    critters: [{ id: "owned-nutter", user_id: "user", critter_id: "010", level: 10, xp: 271, skill_points: 0 }],
+    collectibleSnapshot: {
+      progress: [{ challenge_id: levelChallenge.id, current: "0", goal: "12", goal_reached: false, completed: false, eligible: true, trackable: false }],
+      shards: [], lootboxes: [], tracked: [], unlocked_collectibles: [],
+    },
+  },
+} as unknown as AppData;
+check(derivedChallengeProgress(levelChallengeData, levelChallenge) === 10n, "Critter level challenge derivation must use the Critter named by the legacy target_id.");
+const levelChallengeProgress = progressFor(levelChallengeData, levelChallenge.id);
+check(levelChallengeProgress.current === "10" && levelChallengeProgress.goal === "12" && !levelChallengeProgress.completed,
+  "A stale level challenge snapshot must still display the owned Critter's current level.");
+const completedLevelChallengeProgress = progressFor({
+  ...levelChallengeData,
+  player: { ...levelChallengeData.player!, critters: [{ ...levelChallengeData.player!.critters[0], level: 12 }] },
+}, levelChallenge.id);
+check(completedLevelChallengeProgress.current === "12" && completedLevelChallengeProgress.completed,
+  "A Critter level challenge must complete when the owned Critter reaches its required level.");
+
 const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("own_collectible", { collectible_category: "critter", collectible_ids: ["001"], required_amount: 1, require_unique_collectibles: true }), "Own Ramber."],
   [challenge("own_collectible", { collectible_category: "critter", collectible_ids: [], critter_tag_ids: ["final-stage"], required_amount: 1, require_unique_collectibles: true }), "Own 1 different Critter tagged Final Stage."],

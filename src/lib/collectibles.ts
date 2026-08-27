@@ -11,6 +11,14 @@ import { collectionDiversityGoal, collectionDiversityProgress } from "./collecti
 
 const collectibleIdCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
+function isDerivedChallengeType(challenge: CollectibleUnlockChallenge | undefined): boolean {
+  return challenge?.challenge_type === "collection_diversity"
+    || challenge?.challenge_type === "level_up_critter"
+    || challenge?.challenge_type === "shop_shards"
+    || challenge?.challenge_type === "shop_relic"
+    || challenge?.challenge_type === "own_collectible";
+}
+
 export function sortByCollectibleId<T extends { id: string }>(items: readonly T[]): T[];
 export function sortByCollectibleId<T>(items: readonly T[], getId: (item: T) => string): T[];
 export function sortByCollectibleId<T>(items: readonly T[], getId?: (item: T) => string): T[] {
@@ -164,10 +172,7 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
   const gateEligible = challenge ? inferredGateEligibility(data, challenge) : true;
   if (!progress) {
     const current = challenge ? derivedChallengeCurrent(data, challenge) : 0n;
-    const isDerived = challenge?.challenge_type === "collection_diversity"
-      || challenge?.challenge_type === "shop_shards"
-      || challenge?.challenge_type === "shop_relic"
-      || challenge?.challenge_type === "own_collectible";
+    const isDerived = isDerivedChallengeType(challenge);
     const goalReached = authoredGoal > 0n && current >= authoredGoal;
     return {
       challenge_id: challengeId,
@@ -186,11 +191,8 @@ export function progressFor(data: AppData, challengeId: string): UserCollectible
   }
 
   const eligible = gateEligible && progress.eligible !== false;
-  const isDerived = challenge?.challenge_type === "collection_diversity"
-    || challenge?.challenge_type === "shop_shards"
-    || challenge?.challenge_type === "shop_relic"
-    || challenge?.challenge_type === "own_collectible";
-  const derived = isDerived ? derivedChallengeCurrent(data, challenge) : safeBigInt(progress.current);
+  const isDerived = isDerivedChallengeType(challenge);
+  const derived = isDerived && challenge ? derivedChallengeCurrent(data, challenge) : safeBigInt(progress.current);
   const current = challenge?.challenge_type === "own_collectible"
     ? (derived > safeBigInt(progress.current) ? derived : safeBigInt(progress.current))
     : derived;

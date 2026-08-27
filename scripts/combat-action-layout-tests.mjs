@@ -113,7 +113,7 @@ try {
     space.innerHTML = `
       <button class="combat-back-row">‹ Back to Action Menu</button>
       <div class="combat-skill-actions">
-        ${["Slam", "-----", "-----", "-----"].map((label) => `<span class="tooltip-anchor"><button class="skill-tile"><span class="skill-title"><span class="asset-icon">✦</span><strong>${label}</strong></span><span class="skill-power">PWR 50</span><span class="skill-mana"><span class="asset-icon">◆</span>3</span></button></span>`).join("")}
+        ${["Small Shield Projector", "-----", "-----", "-----"].map((label) => `<span class="tooltip-anchor"><button class="skill-tile"><span class="skill-title"><span class="asset-icon">✦</span><strong>${label}</strong></span><span class="skill-power">PWR 50</span><span class="skill-mana"><span class="asset-icon">◆</span>3</span></button></span>`).join("")}
       </div>
     `;
     const buttons = [...space.querySelectorAll(".combat-skill-actions .skill-tile")].map((button) => {
@@ -121,7 +121,23 @@ try {
       const title = button.querySelector(".skill-title");
       const power = button.querySelector(".skill-power");
       const mana = button.querySelector(".skill-mana");
+      const name = button.querySelector(".skill-title strong");
       const powerRect = power.getBoundingClientRect();
+      const wordRects = (() => {
+        if (!name?.firstChild) return [];
+        const text = name.textContent ?? "";
+        const ranges = [];
+        let offset = 0;
+        for (const word of text.split(/\s+/)) {
+          const start = text.indexOf(word, offset);
+          const range = document.createRange();
+          range.setStart(name.firstChild, start);
+          range.setEnd(name.firstChild, start + word.length);
+          ranges.push({ word, rectCount: range.getClientRects().length });
+          offset = start + word.length;
+        }
+        return ranges;
+      })();
       return {
         top: rect.top,
         bottom: rect.bottom,
@@ -133,6 +149,9 @@ try {
         powerTopRight: powerRect.top < rect.top + rect.height / 2 && powerRect.right <= rect.right && rect.right - powerRect.right <= Number.parseFloat(getComputedStyle(button).paddingRight) + 2,
         manaColumn: getComputedStyle(mana).gridColumn,
         manaRow: getComputedStyle(mana).gridRow,
+        nameOverflowWrap: getComputedStyle(name).overflowWrap,
+        nameWordBreak: getComputedStyle(name).wordBreak,
+        nameWordRects: wordRects,
       };
     });
     return { buttons };
@@ -147,6 +166,10 @@ try {
   check(
     skills.buttons.every((button) => button.titleColumn === "1" && button.titleRow === "1 / 3" && button.powerColumn === "2" && button.powerRow === "1" && button.powerTopRight && button.manaColumn === "2" && button.manaRow === "2"),
     `Combat skill tile contents must match the main-page top-right power layout: ${JSON.stringify(skills)}`,
+  );
+  check(
+    skills.buttons[0].nameOverflowWrap === "normal" && skills.buttons[0].nameWordBreak === "normal" && skills.buttons[0].nameWordRects.every(({ rectCount }) => rectCount === 1),
+    `Combat Skill names must wrap only between complete words: ${JSON.stringify(skills)}`,
   );
   await page.screenshot({ path: path.join(outputDir, "skills.png"), animations: "disabled", fullPage: true });
 

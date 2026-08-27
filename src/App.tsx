@@ -2910,7 +2910,7 @@ function SkillTileGrid({ ariaLabel, children, width }: { ariaLabel: string; chil
 
 function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disabledReason, selected = false, equipped = false, manaCost, manaCostBreakdown, combatControl = false, combatSkillId }: { data: AppData; skill?: Skill | null; sourceCritter?: Critter; onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void; disabled?: boolean; disabledReason?: string; selected?: boolean; equipped?: boolean; manaCost?: number; manaCostBreakdown?: ActionCostBreakdown; combatControl?: boolean; combatSkillId?: string }) {
   const tileRef = useRef<HTMLButtonElement>(null);
-  const [singleWordFontSize, setSingleWordFontSize] = useState<number | null>(null);
+  const [skillFontSize, setSkillFontSize] = useState<number | null>(null);
   const element = skill ? byId(data.catalog.elements, skill.element_id) : null;
   const elementPath = skill ? catalogAssetPath(data, "element", skill.element_id, element?.asset_path, "icon") : null;
   const manaPath = findAssetPath(data, "mana", "mana");
@@ -2921,11 +2921,10 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
   const priorityText = skill && priority !== 0 ? ` Priority: ${priority}` : "";
   const targetText = skill ? `${targetingDescription(skill)}${priorityText}` : "";
   const costSummary = skill && manaCostBreakdown ? costBreakdownText("Mana cost", manaCostBreakdown) : "";
-  const singleWord = Boolean(skill?.name && !/\s/.test(skill.name.trim()));
   useLayoutEffect(() => {
     const tile = tileRef.current;
-    if (!tile || !singleWord) {
-      setSingleWordFontSize(null);
+    if (!tile || !skill) {
+      setSkillFontSize(null);
       return;
     }
     const name = tile.querySelector<HTMLElement>(".skill-title strong");
@@ -2951,7 +2950,7 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
         }
         const needsFit = fittedFontSize < baseFontSize - 0.05;
         const nextFontSize = needsFit ? fittedFontSize : null;
-        setSingleWordFontSize((current) => current === null && nextFontSize === null
+        setSkillFontSize((current) => current === null && nextFontSize === null
           || current !== null && nextFontSize !== null && Math.abs(current - nextFontSize) < 0.05
           ? current
           : nextFontSize);
@@ -2966,11 +2965,11 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
       observer.disconnect();
       window.removeEventListener("resize", fit);
     };
-  }, [singleWord, skill?.name]);
+  }, [skill?.name]);
   const label = skill ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}, ${displayedManaCost} Mana. ${skill.description} ${effectText} ${targetText} ${costSummary}` : "Choose a skill.";
   const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{manaCostBreakdown && manaCostBreakdown.sources.length > 0 && <CostBreakdownLine label="Mana cost" breakdown={manaCostBreakdown} />}{attachmentRows(attachments, sourceCritter)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
   return <GameTooltip label={label.trim()} content={tooltip}><button ref={tileRef} type="button" className={`skill-tile ${skill ? "" : "empty"} ${selected ? "selected" : ""} ${equipped ? "equipped" : ""} ${!onClick ? "read-only" : ""}`} onClick={onClick} disabled={disabled} aria-disabled={!onClick || undefined} data-combat-control={combatControl ? "true" : undefined} data-combat-focus-role={combatControl ? "skill" : undefined} data-combat-skill-id={combatControl ? combatSkillId : undefined}>
-    <span className={`skill-title ${singleWord ? "single-word" : ""}`.trim()}>{skill && <AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={16} />} />}<strong style={singleWordFontSize ? { fontSize: `${singleWordFontSize}px` } : undefined}>{skill?.name ?? "-----"}</strong></span>
+    <span className="skill-title">{skill && <AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={16} />} />}<strong style={skillFontSize ? { fontSize: `${skillFontSize}px` } : undefined}>{skill?.name ?? "-----"}</strong></span>
     {skill?.skill_type === "attack" && <span className="skill-power">PWR {skill.power}</span>}
     {skill && <span className={`skill-mana ${actionCostTone(manaCostBreakdown)}`.trim()}><AssetIcon path={manaPath} alt="Mana" fallback={<Gem size={15} />} />{displayedManaCost}</span>}
     {(selected || equipped) && <Check className="selection-check" size={15} />}
