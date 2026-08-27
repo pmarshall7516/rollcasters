@@ -55,6 +55,42 @@ try {
     </html>
   `);
 
+  await page.setViewportSize({ width: 2391, height: 1305 });
+  const largeDesktop = await page.evaluate(() => {
+    const unit = document.querySelector(".battle-unit");
+    const frame = unit.querySelector(".critter-combat-frame").getBoundingClientRect();
+    const space = unit.querySelector(".combat-action-space");
+    space.innerHTML = `
+      <button class="combat-back-row">‹ Back to Action Menu</button>
+      <div class="combat-skill-actions">
+        <button class="skill-tile">Slam</button><button class="skill-tile">-----</button>
+        <button class="skill-tile">-----</button><button class="skill-tile">-----</button>
+      </div>
+    `;
+    const back = space.querySelector(".combat-back-row").getBoundingClientRect();
+    const spaceRect = space.getBoundingClientRect();
+    return {
+      frame: { top: frame.top, bottom: frame.bottom, height: frame.height },
+      space: { top: spaceRect.top, bottom: spaceRect.bottom, height: spaceRect.height },
+      back: { top: back.top, bottom: back.bottom, height: back.height },
+      unitHeight: unit.getBoundingClientRect().height,
+      spriteSize: getComputedStyle(document.querySelector(".combat-screen")).getPropertyValue("--combat-sprite-size").trim(),
+    };
+  });
+  check(
+    largeDesktop.back.top >= largeDesktop.frame.bottom - 0.5,
+    `Large desktop Back control must not overlap the Critter frame: ${JSON.stringify(largeDesktop)}`,
+  );
+  await page.screenshot({ path: path.join(outputDir, "large-desktop.png"), animations: "disabled", fullPage: true });
+
+  await page.setViewportSize({ width: 382, height: 119 });
+  await page.locator(".combat-action-space").evaluate((space) => {
+    space.innerHTML = `
+      <div class="combat-primary-actions">
+        <button>Skill</button><button>Block</button><button>Swap</button><button>Skip</button>
+      </div>
+    `;
+  });
   const layout = await page.evaluate(() => {
     const space = document.querySelector(".combat-action-space").getBoundingClientRect();
     const buttons = [...document.querySelectorAll(".combat-primary-actions > button")].map((button) => {
@@ -77,12 +113,46 @@ try {
     space.innerHTML = `
       <button class="combat-back-row">‹ Back to Action Menu</button>
       <div class="combat-skill-actions">
-        ${["Slam", "-----", "-----", "-----"].map((label) => `<span class="tooltip-anchor"><button class="skill-tile">${label}</button></span>`).join("")}
+        ${["Small Shield Projector", "-----", "-----", "-----"].map((label) => `<span class="tooltip-anchor"><button class="skill-tile"><span class="skill-title"><span class="asset-icon">✦</span><strong>${label}</strong></span><span class="skill-power">PWR 50</span><span class="skill-mana"><span class="asset-icon">◆</span>3</span></button></span>`).join("")}
       </div>
     `;
     const buttons = [...space.querySelectorAll(".combat-skill-actions .skill-tile")].map((button) => {
       const rect = button.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom, height: rect.height };
+      const title = button.querySelector(".skill-title");
+      const power = button.querySelector(".skill-power");
+      const mana = button.querySelector(".skill-mana");
+      const name = button.querySelector(".skill-title strong");
+      const powerRect = power.getBoundingClientRect();
+      const wordRects = (() => {
+        if (!name?.firstChild) return [];
+        const text = name.textContent ?? "";
+        const ranges = [];
+        let offset = 0;
+        for (const word of text.split(/\s+/)) {
+          const start = text.indexOf(word, offset);
+          const range = document.createRange();
+          range.setStart(name.firstChild, start);
+          range.setEnd(name.firstChild, start + word.length);
+          ranges.push({ word, rectCount: range.getClientRects().length });
+          offset = start + word.length;
+        }
+        return ranges;
+      })();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        height: rect.height,
+        titleColumn: getComputedStyle(title).gridColumn,
+        titleRow: getComputedStyle(title).gridRow,
+        powerColumn: getComputedStyle(power).gridColumn,
+        powerRow: getComputedStyle(power).gridRow,
+        powerTopRight: powerRect.top < rect.top + rect.height / 2 && powerRect.right <= rect.right && rect.right - powerRect.right <= Number.parseFloat(getComputedStyle(button).paddingRight) + 2,
+        manaColumn: getComputedStyle(mana).gridColumn,
+        manaRow: getComputedStyle(mana).gridRow,
+        nameOverflowWrap: getComputedStyle(name).overflowWrap,
+        nameWordBreak: getComputedStyle(name).wordBreak,
+        nameWordRects: wordRects,
+      };
     });
     return { buttons };
   });
@@ -93,7 +163,31 @@ try {
     Math.abs(skills.buttons[0].top - layout.buttons[0].top) <= 1,
     `Primary actions must stay anchored to the same action row as skills: ${JSON.stringify({ layout, skills })}`,
   );
+  check(
+    skills.buttons.every((button) => button.titleColumn === "1" && button.titleRow === "1 / 3" && button.powerColumn === "2" && button.powerRow === "1" && button.powerTopRight && button.manaColumn === "2" && button.manaRow === "2"),
+    `Combat skill tile contents must match the main-page top-right power layout: ${JSON.stringify(skills)}`,
+  );
+  check(
+    skills.buttons[0].nameOverflowWrap === "normal" && skills.buttons[0].nameWordBreak === "normal" && skills.buttons[0].nameWordRects.every(({ rectCount }) => rectCount === 1),
+    `Combat Skill names must wrap only between complete words: ${JSON.stringify(skills)}`,
+  );
   await page.screenshot({ path: path.join(outputDir, "skills.png"), animations: "disabled", fullPage: true });
+
+  const skillSizing = [];
+  for (const viewport of [{ width: 900, height: 720 }, { width: 1920, height: 1080 }]) {
+    await page.setViewportSize(viewport);
+    skillSizing.push(await page.evaluate(() => {
+      const title = document.querySelector(".combat-skill-actions .skill-title");
+      const icon = title?.querySelector(".asset-icon");
+      return {
+        titleFontSize: title ? Number.parseFloat(getComputedStyle(title).fontSize) : 0,
+        iconSize: icon ? icon.getBoundingClientRect().width : 0,
+      };
+    }));
+  }
+  check(skillSizing[0].titleFontSize >= 10 && skillSizing[0].iconSize >= 17, `Narrow-PC skill labels must remain readable: ${JSON.stringify(skillSizing)}`);
+  check(skillSizing[1].titleFontSize > skillSizing[0].titleFontSize && skillSizing[1].iconSize > skillSizing[0].iconSize, `Skill labels and Element logos must scale up with the available desktop space: ${JSON.stringify(skillSizing)}`);
+  await page.setViewportSize({ width: 382, height: 119 });
 
   const swapSelection = await page.evaluate(() => {
     const column = document.querySelector(".player-column");

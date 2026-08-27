@@ -11,19 +11,34 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co"
+      "csp": "default-src 'self'; img-src 'self' http://127.0.0.1:1430 asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:1430 https://*.supabase.co wss://*.supabase.co"
     },
     "windows": [{
-      "label": "main", "title": "Rollcasters", "width": 1280, "height": 800,
-      "minWidth": 1024, "minHeight": 700, "resizable": true, "fullscreen": false,
-      "maximized": false, "center": true
+      "label": "main", "title": "Rollcasters", "width": 1280, "height": 720,
+      "minWidth": 1280, "minHeight": 720, "resizable": false, "fullscreen": true,
+      "decorations": false, "visible": false, "maximized": false, "center": true
     }]
   },
   "bundle": {
     "active": true,
     "targets": ["dmg", "nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "createUpdaterArtifacts": true,
-    "macOS": { "minimumSystemVersion": "12.0", "signingIdentity": "-" },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-",
+      "dmg": {
+        "windowSize": { "width": 660, "height": 400 },
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 }
+      }
+    },
     "windows": { "nsis": { "installMode": "currentUser" } }
   },
   "plugins": {

@@ -94,7 +94,6 @@ try {
               <div class="combat-header">
                 <span></span>
                 <div><p class="eyebrow">Swap playback fixture</p><h1>Moonlit Hollow</h1><p>Encounter 1 / 2 · Turn 2 · 1v1</p></div>
-                <span class="combat-phase-badge">event playback</span>
               </div>
               <div class="combat-board">
                 <aside class="combat-mana-panel rollcaster-mana-panel">

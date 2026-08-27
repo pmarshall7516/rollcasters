@@ -282,6 +282,75 @@ const eligibleLegacyDamage = progressFor(completedLegacyGateData, legacyPostGate
 check(eligibleLegacyDamage.eligible === true && eligibleLegacyDamage.trackable === true,
   "A post-gate damage challenge must become trackable after its dungeon gate reaches its goal.");
 
+const otticeAfflictStatusChallenge: CollectibleUnlockChallenge = {
+  id: "ottice-afflict-status",
+  collectible_type: "critter",
+  collectible_id: "052",
+  challenge_type: "afflict_status",
+  parameters: {
+    status_ids: ["frostbite"],
+    target_side: "enemies",
+    affliction_mode: "fresh_afflictions",
+    required_amount: 35,
+    tracking_required: true,
+  },
+  target_category: null,
+  target_id: null,
+  target_mode: null,
+  any_target: false,
+  target_ids: [],
+  required_amount: "35",
+  required_level: null,
+  sort_order: 0,
+  gate_order: null,
+};
+const otticeAquaDamageChallenge: CollectibleUnlockChallenge = {
+  id: "ottice-aqua-damage",
+  collectible_type: "critter",
+  collectible_id: "052",
+  challenge_type: "deal_damage",
+  parameters: {
+    damage_mode: "any",
+    tracking_scope: "lifetime",
+    required_amount: 1000,
+    tracking_required: true,
+    source_critter_ids: [],
+    source_element_ids: [],
+    target_critter_ids: [],
+    target_element_ids: ["aqua"],
+    source_skill_tag_ids: [],
+    source_critter_tag_ids: [],
+    target_critter_tag_ids: [],
+  },
+  target_category: null,
+  target_id: null,
+  target_mode: null,
+  any_target: false,
+  target_ids: [],
+  required_amount: "1000",
+  required_level: null,
+  sort_order: 1,
+  gate_order: null,
+};
+const otticeCandidateData = {
+  catalog: {
+    ...catalog,
+    collectibleUnlockChallenges: [otticeAfflictStatusChallenge, otticeAquaDamageChallenge],
+  },
+  player: {
+    ...player,
+    collectibleSnapshot: {
+      ...player.collectibleSnapshot,
+      // A local candidate can contain newly authored rows before the active
+      // server release has projected their zero-progress state.
+      progress: [],
+    },
+  },
+} as AppData;
+const otticeCandidateProgress = [otticeAfflictStatusChallenge, otticeAquaDamageChallenge].map((challenge) => progressFor(otticeCandidateData, challenge.id));
+check(otticeCandidateProgress.every((progress) => progress.eligible === true && progress.trackable === true),
+  "Eligible tracked Challenges must expose tracking even when a new candidate row has no stored progress yet.");
+
 const ownershipChallenge: CollectibleUnlockChallenge = {
   id: "ownership-seven",
   collectible_type: "critter",

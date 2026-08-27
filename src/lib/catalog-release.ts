@@ -97,6 +97,10 @@ function requiredNumber(record: Record<string, unknown>, key: string): number {
   return value;
 }
 
+function normalizeAppUrl(value: string | undefined): string | undefined {
+  return value?.replace(/^tauri:\/\/localhost(?=\/|$)/, "http://tauri.localhost");
+}
+
 export function parseCatalogReleasePointer(value: unknown): CatalogReleasePointer {
   if (!isRecord(value)) throw new Error("Catalog release pointer must be an object.");
   return {
@@ -158,6 +162,29 @@ export function isMinimumVersionSatisfied(current: string, minimum: string): boo
     if (currentParts[index] !== minimumParts[index]) return currentParts[index] > minimumParts[index];
   }
   return true;
+}
+
+/**
+ * Resolve the configured catalog root before appending release-relative files.
+ * Browser previews may provide a relative root, while packaged desktop builds
+ * use the app's loopback HTTP asset server so Fetch and Cache Storage receive
+ * an HTTP(S) URL even though the WebView document itself is tauri://localhost.
+ */
+export function resolveCatalogBaseUrl(catalogBaseUrl: string, appUrl?: string): string {
+  const trimmed = catalogBaseUrl.trim();
+  if (!trimmed) throw new Error("Catalog base URL is empty.");
+  const rawBase = appUrl ?? (typeof location === "undefined" ? undefined : location.href);
+  // macOS Tauri webviews use tauri://localhost as their document origin. The
+  // browser Fetch API rejects that scheme before Tauri can serve the bundled
+  // frontend asset, so resolve the app-local route through Tauri's HTTP
+  // localhost alias. Windows/Android may already expose https://tauri.localhost.
+  const base = normalizeAppUrl(rawBase);
+  const normalized = `${trimmed.replace(/\/+$/, "")}/`;
+  try {
+    return new URL(normalized, base).toString();
+  } catch {
+    throw new Error(`Catalog base URL is invalid: ${trimmed}.`);
+  }
 }
 
 const SHA256_CONSTANTS = new Uint32Array([
@@ -280,7 +307,7 @@ async function fetchPointer(url: string): Promise<{ pointer: CatalogReleasePoint
     const cache = await openCatalogCache();
     const fallbackUrl = typeof location === "undefined"
       ? new URL(LAST_VERIFIED_CACHE_KEY, url).toString()
-      : new URL(LAST_VERIFIED_CACHE_KEY, location.origin).toString();
+      : new URL(LAST_VERIFIED_CACHE_KEY, normalizeAppUrl(location.origin)).toString();
     const response = await cache?.match(fallbackUrl);
     if (!response) throw new Error(`Unable to load catalog release pointer: ${String(networkError)}`);
     return { pointer: parseCatalogReleasePointer(await response.json()), source: "cache" };
@@ -331,7 +358,7 @@ export async function loadPublishedCatalog(
   catalogBaseUrl: string,
   gameVersion: string,
 ): Promise<{ catalog: Catalog; release: CatalogReleaseInfo }> {
-  const latestUrl = new URL("latest.json", `${catalogBaseUrl.replace(/\/+$/, "")}/`).toString();
+  const latestUrl = new URL("latest.json", resolveCatalogBaseUrl(catalogBaseUrl)).toString();
   const { pointer, source: pointerSource } = await fetchPointer(latestUrl);
   if (!isSupportedCatalogSchema(pointer.schemaVersion)) {
     throw new Error(`Catalog schema ${pointer.schemaVersion} is not supported by this game.`);
@@ -385,7 +412,7 @@ export async function loadPublishedCatalog(
   if (cache) {
     const fallbackUrl = typeof location === "undefined"
       ? new URL(LAST_VERIFIED_CACHE_KEY, latestUrl).toString()
-      : new URL(LAST_VERIFIED_CACHE_KEY, location.origin).toString();
+      : new URL(LAST_VERIFIED_CACHE_KEY, normalizeAppUrl(location.origin)).toString();
     await cache.put(fallbackUrl, new Response(JSON.stringify(pointer), { headers: { "content-type": "application/json" } }));
   }
   return {

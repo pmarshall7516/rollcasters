@@ -4,8 +4,11 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolveBuildProfile } from "./src/lib/desktop-profile";
 
+const DESKTOP_ASSET_SERVER = "http://127.0.0.1:1430";
+
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  const localCatalogDir = process.env.VITE_LOCAL_CATALOG_DIR ?? env.VITE_LOCAL_CATALOG_DIR;
   const buildProfile = command === "build" ? resolveBuildProfile(mode, env) : undefined;
   const desktopBuild = Boolean(process.env.TAURI_ENV_PLATFORM);
   if (desktopBuild && !fs.existsSync(path.resolve("public/desktop-catalog/game-data/latest.json"))) {
@@ -23,16 +26,19 @@ export default defineConfig(({ command, mode }) => {
       ...(embeddedCatalog ? { "import.meta.env.VITE_GAME_CATALOG_RELEASE_ID": JSON.stringify(embeddedCatalog.catalogVersion) } : {}),
     ...(desktopBuild ? {
       "import.meta.env.VITE_DESKTOP_BUILD": JSON.stringify("true"),
-      "import.meta.env.VITE_GAME_CATALOG_BASE_URL": JSON.stringify("/desktop-catalog/game-data"),
-      "import.meta.env.VITE_GAME_ASSET_BASE_URL": JSON.stringify("/desktop-catalog/game-assets"),
+      "import.meta.env.VITE_GAME_CATALOG_BASE_URL": JSON.stringify(`${DESKTOP_ASSET_SERVER}/desktop-catalog/game-data`),
+      "import.meta.env.VITE_GAME_ASSET_BASE_URL": JSON.stringify(`${DESKTOP_ASSET_SERVER}/desktop-catalog/game-assets`),
     } : {}),
   } : undefined,
   plugins: [react()],
   // The game does not use client-side HMR. Keeping the dev server from
   // injecting an HMR WebSocket avoids noisy/disconnected socket failures when
   // the app is opened through a forwarded or shared desktop port.
-  server: {
-    hmr: false,
+    server: {
+      hmr: false,
+    ...(localCatalogDir ? {
+      fs: { allow: [process.cwd(), path.resolve(localCatalogDir)] },
+    } : {}),
   },
   build: {
     rollupOptions: {

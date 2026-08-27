@@ -46,6 +46,12 @@ async function waitForServer(url) {
 }
 
 async function waitForImages(page) {
+  await page.locator("img[loading='lazy']").evaluateAll((images) => {
+    for (const image of images) {
+      image.loading = "eager";
+      image.scrollIntoView({ block: "center", inline: "nearest" });
+    }
+  });
   await page.waitForFunction(() =>
     [...document.images].every((image) => image.complete && image.naturalWidth > 0),
   );
@@ -237,7 +243,7 @@ try {
     await page.getByRole("button", { name: "Collection" }).click();
     await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "collection");
     await page.getByRole("button", { name: "rollcasters", exact: true }).click();
-    await page.locator(`.rollcaster-card:has(> .collectible-id:text-is("${rollcasterId}"))`).click();
+    await page.locator(`.rollcaster-card:has(> .collectible-id:text-is("${rollcasterId}"))`).first().click();
     const rollcasterChallenge = page.locator(".challenge-detail-row").filter({ hasText: "20 / 20" });
     check(
       await rollcasterChallenge.count() === 1,
@@ -249,7 +255,7 @@ try {
     );
     await page.getByRole("button", { name: "Close" }).click();
     await page.getByRole("button", { name: "critters", exact: true }).click();
-    await page.locator(`.critter-card:has(> .collectible-id:text-is("${critterId}"))`).click();
+    await page.locator(`.critter-card:has(> .collectible-id:text-is("${critterId}"))`).first().click();
     const critterChallenge = page.locator(".challenge-detail-row").filter({ hasText: "50 / 50" });
     check(
       await critterChallenge.count() === 1,

@@ -45,9 +45,7 @@ try {
   check(result.source === "network" || result.source === "cache", "The release source must be verified network/cache data.");
   check(result.elements > 0 && result.critters > 0 && result.assets > 0, "The assembled release must contain the live catalog.");
   check(result.assetStatus === 200, "A hashed release asset must load from the static origin.");
-  if (String(result.assetBase).includes("supabase.co")) {
-    check(String(result.assetBase).includes("/storage/v1/object/public/game-releases/game-assets"), "Supabase release art must use the isolated game-releases bucket.");
-  }
+  check(!String(result.assetBase).includes("supabase.co/storage/v1"), "Published release art must not use Supabase Storage.");
   check(errors.length === 0, `Online browser errors: ${errors.join(" | ")}`);
   await page.route(`${catalogBaseUrl}/**`, (route) => route.abort("internetdisconnected"));
   const offline = await page.evaluate(async ({ catalogBaseUrl }) => {
@@ -100,7 +98,7 @@ try {
   const rendered = await renderPage.locator("[data-release-art]").evaluate((image) => ({ naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight, src: image.src }));
   check(runtime.release?.catalogVersion === result.catalogVersion, `The running Game loaded ${runtime.release?.catalogVersion ?? "no release"}, expected ${result.catalogVersion}.`);
   check(rendered.naturalWidth > 0 && rendered.naturalHeight > 0, `The Game runtime did not render published art from ${runtime.assetUrl ?? "no URL"}.`);
-  check(rendered.src.includes("/game-releases/game-assets/"), `The Game runtime resolved art outside game-releases: ${rendered.src}.`);
+  check(rendered.src.includes("/game-assets/"), `The Game runtime resolved art outside the published game-assets path: ${rendered.src}.`);
   check(renderErrors.length === 0, `Published-art render errors: ${renderErrors.join(" | ")}`);
   await renderPage.screenshot({ path: path.join(outputDir, "published-art-runtime.png"), fullPage: true });
   await renderPage.close();

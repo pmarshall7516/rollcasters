@@ -1,6 +1,13 @@
 # Rollcasters progress
 Original prompt: On the main page, show level-eligible Critter skills in skill-slot popups and allow unlocking them with skill points.
 
+## 2026-08-25 — Faster Dungeon completion rewards
+
+- Dungeon encounter and completion reward presentation now aggregates identical drops by kind and target, and the final Dungeon outcome uses one combined `Rewards` section instead of separate encounter/first-clear panels.
+- Reduced the completion XP reveal pause and animation timings while keeping the authoritative result RPC and projected player XP path unchanged.
+- Added focused reward aggregation/source coverage and updated the outcome layout fixture. Reward/XP presentation, combat latency/result loading, Dungeon entry/exit source checks, responsive layout, typecheck, production build, and generic web-game smoke capture pass.
+- The authenticated live Dungeon browser flow was not run because the disposable fixture requires the configured Supabase environment; the inspected browser smoke capture was the local auth screen, and the responsive outcome captures were inspected at desktop and mobile sizes.
+
 ## 2026-08-15 — Unified Shop cards and derived progress
 
 - Aligned Shard, Relic, and Lootbox cards around the same art/name/purchase/action rows; Shard names retain Critter element logos, price lines contain one item count and the saved currency asset, and Shard/Relic cards share progress bars.
@@ -431,3 +438,28 @@ The working progress log is maintained in the shared Obsidian vault:
 - Added `SkillAvailability.selectable` so turn-restricted Skills can be submitted and fizzle after reserving Mana, while exhausted usage caps and recharge remain disabled.
 - Fizzle presentations are negative and actor-targeted so the combat narration and reaction styling explain the failed Skill.
 - `npm run typecheck` and `npm run test:effect-runtime` pass.
+
+## 2026-08-25 — Fullscreen-first windowed display settings
+
+- Reworked the Tauri main window so fullscreen clears the 1280×720 windowed constraints and fills the active display; startup remains hidden until the saved mode is applied.
+- Added namespaced local persistence for fullscreen/windowed mode and the last valid windowed size. Windowed mode uses a borderless custom chrome strip, explicit minimize/fullscreen/close controls, and corner-only 16:9 resizing constrained to the active monitor work area.
+- Added the home Settings button beneath Shop. Settings opens with a read-only Controls tab and a Window tab that applies display mode changes immediately.
+- Added pure geometry regression coverage in `scripts/desktop-window-tests.ts` and updated the desktop research note with the native-window and persistence decisions.
+- `npm run typecheck`, `npm run test:desktop-window`, and the desktop config/security contract checks pass; full browser/layout/build verification remains to run.
+- Added the explicit Tauri `core:window` mutation permissions required by the runtime APIs; `core:window:default` alone is read-only for these operations.
+- Verified the generated local macOS `.app` directly: it opens borderless at the display-sized 1366×768 fullscreen viewport with no native title bar or traffic-light controls. Local packaging completed the app bundle; updater artifact signing remains unavailable without the protected private key.
+- Follow-up: removed the visible custom top windowed bar and its drag/minimize/close controls. Windowed mode remains borderless with only the four proportional corner resize handles.
+
+## 2026-08-26 — Settings split-pane layout
+
+- Enlarged the Settings popup to a 940×620 desktop frame with a vertical left navigation rail and a dedicated right-side content pane for the selected tab.
+- Kept Controls as the default read-only tab and removed the requested fullscreen/windowed explanatory lines and window-size note.
+- Added `npm run test:settings-layout` with measured split-pane geometry and screenshot coverage. Typecheck, source/geometry regressions, browser smoke, and production build pass.
+
+## 2026-08-26 — Complete combat challenge event contract
+
+- Audited every tracked combat challenge family and confirmed global ownership, level, diversity, and Shop challenges remain on their authoritative derived-state paths rather than being treated as combat events.
+- Normalized canonical combat progress events with Dungeon, battle, active Rollcaster, Ability, Critter element/tag, and Skill context. Damage events carry actual HP plus Shield durability removed, so Any damage counts either component while HP-only and Shield-only modes remain distinct.
+- Multi-target Skill events now expose every resolved target. Successful Block action events are enriched with the enemy context they actually blocked, while per-attack Block prevention events no longer double-count Blocks performed. Server-side tags are derived from authoritative catalog relations.
+- Added and applied `20260826235900_complete_combat_challenge_event_contract`, `20260827000000_fix_combat_challenge_skill_tag_source`, `20260827003000_use_published_challenge_rows`, `20260827020000_fix_scoped_challenge_current_fallback`, `20260827030000_complete_multi_target_and_block_challenge_context`, and `20260827031000_authoritative_challenge_tag_context`; verified the recorded IDs and live matcher behavior.
+- Runtime, published 60-row matcher matrix, damage, tag, scope, typecheck, production build, and synced simulator checks pass. Authenticated browser gameplay remains a separate environment check when a signed-in test session is available.

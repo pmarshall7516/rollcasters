@@ -1,25 +1,32 @@
 {
-  "version": "1.0.0",
-  "channel": "stable",
-  "createdAt": "2026-08-23T01:22:00.000Z",
-  "sourceTag": "game-v1.0.0-source.4",
-  "sourceCommit": "7236286b2773761264dfd966acef1b800b98e378",
-  "aiLabCommit": "9f0a1ba7769dd7aae0809d00f569c9c4ac280094",
-  "releaseNotes": "Rollcasters 1.0.0 stable desktop release.",
-  "activation": { "mode": "immediate", "activatesAt": null },
-  "catalogRelease": {
-    "id": "2026.08.22.1",
-    "manifestSha256": "208bd8a45e7c5c771bd0622d6c55d57903ebebf91095d2ca5e7c5c6acfa5b2fd",
-    "publicBaseUrl": "https://vmmakykjoougmnlwkout.supabase.co/storage/v1/object/public/game-releases/",
-    "manifestPath": "game-data/releases/2026.08.22.1/release-manifest.208bd8a45e7c.json",
-    "assetProvenance": {
-      "status": "legacy-published-release-attested",
-      "repository": "pmarshall7516/rollcaster-assets",
-      "commit": "b899a5771946ace3e1a99d164655db1093896250"
-    }
+  "activation": {
+    "activatesAt": null,
+    "mode": "immediate"
   },
+  "aiLabCommit": "5b505431540d083836060c8f51915ec6739c5346",
+  "catalogRelease": {
+    "assetProvenance": {
+      "commit": "72a47845ade2088d14cc3085fceaaa5f14817d00",
+      "repository": "pmarshall7516/rollcaster-assets",
+      "status": "catalog-manifest-clean"
+    },
+    "id": "2026.08.26.1",
+    "localPath": "catalog",
+    "manifestPath": "game-data/releases/2026.08.26.1/release-manifest.1b0bece26af2.json",
+    "manifestSha256": "1b0bece26af25c7cd02e1f1167bdd46629af164d622a800284ef07d8bf428879",
+    "source": "local"
+  },
+  "channel": "stable",
+  "clientProtocolVersion": 1,
+  "combatRuntimeVersion": 2,
+  "contentSchemaVersion": 2,
+  "createdAt": "2026-08-27T01:13:55.147Z",
   "distribution": {
     "repository": "pmarshall7516/rollcaster-releases",
-    "tag": "game-v1.0.0"
-  }
+    "tag": "game-v1.0.6"
+  },
+  "releaseNotes": "Game Ready",
+  "sourceCommit": "63cdc247c5dcd7ae6428052a63b43466d4099e8c",
+  "sourceTag": "game-v1.0.6-source",
+  "version": "1.0.6"
 }

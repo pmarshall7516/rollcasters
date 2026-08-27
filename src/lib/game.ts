@@ -107,6 +107,8 @@ export type CombatStatus = {
   effects: ResolvedEffectRef[];
 };
 
+export const MAX_STATUSES_PER_CRITTER = 5;
+
 export type RuntimeEffectInstance = {
   instanceId: string;
   sourceEffectId: string;
@@ -186,6 +188,27 @@ export type CombatPresentationEvent = {
   state?: CombatPresentationState;
 };
 
+/**
+ * Combat narration is advanced one event at a time. Treat semicolon-separated
+ * clauses as separate sentences so they receive separate narration steps.
+ */
+export function splitCombatNarration(message: string): string[] {
+  if (!message.includes(";")) return [capitalizeNarrationStep(message)];
+  const parts = message.split(/\s*;\s*/).map((part) => part.trim()).filter(Boolean);
+  return parts.map((part, index) => {
+    const normalized = capitalizeNarrationStep(part);
+    if (index === parts.length - 1 || /[.!?…]$/.test(normalized)) return normalized;
+    return `${normalized}.`;
+  });
+}
+
+function capitalizeNarrationStep(message: string): string {
+  const firstLetterIndex = message.search(/\p{L}/u);
+  if (firstLetterIndex < 0) return message;
+  const firstLetter = message.match(/\p{L}/u)?.[0] ?? "";
+  return `${message.slice(0, firstLetterIndex)}${firstLetter.toUpperCase()}${message.slice(firstLetterIndex + firstLetter.length)}`;
+}
+
 export type CombatPresentationState = {
   playerMana: number;
   opponentMana: number;
@@ -259,6 +282,8 @@ export type CombatState = {
   log: string[];
   phase: "ready" | "selecting" | "resolved" | "won" | "lost";
   runId?: string;
+  /** Catalog ID of the player's active Rollcaster for challenge event context. */
+  playerRollcasterId?: string;
   catalog: Catalog;
   statuses: CombatStatus[];
   modifiers: CombatModifier[];
@@ -284,14 +309,19 @@ export type CombatState = {
   rechargeUntilTurn: Record<string, number>;
   /** Number of turns each Critter has been active since its most recent swap-in. */
   activeTurnCounts?: Record<string, number>;
+  /** Turn in which each combat unit was last swapped in, for challenge correlations. */
+  swapInTurns?: Record<string, number>;
+  /** Same-turn target redirects caused by a successful Swap. */
+  swapRedirects?: Record<string, { outgoingKey: string; incomingKey: string; turn: number }>;
   /** Skill actions that have actually begun this turn. */
   actedSkillKeys?: string[];
   /** Critters that have been flinched and will lose their pending Skill action. */
   stunnedSkillKeys?: string[];
-  /** Set only while resolving a Skill that attempted a duplicate Status application. */
+  /** Set only while resolving a Skill that could not apply a Status. */
   statusApplicationFailure?: {
     statusId: string;
     holderKey: string;
+    reason: "duplicate" | "limit";
   };
 };
 
@@ -530,6 +560,7 @@ export function createInitialCombatState(
   );
   validateRunEffects(runEffects, statusRegistry);
 
+  const activeRollcaster = player.rollcasters.find((owned) => owned.id === player.profile.active_rollcaster_id);
   const setupSources: SetupEffectSource[] = [];
   for (const [unitIndex, unit] of playerUnits.entries()) {
     if (!unit.userCritter) continue;
@@ -544,7 +575,6 @@ export function createInitialCombatState(
       setupSources.push({ ownerType: "relic", ownerId: relicId, side: "opponent", sourceKey: `o${index + 1}`, effects: runEffects.relic[relicId] ?? [], sourceOrder: 10_000 + index * 100 + slotIndex });
     });
   });
-  const activeRollcaster = player.rollcasters.find((owned) => owned.id === player.profile.active_rollcaster_id);
   if (activeRollcaster) {
     for (const slot of player.abilitySlots
       .filter((candidate) => candidate.user_rollcaster_id === activeRollcaster.id && candidate.ability_id)
@@ -602,6 +632,7 @@ export function createInitialCombatState(
     log: [`Entered ${dungeon.id} - ${dungeon.name}.`],
     phase: "ready",
     runId,
+    playerRollcasterId: activeRollcaster?.rollcaster_id,
     catalog,
     statuses: [],
     modifiers: [],
@@ -642,6 +673,8 @@ export function createInitialCombatState(
     skillUsage: { encounter: {}, dungeon: {} },
     rechargeUntilTurn: {},
     activeTurnCounts: {},
+    swapInTurns: {},
+    swapRedirects: {},
     actedSkillKeys: [],
     stunnedSkillKeys: [],
   };
@@ -1429,6 +1462,11 @@ export function startTurn(state: CombatState): CombatState {
       : { ...unit, blocking: false, blockStreak: 0 },
   );
   const playerRoll = playerUnits.reduce((sum, unit) => sum + (unit.active && unit.hp > 0 ? unit.manaRoll : 0), 0);
+  const playerDice = playerUnits.filter((candidate) => candidate.active && candidate.hp > 0);
+  const matchingCount = Math.max(0, ...Object.values(playerDice.reduce<Record<string, number>>((counts, unit) => {
+    counts[String(unit.manaRoll)] = (counts[String(unit.manaRoll)] ?? 0) + 1;
+    return counts;
+  }, {})));
   const opponentRoll = opponentUnits.reduce(
     (sum, unit) => sum + (unit.active && unit.hp > 0 ? unit.manaRoll : 0),
     0,
@@ -1457,14 +1495,26 @@ export function startTurn(state: CombatState): CombatState {
     if (sideAnchor) withDice = resolveReactiveEffects(withDice, "turn_start", sideAnchor, sideAnchor, 0, 0, 0, undefined, undefined, undefined, true);
   }
   withDice = resolveTimedEffects(withDice, "start_of_turn");
-  for (const unit of playerUnits.filter((candidate) => candidate.active && candidate.hp > 0)) {
+  const playerAbilityIds = [...new Set(withDice.setupSources
+    .filter((source) => source.ownerType === "ability" && source.side === "player")
+    .map((source) => source.ownerId))];
+  for (const [index, unit] of playerDice.entries()) {
     withDice = appendProgressEvent(withDice, {
       event_type: "dice_resolved",
       source_critter_id: unit.critter.id,
       target_critter_id: null,
       skill_id: null,
       amount: unit.manaRoll,
-      payload: { die_type: `d${unit.stats.diceMax}`, natural_value: unit.manaRoll, modified_value: unit.manaRoll, natural_maximum: unit.stats.diceMax, turn_mana_total: playerRoll },
+      payload: {
+        die_type: `d${unit.stats.diceMax}`,
+        natural_value: unit.manaRoll,
+        modified_value: unit.manaRoll,
+        natural_maximum: unit.stats.diceMax,
+        turn_mana_total: playerRoll,
+        turn_mana_total_event: index === playerDice.length - 1,
+        matching_count: matchingCount,
+        ability_ids: playerAbilityIds,
+      },
     });
   }
 
@@ -1537,6 +1587,7 @@ export function resolveCombatActions(
         spending_context: "combat",
         resource_type: "mana",
         dungeon_id: state.dungeon.id,
+        rollcaster_id: state.playerRollcasterId ?? null,
         critter_id: actor.critter.id,
         ability_id: null,
         action_type: action.type,
@@ -1811,46 +1862,60 @@ function chooseEnemyActions(state: CombatState): { actions: CombatAction[]; rngS
 }
 
 function resolveActionStage(state: CombatState, actions: CombatAction[], stage: CombatAction["type"]): CombatState {
+  if (combatIsTerminal(state)) return state;
   let rngState = state.rngState;
-  const ordered = actions
-    .filter((action) => action.type === stage)
-    .map((action) => {
-      const tieRoll = nextRandom(rngState);
-      rngState = tieRoll.state;
-      return { action, tieBreaker: tieRoll.value };
-    })
-    .sort((left, right) =>
-      (stage === "skill"
-        ? skillPriorityFor(state, right.action) - skillPriorityFor(state, left.action)
-        : 0)
-      || speedFor(state, right.action.actorKey) - speedFor(state, left.action.actorKey)
-      || right.tieBreaker - left.tieBreaker,
-    )
-    .map(({ action }) => action);
+  const pending = actions.filter((action) => action.type === stage);
+  const tieBreakers = new Map<CombatAction, number>();
+  const targetKeysByAction = new Map<CombatAction, string[]>();
+  for (const action of pending) {
+    const tieRoll = nextRandom(rngState);
+    rngState = tieRoll.state;
+    tieBreakers.set(action, tieRoll.value);
+    targetKeysByAction.set(action, actionSkillTargetKeys(state, action));
+  }
 
-  const positionByActorKey = new Map(ordered.map((action, position) => [action.actorKey, position]));
-  return ordered.reduce((current, action, position) => {
-    const actor = findUnit(current, action.actorKey);
-    const effectSequenceBeforeAction = current.effectSequence;
-    const actionTargetKeys = action.type === "skill" ? actionSkillTargetKeys(current, action) : [];
-    const targetPositions = stage === "skill" ? actionSkillTargetKeys(state, action)
-      .map((targetKey) => positionByActorKey.get(targetKey))
-      .filter((targetPosition): targetPosition is number => targetPosition !== undefined) : [];
-    const targetPosition = targetPositions[0];
-    const resolved = recomputeCombatStats(resolveAction(current, action, stage === "skill"
+  // An earlier action can apply a Status or stat modifier that changes the
+  // order of actions which have not resolved yet. Keep each tie roll stable,
+  // but choose the next action from the current combat state so those updates
+  // take effect immediately. Resolved actions stay resolved and are never
+  // reordered retroactively.
+  const resolvedActorKeys = new Set<string>();
+  let next = { ...state, rngState };
+  let position = 0;
+  while (pending.length > 0 && !combatIsTerminal(next)) {
+    pending.sort((left, right) =>
+      (stage === "skill"
+        ? skillPriorityFor(next, right) - skillPriorityFor(next, left)
+        : 0)
+      || speedFor(next, right.actorKey) - speedFor(next, left.actorKey)
+      || (tieBreakers.get(right) ?? 0) - (tieBreakers.get(left) ?? 0),
+    );
+    const action = pending.shift()!;
+    // A terminal action must finish resolving its own effects and reactions,
+    // but no later action belongs to the completed turn. Checking at the start
+    // of the next reducer step preserves the current action's synchronous
+    // effect chain while preventing queued follow-up actions.
+    const actor = findUnit(next, action.actorKey);
+    const effectSequenceBeforeAction = next.effectSequence;
+    const actionTargetKeys = action.type === "skill" ? actionSkillTargetKeys(next, action) : [];
+    const targetKeys = targetKeysByAction.get(action) ?? [];
+    const actionOrder = stage === "skill" ? {
+      position,
+      total: pending.length + position + 1,
+      first: position === 0,
+      last: pending.length === 0,
+      beforeSkillTarget: targetKeys.some((targetKey) => pending.some((candidate) => candidate.actorKey === targetKey)),
+      afterSkillTarget: targetKeys.some((targetKey) => resolvedActorKeys.has(targetKey)),
+    } : undefined;
+    next = recomputeCombatStats(resolveAction(next, action, stage === "skill"
       ? {
-          actionOrder: {
-            position,
-            total: ordered.length,
-            first: position === 0,
-            last: position === ordered.length - 1,
-            beforeSkillTarget: targetPosition !== undefined && position < targetPosition,
-            afterSkillTarget: targetPosition !== undefined && position > targetPosition,
-          },
+          actionOrder,
         }
       : undefined));
-    if (!actor || !actor.active || actor.hp <= 0) return resolved;
-    let next = decrementTargetTurnRuntimeEffects(resolved, action.actorKey);
+    resolvedActorKeys.add(action.actorKey);
+    position += 1;
+    if (!actor || !actor.active || actor.hp <= 0) continue;
+    next = decrementTargetTurnRuntimeEffects(next, action.actorKey);
     const delayedEvents: DelayedAdvanceEvent[] = [{ delayType: "actions", ignoreAppliedAfter: effectSequenceBeforeAction }];
     if (action.type === "skill") {
       delayedEvents.push({ delayType: "skills_used", actorKey: action.actorKey, ignoreAppliedAfter: effectSequenceBeforeAction });
@@ -1861,8 +1926,14 @@ function resolveActionStage(state: CombatState, actions: CombatAction[], stage: 
     } else if (action.type === "swap" && findUnit(next, action.actorKey)?.active === false) {
       delayedEvents.push({ delayType: "swaps_performed", actorKey: action.actorKey, ignoreAppliedAfter: effectSequenceBeforeAction });
     }
-    return delayedEvents.reduce((currentState, event) => advanceDelayedEffects(currentState, event), next);
-  }, { ...state, rngState });
+    next = delayedEvents.reduce((currentState, event) => advanceDelayedEffects(currentState, event), next);
+  }
+  return next;
+}
+
+function combatIsTerminal(state: CombatState): boolean {
+  return !state.playerUnits.some((unit) => unit.hp > 0)
+    || !state.opponentUnits.some((unit) => unit.hp > 0);
 }
 
 function actionSkillTargetKeys(state: CombatState, action: CombatAction): string[] {
@@ -2152,7 +2223,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
     state = skip.state;
     if (skip.skipped) {
       if (action.type === "block") state = clearBlockStreak(state, actor.key);
-      const message = `${combatantPossessive(actor)} ${action.type} was skipped by ${skip.effectName}; the reserved mana was spent.`;
+      const message = `${combatantName(actor)} could not move due to ${skip.statusName}!`;
       return appendPresentationEvent(
         { ...state, log: [message, ...state.log] },
         { kind: "status", message, actorKey: actor.key, targetKeys: [actor.key], hpChanges: [] },
@@ -2213,7 +2284,12 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       target_critter_id: null,
       skill_id: null,
       amount: 1,
-      payload: { blocks_performed: 1 },
+      payload: {
+        blocks_performed: 1,
+        block_action: true,
+        source_element_ids: critterElementIds(actor.critter),
+        source_critter_tag_ids: critterTagIds(actor.critter),
+      },
     }) : blockedState;
     const announced = appendPresentationEvent(
       succeeded ? blocked : { ...blocked, log: [failureMessage, blockMessage, ...state.log] },
@@ -2245,6 +2321,8 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       payload: {
         incoming_critter_id: incoming.critter.id,
         incoming_element_ids: critterElementIds(incoming.critter),
+        outgoing_critter_id: actor.critter.id,
+        outgoing_element_ids: critterElementIds(actor.critter),
         unique: true,
       },
     }) : swapped;
@@ -2267,7 +2345,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       : undefined;
     const targets = skillTargets(state, actor.key, skill, action.targetKey, targetSlot);
     if (!targets.length) {
-      const message = `${combatantPossessive(actor)} ${skill.name} had no valid target; the reserved mana was spent.`;
+      const message = `${combatantPossessive(actor)} ${skill.name} fizzled; it had no valid target.`;
       return appendPresentationEvent(
         { ...state, log: [message, ...state.log] },
         { kind: "other", message, actorKey: actor.key, targetKeys: [], skillId: skill.id, hpChanges: [] },
@@ -2317,14 +2395,15 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
     }
     let damageDone = 0;
     let next = targets.reduce((current, originalTarget) => {
+      const currentActor = findUnit(current, actor.key) ?? actor;
       const target = findUnit(current, originalTarget.key);
       if (!target || target.hp <= 0) return current;
       if (skill.skill_type === "attack") {
         const damageRoll = nextRandom(current.rngState);
-        const resolvedDamage = calculateSkillDamage(current.catalog, actor, target, skill, () => damageRoll.value, targets.length);
+        const resolvedDamage = calculateSkillDamage(current.catalog, currentActor, target, skill, () => damageRoll.value, targets.length);
         const damage = resolveIncomingDamage(
           { ...current, rngState: damageRoll.state },
-          actor,
+          currentActor,
           target,
           resolvedDamage.damage,
           { sourceOwnerType: "skill", sourceOwnerId: skill.id, sourceCritterKey: actor.key, skillTargetKeys: targets.map((item) => item.key), damageSource: "skill", ...actionContext },
@@ -2371,23 +2450,33 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
             },
           );
         }
-        let progress = appendDamageProgressEvents(withPresentation, actor, target, damage.hpDamage, damage.shieldDamage, afterHp <= 0, skill);
+        let progress = appendDamageProgressEvents(withPresentation, currentActor, target, damage.hpDamage, damage.shieldDamage, afterHp <= 0, skill);
         if (damage.blockPrevented > 0 && target.side === "player") {
+          progress = annotateBlockAction(progress, target, actor);
           progress = appendProgressEvent(progress, {
             event_type: "block_completed",
             source_critter_id: target.critter.id,
             target_critter_id: actor.critter.id,
             skill_id: skill.id,
             amount: damage.blockPrevented,
-            payload: { damage_prevented: damage.blockPrevented, fully_blocked: damage.finalDamage === 0, survived: afterHp > 0 },
+            payload: {
+              damage_prevented: damage.blockPrevented,
+              fully_blocked: damage.finalDamage === 0,
+              survived: afterHp > 0,
+              source_element_ids: critterElementIds(target.critter),
+              target_element_ids: critterElementIds(actor.critter),
+              source_critter_tag_ids: critterTagIds(target.critter),
+              target_critter_tag_ids: critterTagIds(actor.critter),
+              skill_tag_ids: skill.tag_ids,
+            },
           });
         }
         // The incoming damage must be visible before any equipment/status
         // reaction it causes. The reaction is still resolved synchronously,
         // so it is available before the next queued action is processed.
-        const reacted = resolveReactiveEffects(progress, "owner_attacked", actor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true);
+        const reacted = resolveReactiveEffects(progress, "owner_attacked", currentActor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true);
         return afterHp <= 0
-          ? resolveReactiveEffects(reacted, "owner_defeats_enemy", actor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true)
+          ? resolveReactiveEffects(reacted, "owner_defeats_enemy", currentActor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true)
           : reacted;
       }
       return { ...current, log: [`${combatantName(actor)} used ${skill.name} on ${combatantName(target, false)}.`, ...current.log] };
@@ -2401,7 +2490,8 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         amount: 1,
         payload: {
           source_element_ids: critterElementIds(actor.critter),
-          target_element_ids: targets.flatMap((target) => critterElementIds(target.critter)),
+          target_critter_ids: targets.map((target) => target.critter.id),
+          target_element_ids: [...new Set(targets.flatMap((target) => critterElementIds(target.critter)))],
           source_critter_tag_ids: critterTagIds(actor.critter),
           target_critter_tag_ids: [...new Set(targets.flatMap((target) => critterTagIds(target.critter)))],
           skill_tag_ids: skill.tag_ids,
@@ -2438,14 +2528,18 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         ...actionContext,
       });
     }
-    const duplicateStatusFailure = (failedState: CombatState): CombatState | null => {
+    const statusApplicationFailure = (failedState: CombatState): CombatState | null => {
       const failure = failedState.statusApplicationFailure;
       if (!failure) return null;
       const failedStatus = failedState.statusRegistry[failure.statusId];
       const failedTarget = findUnit(skillStartState, failure.holderKey);
-      const message = failedTarget && failedStatus
-        ? `${combatantName(failedTarget)} is already afflicted with ${failedStatus.name}; ${skill.name} failed.`
-        : `${skill.name} failed because it could not apply a duplicate Status.`;
+      const message = failure.reason === "limit"
+        ? failedTarget
+          ? `${combatantName(failedTarget)} already has the maximum of ${MAX_STATUSES_PER_CRITTER} statuses; ${skill.name} failed.`
+          : `${skill.name} failed because the target already has the maximum of ${MAX_STATUSES_PER_CRITTER} statuses.`
+        : failedTarget && failedStatus
+          ? `${combatantName(failedTarget)} is already afflicted with ${failedStatus.name}; ${skill.name} failed.`
+          : `${skill.name} failed because it could not apply a duplicate Status.`;
       return appendPresentationEvent(
         {
           ...skillStartState,
@@ -2463,7 +2557,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         },
       );
     };
-    const failedBeforeSkillUseReactions = duplicateStatusFailure(next);
+    const failedBeforeSkillUseReactions = statusApplicationFailure(next);
     if (failedBeforeSkillUseReactions) return failedBeforeSkillUseReactions;
     // Resolve Skill-use subscriptions after the Skill itself. A Quick
     // Link-style stat change therefore cannot modify the Skill that caused it
@@ -2482,7 +2576,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       true,
     );
     next = resolveCombinedStunChance(next, stunAggregation);
-    const failedAfterSkillUseReactions = duplicateStatusFailure(next);
+    const failedAfterSkillUseReactions = statusApplicationFailure(next);
     if (failedAfterSkillUseReactions) return failedAfterSkillUseReactions;
     return recordSkillUseAndRestrictions(expireCurrentActionEffects(next, actor.key), actor.key, skill.id, effects);
   }
@@ -4053,7 +4147,13 @@ function applyStatus(
     // Status attempt; Skill-owned attempts are surfaced to the enclosing Skill
     // resolver so the entire Skill can be rolled back atomically.
     return context.failOnDuplicateStatus
-      ? { ...state, statusApplicationFailure: { statusId, holderKey } }
+      ? { ...state, statusApplicationFailure: { statusId, holderKey, reason: "duplicate" } }
+      : state;
+  }
+  const holderStatusCount = state.statuses.filter((item) => item.holderKey === holderKey).length;
+  if (holderStatusCount >= MAX_STATUSES_PER_CRITTER) {
+    return context.failOnDuplicateStatus
+      ? { ...state, statusApplicationFailure: { statusId, holderKey, reason: "limit" } }
       : state;
   }
   const adjustedDuration = duration !== null
@@ -4334,7 +4434,7 @@ function resolveSkipCheck(
   state: CombatState,
   actorKey: string,
   actionType: Exclude<CombatAction["type"], "skip">,
-): { state: CombatState; skipped: boolean; effectName: string } {
+): { state: CombatState; skipped: boolean; statusName: string } {
   let next = state;
   for (const instance of state.statuses) {
     const holder = findUnit(next, instance.holderKey);
@@ -4350,10 +4450,14 @@ function resolveSkipCheck(
       if (!targets.some((target) => target.key === actorKey)) continue;
       const chance = rollChance(next, Number(effect.parameters.chance));
       next = chance.state;
-      if (chance.activated) return { state: next, skipped: true, effectName: effect.name };
+      if (chance.activated) return {
+        state: next,
+        skipped: true,
+        statusName: next.statusRegistry[instance.statusId]?.name ?? effect.name,
+      };
     }
   }
-  return { state: next, skipped: false, effectName: "a status effect" };
+  return { state: next, skipped: false, statusName: "a status effect" };
 }
 
 function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey: string): CombatState {
@@ -4385,6 +4489,11 @@ function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey
     opponentUnits: actor.side === "opponent" ? units : state.opponentUnits,
     log: [message, ...state.log],
     activeTurnCounts,
+    swapInTurns: { ...(state.swapInTurns ?? {}), [swapTargetKey]: state.turn },
+    swapRedirects: {
+      ...(state.swapRedirects ?? {}),
+      [swapTargetKey]: { outgoingKey: actorKey, incomingKey: swapTargetKey, turn: state.turn },
+    },
     actedSkillKeys: (state.actedSkillKeys ?? []).filter((key) => !resetKeys.has(key)),
     stunnedSkillKeys: (state.stunnedSkillKeys ?? []).filter((key) => !resetKeys.has(key)),
   };
@@ -4408,7 +4517,7 @@ function swapCombatUnitByKey(state: CombatState, actorKey: string, swapTargetKey
 
 function resolvePostTurn(state: CombatState): CombatState {
   const next = resolveTimedEffects(state, "end_of_turn");
-  return { ...next, log: ["Post-turn effects resolved.", ...next.log] };
+  return { ...next, swapRedirects: {}, log: ["Post-turn effects resolved.", ...next.log] };
 }
 
 export function elementEffectiveness(
@@ -4546,43 +4655,115 @@ function appendPresentationEvent(
   event: CombatPresentationEvent,
 ): CombatState {
   const units = [...state.playerUnits, ...state.opponentUnits];
+  const presentationState: CombatPresentationState = {
+    playerMana: state.playerMana,
+    opponentMana: state.opponentMana,
+    units: units.map((unit) => ({
+      key: unit.key,
+      hp: unit.hp,
+      maxHp: unit.maxHp,
+      shield: unit.shield,
+      maxShield: unit.maxShield,
+      blocking: unit.blocking,
+      blockStreak: unit.blockStreak,
+      active: unit.active,
+      battlefieldSlot: unit.battlefieldSlot,
+      persistentStats: { ...unit.persistentStats },
+      stats: { ...unit.stats },
+    })),
+    statuses: structuredClone(state.statuses),
+    modifiers: structuredClone(state.modifiers),
+    runtimeEffects: structuredClone(state.runtimeEffects),
+  };
+  const messages = splitCombatNarration(event.message);
   return {
     ...state,
-    presentationEvents: [...state.presentationEvents, {
-      ...event,
-      state: {
-        playerMana: state.playerMana,
-        opponentMana: state.opponentMana,
-        units: units.map((unit) => ({
-          key: unit.key,
-          hp: unit.hp,
-          maxHp: unit.maxHp,
-          shield: unit.shield,
-          maxShield: unit.maxShield,
-          blocking: unit.blocking,
-          blockStreak: unit.blockStreak,
-          active: unit.active,
-          battlefieldSlot: unit.battlefieldSlot,
-          persistentStats: { ...unit.persistentStats },
-          stats: { ...unit.stats },
-        })),
-        statuses: structuredClone(state.statuses),
-        modifiers: structuredClone(state.modifiers),
-        runtimeEffects: structuredClone(state.runtimeEffects),
-      },
-    }],
+    presentationEvents: [
+      ...state.presentationEvents,
+      ...messages.map((message) => ({ ...event, message, state: presentationState })),
+    ],
   };
 }
 
 function appendProgressEvent(state: CombatState, event: Omit<CombatProgressEvent, "event_key">): CombatState {
   const sequence = state.turnEvents.length + 1;
+  const payload = {
+    dungeon_id: state.dungeon.id,
+    battle_id: state.runId ?? null,
+    rollcaster_id: state.playerRollcasterId ?? null,
+    ability_ids: [...new Set(state.setupSources
+      .filter((source) => source.ownerType === "ability" && source.side === "player")
+      .map((source) => source.ownerId))],
+    ...(event.payload ?? {}),
+  };
   return {
     ...state,
     turnEvents: [...state.turnEvents, {
       ...event,
-      event_key: `turn:${state.turn}:${sequence}:${event.event_type}`,
+      payload,
+      event_key: `${state.runId ?? "combat"}:turn:${state.turn}:${sequence}:${event.event_type}`,
     }],
   };
+}
+
+function addSwapDamageAvoided(state: CombatState, incomingCritterId: string, amount: number): CombatState {
+  if (amount <= 0) return state;
+  for (let index = state.turnEvents.length - 1; index >= 0; index -= 1) {
+    const event = state.turnEvents[index];
+    if (event.event_type !== "swap_completed" || event.payload?.incoming_critter_id !== incomingCritterId) continue;
+    const payload = event.payload ?? {};
+    const existing = Number(payload.damage_avoided ?? 0);
+    return {
+      ...state,
+      turnEvents: state.turnEvents.map((candidate, candidateIndex) => candidateIndex === index
+        ? { ...candidate, payload: { ...payload, damage_avoided: existing + amount } }
+        : candidate),
+    };
+  }
+  return state;
+}
+
+function annotateBlockAction(
+  state: CombatState,
+  defender: CombatUnit,
+  attacker: CombatUnit,
+): CombatState {
+  for (let index = state.turnEvents.length - 1; index >= 0; index -= 1) {
+    const event = state.turnEvents[index];
+    if (event.event_type !== "block_completed"
+      || event.payload?.block_action !== true
+      || event.source_critter_id !== defender.critter.id
+      || event.payload?.battle_id !== (state.runId ?? null)) continue;
+    const payload = event.payload ?? {};
+    const enemyIds = [...new Set([
+      ...(Array.isArray(payload.target_critter_ids) ? payload.target_critter_ids.filter((id): id is string => typeof id === "string") : []),
+      attacker.critter.id,
+    ])];
+    const enemyElements = [...new Set([
+      ...(Array.isArray(payload.target_element_ids) ? payload.target_element_ids.filter((id): id is string => typeof id === "string") : []),
+      ...critterElementIds(attacker.critter),
+    ])];
+    const enemyTags = [...new Set([
+      ...(Array.isArray(payload.target_critter_tag_ids) ? payload.target_critter_tag_ids.filter((id): id is string => typeof id === "string") : []),
+      ...critterTagIds(attacker.critter),
+    ])];
+    return {
+      ...state,
+      turnEvents: state.turnEvents.map((candidate, candidateIndex) => candidateIndex === index
+        ? {
+            ...candidate,
+            target_critter_id: candidate.target_critter_id ?? attacker.critter.id,
+            payload: {
+              ...payload,
+              target_critter_ids: enemyIds,
+              target_element_ids: enemyElements,
+              target_critter_tag_ids: enemyTags,
+            },
+          }
+        : candidate),
+    };
+  }
+  return state;
 }
 
 function appendDamageProgressEvents(
@@ -4597,6 +4778,10 @@ function appendDamageProgressEvents(
   const actualDamage = Math.max(0, hpDamage) + Math.max(0, shieldDamage);
   if (actualDamage <= 0 || source.side === target.side) return state;
   let next = state;
+  if (source.side === "opponent" && target.side === "player"
+    && state.swapRedirects?.[target.key]?.turn === state.turn) {
+    next = addSwapDamageAvoided(next, target.critter.id, actualDamage);
+  }
   const shieldShattered = target.shield > 0 && shieldDamage >= target.shield;
   if (shieldShattered) {
     next = appendProgressEvent(next, {
@@ -4644,6 +4829,22 @@ function appendDamageProgressEvents(
       amount: actualDamage,
       payload: { hp_damage: Math.max(0, hpDamage), shield_damage: Math.max(0, shieldDamage), source_element_ids: critterElementIds(source.critter), target_element_ids: critterElementIds(target.critter), source_critter_tag_ids: critterTagIds(source.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
     });
+    const swappedInAt = next.swapInTurns?.[target.key];
+    if (knockedOut && swappedInAt !== undefined) {
+      next = appendProgressEvent(next, {
+        event_type: "swap_completed",
+        source_critter_id: source.critter.id,
+        target_critter_id: target.critter.id,
+        skill_id: skill?.id ?? null,
+        amount: 1,
+        payload: {
+          incoming_critter_id: target.critter.id,
+          incoming_element_ids: critterElementIds(target.critter),
+          knockout_after_swap: true,
+          turns_since_swap: Math.max(0, next.turn - swappedInAt),
+        },
+      });
+    }
   }
   return next;
 }

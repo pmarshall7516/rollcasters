@@ -199,6 +199,49 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");
 
+  const occupiedAbility = page.locator(".rollcaster-panel .ability-slot").first();
+  await occupiedAbility.click();
+  const abilityEquipDialog = page.locator(".modal.equip-dialog-ability");
+  check(await abilityEquipDialog.count() === 1, "The Rollcaster ability slot must open the ability equip popup.");
+  check(await abilityEquipDialog.locator(".equip-ability-section[aria-label='Unlocked abilities']").count() === 1, "The ability equip popup must show an unlocked section.");
+  const lockedAbilitySection = abilityEquipDialog.locator(".equip-ability-section[aria-label='Locked abilities']");
+  check(await lockedAbilitySection.count() === 1, "The ability equip popup must show locked abilities beneath unlocked abilities.");
+  const abilitySectionOrder = await abilityEquipDialog.locator(".equip-ability-section").evaluateAll((sections) => sections.map((section) => section.getAttribute("aria-label")));
+  check(abilitySectionOrder.join(",") === "Unlocked abilities,Locked abilities", `Ability sections are out of order: ${abilitySectionOrder.join(",")}`);
+  const abilityGridColumns = await abilityEquipDialog.locator(".ability-candidates").first().evaluate((grid) => ({
+    cardCount: grid.children.length,
+    trackCount: getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length,
+  }));
+  check(abilityGridColumns.trackCount === Math.min(3, abilityGridColumns.cardCount), `The desktop ability equip popup must use up to three columns, got ${JSON.stringify(abilityGridColumns)}.`);
+  const abilityEquipUnlockButton = lockedAbilitySection.getByRole("button", { name: `Unlock · ${abilityUnlock.unlock_cost}` });
+  check(await abilityEquipUnlockButton.count() === 1, "The level-eligible locked Ability must expose an unlock action in the equip popup.");
+  check(await abilityEquipDialog.locator(".point-counter").getByText(`${abilityUnlock.unlock_cost + 1} ability point${abilityUnlock.unlock_cost + 1 === 1 ? "" : "s"}`, { exact: true }).isVisible(), "The ability equip popup must show the Rollcaster's ability-point balance.");
+  await abilityEquipUnlockButton.click();
+  await page.waitForFunction(
+    ({ abilityName }) => [...document.querySelectorAll(".equip-ability-section[aria-label='Unlocked abilities'] .ability-candidate")].some((card) => card.textContent?.includes(abilityName)),
+    { abilityName: abilityUnlock.ability_name },
+  );
+  check(await abilityEquipDialog.locator(".point-counter").getByText("1 ability point", { exact: true }).isVisible(), "The ability equip popup must refresh to the remaining point balance after unlock.");
+  check(await lockedAbilitySection.getByRole("button", { name: `Unlock · ${abilityUnlock.unlock_cost}` }).count() === 0, "An unlocked Ability must leave the locked section after a successful equip-popup unlock.");
+  await page.mouse.move(2, 2);
+  const abilityEquipScreenshot = path.join(outputDir, "equip-ability-unlocked.png");
+  await abilityEquipDialog.screenshot({ path: abilityEquipScreenshot, animations: "disabled" });
+  await abilityEquipDialog.getByRole("button", { name: "Close" }).click();
+
+  const resetAbilityUnlock = await admin
+    .from("user_rollcaster_abilities")
+    .delete()
+    .eq("user_rollcaster_id", ownedRollcaster.data.id)
+    .eq("ability_id", abilityUnlock.ability_id);
+  if (resetAbilityUnlock.error) throw resetAbilityUnlock.error;
+  const resetAbilityPoints = await admin
+    .from("user_rollcasters")
+    .update({ ability_points: abilityUnlock.unlock_cost + 1 })
+    .eq("id", ownedRollcaster.data.id);
+  if (resetAbilityPoints.error) throw resetAbilityPoints.error;
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => JSON.parse(window.render_game_to_text()).view === "home");
+
   const occupiedSkill = page.locator(".loadout-slot:not(.empty) .skill-tile").first();
   await occupiedSkill.click();
   const equipDialog = page.locator(".modal.equip-dialog-skill");
@@ -292,7 +335,7 @@ try {
   check(browserErrors.length === 0, `Browser errors detected: ${browserErrors.join(" | ")}`);
   process.stdout.write(`${JSON.stringify({
     skill: { id: critterUnlock.skill_id, remainingPoints: 1, readyScreenshot: skillReadyScreenshot, screenshot: skillScreenshot, equipWarningScreenshot },
-    ability: { id: abilityUnlock.ability_id, remainingPoints: 1, readyScreenshot: abilityReadyScreenshot, screenshot: abilityScreenshot },
+    ability: { id: abilityUnlock.ability_id, remainingPoints: 1, readyScreenshot: abilityReadyScreenshot, screenshot: abilityScreenshot, equipScreenshot: abilityEquipScreenshot },
     temporaryAbilityMapping: insertedAbilityFixture,
     browserErrors,
   }, null, 2)}\n`);

@@ -1,3 +1,5 @@
+import type { CritterProgression, DungeonRewardSummary, PlayerState, RollcasterProgression } from "./types.js";
+
 export type XpProgress = {
   current: number;
   needed: number;
@@ -8,6 +10,70 @@ type ProgressionThreshold = {
   level: number;
   total_required_xp: number;
 };
+
+type CritterXpProgression = Pick<CritterProgression, "critter_id" | "level" | "total_required_xp" | "grant_skill_points">;
+type RollcasterXpProgression = Pick<RollcasterProgression, "rollcaster_id" | "level" | "total_required_xp" | "grant_ability_points">;
+
+function levelAtTotalXp(progression: ProgressionThreshold[], totalXp: number): number {
+  return [...progression]
+    .sort((left, right) => left.level - right.level)
+    .reverse()
+    .find((row) => row.total_required_xp <= totalXp)?.level ?? 1;
+}
+
+function grantedPoints<T extends { level: number }>(
+  progression: T[],
+  fromLevel: number,
+  toLevel: number,
+  pointsKey: keyof T,
+): number {
+  return progression
+    .filter((row) => row.level > fromLevel && row.level <= toLevel)
+    .reduce((total, row) => total + Math.max(0, Number(row[pointsKey] ?? 0)), 0);
+}
+
+/**
+ * Project the authoritative Dungeon XP receipt into the current client state
+ * before the result screen mounts. The following background refresh should
+ * reconcile to these same totals, so it cannot restart the XP animation.
+ */
+export function applyDungeonXpRewards(
+  player: PlayerState,
+  rewards: Pick<DungeonRewardSummary, "critterXp" | "rollcasterXp">,
+  critterProgression: CritterXpProgression[],
+  rollcasterProgression: RollcasterXpProgression[],
+): PlayerState {
+  const critters = player.critters.map((owned) => {
+    const gain = Math.max(0, Number(rewards.critterXp[owned.id] ?? 0));
+    if (gain <= 0) return owned;
+    const progression = critterProgression.filter((row) => row.critter_id === owned.critter_id);
+    const xp = owned.xp + gain;
+    const level = levelAtTotalXp(progression, xp);
+    return {
+      ...owned,
+      xp,
+      level,
+      skill_points: owned.skill_points + grantedPoints(progression, owned.level, level, "grant_skill_points"),
+    };
+  });
+
+  const rollcasterGain = Math.max(0, Number(rewards.rollcasterXp ?? 0));
+  const activeRollcasterId = player.profile.active_rollcaster_id;
+  const rollcasters = player.rollcasters.map((owned) => {
+    if (owned.id !== activeRollcasterId || rollcasterGain <= 0) return owned;
+    const progression = rollcasterProgression.filter((row) => row.rollcaster_id === owned.rollcaster_id);
+    const xp = owned.xp + rollcasterGain;
+    const level = levelAtTotalXp(progression, xp);
+    return {
+      ...owned,
+      xp,
+      level,
+      ability_points: owned.ability_points + grantedPoints(progression, owned.level, level, "grant_ability_points"),
+    };
+  });
+
+  return { ...player, critters, rollcasters };
+}
 
 export function xpProgress(
   progression: ProgressionThreshold[],

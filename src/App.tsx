@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
   ArrowUp,
@@ -8,16 +9,20 @@ import {
   ChevronDown,
   ChevronRight,
   Coins,
+  CircleHelp,
   Dices,
   Gem,
   Gift,
   Info,
   Lock,
   LogOut,
+  Maximize2,
+  Minimize2,
   Play,
   Plus,
   RefreshCw,
   Search,
+  Settings as SettingsIcon,
   Shield,
   ShoppingBag,
   Skull,
@@ -30,22 +35,27 @@ import {
 } from "lucide-react";
 import {
   acknowledgeCollectibleUnlockEvent,
+  acquireGameplaySession,
   desktopProfile,
   ensureUserGameState,
-  getActiveDungeonRun,
+  getActiveDungeonRunWithTimeout,
   getGameAssetUrl,
   getGameUpdateStatus,
   getSnapshotGameAssetUrl,
   getPromoCodeRedemptionHistory,
   getSession,
+  flushPlayerMutations,
+  flushPlayerMutationsWithTimeout,
+  heartbeatGameplaySession,
   hasSupabaseConfig,
   currentGameVersion,
   loadAppData,
   openLootbox,
   purchaseShopEntry,
-  recordDungeonBattleResult,
+  recordDungeonBattleResultWithRecovery,
   redeemPromoCode,
-  saveDungeonRunState,
+  resolveDungeonRunWithTimeout,
+  releaseGameplaySession,
   setActiveRollcaster,
   setCritterRelicSlot,
   setCritterSkillSlot,
@@ -53,17 +63,20 @@ import {
   setSquadSlot,
   selectStarterCritter,
   selectStarterRollcaster,
+  saveDungeonRunStateWithTimeout,
   signIn,
   signOut,
   signUp,
-  snapshotDungeonRunEffects,
-  startDungeonRun,
+  snapshotDungeonRunEffectsWithRecovery,
+  startDungeonRunWithRecovery,
   submitCollectibleCombatEvents,
   supabase,
+  syncLocalServerCompatibility,
   trackCollectibleChallenge,
   untrackCollectibleChallenge,
   unlockCritterSkill,
   unlockRollcasterAbility,
+  type GameplaySessionResult,
 } from "./lib/supabase";
 import {
   byId,
@@ -82,6 +95,7 @@ import {
   squadCritters,
   type ActionCostBreakdown,
   type CombatState,
+  type RunEffectSnapshot,
 } from "./lib/game";
 import { effectMatchesSourceCritter, sourceElementIds } from "./lib/effects";
 import {
@@ -97,8 +111,8 @@ import {
   dungeonBattleSubmission,
   revealDungeonSwapEvent,
   restoreDungeonRunState,
-  rollDungeonDice,
   serializeDungeonRunState,
+  rollDungeonDice,
   submitDungeonActions,
   toggleDungeonLead,
   type DungeonRunState,
@@ -111,10 +125,12 @@ import {
   type EffectiveDungeon,
 } from "./lib/dungeons";
 import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
-import { relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
+import { applyDungeonXpRewards, relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
+import { aggregateDungeonRewardEntries, combineDungeonRewards } from "./lib/dungeon-rewards";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
 import { combatLoadingNarration, combatSwapTravelOffset } from "./lib/presentation";
+import { updateOpponentRevealState } from "./lib/combat-visibility";
 import {
   challengeDescription,
   completedTrackedChallengeIds,
@@ -152,6 +168,7 @@ import {
 } from "./lib/promo-codes";
 import type {
   AppData,
+  ActiveDungeonRun,
   CombatAction,
   CollectibleUnlockEvent,
   CurrencyDef,
@@ -181,6 +198,25 @@ import type {
 import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
 import { checkForDesktopUpdate, isTauriDesktop, resolveDesktopUpdateGate, type DesktopUpdate } from "./lib/desktop-updater";
 import { downloadDiagnosticReport } from "./lib/diagnostics";
+import {
+  initializeDesktopWindow,
+  setDesktopWindowMode,
+  startDesktopCornerResize,
+  useDesktopWindow,
+  type ResizeCorner,
+  type WindowMode,
+} from "./lib/desktop-window";
+import {
+  CONTROL_ACTIONS,
+  controlLabel,
+  isBindableKeyboardEvent,
+  resetControlBindings,
+  setControlBinding,
+  useControlBindings,
+  type ControlAction,
+  type ControlBindings,
+} from "./lib/control-preferences";
+import { focusedEnabledControl } from "./lib/keyboard-controls";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type BagTab = "currency" | "shards" | "lootboxes";
@@ -195,6 +231,19 @@ function clearLegacyShopPurchaseLedger(userId: string) {
   }
 }
 type CollectionDetail = { type: "critter" | "rollcaster" | "relic"; id: string };
+type DungeonEntryState = {
+  dungeon: Dungeon;
+  phase: "starting" | "recovering" | "confirming";
+  attempt: number;
+  maxAttempts: number;
+  requestId: string;
+  runId?: string;
+};
+type DungeonExitDestination = "play" | "home";
+type ActiveDungeonPrompt = {
+  active: ActiveDungeonRun;
+  dungeon: Dungeon;
+};
 type PromoRenderState = {
   historyStatus: "idle" | "loading" | "loaded" | "error";
   historyCount: number;
@@ -235,15 +284,29 @@ type BannerNotification =
       id: string;
       kind: "shop-error";
       message: string;
+    }
+  | {
+      id: string;
+      kind: "lootbox-error";
+      message: string;
     };
 
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
+const DESKTOP_CLOSE_SAVE_TIMEOUT_MS = 4_000;
 
 function createShopErrorNotification(error: unknown): BannerNotification {
   return {
     id: `shop-error:${createRequestId()}`,
     kind: "shop-error",
     message: shopErrorMessage(error),
+  };
+}
+
+function createLootboxErrorNotification(error: unknown): BannerNotification {
+  return {
+    id: `lootbox-error:${createRequestId()}`,
+    kind: "lootbox-error",
+    message: errorMessage(error, "Unable to open this Lootbox."),
   };
 }
 
@@ -275,15 +338,22 @@ function requiredStarterView(player: PlayerState | null | undefined): View | nul
 }
 
 export function App() {
+  const desktopWindow = useDesktopWindow();
+  const controlBindings = useControlBindings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [desktopGate, setDesktopGate] = useState<"checking" | "ready" | "required" | "error">(() => isTauriDesktop() ? "checking" : "ready");
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
   const [desktopGateError, setDesktopGateError] = useState<string | null>(null);
   const [lootboxOperationActive, setLootboxOperationActive] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
+  const [sessionConflict, setSessionConflict] = useState<GameplaySessionResult | null>(null);
+  const [accountMoved, setAccountMoved] = useState(false);
+  const [sessionActionBusy, setSessionActionBusy] = useState(false);
   const [view, setView] = useState<View>("auth");
   const [data, setData] = useState<AppData | null>(null);
   const shopPurchaseRevisionRef = useRef(0);
+  const shopPurchaseRequestIdsRef = useRef(new Map<string, string>());
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("critters");
@@ -291,6 +361,11 @@ export function App() {
   const [shopTab, setShopTab] = useState<ShopTab>(() => routeFromLocation().shopTab);
   const [detail, setDetail] = useState<CollectionDetail | null>(null);
   const [combat, setCombat] = useState<DungeonRunState | null>(null);
+  const [dungeonEntry, setDungeonEntry] = useState<DungeonEntryState | null>(null);
+  const [activeDungeonPrompt, setActiveDungeonPrompt] = useState<ActiveDungeonPrompt | null>(null);
+  const [activeDungeonPromptBusy, setActiveDungeonPromptBusy] = useState<"continue" | "abandon" | null>(null);
+  const [dungeonExitPrompt, setDungeonExitPrompt] = useState<DungeonExitDestination | null>(null);
+  const [dungeonExitPromptBusy, setDungeonExitPromptBusy] = useState(false);
   const [notificationQueue, setNotificationQueue] = useState<BannerNotification[]>([]);
   const [promoState, setPromoState] = useState<PromoRenderState>({
     historyStatus: "idle",
@@ -307,14 +382,87 @@ export function App() {
   const seenChallengeCompletions = useRef(new Set<string>());
   const seenChallengeCompletionUserId = useRef<string | null>(null);
   const combatRef = useRef<DungeonRunState | null>(null);
-  const combatSaveQueue = useRef<Promise<void>>(Promise.resolve());
-  const lastPersistedCombat = useRef("");
+  const navigationRevisionRef = useRef(0);
   const appKeyboardRootRef = useRef<HTMLDivElement>(null);
   const appKeyboardFocusRef = useRef<HTMLElement | null>(null);
   const appKeyboardFocusProxyRef = useRef<HTMLElement | null>(null);
   const appInvalidFocusTimerRef = useRef<number | null>(null);
   const combatProgressQueue = useRef<Promise<void>>(Promise.resolve());
+  const combatSaveTimerRef = useRef<number | null>(null);
+  const combatSavePromiseRef = useRef<Promise<void> | null>(null);
+  const combatSavePendingRef = useRef(false);
+  const combatSaveDisabledRef = useRef(false);
+  const combatSaveSignatureRef = useRef<string | null>(null);
+  const dungeonAbandonRequestRef = useRef<string | null>(null);
+  const flushCombatSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const clearedLegacyShopLedgerUserRef = useRef<string | null>(null);
+  const dungeonEntryRequestRef = useRef<string | null>(null);
+  const closeRequestedRef = useRef(false);
+  const sessionStoppingRef = useRef(false);
+
+  useEffect(() => {
+    void initializeDesktopWindow();
+  }, []);
+
+  async function completeShutdownCleanup(): Promise<void> {
+    // Release the lease in parallel, but wait briefly for the active Dungeon
+    // snapshot so closing the window does not discard the latest game state.
+    void releaseGameplaySession().catch(() => undefined);
+
+    let timeoutId: number | null = null;
+    try {
+      await Promise.race([
+        flushCombatSaveRef.current(),
+        new Promise<void>((resolve) => {
+          timeoutId = window.setTimeout(resolve, DESKTOP_CLOSE_SAVE_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (saveError) {
+      console.warn("Unable to flush the current Dungeon state before closing.", saveError);
+    } finally {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      combatSaveDisabledRef.current = true;
+    }
+  }
+
+  async function closeRollcasters(): Promise<void> {
+    sessionStoppingRef.current = true;
+    closeRequestedRef.current = true;
+    // Start the best-effort persistence work, but never hold the close action
+    // on a remote request. The native window must be allowed to exit now.
+    void completeShutdownCleanup();
+    if (isTauriDesktop()) {
+      void invoke("exit_app").catch((error) => console.error("Unable to exit the Rollcasters desktop app.", error));
+      return;
+    }
+    window.close();
+  }
+
+  useEffect(() => {
+    if (!isTauriDesktop()) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => getCurrentWindow().onCloseRequested(() => {
+        if (closeRequestedRef.current) return;
+        closeRequestedRef.current = true;
+        sessionStoppingRef.current = true;
+        // Returning from this callback lets Tauri finish the OS close
+        // immediately; persistence continues as a best-effort operation.
+        void completeShutdownCleanup();
+      }))
+      .then((removeListener) => {
+        if (disposed) removeListener();
+        else unlisten = removeListener;
+      })
+      .catch((closeListenerError) => {
+        console.error("Unable to register the desktop close handler.", closeListenerError);
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isTauriDesktop()) return;
@@ -369,7 +517,7 @@ export function App() {
         if (decision.kind === "error") throw new Error(decision.message);
         if (decision.kind !== "required") return;
         setDesktopUpdate(decision.update);
-        if (!combatRef.current && !lootboxOperationActive) setDesktopGate("required");
+        if (!combatRef.current && !dungeonEntryRequestRef.current && !lootboxOperationActive) setDesktopGate("required");
       } catch (updateError) {
         // A failed periodic check does not invalidate a session that already
         // passed the fail-closed startup gate. Retry on the next interval.
@@ -395,7 +543,22 @@ export function App() {
 
   async function purchaseShopItem(entry: ShopEntry, quantity: number): Promise<ShopPurchaseReceipt> {
     if (desktopUpdate) throw new Error("A required Game Update is ready. Finish the current safe-boundary operation and update before making another purchase.");
-    const receipt = await purchaseShopEntry(entry.id, createRequestId(), quantity);
+    await flushPlayerMutations();
+    const intentKey = `${entry.id}:${quantity}`;
+    const requestId = shopPurchaseRequestIdsRef.current.get(intentKey) ?? createRequestId();
+    shopPurchaseRequestIdsRef.current.set(intentKey, requestId);
+    let receipt: ShopPurchaseReceipt;
+    try {
+      receipt = await purchaseShopEntry(entry.id, requestId, quantity);
+    } catch (purchaseError) {
+      // An ambiguous command keeps its request ID so a later click can recover
+      // the same receipt instead of creating a second economic command.
+      if (!errorMessage(purchaseError, "").includes("SHOP_PURCHASE_PENDING")) {
+        shopPurchaseRequestIdsRef.current.delete(intentKey);
+      }
+      throw purchaseError;
+    }
+    shopPurchaseRequestIdsRef.current.delete(intentKey);
     shopPurchaseRevisionRef.current += 1;
     setData((current) => current ? applyShopPurchaseReceipt(current, entry, receipt) : current);
     if (receipt.shop_type !== "lootbox" && receipt.target_category !== "lootbox") {
@@ -468,12 +631,135 @@ export function App() {
   }
 
   function navigate(nextView: View, nextShopTab = shopTab, replace = false) {
+    navigationRevisionRef.current += 1;
+    if (nextView !== "combat") setError(null);
     if (nextView === "shop") setShopTab(nextShopTab);
     setView(nextView);
     if (["home", "collection", "bag", "shop", "play"].includes(nextView)) {
       window.history[replace ? "replaceState" : "pushState"]({}, "", viewUrl(nextView, nextShopTab));
     }
   }
+
+  function showActiveDungeonPrompt(active: ActiveDungeonRun | null, dungeons: Dungeon[]): boolean {
+    if (!active) {
+      setActiveDungeonPrompt(null);
+      return false;
+    }
+    const dungeon = dungeons.find((candidate) => candidate.id === active.run.dungeonId);
+    if (!dungeon) {
+      setActiveDungeonPrompt(null);
+      return false;
+    }
+    setActiveDungeonPrompt({ active, dungeon });
+    return true;
+  }
+
+  function cancelCombatSave() {
+    combatSaveDisabledRef.current = true;
+    combatSavePendingRef.current = false;
+    if (combatSaveTimerRef.current !== null) {
+      window.clearTimeout(combatSaveTimerRef.current);
+      combatSaveTimerRef.current = null;
+    }
+  }
+
+  async function drainCombatSave(): Promise<void> {
+    if (combatSaveDisabledRef.current) return;
+    if (combatSavePromiseRef.current) {
+      await combatSavePromiseRef.current;
+      if (combatSavePendingRef.current) await drainCombatSave();
+      return;
+    }
+    if (combatSaveTimerRef.current !== null) {
+      window.clearTimeout(combatSaveTimerRef.current);
+      combatSaveTimerRef.current = null;
+    }
+    const latest = combatRef.current;
+    if (!latest || latest.run.status !== "started") {
+      combatSavePendingRef.current = false;
+      return;
+    }
+    combatSavePendingRef.current = false;
+    const serialized = serializeDungeonRunState(latest);
+    const signature = JSON.stringify(serialized);
+    const savePromise = (async () => {
+      try {
+        const saved = await saveDungeonRunStateWithTimeout(latest.run, serialized);
+        setCombat((current) => {
+          if (!current || current.run.id !== saved.run.id || current.run.version > saved.run.version) return current;
+          return { ...current, run: saved.run };
+        });
+        combatSaveSignatureRef.current = signature;
+      } catch (saveError) {
+        // A transient save failure must not interrupt combat. The next combat
+        // state change, or the desktop close flush, will retry the latest state.
+        combatSaveSignatureRef.current = null;
+        console.warn("Unable to persist the current Dungeon state.", saveError);
+        window.setTimeout(() => {
+          if (!combatSaveDisabledRef.current) void drainCombatSave();
+        }, 1_000);
+      }
+    })();
+    combatSavePromiseRef.current = savePromise;
+    try {
+      await savePromise;
+    } finally {
+      combatSavePromiseRef.current = null;
+    }
+    if (combatSavePendingRef.current) await drainCombatSave();
+  }
+
+  function scheduleCombatSave() {
+    combatSavePendingRef.current = true;
+    if (combatSaveDisabledRef.current || combatSaveTimerRef.current !== null || combatSavePromiseRef.current) return;
+    combatSaveTimerRef.current = window.setTimeout(() => {
+      combatSaveTimerRef.current = null;
+      void drainCombatSave();
+    }, 350);
+  }
+
+  function requestDungeonExit(destination: DungeonExitDestination) {
+    const activeRun = combat?.run.status === "started" || Boolean(dungeonEntry);
+    if (!activeRun) {
+      setCombat(null);
+      setDungeonEntry(null);
+      navigate(destination);
+      return;
+    }
+    setDungeonExitPrompt(destination);
+  }
+
+  async function confirmDungeonExit() {
+    const destination = dungeonExitPrompt;
+    if (!destination || dungeonExitPromptBusy) return;
+    setDungeonExitPromptBusy(true);
+    setError(null);
+    cancelCombatSave();
+    const entryRequestId = dungeonEntry?.requestId ?? dungeonEntryRequestRef.current;
+    if (entryRequestId) dungeonAbandonRequestRef.current = entryRequestId;
+    try {
+      let runId = combat?.run.id ?? dungeonEntry?.runId;
+      if (!runId) {
+        const active = await getActiveDungeonRunWithTimeout();
+        runId = active?.run.id;
+      }
+      if (runId) await resolveDungeonRunWithTimeout(runId);
+      setDungeonExitPrompt(null);
+      setActiveDungeonPrompt(null);
+      setCombat(null);
+      setDungeonEntry(null);
+      navigate(destination);
+    } catch (exitError) {
+      console.error("Unable to abandon the current Dungeon run.", exitError);
+      combatSaveDisabledRef.current = false;
+      if (combat) scheduleCombatSave();
+      setError(errorMessage(exitError, "Unable to abandon the current Dungeon run."));
+    } finally {
+      setDungeonExitPromptBusy(false);
+    }
+  }
+
+  flushCombatSaveRef.current = drainCombatSave;
 
   function appKeyboardScope(): HTMLElement | null {
     const root = appKeyboardRootRef.current;
@@ -610,7 +896,7 @@ export function App() {
       const focusInsideApp = (active instanceof HTMLElement && root.contains(active)) || Boolean(appKeyboardFocusRef.current && root.contains(appKeyboardFocusRef.current));
       if (!focusInsideApp && active !== document.body) return;
 
-      if (event.code === "ShiftLeft") {
+      if (event.code === controlBindings.back) {
         if (event.repeat) return;
         event.preventDefault();
         const dialog = root.querySelector<HTMLElement>("[role='dialog'][aria-modal='true']");
@@ -628,10 +914,10 @@ export function App() {
         return;
       }
 
-      const direction = event.code === "ArrowUp" || event.code === "KeyW" ? "up"
-        : event.code === "ArrowDown" || event.code === "KeyS" ? "down"
-          : event.code === "ArrowLeft" || event.code === "KeyA" ? "left"
-            : event.code === "ArrowRight" || event.code === "KeyD" ? "right"
+      const direction = event.code === controlBindings["move-up"] ? "up"
+        : event.code === controlBindings["move-down"] ? "down"
+          : event.code === controlBindings["move-left"] ? "left"
+            : event.code === controlBindings["move-right"] ? "right"
               : null;
       if (direction) {
         event.preventDefault();
@@ -639,7 +925,7 @@ export function App() {
         return;
       }
 
-      if (event.code !== "Space" || event.repeat) return;
+      if (event.code !== controlBindings.interact || event.repeat) return;
       if (target?.closest("button, summary, [role='button'], [role='tab'], [role='option']")) return;
       const control = appKeyboardFocusRef.current && scope?.contains(appKeyboardFocusRef.current)
         ? appKeyboardFocusRef.current
@@ -650,12 +936,13 @@ export function App() {
     }
     window.addEventListener("keydown", handleAppKeyboard);
     return () => window.removeEventListener("keydown", handleAppKeyboard);
-  }, [view]);
+  }, [controlBindings, view]);
 
   async function refresh(nextView?: View, options: { showLoading?: boolean } = {}) {
     if (!hasSupabaseConfig) return;
     const showLoading = options.showLoading ?? true;
     if (showLoading) setLoading(true);
+    const navigationRevisionAtStart = navigationRevisionRef.current;
     setError(null);
     const shopPurchaseRevisionAtStart = shopPurchaseRevisionRef.current;
     try {
@@ -663,6 +950,7 @@ export function App() {
       const loaded = await loadAppData();
       if (shopPurchaseRevisionAtStart !== shopPurchaseRevisionRef.current) return;
       commitLoadedData(loaded);
+      if (navigationRevisionRef.current !== navigationRevisionAtStart) return;
       const requiredView = requiredStarterView(loaded.player);
       if (requiredView) {
         setView(requiredView);
@@ -672,29 +960,87 @@ export function App() {
         const route = routeFromLocation();
         setShopTab(route.shopTab);
         if (route.view === "play") {
-          const active = await getActiveDungeonRun();
-          if (active) {
-            const dungeon = loaded.catalog.dungeons.find((candidate) => candidate.id === active.run.dungeonId);
-            if (dungeon) {
-              const persisted = restoreDungeonRunState(active.combatState, loaded.catalog, active.run);
-              const resumed = persisted
-                ?? createDungeonRunState(loaded.catalog, loaded.player!, dungeon, active.run);
-              lastPersistedCombat.current = persisted
-                ? JSON.stringify(serializeDungeonRunState(persisted))
-                : "";
-              setCombat(resumed);
-              setView("combat");
-              return;
-            }
-          }
+          const active = await getActiveDungeonRunWithTimeout();
+          if (navigationRevisionRef.current !== navigationRevisionAtStart) return;
+          showActiveDungeonPrompt(active, loaded.catalog.dungeons);
         }
+        if (navigationRevisionRef.current !== navigationRevisionAtStart) return;
         setView(route.view);
       }
     } catch (err) {
       console.error("Unable to load game data.", err);
-      setError(errorMessage(err, "Unable to load game data."));
+      // A background reconciliation must not cover an already-authoritative
+      // reward/outcome screen with a transient refresh failure. Interactive
+      // refreshes still surface the error normally.
+      if (showLoading) setError(errorMessage(err, "Unable to load game data."));
     } finally {
       if (showLoading) setLoading(false);
+    }
+  }
+
+  async function openPlay(): Promise<void> {
+    if (dungeonEntryRequestRef.current) return;
+    navigate("play");
+    try {
+      const active = await getActiveDungeonRunWithTimeout();
+      showActiveDungeonPrompt(active, data?.catalog.dungeons ?? []);
+    } catch (err) {
+      setError(dungeonEntryErrorMessage(err));
+    }
+  }
+
+  async function continueActiveDungeon(): Promise<void> {
+    const prompt = activeDungeonPrompt;
+    if (!prompt || activeDungeonPromptBusy) return;
+    if (!data?.player) return;
+    setActiveDungeonPromptBusy("continue");
+    setError(null);
+    const requestId = createRequestId();
+    dungeonEntryRequestRef.current = requestId;
+    combatSaveDisabledRef.current = false;
+    combatSaveSignatureRef.current = null;
+    try {
+      const dungeon = data.catalog.dungeons.find((candidate) => candidate.id === prompt.active.run.dungeonId) ?? prompt.dungeon;
+      setActiveDungeonPrompt(null);
+      setDungeonEntry({ dungeon, phase: "recovering", attempt: 1, maxAttempts: 1, requestId });
+      setCombat(null);
+      setView("combat");
+      const persisted = restoreDungeonRunState(prompt.active.combatState, data.catalog, prompt.active.run);
+      const resumed = persisted
+        ?? createDungeonRunState(data.catalog, data.player, dungeon, prompt.active.run);
+      const authoritative = applyAuthoritativeDungeonEffectSnapshot(resumed, prompt.active.effectSnapshot);
+      if (dungeonEntryRequestRef.current !== requestId) return;
+      setCombat(authoritative);
+      setDungeonEntry(null);
+    } catch (err) {
+      console.error("Unable to continue Dungeon run.", { runId: prompt.active.run.id, error: err });
+      setActiveDungeonPrompt(null);
+      setCombat(null);
+      setDungeonEntry(null);
+      setError(dungeonEntryErrorMessage(err));
+      setView("play");
+    } finally {
+      if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
+      setActiveDungeonPromptBusy(null);
+    }
+  }
+
+  async function abandonActiveDungeon(): Promise<void> {
+    const prompt = activeDungeonPrompt;
+    if (!prompt || activeDungeonPromptBusy) return;
+    setActiveDungeonPromptBusy("abandon");
+    setError(null);
+    try {
+      await resolveDungeonRunWithTimeout(prompt.active.run.id);
+      setActiveDungeonPrompt(null);
+      setCombat(null);
+      setDungeonEntry(null);
+      navigate("play");
+    } catch (err) {
+      console.error("Unable to abandon Dungeon run.", { runId: prompt.active.run.id, error: err });
+      setError(errorMessage(err, "Unable to abandon the Dungeon run."));
+    } finally {
+      setActiveDungeonPromptBusy(null);
     }
   }
 
@@ -704,32 +1050,119 @@ export function App() {
       setError("A required Game Update is ready. Update before starting another Dungeon.");
       return;
     }
-    setLoading(true);
+    if (dungeonEntryRequestRef.current) return;
+    const requestId = createRequestId();
+    dungeonEntryRequestRef.current = requestId;
+    combatSaveDisabledRef.current = false;
+    combatSaveSignatureRef.current = null;
+    setDungeonEntry({ dungeon, phase: "starting", attempt: 1, maxAttempts: 3, requestId });
+    setCombat(null);
+    setView("combat");
     setError(null);
     try {
-      const run = await startDungeonRun(dungeon.id);
-      const initialCombat = createDungeonRunState(data.catalog, data.player, dungeon, run);
-      await snapshotDungeonRunEffects(run.id, initialCombat.battle.snapshot);
-      lastPersistedCombat.current = "";
-      setCombat(initialCombat);
-      setView("combat");
+      const activeBeforeStart = await getActiveDungeonRunWithTimeout();
+      if (activeBeforeStart) {
+        const activeDungeon = data.catalog.dungeons.find((candidate) => candidate.id === activeBeforeStart.run.dungeonId);
+        if (!activeDungeon) throw new Error("An active Dungeon run is unavailable in this release.");
+        showActiveDungeonPrompt(activeBeforeStart, data.catalog.dungeons);
+        setDungeonEntry(null);
+        setCombat(null);
+        setView("play");
+        if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
+        return;
+      }
+      await flushPlayerMutationsWithTimeout();
     } catch (err) {
-      setError(errorMessage(err, "Unable to start dungeon."));
+      console.error("Unable to check for an existing Dungeon run.", { dungeonId: dungeon.id, error: err });
+      setDungeonEntry(null);
+      setCombat(null);
+      setView("play");
+      setError(dungeonEntryErrorMessage(err));
+      if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
+      return;
+    }
+    try {
+      const run = await startDungeonRunWithRecovery(dungeon.id, requestId, (attempt) => {
+        setDungeonEntry((current) => current?.requestId === requestId
+          ? { ...current, phase: attempt.phase, attempt: attempt.attempt, maxAttempts: attempt.maxAttempts }
+          : current);
+      });
+      setDungeonEntry((current) => current?.requestId === requestId
+        ? { ...current, runId: run.id }
+        : current);
+      if (dungeonAbandonRequestRef.current === requestId) {
+        await resolveDungeonRunWithTimeout(run.id);
+        return;
+      }
+      setDungeonEntry((current) => current?.requestId === requestId
+        ? { ...current, phase: "confirming" }
+        : current);
+      const initialCombat = createDungeonRunState(data.catalog, data.player, dungeon, run);
+      const confirmedSnapshot = await snapshotDungeonRunEffectsWithRecovery(run.id, initialCombat.battle.snapshot, (attempt) => {
+        setDungeonEntry((current) => current?.requestId === requestId
+          ? { ...current, phase: attempt.phase, attempt: attempt.attempt, maxAttempts: attempt.maxAttempts }
+          : current);
+      });
+      if (dungeonAbandonRequestRef.current === requestId) {
+        await resolveDungeonRunWithTimeout(run.id);
+        return;
+      }
+      if (dungeonEntryRequestRef.current !== requestId) return;
+      setCombat(applyAuthoritativeDungeonEffectSnapshot(initialCombat, confirmedSnapshot));
+      setDungeonEntry(null);
+    } catch (err) {
+      if (dungeonAbandonRequestRef.current === requestId) return;
+      console.error("Unable to initialize Dungeon entry.", { dungeonId: dungeon.id, requestId, error: err });
+      setCombat(null);
+      setDungeonEntry(null);
+      setError(dungeonEntryErrorMessage(err));
+      setView("play");
     } finally {
-      setLoading(false);
+      if (dungeonEntryRequestRef.current === requestId) dungeonEntryRequestRef.current = null;
+      if (dungeonAbandonRequestRef.current === requestId) dungeonAbandonRequestRef.current = null;
     }
   }
 
   function queueCombatProgressEvents(runId: string, turnNumber: number, events: Parameters<typeof submitCollectibleCombatEvents>[2]) {
     if (events.length === 0) return;
     const work = combatProgressQueue.current.then(async () => {
-      await submitCollectibleCombatEvents(runId, turnNumber, events);
-      void refresh("combat", { showLoading: false });
+      const snapshot = await submitCollectibleCombatEvents(runId, turnNumber, events);
+      // Combat progress is returned by the same authoritative receipt. Apply
+      // it immediately so the Collection/Bag UI does not wait for a later
+      // bootstrap refresh (or race that refresh with the queued write).
+      setData((current) => current?.player
+        ? {
+            ...current,
+            player: {
+              ...current.player,
+              collectibleSnapshot: snapshot,
+            },
+          }
+        : current);
     });
     combatProgressQueue.current = work.catch((progressError) => {
-      console.error("Unable to submit collectible combat progress.", progressError);
-      setError(errorMessage(progressError, "Unable to update challenge progress."));
+      // Challenge progress is a non-critical post-combat projection. Combat
+      // and its authoritative rewards have already completed, so a slow or
+      // locked progress write must not become a gameplay error banner.
+      console.warn("Collectible combat progress was deferred after the combat result.", progressError);
     });
+  }
+
+  async function establishGameplaySession(takeover = false): Promise<boolean> {
+    const result = await acquireGameplaySession(takeover);
+    sessionStoppingRef.current = false;
+    setIsAuthed(true);
+    if (result.outcome === "ACCOUNT_ONLINE") {
+      setSessionConflict(result);
+      return false;
+    }
+    setSessionConflict(null);
+    setAccountMoved(false);
+    return true;
+  }
+
+  async function finishAuthentication(): Promise<void> {
+    if (await establishGameplaySession(false)) await refresh();
   }
 
   useEffect(() => {
@@ -739,11 +1172,13 @@ export function App() {
       return;
     }
 
-    getSession()
-      .then(async (session) => {
-        setIsAuthed(Boolean(session));
-        if (session) await refresh();
-      })
+    const initializeSession = async () => {
+      await syncLocalServerCompatibility();
+      const session = await getSession();
+      setIsAuthed(Boolean(session));
+      if (session && await establishGameplaySession(false)) await refresh();
+    };
+    void initializeSession()
       .catch((err) => setError(err.message))
       .finally(() => setSessionReady(true));
 
@@ -753,6 +1188,10 @@ export function App() {
       setIsAuthed(Boolean(session));
       if (!session) {
         setData(null);
+        setSessionConflict(null);
+        setAccountMoved(false);
+        setDungeonEntry(null);
+        dungeonEntryRequestRef.current = null;
         clearedLegacyShopLedgerUserRef.current = null;
         setView("auth");
       }
@@ -762,8 +1201,39 @@ export function App() {
   }, [desktopGate]);
 
   useEffect(() => {
+    if (!isAuthed || sessionConflict || accountMoved) return;
+    const heartbeat = window.setInterval(() => {
+      if (sessionStoppingRef.current) return;
+      void heartbeatGameplaySession().catch((heartbeatError) => {
+        if (!sessionStoppingRef.current && errorMessage(heartbeatError, "").includes("SESSION_DISPLACED")) {
+          setAccountMoved(true);
+          setCombat(null);
+          setDungeonEntry(null);
+          dungeonEntryRequestRef.current = null;
+        }
+      });
+    }, 20_000);
+    return () => window.clearInterval(heartbeat);
+  }, [accountMoved, isAuthed, sessionConflict]);
+
+  async function endSession(): Promise<void> {
+    sessionStoppingRef.current = true;
+    try {
+      await signOut();
+      setIsAuthed(false);
+      setSessionConflict(null);
+      setAccountMoved(false);
+    } catch (error) {
+      sessionStoppingRef.current = false;
+      throw error;
+    }
+  }
+
+  useEffect(() => {
     function popstate() {
       if (!isAuthed || !data?.player) return;
+      if (dungeonEntryRequestRef.current) return;
+      navigationRevisionRef.current += 1;
       const requiredView = requiredStarterView(data.player);
       if (requiredView) {
         setView(requiredView);
@@ -816,45 +1286,11 @@ export function App() {
 
   useEffect(() => {
     combatRef.current = combat;
-    if (
-      !combat
-      || combat.run.status !== "started"
-      || combat.phase === "battle_result"
-      || combat.phase === "dungeon_complete"
-      || combat.phase === "dungeon_failed"
-    ) return;
-    const serialized = serializeDungeonRunState(combat);
-    const signature = JSON.stringify(serialized);
-    if (signature === lastPersistedCombat.current) return;
-
-    combatSaveQueue.current = combatSaveQueue.current
-      .then(async () => {
-        const latest = combatRef.current;
-        if (
-          !latest
-          || latest.run.status !== "started"
-          || latest.phase === "battle_result"
-          || latest.phase === "dungeon_complete"
-          || latest.phase === "dungeon_failed"
-        ) return;
-        const latestSerialized = serializeDungeonRunState(latest);
-        const latestSignature = JSON.stringify(latestSerialized);
-        if (latestSignature === lastPersistedCombat.current) return;
-        const saved = await saveDungeonRunState(latest.run, latestSerialized);
-        lastPersistedCombat.current = latestSignature;
-        const latestCurrent = combatRef.current;
-        if (latestCurrent?.run.id === latest.run.id) {
-          combatRef.current = { ...latestCurrent, run: saved.run };
-        }
-        setCombat((current) => current?.run.id === latest.run.id
-          ? { ...current, run: saved.run }
-          : current);
-      })
-      .catch((saveError) => {
-        console.error("Unable to persist Dungeon combat state.", saveError);
-        setError(errorMessage(saveError, "Unable to save Dungeon progress."));
-      });
-  }, [combat]);
+    if (!combat || combat.run.status !== "started" || dungeonEntry || combatSaveDisabledRef.current) return;
+    const signature = JSON.stringify(serializeDungeonRunState(combat));
+    if (signature === combatSaveSignatureRef.current) return;
+    scheduleCombatSave();
+  }, [combat, dungeonEntry]);
 
   useEffect(() => {
     const textData = data;
@@ -862,6 +1298,22 @@ export function App() {
       JSON.stringify({
         view,
         loading,
+        dungeonEntry: dungeonEntry ? {
+          dungeonId: dungeonEntry.dungeon.id,
+          phase: dungeonEntry.phase,
+          attempt: dungeonEntry.attempt,
+          maxAttempts: dungeonEntry.maxAttempts,
+        } : null,
+        dungeonPrompt: activeDungeonPrompt ? {
+          dungeonId: activeDungeonPrompt.dungeon.id,
+          dungeonName: activeDungeonPrompt.dungeon.name,
+          runId: activeDungeonPrompt.active.run.id,
+          busy: activeDungeonPromptBusy,
+        } : null,
+        dungeonExitPrompt: dungeonExitPrompt ? {
+          destination: dungeonExitPrompt,
+          busy: dungeonExitPromptBusy,
+        } : null,
         authed: isAuthed,
         catalogRelease: textData?.catalogRelease ?? null,
         playerStateRevision: textData?.player?.playerStateRevision ?? null,
@@ -1018,14 +1470,31 @@ export function App() {
           : null,
       });
     window.advanceTime = () => undefined;
-  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, notificationQueue, promoState]);
+  }, [view, shopTab, bagTab, loading, isAuthed, data, combat, dungeonEntry, activeDungeonPrompt, activeDungeonPromptBusy, dungeonExitPrompt, dungeonExitPromptBusy, notificationQueue, promoState]);
 
   if (desktopGate === "checking") return <Shell><Loading message="Checking for required Game Updates..." /></Shell>;
   if (desktopGate === "error") return <Shell><DesktopUpdateScreen message={desktopGateError ?? "The secure update check failed."} /></Shell>;
   if (desktopGate === "required" && desktopUpdate) return <Shell><DesktopUpdateScreen version={desktopUpdate.version} update={desktopUpdate} /></Shell>;
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
-  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => refresh()} error={error} setError={setError} /></Shell>;
+  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => void finishAuthentication()} onClose={closeRollcasters} error={error} setError={setError} /></Shell>;
+  if (sessionConflict) return <Shell><GameplaySessionDialog
+    kind="online"
+    busy={sessionActionBusy}
+    onOk={async () => {
+      setSessionActionBusy(true);
+      try { await endSession(); } finally { setSessionActionBusy(false); }
+    }}
+    onPlayHere={async () => {
+      setSessionActionBusy(true);
+      try { if (await establishGameplaySession(true)) await refresh(); } catch (sessionError) { setError(errorMessage(sessionError, "Unable to take over this account.")); } finally { setSessionActionBusy(false); }
+    }}
+  /></Shell>;
+  if (accountMoved) return <Shell><GameplaySessionDialog
+    kind="moved"
+    busy={sessionActionBusy}
+    onOk={async () => { setSessionActionBusy(true); try { await endSession(); } finally { setSessionActionBusy(false); } }}
+  /></Shell>;
   if (!data?.player) return <Shell><Loading message="Loading Rollcasters..." error={error} /></Shell>;
 
   return (
@@ -1039,14 +1508,18 @@ export function App() {
       <TopBar
         data={data}
         player={data.player!}
-        refreshing={view !== "combat" && loading}
-        onHome={() => navigate(requiredStarterView(data.player) ?? "home")}
-        onSignOut={async () => {
-          await signOut();
-          setIsAuthed(false);
+        onHome={() => {
+          if (view === "combat" && (combat || dungeonEntry)) {
+            requestDungeonExit("home");
+            return;
+          }
+          if (dungeonEntryRequestRef.current) return;
+          navigate(requiredStarterView(data.player) ?? "home");
         }}
+        onSignOut={endSession}
+        onClose={closeRollcasters}
       />
-      <div ref={appKeyboardRootRef} className="app-keyboard-root" aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft">
+      <div ref={appKeyboardRootRef} className="app-keyboard-root" aria-keyshortcuts={Object.values(controlBindings).join(" ")}>
         {error && <div className="notice error">{error}</div>}
         {view === "starter-rollcaster" && (
           <StarterRollcasterScreen
@@ -1086,7 +1559,8 @@ export function App() {
           onCollection={() => navigate("collection")}
           onBag={() => navigate("bag")}
           onShop={() => navigate("shop", "shard")}
-          onPlay={() => navigate("play")}
+          onSettings={() => setSettingsOpen(true)}
+          onPlay={() => void openPlay()}
           onRefresh={() => refresh("home")}
         />
       )}
@@ -1111,6 +1585,7 @@ export function App() {
             if (desktopUpdate) throw new Error("A required Game Update is ready. Update before opening another Lootbox.");
           }}
           onPurchaseError={(purchaseFailure) => enqueueNotification(createShopErrorNotification(purchaseFailure))}
+          onOpenError={(openingFailure) => enqueueNotification(createLootboxErrorNotification(openingFailure))}
           onBack={() => navigate("home")}
         />
       )}
@@ -1133,27 +1608,54 @@ export function App() {
           onStart={beginDungeon}
         />
       )}
-        {view === "combat" && combat && (
+      {view === "play" && activeDungeonPrompt && (
+        <ContinueDungeonDialog
+          dungeon={activeDungeonPrompt.dungeon}
+          busy={activeDungeonPromptBusy}
+          onContinue={() => void continueActiveDungeon()}
+          onAbandon={() => void abandonActiveDungeon()}
+          onClose={() => {
+            if (!activeDungeonPromptBusy) setActiveDungeonPrompt(null);
+          }}
+        />
+      )}
+      {view === "combat" && dungeonExitPrompt && (
+        <AbandonDungeonDialog
+          busy={dungeonExitPromptBusy}
+          onConfirm={() => void confirmDungeonExit()}
+          onCancel={() => {
+            if (!dungeonExitPromptBusy) {
+              setDungeonExitPrompt(null);
+              combatSaveDisabledRef.current = false;
+              if (dungeonAbandonRequestRef.current === dungeonEntry?.requestId) dungeonAbandonRequestRef.current = null;
+              if (combat) scheduleCombatSave();
+            }
+          }}
+        />
+      )}
+        {view === "combat" && dungeonEntry && (
+          <DungeonEntryScreen entry={dungeonEntry} />
+        )}
+      {view === "combat" && !dungeonEntry && combat && (
         <CombatScreen
           data={data}
           combat={combat}
+          controlBindings={controlBindings}
           setCombat={setCombat}
-          onTurnResolved={(resolved) => {
-            const turn = resolved.pendingBattle ?? resolved.battle;
-            if (turn.turnEvents.length === 0) return;
-            // Challenge progress is durable but not required to render the
-            // already-resolved turn. Keep it ordered in the background so a
-            // slow progress RPC cannot delay combat presentation.
-            queueCombatProgressEvents(resolved.run.id, resolved.battle.turn, turn.turnEvents);
-          }}
-          onBattleResult={async (resolved) => {
+          onCombatTurnResolved={(runId, turnNumber, events) => queueCombatProgressEvents(runId, turnNumber, events)}
+          onBattleResult={async (resolved, requestId) => {
             setLoading(true);
             setError(null);
             try {
-              await combatSaveQueue.current;
-              const result = await recordDungeonBattleResult(
+              // The final battle result can arrive in the same render tick as
+              // the battle_completed challenge event. Wait for that receipt
+              // before applying the authoritative result snapshot so its
+              // refresh cannot overwrite the fresh challenge progress.
+              await combatProgressQueue.current;
+              const result = await recordDungeonBattleResultWithRecovery(
                 resolved.run,
                 dungeonBattleSubmission(resolved),
+                requestId,
               );
               if (result.run.status === "won") {
                 const activatedRelicIds = [...new Set(resolved.battle.runtimeEffects
@@ -1178,19 +1680,42 @@ export function App() {
                   },
                 }]);
               }
-              setCombat(applyDungeonBattleResult(resolved, result, data.catalog, data.player!));
+              // The result RPC has already committed XP. Project that receipt
+              // into the current client snapshot before mounting the result
+              // screen so the background refresh reconciles to the same
+              // animation target instead of restarting it.
+              const playerAfterRewards = applyDungeonXpRewards(
+                data.player!,
+                result.battleRewards,
+                data.catalog.critterProgression,
+                data.catalog.rollcasterProgression,
+              );
+              setData((current) => current?.player
+                ? {
+                    ...current,
+                    player: playerAfterRewards,
+                  }
+                : current);
+              setCombat(applyDungeonBattleResult(resolved, result, data.catalog, playerAfterRewards));
               // Refresh the catalog/player projection after the result screen
               // is visible. The authoritative result already contains the
               // run and reward state needed for this immediate transition.
               void refresh("combat", { showLoading: false });
             } catch (resultError) {
-              setError(errorMessage(resultError, "Unable to record the encounter result."));
+              // Keep the resolved battle state durable while the result RPC is
+              // pending. CombatScreen owns the visible recovery dialog, so a
+              // timeout cannot become a softlocking app banner or expose raw
+              // server text to the player.
+              combatSaveDisabledRef.current = false;
+              combatSaveSignatureRef.current = null;
+              scheduleCombatSave();
+              throw resultError;
             } finally {
               setLoading(false);
             }
           }}
-          onBack={() => navigate("play")}
-          onHome={() => { setCombat(null); navigate("home"); }}
+          onBack={() => requestDungeonExit("play")}
+          onHome={() => requestDungeonExit("home")}
           onReplay={() => beginDungeon(combat.dungeon)}
           onNextDungeon={(dungeonId) => {
             const next = data.catalog.dungeons.find((dungeon) => dungeon.id === dungeonId);
@@ -1206,16 +1731,69 @@ export function App() {
           notification={notificationQueue[0]}
         />
       )}
+      {settingsOpen && (
+        <SettingsModal
+          windowMode={desktopWindow.mode}
+          onWindowModeChange={setDesktopWindowMode}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </Shell>
   );
 }
 
 function errorMessage(error: unknown, fallback: string): string {
+  const raw = rawErrorMessage(error, fallback);
+  return isStatementTimeoutMessage(raw)
+    ? "The save service is busy right now. Please try again."
+    : raw;
+}
+
+function rawErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message;
   if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
     return error.message;
   }
   return fallback;
+}
+
+function isStatementTimeoutMessage(message: string): boolean {
+  return message.toLowerCase().includes("canceling statement due to statement timeout");
+}
+
+function dungeonEntryErrorMessage(error: unknown): string {
+  const raw = rawErrorMessage(error, "Unable to start dungeon.");
+  if (raw.includes("DUNGEON_ENTRY_TIMEOUT") || isStatementTimeoutMessage(raw)) {
+    return "Dungeon entry is taking longer than expected. No combat was started; please try again.";
+  }
+  return errorMessage(error, "Unable to start dungeon.");
+}
+
+function applyAuthoritativeDungeonEffectSnapshot(
+  state: DungeonRunState,
+  effectSnapshot: unknown,
+): DungeonRunState {
+  if (!effectSnapshot || typeof effectSnapshot !== "object") return state;
+  const snapshot = structuredClone(effectSnapshot) as RunEffectSnapshot;
+  return {
+    ...state,
+    battle: { ...state.battle, snapshot },
+    pendingBattle: state.pendingBattle ? { ...state.pendingBattle, snapshot } : null,
+  };
+}
+
+function loadoutErrorMessage(error: unknown, fallback: string): string {
+  const raw = errorMessage(error, fallback);
+  const messages: Record<string, string> = {
+    SKILL_NOT_IN_PUBLISHED_RELEASE: "This Skill is not part of the current published release.",
+    ABILITY_NOT_IN_PUBLISHED_RELEASE: "This Ability is not part of the current published release.",
+    SKILL_NOT_ALLOWED_FOR_CRITTER: "This Skill is not available for this Critter.",
+    ABILITY_NOT_ALLOWED_FOR_ROLLCASTER: "This Ability is not available for this Rollcaster.",
+    PLAYER_REVISION_CONFLICT: "Your loadout changed elsewhere. Reloading the latest state…",
+    SESSION_DISPLACED: "This account moved to another session.",
+  };
+  const code = Object.keys(messages).find((candidate) => raw.includes(candidate));
+  return code ? messages[code] : raw;
 }
 
 function useViewportFitScale(bottomGutter = 4) {
@@ -1272,12 +1850,157 @@ function useViewportFitScale(bottomGutter = 4) {
 }
 
 function Shell({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  const desktopWindow = useDesktopWindow();
   return (
-    <main className={`app-shell ${className}`.trim()} data-game-profile={desktopProfile.profile} data-game-environment={desktopProfile.environment}>
+    <main className={`app-shell ${className}`.trim()} data-game-profile={desktopProfile.profile} data-game-environment={desktopProfile.environment} data-window-mode={desktopWindow.mode}>
+      <DesktopWindowResizeHandles mode={desktopWindow.mode} />
       <div className="world-glow" />
       {desktopProfile.badge && <span className={`game-profile-badge ${desktopProfile.profile}`} aria-label={`${desktopProfile.appName} profile`}>{desktopProfile.badge}</span>}
       {children}
     </main>
+  );
+}
+
+function DesktopWindowResizeHandles({ mode }: { mode: WindowMode }) {
+  if (!isTauriDesktop() || mode !== "windowed") return null;
+  const corners: Array<{ corner: ResizeCorner; className: string; label: string }> = [
+    { corner: "north-west", className: "north-west", label: "Resize window from top left corner" },
+    { corner: "north-east", className: "north-east", label: "Resize window from top right corner" },
+    { corner: "south-west", className: "south-west", label: "Resize window from bottom left corner" },
+    { corner: "south-east", className: "south-east", label: "Resize window from bottom right corner" },
+  ];
+  return (
+    <>{corners.map(({ corner, className, label }) => (
+        <button
+          key={corner}
+          type="button"
+          className={`desktop-window-resize-handle ${className}`}
+          aria-label={label}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            void startDesktopCornerResize(corner, { screenX: event.screenX, screenY: event.screenY }).catch((error) => console.error("Unable to resize the Rollcasters window.", error));
+          }}
+        />
+      ))}</>
+  );
+}
+
+function SettingsModal({
+  windowMode,
+  onWindowModeChange,
+  onClose,
+}: {
+  windowMode: WindowMode;
+  onWindowModeChange: (mode: WindowMode) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"controls" | "window">("controls");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const controlBindings = useControlBindings();
+  const [selectedAction, setSelectedAction] = useState<ControlAction | null>(null);
+  const [controlError, setControlError] = useState<string | null>(null);
+
+  async function changeWindowMode(mode: WindowMode) {
+    if (busy || mode === windowMode) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onWindowModeChange(mode);
+    } catch (changeError) {
+      setError(errorMessage(changeError, "Unable to change the window mode."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function selectControl(action: ControlAction) {
+    setSelectedAction((current) => current === action ? null : action);
+    setControlError(null);
+  }
+
+  function bindSelectedControl(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!selectedAction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isBindableKeyboardEvent(event.nativeEvent)) {
+      setControlError("That key cannot be used for a control.");
+      return;
+    }
+    const conflict = CONTROL_ACTIONS.find(({ id }) => id !== selectedAction && controlBindings[id] === event.code);
+    if (conflict) {
+      setControlError(`${controlLabel(event.code)} is already assigned to ${conflict.label}.`);
+      return;
+    }
+    setControlBinding(selectedAction, event.code);
+    setSelectedAction(null);
+    setControlError(null);
+  }
+
+  function restoreDefaultControls() {
+    resetControlBindings();
+    setSelectedAction(null);
+    setControlError(null);
+  }
+
+  return (
+    <Modal eyebrow="Rollcasters" title="Settings" description="Adjust your game window and configure local controls." onClose={onClose} className="settings-modal">
+      <div className="settings-layout" onKeyDownCapture={bindSelectedControl}>
+        <nav className="settings-tabs" role="tablist" aria-orientation="vertical" aria-label="Settings categories">
+          <button id="settings-tab-controls" type="button" role="tab" aria-selected={tab === "controls"} aria-controls="settings-panel-controls" className={tab === "controls" ? "active" : ""} onClick={() => setTab("controls")}>
+            <CircleHelp size={16} aria-hidden="true" /> Controls
+          </button>
+          <button id="settings-tab-window" type="button" role="tab" aria-selected={tab === "window"} aria-controls="settings-panel-window" className={tab === "window" ? "active" : ""} onClick={() => setTab("window")}>
+            <SettingsIcon size={16} aria-hidden="true" /> Window
+          </button>
+        </nav>
+        <div className="settings-content">
+          {tab === "controls" ? (
+            <section id="settings-panel-controls" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-controls">
+              <div className="settings-section-heading"><div><p className="eyebrow">Saved on this device</p><h3>Controls</h3></div><span className="settings-status">{selectedAction ? "Press a key" : "Keyboard"}</span></div>
+              <p className="settings-help">Select a control, then press the keyboard key you want to use. Mouse clicks always activate the same controls and cannot be remapped.</p>
+              {controlError && <p className="settings-error" role="alert">{controlError}</p>}
+              <div className="control-list">
+                {CONTROL_ACTIONS.map(({ id, label }) => {
+                  const selected = selectedAction === id;
+                  return <button
+                    key={id}
+                    type="button"
+                    className={`control-row ${selected ? "selected" : ""}`}
+                    aria-pressed={selected}
+                    onClick={() => selectControl(id)}
+                  >
+                    <span>{label}</span>
+                    <strong>{selected ? "Press a key…" : controlLabel(controlBindings[id])}</strong>
+                  </button>;
+                })}
+              </div>
+              <div className="settings-control-actions">
+                <button type="button" className="secondary-button" onClick={restoreDefaultControls}>Reset Defaults</button>
+              </div>
+            </section>
+          ) : (
+            <section id="settings-panel-window" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-window">
+              <div className="settings-section-heading"><div><p className="eyebrow">Display mode</p><h3>Window</h3></div>{busy && <span className="settings-status">Applying…</span>}</div>
+              {error && <p className="settings-error" role="alert">{error}</p>}
+              <div className="window-mode-options">
+                <label className={`window-mode-option ${windowMode === "fullscreen" ? "selected" : ""}`}>
+                  <input type="radio" name="window-mode" checked={windowMode === "fullscreen"} disabled={busy} onChange={() => void changeWindowMode("fullscreen")} />
+                  <span><strong>Fullscreen</strong></span>
+                  <Maximize2 size={18} aria-hidden="true" />
+                </label>
+                <label className={`window-mode-option ${windowMode === "windowed" ? "selected" : ""}`}>
+                  <input type="radio" name="window-mode" checked={windowMode === "windowed"} disabled={busy} onChange={() => void changeWindowMode("windowed")} />
+                  <span><strong>Windowed</strong></span>
+                  <Minimize2 size={18} aria-hidden="true" />
+                </label>
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1333,12 +2056,52 @@ function Loading({ message, error }: { message: string; error?: string | null })
   );
 }
 
+function DungeonEntryScreen({ entry }: { entry: DungeonEntryState }) {
+  const message = entry.phase === "starting"
+    ? "Preparing your squad and opponents..."
+    : entry.phase === "confirming"
+      ? "Confirming the run snapshot..."
+      : "Reconnecting to the Dungeon run...";
+  return (
+    <section className="setup-panel loading-panel dungeon-entry-screen" role="status" aria-live="polite">
+      <Swords size={46} aria-hidden="true" />
+      <p className="eyebrow">Dungeon briefing</p>
+      <h1>Entering {entry.dungeon.name}</h1>
+      <p>{message}</p>
+    </section>
+  );
+}
+
+function GameplaySessionDialog({
+  kind,
+  busy,
+  onOk,
+  onPlayHere,
+}: {
+  kind: "online" | "moved";
+  busy: boolean;
+  onOk: () => Promise<void>;
+  onPlayHere?: () => Promise<void>;
+}) {
+  return <section className="setup-panel loading-panel gameplay-session-dialog" role="alertdialog" aria-live="assertive">
+    <UserRound size={42} aria-hidden="true" />
+    <h1>{kind === "online" ? "Account is Online" : "Account Moved"}</h1>
+    <p>{kind === "online" ? "This account is active in another Rollcasters session." : "This account is now being played on another device."}</p>
+    <div className="dialog-actions">
+      <button type="button" className="secondary-button" disabled={busy} onClick={() => void onOk()}>{kind === "online" ? "OK" : "Return to sign in"}</button>
+      {kind === "online" && onPlayHere && <button type="button" className="primary-button" disabled={busy} onClick={() => void onPlayHere()}>{busy ? "Connecting…" : "Play Here"}</button>}
+    </div>
+  </section>;
+}
+
 function AuthScreen({
   onAuthed,
+  onClose,
   error,
   setError,
 }: {
   onAuthed: () => void;
+  onClose: () => Promise<void>;
   error: string | null;
   setError: (error: string | null) => void;
 }) {
@@ -1346,7 +2109,6 @@ function AuthScreen({
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
 
@@ -1356,7 +2118,7 @@ function AuthScreen({
     setError(null);
     try {
       if (mode === "signup") {
-        const hasSession = await signUp(email, password, username || email.split("@")[0], inviteCode);
+        const hasSession = await signUp(email, password, username || email.split("@")[0]);
         if (!hasSession) {
           setConfirmationEmail(email);
           return;
@@ -1366,7 +2128,7 @@ function AuthScreen({
       }
       await onAuthed();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed.");
+      setError(errorMessage(err, "Authentication failed."));
     } finally {
       setBusy(false);
     }
@@ -1374,6 +2136,7 @@ function AuthScreen({
 
   return (
     <section className="auth-layout">
+      <ExitControl className="auth-exit-control" onClose={onClose} />
       <header className="auth-brand"><BrandLogo /></header>
       <form className="auth-card" onSubmit={submit}>
         {confirmationEmail ? (
@@ -1391,10 +2154,6 @@ function AuthScreen({
             <label>
               Username
               <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="ShanksFan" />
-            </label>
-            <label>
-              Player invite
-              <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} autoComplete="one-time-code" required />
             </label>
           </>
         )}
@@ -1428,6 +2187,9 @@ function AuthScreen({
         </button>
         </>}
       </form>
+      <div className="auth-version-pill" aria-label={`Game version ${currentGameVersion}`}>
+        v{currentGameVersion}
+      </div>
     </section>
   );
 }
@@ -1435,19 +2197,37 @@ function AuthScreen({
 function TopBar({
   data,
   player,
-  refreshing,
   onHome,
   onSignOut,
+  onClose,
 }: {
   data: AppData;
   player: PlayerState;
-  refreshing: boolean;
   onHome: () => void;
   onSignOut: () => void;
+  onClose: () => Promise<void>;
 }) {
   const currencies = orderedCurrencies(data);
   const topBarRef = useRef<HTMLElement>(null);
   const currencyTooltipRef = useRef<HTMLSpanElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    function handleDocumentInteraction(event: MouseEvent) {
+      if (!userMenuRef.current?.contains(event.target as Node)) setProfileMenuOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setProfileMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleDocumentInteraction);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentInteraction);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [profileMenuOpen]);
 
   const showCurrencyTooltip = (element: HTMLElement, label: string) => {
     const topBar = topBarRef.current;
@@ -1465,15 +2245,8 @@ function TopBar({
 
   const hideCurrencyTooltip = () => currencyTooltipRef.current?.classList.remove("visible");
 
-  return (
+  return <>
     <header ref={topBarRef} className={`top-bar ${currencies.length > 3 ? "currency-rich" : ""}`.trim()}>
-      {refreshing && (
-        <div className="refresh-indicator" role="status" aria-live="polite" title="Refreshing game data">
-          <RefreshCw aria-hidden="true" />
-          <span>Refreshing</span>
-          <span className="sr-only"> game data</span>
-        </div>
-      )}
       <button type="button" className="brand-home-button" onClick={onHome} aria-label="Rollcasters home">
         <BrandLogo compact />
       </button>
@@ -1506,13 +2279,40 @@ function TopBar({
             );
           })}
         </div>
-        <div className="user-pill">
-          <UserRound size={17} />
-          {player.profile.username}
+        <div className="user-menu" ref={userMenuRef}>
+          <button
+            type="button"
+            className="user-pill user-menu-trigger"
+            aria-haspopup="menu"
+            aria-expanded={profileMenuOpen}
+            onClick={() => setProfileMenuOpen((open) => !open)}
+          >
+            <UserRound size={17} aria-hidden="true" />
+            <span className="user-menu-name">{player.profile.username}</span>
+            <ChevronDown size={15} aria-hidden="true" />
+          </button>
+          {profileMenuOpen && (
+            <div className="user-menu-dropdown" role="menu" aria-label="Account menu">
+              <button
+                type="button"
+                className="user-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                  void onSignOut();
+                }}
+              >
+                <LogOut size={17} aria-hidden="true" />
+                Log Out
+              </button>
+              <div className="user-menu-version" aria-label={`Game version ${currentGameVersion}`}>
+                <span>Game version</span>
+                <strong>v{currentGameVersion}</strong>
+              </div>
+            </div>
+          )}
         </div>
-        <button className="icon-button" onClick={onSignOut} aria-label="Log out">
-          <LogOut size={18} />
-        </button>
+        <ExitControl onClose={onClose} />
       </div>
       <span
         ref={currencyTooltipRef}
@@ -1520,7 +2320,39 @@ function TopBar({
         aria-hidden="true"
       />
     </header>
-  );
+  </>;
+}
+
+function ExitControl({ className = "", onClose }: { className?: string; onClose: () => Promise<void> }) {
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
+
+  return <>
+    <button
+      type="button"
+      className={`icon-button exit-button ${className}`.trim()}
+      onClick={() => setExitDialogOpen(true)}
+      aria-label="Exit Rollcasters"
+    >
+      <X size={19} aria-hidden="true" />
+    </button>
+    {exitDialogOpen && (
+      <Modal eyebrow="Rollcasters" title="Do you want to exit Rollcasters?" description={null} onClose={() => setExitDialogOpen(false)} className="exit-dialog">
+        <div className="dialog-actions exit-dialog-actions">
+          <button type="button" className="secondary-button" onClick={() => setExitDialogOpen(false)}>No</button>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={() => {
+              void onClose().catch((error) => console.error("Unable to close Rollcasters.", error));
+              setExitDialogOpen(false);
+            }}
+          >
+            Yes
+          </button>
+        </div>
+      </Modal>
+    )}
+  </>;
 }
 
 function BrandLogo({ compact = false }: { compact?: boolean }) {
@@ -1572,7 +2404,7 @@ function StarterRollcasterScreen({ data, onSelect }: { data: AppData; onSelect: 
                 <Sprite
                   name={rollcaster.name}
                   element="basic"
-                  assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)}
+                  assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["portrait", "card", "thumb"])}
                   size="large"
                   fit="portrait"
                 />
@@ -1611,7 +2443,7 @@ function StarterScreen({ data, onSelect }: { data: AppData; onSelect: (critterId
         {starterCritters.map((critter) => (
           <button key={critter.id} className="catalog-card starter-card" onClick={() => onSelect(critter.id)}>
             <span className="collectible-id">{critter.id}</span>
-            <CardSprite><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="large" /></CardSprite>
+            <CardSprite><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["card", "thumb"])} size="large" /></CardSprite>
             <CardName data={data} name={critter.name} critter={critter} />
             <StatGrid stats={critterStats(data.catalog, critter, 1)} compact />
             <span className="primary-button full-width">Choose {critter.name}</span>
@@ -1629,7 +2461,7 @@ type EquipTarget =
   | { type: "ability"; slotIndex: number; owned: UserRollcaster }
   | { type: "rollcaster"; slotIndex: number };
 
-function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onBag: () => void; onShop: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
+function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onBag: () => void; onShop: () => void; onSettings: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
   const player = data.player!;
   const activeRollcaster = player.rollcasters.find((row) => row.id === player.profile.active_rollcaster_id) ?? player.rollcasters[0];
   const rollcaster = byId(data.catalog.rollcasters, activeRollcaster?.rollcaster_id);
@@ -1690,7 +2522,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
       await onRefresh();
       setEquipTarget(null);
     } catch (err) {
-      setEquipError(errorMessage(err, "Unable to update loadout."));
+      setEquipError(loadoutErrorMessage(err, "Unable to update loadout."));
     } finally {
       setSaving(false);
     }
@@ -1709,15 +2541,28 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
     }
   }
 
+  async function unlockAbility(owned: UserRollcaster, abilityId: string) {
+    setSaving(true);
+    setEquipError(null);
+    try {
+      await unlockRollcasterAbility(owned.id, abilityId);
+      await onRefresh();
+    } catch (err) {
+      setEquipError(errorMessage(err, "Unable to unlock this ability."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <><section className="home-layout">
       <div className="home-rollcaster-column">
         <aside className="rollcaster-panel">
           <p className="eyebrow">Active Rollcaster</p>
           <button className="portrait-button" onClick={() => setEquipTarget({ type: "rollcaster", slotIndex: 1 })} aria-label="Choose active Rollcaster">
-            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path)} size="hero" fit="portrait" /></CardSprite>
+            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster?.name ?? "Shanks"} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster?.id, rollcaster?.asset_path, ["portrait", "card", "thumb"])} size="hero" fit="portrait" /></CardSprite>
           </button>
-          <h1>{rollcaster?.name ?? "Unknown"}</h1>
+          <h1 className="collectible-name">{rollcaster?.name ?? "Unknown"}</h1>
           {rollcasterProgress && <ProgressBar progress={rollcasterProgress} inline className="rollcaster-xp-progress" />}
           <p className="rollcaster-level">Level {activeRollcaster?.level ?? 1}</p>
           <div className="ability-list" aria-label="Rollcaster abilities">
@@ -1749,6 +2594,10 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
           <Coins size={24} />
           Shop
         </button>
+        <button className="menu-button settings-menu-button" onClick={onSettings}>
+          <SettingsIcon size={24} />
+          Settings
+        </button>
       </nav>
 
       <section ref={squadPanelRef} className="squad-panel" aria-label="Equipped squad">
@@ -1766,7 +2615,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onPlay, onRefresh }: { 
         })}
       </section>
     </section>
-    {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} error={equipError} onClose={() => setEquipTarget(null)} onEquip={equip} onUnlockSkill={unlockSkill} />}
+    {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} error={equipError} onClose={() => setEquipTarget(null)} onEquip={equip} onUnlockSkill={unlockSkill} onUnlockAbility={unlockAbility} />}
     </>
   );
 }
@@ -1837,7 +2686,7 @@ function TrackedChallengeSlots({
           >
             <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="sm" />
             <div className="tracked-challenge-copy">
-              <strong>{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong>
+              <strong className="collectible-name">{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong>
               <span>{challengeDescription(data, challenge)}</span>
               <span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span>
             </div>
@@ -1879,7 +2728,7 @@ function ChallengeReplacementModal({
     <Modal eyebrow="Challenge tracking" title="Replace a tracked challenge" description={null} onClose={onClose} className="challenge-replacement-modal">
       <div className="tracked-challenge-card challenge-replacement-target">
         <CollectibleSprite data={data} type={challenge.collectible_type} id={challenge.collectible_id} size="sm" />
-        <div className="tracked-challenge-copy"><strong>{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong><span>{challengeDescription(data, challenge)}</span><span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span></div>
+        <div className="tracked-challenge-copy"><strong className="collectible-name">{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong><span>{challengeDescription(data, challenge)}</span><span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span></div>
       </div>
       <p className="challenge-note">Select a tracked slot to replace it with this challenge.</p>
       <TrackedChallengeSlots data={data} tracked={tracked} busyId={busyId} onSelect={selectReplacement} />
@@ -1893,10 +2742,29 @@ function CollectibleSprite({ data, type, id, size = "sm", shard = false }: { dat
   const name = collectibleName(data, type, id);
   const critter = type === "critter" ? byId(data.catalog.critters, id) : undefined;
   const element = critter?.element_1_id ?? (type === "relic" ? "metal" : "basic");
-  const content = <Sprite name={name} element={element} assetPath={catalogAssetPath(data, type, id, collectibleAssetPath(data, type, id))} size="small" fit={type === "rollcaster" ? "portrait" : "contain"} />;
+  const variant = type === "relic"
+    ? size === "xs" ? "icon" : size === "sm" ? "thumb" : "card"
+    : size === "xs" || size === "sm" ? "thumb" : "card";
+  const content = <Sprite name={name} element={element} assetPath={preferredAssetPath(data, type, id, collectibleAssetPath(data, type, id), [variant, "card", "thumb"])} size="small" fit={type === "rollcaster" ? "portrait" : "contain"} />;
   return shard
     ? <span className="shard-sprite-glow" role="img" aria-label={`${name} shards`}><svg className="shard-sprite-outline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon className="shard-outline-glow shard-outline-glow-wide" points="1,50 50,1 99,50 50,99" /><polygon className="shard-outline-glow shard-outline-glow-mid" points="1,50 50,1 99,50 50,99" /><polygon className="shard-outline-border" points="1,50 50,1 99,50 50,99" /></svg><span className="shard-sprite-frame" aria-hidden="true">{content}</span></span>
     : <SpriteFrame size={size}>{content}</SpriteFrame>;
+}
+
+function preferredAssetPath(
+  data: AppData,
+  category: string,
+  ownerId: string | null | undefined,
+  directPath: string | null | undefined,
+  variants: readonly string[],
+): string | null {
+  if (ownerId) {
+    for (const variant of variants) {
+      const path = findAssetPath(data, category, ownerId, variant);
+      if (path) return path;
+    }
+  }
+  return catalogAssetPath(data, category, ownerId, directPath);
 }
 
 function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData; slotIndex: number; owned?: UserCritter; onEquip: (target: EquipTarget) => void }) {
@@ -1922,7 +2790,7 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
     <article className="loadout-slot">
       <div className="loadout-critter-summary">
         <button className="slot-topline slot-button loadout-critter-header" onClick={() => onEquip({ type: "critter", slotIndex })} aria-label={`Change ${critter.name} in squad slot ${slotIndex}`}>
-          <SpriteFrame size="md" className="loadout-critter-frame"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} size="small" /></SpriteFrame>
+          <SpriteFrame size="md" className="loadout-critter-frame"><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["thumb", "card"])} size="small" /></SpriteFrame>
           <div className="loadout-critter-content">
             <div className="loadout-critter-identity">
               <CritterName data={data} critter={critter} />
@@ -2041,18 +2909,67 @@ function SkillTileGrid({ ariaLabel, children, width }: { ariaLabel: string; chil
 }
 
 function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disabledReason, selected = false, equipped = false, manaCost, manaCostBreakdown, combatControl = false, combatSkillId }: { data: AppData; skill?: Skill | null; sourceCritter?: Critter; onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void; disabled?: boolean; disabledReason?: string; selected?: boolean; equipped?: boolean; manaCost?: number; manaCostBreakdown?: ActionCostBreakdown; combatControl?: boolean; combatSkillId?: string }) {
+  const tileRef = useRef<HTMLButtonElement>(null);
+  const [skillFontSize, setSkillFontSize] = useState<number | null>(null);
   const element = skill ? byId(data.catalog.elements, skill.element_id) : null;
   const elementPath = skill ? catalogAssetPath(data, "element", skill.element_id, element?.asset_path, "icon") : null;
   const manaPath = findAssetPath(data, "mana", "mana");
   const displayedManaCost = skill ? manaCost ?? skill.mana_cost : null;
   const attachments = skill ? data.catalog.effectsBySkill[skill.id] ?? [] : [];
   const effectText = skill ? attachmentText(attachments) : "";
-  const targetText = skill ? `${targetingDescription(skill)} Priority: ${skill.priority ?? 0}` : "";
+  const priority = skill?.priority ?? 0;
+  const priorityText = skill && priority !== 0 ? ` Priority: ${priority}` : "";
+  const targetText = skill ? `${targetingDescription(skill)}${priorityText}` : "";
   const costSummary = skill && manaCostBreakdown ? costBreakdownText("Mana cost", manaCostBreakdown) : "";
+  useLayoutEffect(() => {
+    const tile = tileRef.current;
+    if (!tile || !skill) {
+      setSkillFontSize(null);
+      return;
+    }
+    const name = tile.querySelector<HTMLElement>(".skill-title strong");
+    if (!name) return;
+    let animationFrame = 0;
+    const fit = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        name.style.removeProperty("font-size");
+        const baseFontSize = Number.parseFloat(window.getComputedStyle(name).fontSize);
+        const availableWidth = name.getBoundingClientRect().width;
+        if (!baseFontSize || !availableWidth) return;
+        let fittedFontSize = baseFontSize;
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const renderedWidth = name.scrollWidth;
+          if (renderedWidth <= availableWidth + 0.1) break;
+          fittedFontSize = Math.max(1, fittedFontSize * availableWidth / renderedWidth);
+          name.style.fontSize = `${fittedFontSize}px`;
+        }
+        if (name.scrollWidth > availableWidth + 0.1) {
+          fittedFontSize = Math.max(1, fittedFontSize * availableWidth / name.scrollWidth);
+          name.style.fontSize = `${fittedFontSize}px`;
+        }
+        const needsFit = fittedFontSize < baseFontSize - 0.05;
+        const nextFontSize = needsFit ? fittedFontSize : null;
+        setSkillFontSize((current) => current === null && nextFontSize === null
+          || current !== null && nextFontSize !== null && Math.abs(current - nextFontSize) < 0.05
+          ? current
+          : nextFontSize);
+      });
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(tile);
+    window.addEventListener("resize", fit);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      observer.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, [skill?.name]);
   const label = skill ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}, ${displayedManaCost} Mana. ${skill.description} ${effectText} ${targetText} ${costSummary}` : "Choose a skill.";
   const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{manaCostBreakdown && manaCostBreakdown.sources.length > 0 && <CostBreakdownLine label="Mana cost" breakdown={manaCostBreakdown} />}{attachmentRows(attachments, sourceCritter)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
-  return <GameTooltip label={label.trim()} content={tooltip}><button type="button" className={`skill-tile ${skill ? "" : "empty"} ${selected ? "selected" : ""} ${equipped ? "equipped" : ""} ${!onClick ? "read-only" : ""}`} onClick={onClick} disabled={disabled} aria-disabled={!onClick || undefined} data-combat-control={combatControl ? "true" : undefined} data-combat-focus-role={combatControl ? "skill" : undefined} data-combat-skill-id={combatControl ? combatSkillId : undefined}>
-    <span className="skill-title">{skill && <AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={16} />} />}<strong>{skill?.name ?? "-----"}</strong></span>
+  return <GameTooltip label={label.trim()} content={tooltip}><button ref={tileRef} type="button" className={`skill-tile ${skill ? "" : "empty"} ${selected ? "selected" : ""} ${equipped ? "equipped" : ""} ${!onClick ? "read-only" : ""}`} onClick={onClick} disabled={disabled} aria-disabled={!onClick || undefined} data-combat-control={combatControl ? "true" : undefined} data-combat-focus-role={combatControl ? "skill" : undefined} data-combat-skill-id={combatControl ? combatSkillId : undefined}>
+    <span className="skill-title">{skill && <AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={16} />} />}<strong style={skillFontSize ? { fontSize: `${skillFontSize}px` } : undefined}>{skill?.name ?? "-----"}</strong></span>
     {skill?.skill_type === "attack" && <span className="skill-power">PWR {skill.power}</span>}
     {skill && <span className={`skill-mana ${actionCostTone(manaCostBreakdown)}`.trim()}><AssetIcon path={manaPath} alt="Mana" fallback={<Gem size={15} />} />{displayedManaCost}</span>}
     {(selected || equipped) && <Check className="selection-check" size={15} />}
@@ -2062,10 +2979,10 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
 function LoadoutRelicSlot({ data, relic, sourceCritter, slotIndex, onClick }: { data: AppData; relic?: Relic | null; sourceCritter?: Critter; slotIndex: number; onClick: () => void }) {
   const attachments = relic ? data.catalog.effectsByRelic[relic.id] ?? [] : [];
   const details = relic ? `${relic.name}. ${relic.description} ${attachmentText(attachments)}` : `Choose a relic for slot ${slotIndex}.`;
-  const tooltip = relic ? <><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments, sourceCritter)}</> : <span className="tooltip-description">Choose a relic for slot {slotIndex}.</span>;
+  const tooltip = relic ? <><span className="tooltip-heading"><strong className="collectible-name">{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(attachments, sourceCritter)}</> : <span className="tooltip-description">Choose a relic for slot {slotIndex}.</span>;
   return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className={`loadout-relic-cell unlocked ${relic ? "equipped" : "empty"}`} onClick={onClick} aria-label={`Equip relic · Slot ${slotIndex}`}>
     {relic
-      ? <AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield aria-hidden="true" />} />
+      ? <AssetIcon path={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["icon", "thumb", "card"])} alt={relic.name} fallback={<Shield aria-hidden="true" />} />
       : <Plus className="empty-relic-plus" aria-hidden="true" />}
   </button></GameTooltip>;
 }
@@ -2154,7 +3071,7 @@ function useUnlockButtonFlash() {
   return { flashingId, flash };
 }
 
-function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSkill }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void> }) {
+function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSkill, onUnlockAbility }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void>; onUnlockAbility: (owned: UserRollcaster, abilityId: string) => Promise<void> }) {
   const player = data.player!;
   const title = target.type === "rollcaster" ? "Choose active Rollcaster" : `Equip ${target.type} · Slot ${target.slotIndex}`;
   const [query, setQuery] = useState("");
@@ -2163,6 +3080,9 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
   const normalizedQuery = query.trim().toLowerCase();
   const currentSkillOwner = target.type === "skill"
     ? player.critters.find((owned) => owned.id === target.owned.id) ?? target.owned
+    : null;
+  const currentAbilityOwner = target.type === "ability"
+    ? player.rollcasters.find((owned) => owned.id === target.owned.id) ?? target.owned
     : null;
   let content: React.ReactNode;
 
@@ -2192,7 +3112,7 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       const inSquad = assigned.has(owned.id);
       const disabled = saving || (inSquad && !selected) || (selected && !canRemoveCurrent);
       return <button className={`candidate-card ${selected ? "selected" : ""} ${inSquad && !selected ? "in-squad" : ""}`} key={owned.id} disabled={disabled} onClick={() => onEquip(() => changeSquadSlot(selected ? target.slotIndex : equipSlotIndex, selected ? null : owned.id))}>
-        <SpriteFrame size="md" selected={selected}><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
+        <SpriteFrame size="md" selected={selected}><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["card", "thumb"])} /></SpriteFrame>
         <CritterName data={data} critter={critter} /><span>Level {owned.level}</span>{selected ? <span className="state-badge remove-badge">Select again to remove</span> : inSquad && <span className="state-badge"><Check size={14} /> In squad</span>}
       </button>;
     })}</div> : <p className="empty-state">No critters available</p>;
@@ -2295,43 +3215,128 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
       const effects = data.catalog.effectsByRelic[relic.id] ?? [];
       const sourceCritter = byId(data.catalog.critters, target.owned.critter_id);
       const details = `${relic.name}. ${relic.description} ${attachmentText(effects)}`.trim();
-      return <GameTooltip key={relic.id} label={details} content={<><span className="tooltip-heading"><strong>{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
+      return <GameTooltip key={relic.id} label={details} content={<><span className="tooltip-heading"><strong className="collectible-name">{relic.name}</strong></span><span className="tooltip-description">{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
         <button className={`candidate-card relic-candidate ${selected ? "selected" : ""} ${unavailable ? "unavailable" : ""}`} disabled={saving || selected || unavailable} onClick={() => {
           if (unavailable) return;
           onEquip(() => setCritterRelicSlot(target.owned.id, target.slotIndex, relic.id));
         }}>
-          <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} /></SpriteFrame><strong>{relic.name}</strong><span className="inventory-count relic-availability">Available: {available}</span>
+          <SpriteFrame size="md" selected={selected}><Sprite name={relic.name} element="metal" assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} /></SpriteFrame><strong className="collectible-name">{relic.name}</strong><span className="inventory-count relic-availability">Available: {available}</span>
         </button>
       </GameTooltip>;
     })}</div> : <p className="empty-state">No relics available</p>;
   } else if (target.type === "ability") {
-    const ids = player.unlockedAbilityIdsByRollcaster[target.owned.id] ?? [];
-    const rows = player.abilitySlots.filter((row) => row.user_rollcaster_id === target.owned.id);
+    const abilityOwner = currentAbilityOwner!;
+    const ids = new Set(player.unlockedAbilityIdsByRollcaster[abilityOwner.id] ?? []);
+    const rows = player.abilitySlots.filter((row) => row.user_rollcaster_id === abilityOwner.id);
     const current = rows.find((row) => row.slot_index === target.slotIndex)?.ability_id;
-    const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex).map((row) => row.ability_id));
-    const eligible = ids.map((id) => byId(data.catalog.rollcasterAbilities, id)).filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
-    content = eligible.length ? <div className="ability-candidates">{eligible.map((ability) => {
+    const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex && row.ability_id).map((row) => row.ability_id));
+    const equippedCount = rows.filter((row) => row.ability_id).length;
+    const eligible = data.catalog.rollcasterAbilityUnlocks
+      .filter((unlock) => unlock.rollcaster_id === abilityOwner.rollcaster_id)
+      .map((unlock) => ({ ability: byId(data.catalog.rollcasterAbilities, unlock.ability_id), unlock }))
+      .filter((candidate): candidate is { ability: RollcasterAbility; unlock: typeof data.catalog.rollcasterAbilityUnlocks[number] } => Boolean(candidate.ability))
+      .filter(({ ability }) => !normalizedQuery || `${ability.name} ${ability.description}`.toLowerCase().includes(normalizedQuery))
+      .sort((left, right) =>
+        left.unlock.unlock_level - right.unlock.unlock_level ||
+        left.unlock.sort_order - right.unlock.sort_order ||
+        left.ability.sort_order - right.ability.sort_order ||
+        left.ability.id.localeCompare(right.ability.id),
+      );
+    const unlockedEligible = eligible.filter(({ ability }) => ids.has(ability.id));
+    const lockedEligible = eligible.filter(({ ability }) => !ids.has(ability.id));
+    const renderAbility = ({ ability, unlock }: { ability: RollcasterAbility; unlock: typeof data.catalog.rollcasterAbilityUnlocks[number] }) => {
       const selected = current === ability.id;
       const equipped = selected || equippedElsewhere.has(ability.id);
-      return <button className={`ability-candidate ${selected ? "selected" : ""} ${equipped ? "equipped" : ""}`} key={ability.id} disabled={saving || equippedElsewhere.has(ability.id)} onClick={() => onEquip(() => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, selected ? null : ability.id))}><span><strong>{ability.name}</strong><small>{ability.description}</small>{attachmentRows(data.catalog.effectsByAbility[ability.id] ?? [])}</span>{equipped && <Check size={18} />}</button>;
-    })}</div> : <p className="empty-state">No abilities available</p>;
+      const cannotRemoveLast = selected && equippedCount <= 1;
+      const locked = !ids.has(ability.id);
+      const levelEligible = abilityOwner.level >= unlock.unlock_level;
+      const unlockCost = unlock.unlock_cost ?? 0;
+      const canUnlock = levelEligible && abilityOwner.ability_points >= unlockCost;
+      const effects = data.catalog.effectsByAbility[ability.id] ?? [];
+      const disabledReason = cannotRemoveLast
+        ? "At least one ability must remain equipped."
+        : equippedElsewhere.has(ability.id)
+          ? "Equipped in another slot."
+          : locked && !levelEligible
+            ? `Unlocks at level ${unlock.unlock_level}.`
+            : locked && !canUnlock
+              ? `Need ${unlockCost - abilityOwner.ability_points} more ability point${unlockCost - abilityOwner.ability_points === 1 ? "" : "s"}.`
+              : undefined;
+      const label = `${ability.name}. ${ability.description} ${attachmentText(effects)} ${disabledReason ?? ""}`.trim();
+      const card = <button
+        type="button"
+        className={`ability-candidate ${selected ? "selected" : ""} ${equipped ? "equipped" : ""}`.trim()}
+        disabled={saving || locked || equippedElsewhere.has(ability.id) || cannotRemoveLast}
+        onClick={locked ? undefined : () => onEquip(() => setRollcasterAbilitySlot(abilityOwner.id, target.slotIndex, selected ? null : ability.id))}
+      >
+        <span><strong>{ability.name}</strong><small>{ability.description}</small>{attachmentRows(effects)}</span>
+        {equipped && <Check size={18} />}
+      </button>;
+      if (locked) {
+        return <div className={`equip-ability-option locked ${levelEligible ? "unlockable" : "level-locked"}`.trim()} key={ability.id}>
+          <GameTooltip label={label} content={<><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(effects)}{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</>}>{card}</GameTooltip>
+          <div className="equip-ability-unlock-row">
+            <span className="equip-ability-unlock-requirement">Unlock at level {unlock.unlock_level} · {unlockCost} ability point{unlockCost === 1 ? "" : "s"}</span>
+            {levelEligible && <button
+              type="button"
+              className={`primary-button ability-unlock-button ${flashingId === ability.id ? "insufficient-points" : ""}`.trim()}
+              disabled={saving}
+              title={!canUnlock ? disabledReason : undefined}
+              onClick={() => {
+                if (!canUnlock) {
+                  flash(ability.id);
+                  return;
+                }
+                void onUnlockAbility(abilityOwner, ability.id);
+              }}
+            >Unlock · {unlockCost}</button>}
+          </div>
+        </div>;
+      }
+      return <GameTooltip key={ability.id} label={label} content={<><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(effects)}{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</>}>{card}</GameTooltip>;
+    };
+    content = eligible.length ? <div className="equip-ability-sections">
+      {unlockedEligible.length > 0 && <section className="equip-ability-section" aria-label="Unlocked abilities">
+        <p className="equip-skill-section-label">Unlocked abilities</p>
+        <div className="ability-candidates">{unlockedEligible.map(renderAbility)}</div>
+      </section>}
+      {lockedEligible.length > 0 && <section className="equip-ability-section" aria-label="Locked abilities">
+        <p className="equip-skill-section-label">Locked abilities</p>
+        {unlockedEligible.length > 0 && <div className="equip-skill-divider" role="separator" aria-label="Locked abilities divider" />}
+        <div className="ability-candidates">{lockedEligible.map(renderAbility)}</div>
+      </section>}
+    </div> : <p className="empty-state">No abilities available</p>;
   } else {
     content = <div className="candidate-grid">{sortByCollectibleId(player.rollcasters, (owned) => owned.rollcaster_id).map((owned) => {
       const entry = byId(data.catalog.rollcasters, owned.rollcaster_id)!;
       const selected = player.profile.active_rollcaster_id === owned.id;
-      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", entry.id, entry.asset_path)} size="large" fit="portrait" /></SpriteFrame><strong>{entry.name}</strong><span>Level {owned.level}</span></button>;
+      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", entry.id, entry.asset_path, ["portrait", "card", "thumb"])} size="large" fit="portrait" /></SpriteFrame><strong className="collectible-name">{entry.name}</strong><span>Level {owned.level}</span></button>;
     })}</div>;
   }
 
   const currentRelic = target.type === "relic" ? player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id : null;
-  const currentAbility = target.type === "ability" ? player.abilitySlots.find((row) => row.user_rollcaster_id === target.owned.id && row.slot_index === target.slotIndex)?.ability_id : null;
-  const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && Boolean(currentAbility));
+  const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && player.abilitySlots.filter((row) => row.user_rollcaster_id === target.owned.id && row.ability_id).length > 1);
   const clear = target.type === "critter" ? () => setSquadSlot(target.slotIndex, null) : target.type === "skill" ? () => setCritterSkillSlot(target.owned.id, target.slotIndex, null) : target.type === "relic" ? () => setCritterRelicSlot(target.owned.id, target.slotIndex, null) : target.type === "ability" ? () => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, null) : null;
-  return <Modal className={target.type === "skill" ? "equip-dialog equip-dialog-skill" : target.type === "relic" ? "equip-dialog equip-dialog-relic" : "equip-dialog"} title={title} description={target.type === "skill" ? "Choose an unlocked skill or unlock one available at this Critter's level." : "Choose an eligible item for this loadout slot."} onClose={onClose}>
+  const dialogClass = target.type === "skill"
+    ? "equip-dialog equip-dialog-skill"
+    : target.type === "relic"
+      ? "equip-dialog equip-dialog-relic"
+      : target.type === "ability"
+        ? "equip-dialog equip-dialog-ability"
+        : "equip-dialog";
+  const scrollableContent = target.type === "skill"
+    ? <div className="equip-skill-list">{content}</div>
+    : target.type === "relic"
+      ? <div className="equip-relic-list">{content}</div>
+      : target.type === "ability"
+        ? <div className="equip-ability-list">{content}</div>
+        : content;
+  return <Modal className={dialogClass} title={title} description={target.type === "skill" ? "Choose an unlocked skill or unlock one available at this Critter's level." : target.type === "ability" ? "Choose an unlocked ability or unlock one available at this Rollcaster's level." : "Choose an eligible item for this loadout slot."} onClose={onClose}>
     {error && <p className="notice error" role="alert">{error}</p>}
     {target.type === "skill" && currentSkillOwner && <div className="equip-dialog-point-summary"><PointCounter kind="skill" points={currentSkillOwner.skill_points} inline /></div>}
-    {(target.type === "skill" || target.type === "relic") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : "Search relics by name"} /></label>}
-    {target.type === "skill" ? <div className="equip-skill-list">{content}</div> : content}
+    {target.type === "ability" && currentAbilityOwner && <div className="equip-dialog-point-summary"><PointCounter kind="ability" points={currentAbilityOwner.ability_points} inline /></div>}
+    {(target.type === "skill" || target.type === "relic" || target.type === "ability") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : target.type === "ability" ? "Search abilities by name…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : target.type === "ability" ? "Search abilities by name" : "Search relics by name"} /></label>}
+    {scrollableContent}
     <div className="dialog-actions">{canUnequip && clear && <button className="danger-button" disabled={saving} onClick={() => onEquip(clear)}>Unequip</button>}<button className="secondary-button" onClick={onClose}>Cancel</button></div>
   </Modal>;
 }
@@ -2445,6 +3450,7 @@ function BagScreen({
   onRefresh,
   onBeforeOpenLootbox,
   onPurchaseError,
+  onOpenError,
 }: {
   data: AppData;
   tab: BagTab;
@@ -2453,6 +3459,7 @@ function BagScreen({
   onRefresh: () => Promise<void>;
   onBeforeOpenLootbox: () => Promise<void>;
   onPurchaseError: (error: unknown) => void;
+  onOpenError: (error: unknown) => void;
 }) {
   const [selectedLootbox, setSelectedLootbox] = useState<string | null>(null);
   const currencies = orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite");
@@ -2545,7 +3552,7 @@ function BagScreen({
           {ownedLootboxes.length === 0 && <div className="shop-empty"><Gift /><h2>No Lootboxes yet</h2><p>Purchased and earned Lootboxes will appear here.</p></div>}
         </div>
       </div>}
-      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onBeforeOpen={onBeforeOpenLootbox} onPurchaseError={onPurchaseError} onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
+      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onBeforeOpen={onBeforeOpenLootbox} onPurchaseError={onPurchaseError} onOpenError={onOpenError} onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
     </section>
   );
 }
@@ -2579,7 +3586,7 @@ function BagShardCard({ data, type, id }: { data: AppData; type: CollectibleType
     <article className={`shop-entry-card bag-shard-card ${complete ? "complete" : ""}`.trim()} data-collectible-type={type} data-collectible-id={id} data-shard-status={complete ? "complete" : "in-progress"}>
       <CollectibleSprite data={data} type={type} id={id} size="md" shard />
       <div className="shop-entry-copy">
-        <h3>{targetName}</h3>
+        <h3 className="collectible-name">{targetName}</h3>
         <p className="shop-target">{id}</p>
       </div>
       <ShopProgressBar current={progress.current} goal={progress.goal} type="Shards" showCompletion={complete} />
@@ -2789,6 +3796,7 @@ function ShopScreen({
         onPurchaseRequested={(quantity) => queuePurchase(selectedLootboxEntry, quantity)}
         onBeforeOpen={async () => undefined}
         onPurchaseError={(purchaseFailure) => onNotify(createShopErrorNotification(purchaseFailure))}
+        onOpenError={(openingFailure) => onNotify(createLootboxErrorNotification(openingFailure))}
         onRefresh={onRefresh}
         onPurchased={() => setPurchasedLootboxEntries((current) => new Set(current).add(selectedLootboxEntry.id))}
         onPurchaseFailed={() => setPurchasedLootboxEntries((current) => {
@@ -2829,7 +3837,7 @@ function LootboxPoolArt({ data, entry }: { data: AppData; entry: LootboxPoolEntr
     return <span className="lootbox-pool-art lootbox-pool-shard-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="sm" shard /></span>;
   }
   const relic = byId(data.catalog.relics, entry.target_id);
-  return <span className="lootbox-pool-art"><SpriteFrame size="sm"><Sprite name={relic?.name ?? entry.target_id} element="metal" assetPath={relic ? (findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)) : null} size="small" /></SpriteFrame></span>;
+  return <span className="lootbox-pool-art"><SpriteFrame size="sm"><Sprite name={relic?.name ?? entry.target_id} element="metal" assetPath={relic ? preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["thumb", "icon", "card"]) : null} size="small" /></SpriteFrame></span>;
 }
 
 function lootboxPoolEntryName(data: AppData, entry: LootboxPoolEntry): string {
@@ -2949,7 +3957,7 @@ function LootboxRewardProgress({ data, progress, duplicateAmount, duplicateCurre
   </div>;
 }
 
-function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onBeforeOpen, onPurchaseError, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
+function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onBeforeOpen, onPurchaseError, onOpenError, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
   data: AppData;
   lootboxId: string;
   mode: "purchase" | "owned";
@@ -2959,12 +3967,14 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   onPurchaseRequested?: (quantity: number) => Promise<ShopPurchaseReceipt>;
   onBeforeOpen?: () => Promise<void>;
   onPurchaseError?: (error: unknown) => void;
+  onOpenError?: (error: unknown) => void;
   onRefresh: () => Promise<void>;
   onPurchased?: () => void;
   onPurchaseFailed?: () => void;
   onOpened?: () => void;
   onClose: () => void;
 }) {
+  const controlBindings = useControlBindings();
   const lootbox = data.catalog.lootboxes.find((row) => row.id === lootboxId);
   const pool = data.catalog.lootboxPoolEntries.filter((entry) => entry.lootbox_id === lootboxId).sort((left,right) => left.sort_order-right.sort_order);
   const [purchased, setPurchased] = useState(mode === "owned" || initialPurchased);
@@ -2974,7 +3984,6 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   const initialBagQuantity = lootboxQuantity(data, lootboxId);
   const startingBagQuantityRef = useRef(initialBagQuantity);
   const [availableToOpen, setAvailableToOpen] = useState<bigint | null>(() => mode === "owned" || initialPurchased ? initialBagQuantity : null);
-  const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<LootboxModalPhase>("idle");
   const [receipt, setReceipt] = useState<LootboxOpeningReceipt | null>(null);
   const [rewardProgress, setRewardProgress] = useState<LootboxRewardProgressState | null>(null);
@@ -3002,7 +4011,6 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
 
   async function purchaseBox() {
     if (!shopEntry || !onPurchaseRequested || busy || purchasePending) return;
-    setError(null);
     setPurchasePending(true);
     try {
       const receipt = await onPurchaseRequested(selectedPurchaseQuantity);
@@ -3026,12 +4034,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
 
   async function openBox(force = false) {
     if ((!force && !canOpen) || !lootbox || (availableToOpen !== null && availableToOpen <= 0n)) return;
-    setBusy(true); setError(null);
+    setBusy(true);
     try {
       try {
         await onBeforeOpen?.();
-      } catch (purchaseFailure) {
-        onPurchaseError?.(purchaseFailure);
+      } catch (beforeOpenError) {
+        onOpenError?.(beforeOpenError);
         return;
       }
       const opening = await openLootbox(lootbox.id, openingRequest.current);
@@ -3054,12 +4062,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
       timers.current.push(window.setTimeout(() => setPhase("opened"),650));
       timers.current.push(window.setTimeout(() => setPhase("reel"),950));
     } catch (openingFailure) {
-      const openingErrorMessage = errorMessage(openingFailure, "Unable to open this Lootbox.");
-      if (/purchase_shop_entries|purchase_shop_entry|purchase could not be completed/i.test(openingErrorMessage)) {
+      const openingErrorText = rawErrorMessage(openingFailure, "");
+      if (/purchase_shop_entries|purchase_shop_entry|purchase could not be completed/i.test(openingErrorText)) {
         onPurchaseError?.(openingFailure);
         return;
       }
-      setError(openingErrorMessage);
+      onOpenError?.(openingFailure);
     } finally { setBusy(false); }
   }
 
@@ -3078,12 +4086,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (event.code !== "Space" || event.repeat || target?.matches("input,textarea,select,button,[contenteditable=true]")) return;
+      if (event.code !== controlBindings.interact || event.repeat || target?.matches("input,textarea,select,button,[contenteditable=true]")) return;
       if (canOpen) { event.preventDefault(); void openBox(); }
     };
     window.addEventListener("keydown",onKey);
     return () => window.removeEventListener("keydown",onKey);
-  }, [canOpen,lootbox?.id]);
+  }, [canOpen, controlBindings.interact, lootbox?.id]);
 
   useEffect(() => {
     if (purchased && phase === "idle" && !busy) {
@@ -3176,12 +4184,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
           <button className={`lootbox-click-target ${phase==="shaking"?"shaking":""}`} disabled><LootboxSprite lootbox={lootbox} variant={phase==="shaking"?"closed":"open"} /></button>
         </div>
         <div className="lootbox-opening-reel-slot">
-          {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small>{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
+          {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small className="collectible-name">{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
         </div>
         <div className="lootbox-opening-result-slot">
           {phase === "result" && receipt && <div className={`lootbox-result ${duplicateUnits > 0n ? "has-duplicate" : ""}`.trim()} data-reward-type={receipt.reward.type}>
             <span>YOU WON</span>
-            <h3>x{formatAmount(receipt.reward.amount)} {rewardName}</h3>
+            <h3>x{formatAmount(receipt.reward.amount)} <span className="collectible-name">{rewardName}</span></h3>
             {rewardProgress ? <LootboxRewardProgress data={data} progress={rewardProgress} duplicateAmount={duplicateUnits} duplicateCurrency={duplicateCurrency} convertedCurrencyAmount={receipt.reward.convertedCurrencyAmount} /> : duplicateUnits > 0n && <div className="lootbox-duplicate-conversion">
               <span className="lootbox-duplicate-currency" aria-hidden="true">
                 <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
@@ -3197,14 +4205,13 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
         </div>
       </div> : <>
         <button className="lootbox-click-target" disabled={!canOpen} aria-label={canOpen?`Open ${lootbox.name}`:lootbox.name} onClick={() => void openBox()}><LootboxSprite lootbox={lootbox} variant="closed" /></button>
-        {error&&<p className="notice error" role="alert">{error}</p>}
         <footer>{!purchased&&shopEntry&&currency?<div className="lootbox-modal-purchase-stack">
           <div className="shop-price lootbox-modal-purchase-price" aria-live="polite"><span className="shop-purchase-quantity">{formatAmount(selectedPurchaseQuantity)}×</span><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt={currency.name} loading="eager" fallback={<Coins />} /><span className="shop-price-cost">{formatAmount(shopPurchasePrice(shopEntry, selectedPurchaseQuantity))}</span></div>
           <div className="shop-purchase-row lootbox-modal-purchase-row">
           <ShopQuantityControl label={`Quantity of ${lootbox.name}`} quantity={selectedPurchaseQuantity} max={99} disabled={busy || purchasePending} onChange={setSelectedPurchaseQuantity} />
           <button className="primary-button lootbox-purchase-button" disabled={busy || purchasePending} onClick={() => void purchaseBox()}>Purchase</button>
-        </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts="Space">{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={sendToBag}>Send to Bag</button>}</>}</footer>
-        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong>{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
+        </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts={controlBindings.interact}>{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={sendToBag}>Send to Bag</button>}</>}</footer>
+        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong className="collectible-name">{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
       </>}
     </section>
   </div>;
@@ -3463,7 +4470,7 @@ function PromoRewardGrid({ data, rewards }: { data: AppData; rewards: PromoCodeR
           >
             <PromoRewardArt data={data} reward={reward} />
             <div className="promo-reward-copy">
-              <h3>{reward.name}</h3>
+              <h3 className="collectible-name">{reward.name}</h3>
               <span>{outcome}</span>
             </div>
             <strong>×{formatAmount(reward.quantity)}</strong>
@@ -3542,7 +4549,7 @@ function ShopEntryCard({ data, entry, quantity, busy, onQuantityChange, onPurcha
   const displayName = entry.shop_type === "shard" ? `${targetName} Shards` : targetName;
   const lineType = entry.shop_type === "shard" ? "Shards" : "Relics";
   return (
-    <article className={`shop-entry-card ${complete ? "complete" : ""} ${maxOwned ? "max-owned" : ""}`.trim()} data-shop-type={entry.shop_type} data-availability-code={availability.code ?? "AVAILABLE"} data-shard-status={entry.shop_type === "shard" ? (complete ? "complete" : "in-progress") : undefined}>
+    <article className={`shop-entry-card ${complete ? "complete" : ""} ${maxOwned ? "max-owned" : ""}`.trim()} data-shop-type={entry.shop_type} data-target-id={entry.target_id} data-availability-code={availability.code ?? "AVAILABLE"} data-shard-status={entry.shop_type === "shard" ? (complete ? "complete" : "in-progress") : undefined}>
       <div className="shop-card-art"><CollectibleSprite data={data} type={entry.target_category} id={entry.target_id} size="md" shard={entry.shop_type === "shard"} /></div>
       <div className="shop-entry-copy">
         <h3 className="shop-item-name shop-target">
@@ -3704,7 +4711,7 @@ function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }:
           const progress = progressFor(data, challenge.id);
           const blocked = progress.eligible === false;
           const slot = progress.completed ? null : trackedSlotFor(data, challenge.id);
-          const trackedFamily = isTrackableChallenge(challenge);
+          const trackedFamily = isTrackableChallenge(challenge, data.catalog.unlockChallengeTemplates);
           const trackable = trackedFamily && !progress.completed && progress.trackable !== false;
           return (
             <Fragment key={challenge.id}>
@@ -3984,7 +4991,7 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
         {challenges.map((challenge) => {
           const progress = progressFor(data, challenge.id);
           const slot = progress.completed ? null : trackedSlotFor(data, challenge.id);
-          const trackedFamily = isTrackableChallenge(challenge);
+          const trackedFamily = isTrackableChallenge(challenge, data.catalog.unlockChallengeTemplates);
           const trackable = trackedFamily && !progress.completed && progress.trackable !== false;
           const blocked = progress.eligible === false;
           return (
@@ -3992,7 +4999,7 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
               {challenge.id === firstBlockedChallengeId && <div className="challenge-gate-boundary challenge-detail-gate-boundary">
                 <span className="gate-blocked"><Lock size={12} />Complete all above challenges first</span>
               </div>}
-              <article className={`challenge-detail-row ${progress.completed ? "complete" : ""} ${blocked ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()}>
+              <article data-challenge-id={challenge.id} className={`challenge-detail-row ${progress.completed ? "complete" : ""} ${blocked ? "blocked" : ""} ${progress.goal_reached ? "goal-reached" : ""}`.trim()}>
                 <span className="challenge-detail-copy">
                   <span>{challengeDescription(data, challenge)}</span>
                 </span>
@@ -4073,7 +5080,7 @@ function DetailModal({
     return (
       <Modal title={critter.name} onClose={onClose}>
         {detailError && <p className="notice error" role="alert">{detailError}</p>}
-        <CollectibleDetailHero data={data} id={critter.id} name={critter.name} critter={critter} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} assetElement={critter.element_1_id} />
+        <CollectibleDetailHero data={data} id={critter.id} name={critter.name} critter={critter} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["portrait", "battle", "card"])} assetElement={critter.element_1_id} />
         <p className="detail-level">{collectibleUnlocked && owned ? `Level ${owned.level}` : "Locked"}</p>
         <CollectibleChallengePanel data={data} type="critter" id={critter.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} />
         {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
@@ -4127,7 +5134,7 @@ function DetailModal({
   return (
     <Modal title={rollcaster.name} onClose={onClose}>
       {detailError && <p className="notice error" role="alert">{detailError}</p>}
-      <CollectibleDetailHero data={data} id={rollcaster.id} name={rollcaster.name} assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} assetElement="basic" />
+      <CollectibleDetailHero data={data} id={rollcaster.id} name={rollcaster.name} assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["portrait", "battle", "card"])} assetElement="basic" />
       <p className="detail-level">{collectibleUnlocked && owned ? `Level ${owned.level}` : "Locked"}</p>
       <CollectibleChallengePanel data={data} type="rollcaster" id={rollcaster.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} />
       {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
@@ -4351,7 +5358,6 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
         <div>
           <p className="eyebrow">{entry.mode === "boss" ? "First-clear lineup" : "Regular encounter pool"}</p>
           <h3>{entry.pool.length} opponent{entry.pool.length === 1 ? "" : "s"}</h3>
-          {entry.mode === "boss" && <p>Opponents arrive in fixed Boss Order.</p>}
         </div>
       </div>
       <div className="dungeon-opponent-list">
@@ -4361,15 +5367,19 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
           return (
             <details className="dungeon-opponent-entry" key={opponent.id}>
               <summary>
-                <SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
+                {entry.encounterPoolRevealed
+                  ? <SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>
+                  : <SpriteFrame size="sm"><span className="dungeon-unknown-critter-icon" role="img" aria-label="Unknown Critter"><CircleHelp size={34} aria-hidden="true" /></span></SpriteFrame>}
                 <span className="dungeon-opponent-identity">
-                  <span className="collectible-id">{critter.id}</span>
-                  <CritterName data={data} critter={critter} />
+                  {entry.encounterPoolRevealed && <span className="collectible-id">{critter.id}</span>}
+                  {entry.encounterPoolRevealed
+                    ? <CritterName data={data} critter={critter} />
+                    : <strong className="dungeon-unknown-critter-name">?????</strong>}
                   <small>Level {opponent.critter_level}</small>
                 </span>
-                <strong className="dungeon-opponent-rate">
-                  {entry.mode === "boss" ? `Boss position ${index + 1}` : formatProbability(opponent.probability ?? 0)}
-                </strong>
+                {entry.mode === "boss"
+                  ? <span className="dungeon-boss-position"><span className="sr-only">Boss position </span>{index + 1}</span>
+                  : <strong className="dungeon-opponent-rate">{formatProbability(opponent.probability ?? 0)}</strong>}
                 <ChevronDown aria-hidden="true" />
               </summary>
               <div className="dungeon-opponent-drop-panel">
@@ -4384,6 +5394,72 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
             </details>
           );
         })}
+      </div>
+    </Modal>
+  );
+}
+
+function ContinueDungeonDialog({
+  dungeon,
+  busy,
+  onContinue,
+  onAbandon,
+  onClose,
+}: {
+  dungeon: Dungeon;
+  busy: "continue" | "abandon" | null;
+  onContinue: () => void;
+  onAbandon: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      eyebrow="Dungeon expedition"
+      title="Continue Dungeon?"
+      description={null}
+      onClose={onClose}
+      className="continue-dungeon-modal"
+    >
+      <div className="continue-dungeon-copy">
+        <p>You left off in the middle of <strong>{dungeon.name}</strong> ({dungeon.id}).</p>
+        <p>Do you want to continue from your saved state or abandon the run?</p>
+        <p className="continue-dungeon-warning">Abandoning discards this saved run and returns you to the Dungeon selection grid.</p>
+      </div>
+      <div className="dialog-actions continue-dungeon-actions">
+        <button type="button" className="danger-button" disabled={busy !== null} onClick={onAbandon}>
+          {busy === "abandon" ? "Abandoning…" : "Abandon"}
+        </button>
+        <button type="button" className="primary-button" disabled={busy !== null} onClick={onContinue}>
+          {busy === "continue" ? "Continuing…" : "Continue"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function AbandonDungeonDialog({
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal
+      eyebrow="Dungeon expedition"
+      title="Do you want to abandon the current run?"
+      description={null}
+      onClose={onCancel}
+      className="abandon-dungeon-modal"
+      dismissible={false}
+    >
+      <div className="dialog-actions abandon-dungeon-actions">
+        <button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>No</button>
+        <button type="button" className="danger-button" disabled={busy} onClick={onConfirm}>
+          {busy ? "Abandoning…" : "Yes"}
+        </button>
       </div>
     </Modal>
   );
@@ -4404,9 +5480,8 @@ function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
           ? <LootboxSprite lootbox={data.catalog.lootboxes.find((lootbox) => lootbox.id === drop.targetId)!} variant="closed" />
         : <CollectibleSprite data={data} type={(drop.targetCategory ?? "relic") as CollectibleType} id={drop.targetId} size="xs" shard={drop.kind === "shard"} />}
       <span>
-        <strong>{dropAmountLabel(drop.minAmount, drop.maxAmount)} {drop.kind === "shard" ? `${targetName} Shards` : targetName}</strong>
+        <strong>{dropAmountLabel(drop.minAmount, drop.maxAmount)} x <span className="collectible-name">{drop.kind === "shard" ? `${targetName} Shards` : targetName}</span></strong>
         <small>{Math.round(drop.probability * 10000) / 100}% chance</small>
-        {(drop.kind === "shard" || drop.kind === "relic") && drop.dupeCurrencyId && <small>Duplicates convert to {drop.dupeCurrencyAmount ?? 0} {currencyFor(data, drop.dupeCurrencyId)?.name ?? drop.dupeCurrencyId} each.</small>}
       </span>
     </div>
   );
@@ -4415,8 +5490,9 @@ function DungeonDropRow({ data, drop }: { data: AppData; drop: DungeonDrop }) {
 function CombatScreen({
   data,
   combat,
+  controlBindings,
   setCombat,
-  onTurnResolved,
+  onCombatTurnResolved,
   onBattleResult,
   onBack,
   onHome,
@@ -4425,19 +5501,29 @@ function CombatScreen({
 }: {
   data: AppData;
   combat: DungeonRunState;
+  controlBindings: ControlBindings;
   setCombat: Dispatch<SetStateAction<DungeonRunState | null>>;
-  onTurnResolved: (state: DungeonRunState) => void | Promise<void>;
-  onBattleResult: (state: DungeonRunState) => Promise<void>;
+  onCombatTurnResolved: (runId: string, turnNumber: number, events: DungeonRunState["battle"]["turnEvents"]) => void;
+  onBattleResult: (state: DungeonRunState, requestId: string) => Promise<void>;
   onBack: () => void;
   onHome: () => void;
   onReplay: () => void;
   onNextDungeon: (dungeonId: string) => void;
 }) {
   const NARRATION_TYPEWRITER_INTERVAL_MS = 22;
+  const INTERACT_HOLD_START_DELAY_MS = 2_000;
+  const INTERACT_HOLD_REPEAT_INTERVAL_MS = 80;
   const combatRootRef = useRef<HTMLElement>(null);
   const [actions, setActions] = useState<Record<string, CombatAction>>({});
   const [menu, setMenu] = useState<"actions" | "skills" | "swap">("actions");
-  const [revealedOpponentKeys, setRevealedOpponentKeys] = useState<Set<string>>(new Set());
+  const opponentEncounterKey = `${combat.run.id}:${combat.run.battleIndex}`;
+  const [opponentRevealState, setOpponentRevealState] = useState(() => ({
+    encounterKey: opponentEncounterKey,
+    keys: new Set<string>(),
+  }));
+  const revealedOpponentKeys = opponentRevealState.encounterKey === opponentEncounterKey
+    ? opponentRevealState.keys
+    : new Set<string>();
   const [targeting, setTargeting] = useState<{ actorKey: string; skill: Skill; phase: "primary" | "swap"; primaryTargetKey?: string } | null>(null);
   const [swapSelection, setSwapSelection] = useState<{ actorKey: string; mode: "regular" | "skill" } | null>(null);
   const [submittingProgress, setSubmittingProgress] = useState(false);
@@ -4445,6 +5531,8 @@ function CombatScreen({
   const [loadingDots, setLoadingDots] = useState(1);
   const [recordingResult, setRecordingResult] = useState(false);
   const [resultAttempt, setResultAttempt] = useState(0);
+  const [resultError, setResultError] = useState<string | null>(null);
+  const resultRequestIdRef = useRef<string | null>(null);
   const [diceSettled, setDiceSettled] = useState(true);
   const [eventSettled, setEventSettled] = useState(true);
   const [visibleNarration, setVisibleNarration] = useState("");
@@ -4452,6 +5540,10 @@ function CombatScreen({
   const keyboardFocusRef = useRef<HTMLElement | null>(null);
   const keyboardFocusProxyRef = useRef<HTMLElement | null>(null);
   const invalidKeyboardFocusTimerRef = useRef<number | null>(null);
+  const interactHeldRef = useRef(false);
+  const interactHoldDelayTimerRef = useRef<number | null>(null);
+  const interactHoldTimerRef = useRef<number | null>(null);
+  const interactActionRef = useRef<(showInvalidFeedback?: boolean) => void>(() => undefined);
   const lastActionMenuFocusKeyRef = useRef("");
   const lastCommandFocusKeyRef = useRef("");
   const lastSkillByActorKeyRef = useRef<Record<string, string>>({});
@@ -4487,22 +5579,17 @@ function CombatScreen({
     return byId(data.catalog.rollcasterAbilities, slot?.ability_id);
   });
   useEffect(() => {
-    if (combat.phase === "lead_selection") return;
-    const encounteredOpponentKeys = new Set(
-      battle.opponentUnits.filter((unit) => unit.active).map((unit) => unit.key),
-    );
-    for (const recordedEvent of combat.events) {
-      for (const key of [recordedEvent.actorKey, ...recordedEvent.targetKeys, recordedEvent.swap?.outgoingKey, recordedEvent.swap?.incomingKey]) {
-        if (key?.startsWith("o")) encounteredOpponentKeys.add(key);
-      }
-    }
-    if (!encounteredOpponentKeys.size) return;
-    setRevealedOpponentKeys((current) => {
-      const next = new Set(current);
-      encounteredOpponentKeys.forEach((key) => next.add(key));
-      return next.size === current.size ? current : next;
-    });
-  }, [combat.events, combat.phase, battle.opponentUnits]);
+    const activeOpponentKeys = battle.opponentUnits
+      .filter((unit) => unit.active)
+      .map((unit) => unit.key);
+    setOpponentRevealState((current) => updateOpponentRevealState(
+      current,
+      opponentEncounterKey,
+      combat.phase,
+      activeOpponentKeys,
+      combat.events,
+    ));
+  }, [combat.events, combat.phase, opponentEncounterKey, battle.opponentUnits]);
   const legalTargets = targeting
     ? targeting.phase === "swap"
       ? healthyFriendlySwapTargets(battle, targeting.actorKey)
@@ -4700,13 +5787,58 @@ function CombatScreen({
     }, 360);
   }
 
-  function activateCombatKeyboardControl(control: HTMLElement) {
-    if (control.matches(":disabled") || control.getAttribute("aria-disabled") === "true") {
-      flashInvalidKeyboardControl(control);
+  function isEnabledCombatControl(control: HTMLElement): boolean {
+    return !control.matches(":disabled") && control.getAttribute("aria-disabled") !== "true";
+  }
+
+  function heldInteractControl(): HTMLElement | null {
+    const controls = combatKeyboardControls();
+    const enabledControls = controls.filter(isEnabledCombatControl);
+    if (!enabledControls.length) return null;
+
+    const focusedControl = focusedEnabledControl(controls, keyboardFocusRef.current, isEnabledCombatControl);
+    if (focusedControl) return focusedControl;
+
+    if (combat.phase === "lead_selection" || combat.phase === "forced_replacements") {
+      if (combat.selectedLeadIds.length < combat.requiredLeadCount) {
+        return enabledControls.find((control) => (
+          control.dataset.combatFocusRole === "lead"
+          && control.getAttribute("aria-pressed") !== "true"
+        )) ?? null;
+      }
+      return enabledControls.find((control) => control.dataset.combatFocusRole === "lead-confirm") ?? null;
+    }
+
+    if (combat.phase === "select_player_actions") {
+      if (targeting || swapSelection) {
+        return enabledControls.find((control) => control.dataset.combatFocusRole === "target" || control.dataset.combatFocusRole === "swap") ?? null;
+      }
+      if (menu === "skills" && currentActor) {
+        return enabledControls.find((control) => (
+          control.dataset.combatFocusRole === "skill"
+          && control.dataset.combatSkillId === lastSkillByActorKeyRef.current[currentActor.key]
+        ))
+          ?? enabledControls.find((control) => control.dataset.combatFocusRole === "skill")
+          ?? null;
+      }
+      if (currentActor) return enabledControls.find((control) => control.dataset.combatFocusRole === "action-primary") ?? null;
+      return enabledControls.find((control) => control.dataset.combatFocusRole === "submit") ?? null;
+    }
+
+    return enabledControls.find((control) => control.dataset.combatFocusRole === defaultCombatFocusRole()) ?? enabledControls[0] ?? null;
+  }
+
+  function activateHeldInteract(showInvalidFeedback = false) {
+    const control = heldInteractControl();
+    if (!control) {
+      const focused = keyboardFocusRef.current;
+      if (showInvalidFeedback && focused && !isEnabledCombatControl(focused)) flashInvalidKeyboardControl(focused);
       return;
     }
     control.click();
   }
+
+  interactActionRef.current = activateHeldInteract;
 
   useEffect(() => {
     function handleMouseMove() {
@@ -4748,9 +5880,21 @@ function CombatScreen({
   }, [combat.run.battleIndex, battle.turn, combat.phase === "select_player_actions"]);
 
   useLayoutEffect(() => {
-    if (combat.phase !== "battle_result" || recordingResult) return;
+    if (combat.phase !== "battle_result") {
+      resultRequestIdRef.current = null;
+      setResultError(null);
+      return;
+    }
+    if (recordingResult) return;
+    const requestId = resultRequestIdRef.current ?? createRequestId();
+    resultRequestIdRef.current = requestId;
     setRecordingResult(true);
-    void onBattleResult(combat).finally(() => setRecordingResult(false));
+    void onBattleResult(combat, requestId)
+      .catch((error) => {
+        console.warn("Unable to save the encounter result; retry remains available.", error);
+        setResultError("We couldn’t save this encounter result yet. Your completed battle is still here; retry saving to continue.");
+      })
+      .finally(() => setRecordingResult(false));
   }, [combat.phase, combat.run.battleIndex, resultAttempt]);
 
   useEffect(() => {
@@ -4851,18 +5995,58 @@ function CombatScreen({
   }
 
   useEffect(() => {
-    if (!narrationAdvanceable) return;
-    function handleSpacebar(event: KeyboardEvent) {
-      if (event.code !== "Space" || event.repeat) return;
-      const target = event.target;
-      if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
-      if (target instanceof HTMLElement && target.closest("button, [role='button'], [data-combat-control]")) return;
-      event.preventDefault();
-      advanceNarration();
+    function stopInteractHold() {
+      interactHeldRef.current = false;
+      if (interactHoldDelayTimerRef.current !== null) {
+        window.clearTimeout(interactHoldDelayTimerRef.current);
+        interactHoldDelayTimerRef.current = null;
+      }
+      if (interactHoldTimerRef.current !== null) {
+        window.clearInterval(interactHoldTimerRef.current);
+        interactHoldTimerRef.current = null;
+      }
     }
-    window.addEventListener("keydown", handleSpacebar);
-    return () => window.removeEventListener("keydown", handleSpacebar);
-  }, [narrationAdvanceable, combat.phase, diceSettled, eventSettled, loadingNarration]);
+
+    function handleInteractKeyDown(event: KeyboardEvent) {
+      if (event.code !== controlBindings.interact) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")) return;
+      const targetCombatControl = target?.closest("[data-combat-control]");
+      if (target?.closest("button, [role='button']") && !targetCombatControl) return;
+      const root = combatRootRef.current;
+      const active = document.activeElement;
+      const focusInsideCombat = (active instanceof HTMLElement && root?.contains(active))
+        || Boolean(keyboardFocusRef.current && root?.contains(keyboardFocusRef.current));
+      if (!focusInsideCombat && active !== document.body) return;
+
+      event.preventDefault();
+      if (event.repeat || interactHeldRef.current) return;
+      interactHeldRef.current = true;
+      interactActionRef.current(true);
+      interactHoldDelayTimerRef.current = window.setTimeout(() => {
+        interactHoldDelayTimerRef.current = null;
+        if (!interactHeldRef.current) return;
+        interactActionRef.current();
+        interactHoldTimerRef.current = window.setInterval(() => {
+          if (interactHeldRef.current) interactActionRef.current();
+        }, INTERACT_HOLD_REPEAT_INTERVAL_MS);
+      }, INTERACT_HOLD_START_DELAY_MS);
+    }
+
+    function handleInteractKeyUp(event: KeyboardEvent) {
+      if (event.code === controlBindings.interact) stopInteractHold();
+    }
+
+    window.addEventListener("keydown", handleInteractKeyDown);
+    window.addEventListener("keyup", handleInteractKeyUp);
+    window.addEventListener("blur", stopInteractHold);
+    return () => {
+      stopInteractHold();
+      window.removeEventListener("keydown", handleInteractKeyDown);
+      window.removeEventListener("keyup", handleInteractKeyUp);
+      window.removeEventListener("blur", stopInteractHold);
+    };
+  }, [controlBindings.interact]);
 
   const keyboardFocusSignature = [
     combat.phase,
@@ -4934,36 +6118,27 @@ function CombatScreen({
       const focusInsideCombat = (active instanceof HTMLElement && root.contains(active)) || Boolean(keyboardFocusRef.current && root.contains(keyboardFocusRef.current));
       if (!focusInsideCombat && active !== document.body) return;
 
-      if (event.code === "ShiftLeft") {
+      if (event.code === controlBindings.back) {
         if (event.repeat) return;
         event.preventDefault();
         keyboardBack();
         return;
       }
 
-      const direction = event.code === "ArrowUp" || event.code === "KeyW" ? "up"
-        : event.code === "ArrowDown" || event.code === "KeyS" ? "down"
-          : event.code === "ArrowLeft" || event.code === "KeyA" ? "left"
-            : event.code === "ArrowRight" || event.code === "KeyD" ? "right"
+      const direction = event.code === controlBindings["move-up"] ? "up"
+        : event.code === controlBindings["move-down"] ? "down"
+          : event.code === controlBindings["move-left"] ? "left"
+            : event.code === controlBindings["move-right"] ? "right"
               : null;
       if (direction) {
         event.preventDefault();
         moveCombatFocus(direction);
         return;
       }
-
-      if (event.code !== "Space" || event.repeat) return;
-      if (target?.closest("button, [role='button'], [data-combat-control]")) return;
-      if (narrationAdvanceable) return;
-      const control = keyboardFocusRef.current
-        ?? focusCombatControl(defaultCombatFocusRole());
-      if (!control) return;
-      event.preventDefault();
-      activateCombatKeyboardControl(control);
     }
     window.addEventListener("keydown", handleCombatKeyboard);
     return () => window.removeEventListener("keydown", handleCombatKeyboard);
-  }, [combat.phase, menu, targeting, swapSelection, currentActor?.key, currentActorIndex, actions, narrationAdvanceable, loadingNarration]);
+  }, [controlBindings, combat.phase, menu, targeting, swapSelection, currentActor?.key, currentActorIndex, actions, narrationAdvanceable, loadingNarration]);
 
   useLayoutEffect(() => {
     setSwapMotion(null);
@@ -5111,8 +6286,8 @@ function CombatScreen({
     // rules into a worker prematurely.
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     const resolved = submitDungeonActions(combat, selectedActions);
+    onCombatTurnResolved(combat.run.id, combat.battle.turn, (resolved.pendingBattle ?? resolved.battle).turnEvents);
     try {
-      await onTurnResolved(resolved);
       // Keep the resolved presentation out of the tree until turn loading has
       // finished. Presentation classes start their animations on mount.
       setCombat((current) => current
@@ -5132,6 +6307,7 @@ function CombatScreen({
       <DungeonOutcomeScreen
         data={data}
         combat={combat}
+        controlBindings={controlBindings}
         complete={complete}
         keyboardRootRef={combatRootRef}
         onHome={onHome}
@@ -5146,7 +6322,7 @@ function CombatScreen({
       ref={combatRootRef}
       className="combat-screen"
       data-combat-loading={loadingNarration ? "true" : "false"}
-      aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft"
+      aria-keyshortcuts={Object.values(controlBindings).join(" ")}
     >
       <div ref={viewportFitRef} className="combat-viewport-fit">
         <div className="combat-header">
@@ -5156,14 +6332,13 @@ function CombatScreen({
             <h1>{combat.dungeon.name}</h1>
             <p>Encounter {combat.run.battleIndex} / {combat.run.battleCount} · Turn {battle.turn} · {combat.run.battleFormat}</p>
           </div>
-          <span className="combat-phase-badge">{combat.phase.replace(/_/g, " ")}</span>
         </div>
 
         <div className="combat-board">
           <CombatRollcasterPanel
             data={data}
             name={activeRollcaster?.name ?? "Rollcaster"}
-            assetPath={catalogAssetPath(data, "rollcaster", activeRollcaster?.id, activeRollcaster?.asset_path)}
+            assetPath={preferredAssetPath(data, "rollcaster", activeRollcaster?.id, activeRollcaster?.asset_path, ["battle", "portrait", "card"])}
             mana={displayedPlayerMana}
             manaAssetPath={manaAssetPath}
             manaRefund={playerManaRefund?.amount}
@@ -5247,7 +6422,7 @@ function CombatScreen({
           <CombatRollcasterPanel
             data={data}
             name={enemyRollcaster?.name ?? "Enemy"}
-            assetPath={enemyRollcasterAssetPath}
+            assetPath={preferredAssetPath(data, "eclipse-order", enemyRollcaster?.id, enemyRollcasterAssetPath, ["battle", "portrait", "card"])}
             mana={battle.opponentMana}
             manaAssetPath={manaAssetPath}
             manaRefund={opponentManaRefund?.amount}
@@ -5272,8 +6447,8 @@ function CombatScreen({
                 data-combat-unit-key={candidate.key}
                 onClick={() => selectSkillTarget(candidate.key)}
               >
-                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path)} /></SpriteFrame>
-                <span><strong>{candidate.name}</strong><small>0 / {candidate.maxHp} HP</small></span>
+                <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path, ["battle", "card", "thumb"])} /></SpriteFrame>
+                <span><strong className="collectible-name">{candidate.name}</strong><small>0 / {candidate.maxHp} HP</small></span>
               </button>
             ))}
           </div>
@@ -5301,8 +6476,8 @@ function CombatScreen({
           tabIndex={loadingNarration || manaRefundNarration ? -1 : undefined}
           aria-label={loadingNarration ? (recordingResult ? "Waiting for encounter results" : "Loading") : manaRefundNarration ? "Mana restored" : undefined}
           disabled={loadingNarration || manaRefundNarration || !narrationAdvanceable}
-          aria-keyshortcuts="Space"
-          title={!loadingNarration && !manaRefundNarration && narrationAdvanceable ? "Click or press Space to continue" : undefined}
+          aria-keyshortcuts={controlBindings.interact}
+          title={!loadingNarration && !manaRefundNarration && narrationAdvanceable ? `Click or press ${controlLabel(controlBindings.interact)} to continue` : undefined}
           onClick={loadingNarration || manaRefundNarration ? undefined : advanceNarration}
         >
           <span className={`combat-narration-copy ${narrationComplete && narrationText !== "Rolling…" && !loadingNarration ? "" : "typing"}`}>
@@ -5313,13 +6488,6 @@ function CombatScreen({
           {!loadingNarration && !manaRefundNarration && (["event_playback", "roll_result", "entry_dialogue", "outcome_dialogue"].includes(combat.phase)) && <ChevronRight size={24} aria-label="Next" />}
         </button>
 
-        {combat.phase === "battle_result" && !recordingResult && (
-          <div className="combat-command-row">
-            <button className="primary-button" data-combat-control="true" data-combat-focus-role="retry" onClick={() => setResultAttempt((attempt) => attempt + 1)}>
-              <RefreshCw size={17} /> Retry Save
-            </button>
-          </div>
-        )}
       </div>
       {combat.phase === "encounter_rewards" && combat.lastBattleRewards && (
         <CombatResultDialog
@@ -5336,6 +6504,15 @@ function CombatScreen({
           combat={combat}
           onToggle={(id) => setCombat((current) => current ? toggleDungeonLead(current, id) : current)}
           onConfirm={() => setCombat((current) => current ? confirmDungeonLeads(current) : current)}
+        />
+      )}
+      {combat.phase === "battle_result" && resultError && (
+        <DungeonResultSaveDialog
+          busy={recordingResult}
+          onRetry={() => {
+            setResultError(null);
+            setResultAttempt((attempt) => attempt + 1);
+          }}
         />
       )}
     </section>
@@ -5378,7 +6555,7 @@ function CombatRollcasterPanel({
       <span className="combat-sprite-frame rollcaster-combat-frame">
         <Sprite name={name} element="basic" assetPath={assetPath} size="large" fit="portrait" flipped={opponent} />
       </span>
-      <h3>{name}</h3>
+      <h3 className="collectible-name">{name}</h3>
       <div className="combat-mana-total-wrap">
         <strong
           className={`combat-mana-total ${manaRefund ? "mana-refund-counter" : ""} ${manaReserved && !manaSubmitting ? "mana-reserved" : ""} ${manaSubmitting ? "mana-submit-shake" : ""}`.trim()}
@@ -5434,7 +6611,7 @@ function CombatSquadGrid({
         const ko = unit.hp <= 0;
         const selectable = selectableSwapKeys.has(unit.key);
         const slot = <span className={`combat-squad-slot ${unit.active ? "active" : "reserve"} ${ko ? "ko" : ""} ${selectable ? "legal-target" : ""}`} data-combat-squad-unit-key={unit.key} aria-label={`${unit.name}: ${unit.hp} / ${unit.maxHp} HP`}>
-          <Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} size="small" flipped={opponent} />
+          <Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path, ["battle", "card", "thumb"])} size="small" flipped={opponent} />
         </span>;
         const interactiveSlot = selectable
           ? <button type="button" className="combat-squad-slot-button" data-combat-control="true" data-combat-focus-role="target" data-combat-unit-key={unit.key} aria-label={`Swap to ${unit.name}`} onClick={() => onSwapTarget?.(unit.key)}>{slot}</button>
@@ -5442,7 +6619,7 @@ function CombatSquadGrid({
         return <GameTooltip
           key={unit.key}
           label={`${unit.name}: ${unit.hp} / ${unit.maxHp} HP`}
-          content={<><span className="tooltip-heading"><CritterElementLogos data={data} critter={unit.critter} /><strong>{unit.name}</strong></span><span>{unit.hp} / {unit.maxHp} HP</span></>}
+          content={<><span className="tooltip-heading"><CritterElementLogos data={data} critter={unit.critter} /><strong className="collectible-name">{unit.name}</strong></span><span>{unit.hp} / {unit.maxHp} HP</span></>}
         >
           {interactiveSlot}
         </GameTooltip>;
@@ -5491,7 +6668,7 @@ function CombatLeadDialog({
                 aria-pressed={selected}
                 onClick={() => onToggle(ownedId)}
               >
-                <SpriteFrame size="md"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)} /></SpriteFrame>
+                <SpriteFrame size="md"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path, ["battle", "card", "thumb"])} /></SpriteFrame>
                 <span className="combat-lead-option-copy">
                   <CritterName data={data} critter={unit.critter} />
                   <small>Lv {unit.level} · {unit.hp} / {unit.maxHp} HP</small>
@@ -5636,7 +6813,7 @@ function BattleUnit({
             <span className="combat-sprite-frame critter-combat-frame"><Sprite
               name={unit.name}
               element={unit.critter.element_1_id}
-              assetPath={catalogAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path)}
+              assetPath={preferredAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path, ["battle", "card", "thumb"])}
               size="medium"
               flipped={opponent}
             /></span>
@@ -5757,8 +6934,8 @@ function CombatRelicRow({ data, relicIds, sourceCritter }: { data: AppData; reli
     const relic = byId(data.catalog.relics, id);
     if (!relic) return null;
     const effects = data.catalog.effectsByRelic[id] ?? [];
-    return <GameTooltip key={id} label={`${relic.name}. ${relic.description} ${attachmentText(effects)}`} content={<><strong>{relic.name}</strong><span>{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
-      <span className="combat-relic-icon"><AssetIcon path={catalogAssetPath(data, "relic", relic.id, relic.asset_path)} alt={relic.name} fallback={<Shield size={13} />} /></span>
+    return <GameTooltip key={id} label={`${relic.name}. ${relic.description} ${attachmentText(effects)}`} content={<><strong className="collectible-name">{relic.name}</strong><span>{relic.description}</span>{attachmentRows(effects, sourceCritter)}</>}>
+      <span className="combat-relic-icon"><AssetIcon path={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["icon", "thumb", "card"])} alt={relic.name} fallback={<Shield size={13} />} /></span>
     </GameTooltip>;
   })}</span>;
 }
@@ -5800,7 +6977,7 @@ function combatActionSummary(
     const target = data.player!.critters.find((owned) => owned.id === action.swapToId);
     const critter = byId(data.catalog.critters, target?.critter_id);
     return {
-      content: <>Swapping to <strong className="combat-action-target friendly">{critter?.name ?? "Critter"}</strong></>,
+      content: <>Swapping to <strong className="collectible-name combat-action-target friendly">{critter?.name ?? "Critter"}</strong></>,
     };
   }
   const skill = actor.skills.find((candidate) => candidate.id === action.skillId);
@@ -5813,7 +6990,7 @@ function combatActionSummary(
       <>
         <strong>{skill?.name ?? "Skill"}</strong>
         <span aria-hidden="true">→</span>
-        <strong className={`combat-action-target ${targetTone}`}>
+        <strong className={`collectible-name combat-action-target ${targetTone}`}>
           {target?.name ?? (skill ? targetingDescription(skill) : "target")}
         </strong>
       </>
@@ -5880,7 +7057,7 @@ function CombatDie({ data, unit, rolling, manaAssetPath, opponent = false }: { d
   return (
     <span className={`combat-die ${rolling ? "rolling" : "landed"}`}>
       <span className="combat-die-value"><strong>{rolling ? "?" : unit.manaRoll || "–"}</strong><AssetIcon path={manaAssetPath} alt="Mana" fallback={<Gem />} /></span>
-      <span className="combat-die-label"><CritterElementLogos data={data} critter={unit.critter} /><small>{opponent ? "Enemy " : ""}{unit.name}</small></span>
+      <span className="combat-die-label"><CritterElementLogos data={data} critter={unit.critter} /><small className="collectible-name">{opponent ? "Enemy " : ""}{unit.name}</small></span>
     </span>
   );
 }
@@ -5900,22 +7077,38 @@ function CombatResultDialog({ data, title, rewards, actionLabel, onAction }: { d
   );
 }
 
-function RewardSummary({ data, rewards }: { data: AppData; rewards: DungeonRewardSummary }) {
-  const dropEntries = rewards.entries.filter((entry) => entry.kind !== "critter_xp" && entry.kind !== "rollcaster_xp");
+function RewardSummary({ data, rewards, layout }: { data: AppData; rewards: DungeonRewardSummary; layout?: "dungeon-outcome" }) {
+  const dropEntries = aggregateDungeonRewardEntries(rewards.entries);
   if (!dropEntries.length) return <p className="dungeon-no-drops">No encounter drops were earned.</p>;
+  const layoutClass = layout === "dungeon-outcome"
+    ? `dungeon-outcome-reward-list reward-count-${Math.min(dropEntries.length, 3)}`
+    : "";
   return (
-    <div className="combat-reward-list">
+    <div className={`combat-reward-list ${layoutClass}`.trim()}>
       {dropEntries.map((entry) => {
-        const label = entry.kind === "critter_xp"
-          ? `${entry.amount} Critter XP`
-          : entry.kind === "rollcaster_xp"
-            ? `${entry.amount} Rollcaster XP`
-            : entry.kind === "currency"
-              ? `${entry.amount} ${currencyFor(data, entry.targetId)?.name ?? entry.targetId}`
-              : entry.kind === "lootbox"
-                ? `${entry.amount} ${data.catalog.lootboxes.find((lootbox) => lootbox.id === entry.targetId)?.name ?? entry.targetId}`
-                : `${entry.amount} ${entry.kind === "shard" ? `${collectibleName(data, (entry.targetCategory ?? "relic") as CollectibleType, entry.targetId)} Shards` : collectibleName(data, "relic", entry.targetId)}`;
-        return <span key={entry.id}><RewardEntryIcon data={data} entry={entry} /><strong>{label}</strong>{entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}</span>;
+        const name = entry.kind === "currency"
+          ? currencyFor(data, entry.targetId)?.name ?? entry.targetId
+          : entry.kind === "lootbox"
+            ? data.catalog.lootboxes.find((lootbox) => lootbox.id === entry.targetId)?.name ?? entry.targetId
+            : entry.kind === "shard"
+              ? `${collectibleName(data, (entry.targetCategory ?? "relic") as CollectibleType, entry.targetId)} Shards`
+              : collectibleName(data, "relic", entry.targetId);
+        const tone = entry.kind === "currency" && entry.targetId === "coins"
+          ? "reward-tone-coins"
+          : entry.kind === "shard"
+            ? "reward-tone-shard"
+            : entry.kind === "relic"
+              ? "reward-tone-relic"
+              : "";
+        return (
+          <article key={entry.id} className={`combat-reward-card combat-reward-card-${entry.kind} ${tone}`.trim()}>
+            <span className="combat-reward-art"><RewardEntryIcon data={data} entry={entry} /></span>
+            {layout === "dungeon-outcome"
+              ? <strong aria-label={`${entry.amount} x ${name}`}><span className="combat-reward-count">{entry.amount}</span><span aria-hidden="true"> x </span><span className="combat-reward-name">{name}</span></strong>
+              : <strong>{entry.amount} <span className="collectible-name">{name}</span></strong>}
+            {entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}
+          </article>
+        );
       })}
     </div>
   );
@@ -5932,10 +7125,10 @@ function xpStateAtTotal(progression: XpThreshold[], totalXp: number): { level: n
   return { level, progress: xpProgress(ordered, level, totalXp) };
 }
 
-const XP_REVEAL_DELAY_MS = 560;
-const XP_FILL_TOTAL_MS = 1800;
-const XP_LEVEL_UP_HOLD_MS = 980;
-const XP_MIN_FILL_SEGMENT_MS = 420;
+const XP_REVEAL_DELAY_MS = 180;
+const XP_FILL_TOTAL_MS = 900;
+const XP_LEVEL_UP_HOLD_MS = 480;
+const XP_MIN_FILL_SEGMENT_MS = 180;
 
 type XpFillSegment = {
   kind: "fill";
@@ -6033,21 +7226,17 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
   useEffect(() => {
     let cancelled = false;
     let frameA = 0;
-    let frameB = 0;
     let timeout = 0;
     // Wait until the rewards UI has painted, then settle briefly so the party cards are readable before XP moves.
     frameA = window.requestAnimationFrame(() => {
-      frameB = window.requestAnimationFrame(() => {
-        timeout = window.setTimeout(() => {
-          if (cancelled) return;
-          setXpReady(true);
-        }, XP_REVEAL_DELAY_MS);
-      });
+      timeout = window.setTimeout(() => {
+        if (cancelled) return;
+        setXpReady(true);
+      }, XP_REVEAL_DELAY_MS);
     });
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(frameA);
-      window.cancelAnimationFrame(frameB);
       window.clearTimeout(timeout);
     };
   }, [rewards]);
@@ -6066,8 +7255,8 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
             gain={rewards.rollcasterXp}
             finalTotal={ownedRollcaster.xp}
             progression={data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id)}
-            sprite={<SpriteFrame size="sm"><Sprite name={rollcaster.name} element="basic" assetPath={catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} fit="portrait" /></SpriteFrame>}
-            identity={<strong>{rollcaster.name}</strong>}
+            sprite={<SpriteFrame size="sm"><Sprite name={rollcaster.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["thumb", "card"])} fit="portrait" /></SpriteFrame>}
+            identity={<strong className="collectible-name">{rollcaster.name}</strong>}
             animate={xpReady}
             rollcaster
           />
@@ -6083,7 +7272,7 @@ function XpGainSection({ data, rewards }: { data: AppData; rewards: DungeonRewar
               gain={gain}
               finalTotal={owned.xp}
               progression={data.catalog.critterProgression.filter((row) => row.critter_id === critter.id)}
-              sprite={<SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={catalogAssetPath(data, "critter", critter.id, critter.asset_path)} /></SpriteFrame>}
+              sprite={<SpriteFrame size="sm"><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["thumb", "card"])} /></SpriteFrame>}
               identity={<CritterName data={data} critter={critter} />}
               animate={xpReady}
             />
@@ -6310,20 +7499,20 @@ function RewardEntryIcon({ data, entry }: { data: AppData; entry: DungeonRewardS
   />;
 }
 
-function DungeonOutcomeScreen({ data, combat, complete, keyboardRootRef, onHome, onReplay, onNextDungeon }: { data: AppData; combat: DungeonRunState; complete: boolean; keyboardRootRef: React.RefObject<HTMLElement>; onHome: () => void; onReplay: () => void; onNextDungeon: (id: string) => void }) {
+function DungeonOutcomeScreen({ data, combat, controlBindings, complete, keyboardRootRef, onHome, onReplay, onNextDungeon }: { data: AppData; combat: DungeonRunState; controlBindings: ControlBindings; complete: boolean; keyboardRootRef: React.RefObject<HTMLElement>; onHome: () => void; onReplay: () => void; onNextDungeon: (id: string) => void }) {
+  const rewards = combineDungeonRewards(combat.lastBattleRewards, combat.dungeonRewards);
   return (
     <section
       ref={keyboardRootRef}
       className={`combat-screen dungeon-outcome-screen ${complete ? "victory" : "failure"}`}
-      aria-keyshortcuts="W A S D ArrowUp ArrowDown ArrowLeft ArrowRight Space ShiftLeft"
+      aria-keyshortcuts={Object.values(controlBindings).join(" ")}
     >
       <div className="dungeon-outcome-emblem">{complete ? <Sparkles size={42} /> : <Skull size={42} />}</div>
       <p className="eyebrow">{complete ? "Dungeon complete" : "Expedition failed"}</p>
       <h1>{complete ? `${combat.dungeon.name} cleared!` : "Your squad has fallen."}</h1>
-      <p>{complete ? `All ${combat.run.battleCount} encounters are complete. Rewards below are already saved.` : "Rewards from defeated opponents are saved. Retrying starts a fresh run at full HP."}</p>
+      <p>{complete ? "All encounters are complete." : "Rewards from defeated opponents are saved. Retrying starts a fresh run at full HP."}</p>
       <div className="dungeon-outcome-rewards">
-        {combat.lastBattleRewards && <section><h2>Final Encounter</h2><RewardSummary data={data} rewards={combat.lastBattleRewards} /></section>}
-        {combat.dungeonRewards && <section><h2>{combat.dungeonRewards.completionPhase === "first_time" ? "First-clear Rewards" : "Completion Rewards"}</h2><RewardSummary data={data} rewards={combat.dungeonRewards} /></section>}
+        <section><h2>Rewards</h2><RewardSummary data={data} rewards={rewards} layout="dungeon-outcome" /></section>
       </div>
       {combat.lastBattleRewards && <XpGainSection data={data} rewards={combat.lastBattleRewards} />}
       <div className="dungeon-outcome-actions">
@@ -6335,19 +7524,43 @@ function DungeonOutcomeScreen({ data, combat, complete, keyboardRootRef, onHome,
   );
 }
 
+function DungeonResultSaveDialog({ busy, onRetry }: { busy: boolean; onRetry: () => void }) {
+  return (
+    <Modal
+      eyebrow="Encounter complete"
+      title="Encounter result needs a retry"
+      description="Your completed battle is still open on this screen. Keep the game open and retry the save so your rewards and Dungeon progress can be recorded."
+      onClose={() => undefined}
+      className="dungeon-result-save-modal"
+      dismissible={false}
+    >
+      <div className="dungeon-result-save-warning" role="alert">
+        <AlertTriangle size={24} aria-hidden="true" />
+        <p>We’re having trouble reaching the save service. We’ll keep your battle here until it saves successfully.</p>
+      </div>
+      <div className="dialog-actions dungeon-result-save-actions">
+        <button type="button" className="primary-button" disabled={busy} onClick={onRetry}>
+          {busy ? "Saving…" : <><RefreshCw size={17} /> Retry Save</>}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function StatusIconRow({ data, statuses }: { data: AppData; statuses: CombatState["statuses"] }) {
   const ordered = statuses
     .map((instance) => ({ instance, status: byId(data.catalog.statuses, instance.statusId) }))
     .filter((entry): entry is { instance: CombatState["statuses"][number]; status: NonNullable<typeof entry.status> } => Boolean(entry.status))
     .sort((left, right) => (left.status.sort_order ?? 0) - (right.status.sort_order ?? 0) || left.status.id.localeCompare(right.status.id));
   if (!ordered.length) return null;
-  return <span className="status-icon-row" aria-label="Active statuses">{ordered.map(({ instance, status }) => {
+  const crowded = ordered.length > 2;
+  return <span className={`status-icon-row${crowded ? " crowded" : ""}`} aria-label="Active statuses">{ordered.map(({ instance, status }) => {
     const effects = data.catalog.effectsByStatus[status.id] ?? [];
     const duration = instance.duration === null ? "Indefinite" : `${instance.duration} turn${instance.duration === 1 ? "" : "s"} remaining`;
     const iconPath = catalogAssetPath(data, "status", status.id, status.asset_path);
     const label = `${status.name}. ${duration}. ${attachmentText(effects)}`.trim();
     return <GameTooltip key={instance.instanceId} label={label} content={<><span className="tooltip-heading"><AssetIcon path={iconPath} alt="" fallback={<Sparkles size={16} />} /><strong>{status.name}</strong></span>{attachmentRows(effects)}<span className="status-duration">{duration}</span></>}>
-      <span className="status-icon"><AssetIcon path={iconPath} alt={status.name} fallback={<Sparkles size={16} />} /><small>{instance.duration === null ? "∞" : instance.duration}</small></span>
+      <span className="status-icon"><AssetIcon path={iconPath} alt={status.name} fallback={<Sparkles size={20} />} />{instance.duration !== null && <small>{instance.duration}</small>}</span>
     </GameTooltip>;
   })}</span>;
 }
@@ -6364,7 +7577,7 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
         <CollectibleSprite data={data} type={event.collectible_type} id={event.collectible_id} size="xs" />
         <div className="unlock-notification-copy">
           <span className="unlock-notification-label"><Sparkles size={14} aria-hidden="true" /> Collectible unlocked</span>
-          <h2>{critter ? <><CritterName data={data} critter={critter} /> <span>unlocked!</span></> : `${name} unlocked!`}</h2>
+          <h2>{critter ? <><CritterName data={data} critter={critter} /> <span>unlocked!</span></> : <><span className="collectible-name">{name}</span> unlocked!</>}</h2>
         </div>
       </aside>
     );
@@ -6380,7 +7593,7 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
         <div className="unlock-notification-copy">
           <span className="unlock-notification-label"><Check size={14} aria-hidden="true" /> Challenge completed</span>
           <h2>{challengeDescription(data, challenge)}</h2>
-          <p className="unlock-notification-detail">{collectible} challenge completed</p>
+          <p className="unlock-notification-detail"><span className="collectible-name">{collectible}</span> challenge completed</p>
         </div>
       </aside>
     );
@@ -6394,7 +7607,7 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
         <CollectibleSprite data={data} type={notification.targetCategory} id={notification.targetId} size="xs" />
         <div className="unlock-notification-copy">
           <span className="unlock-notification-label"><ShoppingBag size={14} aria-hidden="true" /> Shop reward</span>
-          <h2>×{formatAmount(notification.granted)} {rewardName} added</h2>
+          <h2>×{formatAmount(notification.granted)} <span className="collectible-name">{rewardName}</span> added</h2>
           {notification.discarded !== "0" && (
             <p className="unlock-notification-detail">×{formatAmount(notification.discarded)} overflow discarded</p>
           )}
@@ -6403,12 +7616,12 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
     );
   }
 
-  if (notification.kind === "shop-error") {
+  if (notification.kind === "shop-error" || notification.kind === "lootbox-error") {
     return (
       <aside className="unlock-notification error-notification" role="status" aria-live="polite" aria-atomic="true">
         <span className="notification-banner-icon" aria-hidden="true"><AlertTriangle size={25} /></span>
         <div className="unlock-notification-copy">
-          <span className="unlock-notification-label"><AlertTriangle size={14} aria-hidden="true" /> Purchase error</span>
+          <span className="unlock-notification-label"><AlertTriangle size={14} aria-hidden="true" /> {notification.kind === "shop-error" ? "Purchase error" : "Lootbox error"}</span>
           <h2>{notification.message}</h2>
         </div>
       </aside>
@@ -6437,6 +7650,7 @@ function Modal({
   children,
   onClose,
   className = "",
+  dismissible = true,
 }: {
   eyebrow?: string;
   title: string;
@@ -6444,6 +7658,7 @@ function Modal({
   children: React.ReactNode;
   onClose: () => void;
   className?: string;
+  dismissible?: boolean;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -6476,25 +7691,26 @@ function Modal({
     document.addEventListener("keydown", keydown);
     return () => { document.removeEventListener("keydown", keydown); previous?.focus(); };
   }, [title]);
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(event) => {
         event.stopPropagation();
-        if (event.target === event.currentTarget) onClose();
+        if (dismissible && event.target === event.currentTarget) onClose();
       }}
       onClick={(event) => event.stopPropagation()}
     >
       <div className={`modal ${className}`.trim()} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <div className="modal-header">
           <div><p className="eyebrow">{eyebrow}</p><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div>
-          <button className="icon-button" onClick={onClose} aria-label="Close">
+          {dismissible && <button className="icon-button" onClick={onClose} aria-label="Close">
             <X size={18} />
-          </button>
+          </button>}
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

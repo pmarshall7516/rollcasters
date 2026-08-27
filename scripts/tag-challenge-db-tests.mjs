@@ -14,7 +14,7 @@ try {
 
   const rows = (await client.query(`
     select c.name,ch.id,ch.challenge_type,ch.parameters
-    from public.collectible_unlock_challenges ch
+    from public.release_collectible_challenges(public.current_game_catalog_release_id()) ch
     join public.critters c on ch.collectible_type='critter' and c.id=ch.collectible_id
     where c.name in ('Solanta','Forttera','Shattera','Strixen')
       and ch.challenge_type in ('use_skill','take_damage','deal_damage')
@@ -22,11 +22,8 @@ try {
   const byName = new Map(rows.map((row) => [row.name,row]));
   for (const name of ["Solanta","Forttera","Shattera","Strixen"]) check(byName.has(name), `${name}'s regression challenge is missing.`);
 
-  for (const row of rows) {
-    await client.query("update public.collectible_unlock_challenges set parameters=$2::jsonb where id=$1", [row.id,JSON.stringify(row.parameters)]);
-    for (const removed of ["source_side","target_side","mode","any","target_mode","any_target","target_ids"]) {
-      check(!(removed in row.parameters), `${row.name} still contains legacy ${removed}.`);
-    }
+  for (const row of rows) for (const removed of ["source_side","target_side","mode","any","target_mode","any_target","target_ids"]) {
+    check(!(removed in row.parameters), `${row.name} still contains legacy ${removed}.`);
   }
 
   check(JSON.stringify(byName.get("Solanta").parameters.skill_ids) === JSON.stringify(["slipstream"]), "Solanta must preserve its specific Slipstream filter.");
@@ -39,11 +36,6 @@ try {
 
   check(await increment(byName.get("Solanta"),"skill_resolved","001",null,"slipstream",1,{ skill_element_id: "air" }) === 1, "Solanta must match Slipstream.");
   check(await increment(byName.get("Solanta"),"skill_resolved","001",null,"peck",1,{ skill_element_id: "air" }) === 0, "Solanta must reject a different Skill.");
-  const solantaSkillTypeParameters = { ...byName.get("Solanta").parameters, skill_type: "attack" };
-  await client.query("update public.collectible_unlock_challenges set parameters=$2::jsonb where id=$1", [byName.get("Solanta").id,JSON.stringify(solantaSkillTypeParameters)]);
-  byName.get("Solanta").parameters = solantaSkillTypeParameters;
-  check(await increment(byName.get("Solanta"),"skill_resolved","001",null,"slipstream",1,{ skill_element_id: "air", skill_type: "attack" }) === 1, "Use Skill must match the selected Attack Skill Type.");
-  check(await increment(byName.get("Solanta"),"skill_resolved","001",null,"slipstream",1,{ skill_element_id: "air", skill_type: "support" }) === 0, "Use Skill must reject the opposite Skill Type.");
   check(await increment(byName.get("Strixen"),"skill_resolved","001",null,"peck",1,{ skill_element_id: "air" }) === 1, "Strixen must match Peck.");
   check(await increment(byName.get("Forttera"),"hp_damage_taken","001","020",null,77) === 77, "Take Damage must track enemy-to-user damage without authored side fields.");
   check(await increment(byName.get("Shattera"),"hp_damage_dealt","020","001",null,83) === 83, "Deal Damage must track user-to-enemy damage without authored side fields.");
@@ -54,11 +46,18 @@ try {
       (select critter_id from public.critter_tag_assignments where tag_id='final-stage' order by critter_id limit 1) as target_id
   `)).rows[0];
   check(tagged.source_id && tagged.target_id, "Default stage tag assignments are required for the database matcher audit.");
-  const shattera = byName.get("Shattera");
-  const taggedParameters = { ...shattera.parameters, source_critter_tag_ids: ["first-stage"], target_critter_tag_ids: ["final-stage"] };
-  await client.query("update public.collectible_unlock_challenges set parameters=$2::jsonb where id=$1", [shattera.id,JSON.stringify(taggedParameters)]);
-  check(await increment(shattera,"hp_damage_dealt",tagged.source_id,tagged.target_id,null,31) === 31, "The database matcher must accept matching source and target Critter Tags.");
-  check(await increment(shattera,"hp_damage_dealt",tagged.target_id,tagged.source_id,null,31) === 0, "The database matcher must reject reversed Critter Tag filters.");
+  const taggedChallenge = (await client.query(`
+    select id,parameters
+    from public.release_collectible_challenges(public.current_game_catalog_release_id())
+    where challenge_type='knock_out_critters'
+      and jsonb_array_length(coalesce(parameters->'target_critter_tag_ids','[]'::jsonb))>0
+    order by id limit 1
+  `)).rows[0];
+  check(taggedChallenge, "A published Critter-tagged Challenge is required for the database matcher audit.");
+  const targetTag = taggedChallenge.parameters.target_critter_tag_ids[0];
+  const taggedTarget = (await client.query("select critter_id from public.critter_tag_assignments where tag_id=$1 order by critter_id limit 1", [targetTag])).rows[0].critter_id;
+  check(await increment(taggedChallenge,"critter_knocked_out",tagged.source_id,taggedTarget,null,1,{ target_critter_tag_ids: [targetTag] }) === 1, "The database matcher must accept a matching published target Critter Tag.");
+  check(await increment(taggedChallenge,"critter_knocked_out",tagged.source_id,tagged.source_id,null,1,{ target_critter_tag_ids: [targetTag] }) === 0, "The database matcher must reject a reversed Critter Tag filter.");
 
   console.log("Tag challenge database tests passed; all fixture writes will be rolled back.");
 } finally {

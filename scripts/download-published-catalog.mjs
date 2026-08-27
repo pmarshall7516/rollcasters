@@ -11,8 +11,8 @@ export function validatePublishedCatalogContract(candidate) {
   const catalog = candidate.catalogRelease ?? {}
   if (!/^\d{4}\.\d{2}\.\d{2}\.\d+$/.test(String(catalog.id ?? ''))) throw new Error('Published Catalog ID is invalid.')
   if (!SHA256.test(String(catalog.manifestSha256 ?? ''))) throw new Error('Published Catalog manifest SHA-256 is invalid.')
-  const base = new URL(String(catalog.publicBaseUrl ?? ''))
-  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) throw new Error('Published Catalog base URL must be credential-free HTTPS.')
+  if (catalog.source !== 'local') throw new Error('Published Catalog must use the local immutable bundle source.')
+  if (!safeRelative(catalog.localPath)) throw new Error('Local Catalog bundle path is unsafe.')
   if (!safeRelative(catalog.manifestPath)) throw new Error('Published Catalog manifest path is unsafe.')
   const provenance = catalog.assetProvenance
   if (catalog.id === LEGACY_CATALOG_ID && catalog.manifestSha256 !== LEGACY_MANIFEST_SHA256) throw new Error('Catalog 2026.08.22.1 must use its already-published immutable manifest.')
@@ -21,65 +21,43 @@ export function validatePublishedCatalogContract(candidate) {
       throw new Error('Catalog 2026.08.22.1 requires its explicit clean Git LFS provenance receipt.')
     }
   }
-  return { catalog, base }
+  return { catalog }
 }
 
-export async function downloadPublishedCatalog(candidate, outputRoot, fetchImpl = fetch) {
-  const { catalog, base } = validatePublishedCatalogContract(candidate)
+export async function downloadPublishedCatalog(candidate, outputRoot, fetchImpl = fetch, candidateRoot = process.cwd()) {
+  const { catalog } = validatePublishedCatalogContract(candidate)
   const root = path.resolve(outputRoot)
   if (fs.existsSync(root) && fs.readdirSync(root).length) throw new Error('Published Catalog output directory must be empty.')
   fs.mkdirSync(root, { recursive: true })
-  const manifestUrl = new URL(catalog.manifestPath, ensureSlash(base))
-  const manifestBytes = await download(manifestUrl, fetchImpl)
+  const sourceRoot = path.resolve(candidateRoot, catalog.localPath)
+  if (!fs.existsSync(sourceRoot)) throw new Error(`Local Catalog bundle is missing: ${sourceRoot}`)
+  const sourcePointerPath = path.join(sourceRoot, 'game-data', 'latest.json')
+  const sourcePointer = JSON.parse(fs.readFileSync(sourcePointerPath, 'utf8'))
+  if (sourcePointer.catalogVersion !== catalog.id || sourcePointer.releaseManifestSha256 !== catalog.manifestSha256) throw new Error('Local Catalog pointer does not match the candidate.')
+  const sourceManifestPath = path.resolve(sourceRoot, 'game-data', sourcePointer.releaseManifestUrl)
+  if (sourceManifestPath !== path.resolve(sourceRoot, catalog.manifestPath)) throw new Error('Local Catalog manifest path does not match the candidate.')
+  const manifestBytes = fs.readFileSync(sourceManifestPath)
   verifyBytes(manifestBytes, catalog.manifestSha256, 'Catalog manifest')
   const manifest = JSON.parse(manifestBytes.toString('utf8'))
   if (manifest.catalogVersion !== catalog.id) throw new Error('Published Catalog ID does not match its manifest.')
-  writeRelative(root, catalog.manifestPath, manifestBytes)
-  const manifestDirectory = new URL('./', manifestUrl)
-  await Promise.all((manifest.packs ?? []).map(async (pack) => {
+  for (const pack of manifest.packs ?? []) {
     if (!safeRelative(pack.url) || !SHA256.test(String(pack.sha256 ?? ''))) throw new Error(`Catalog pack contract is invalid: ${String(pack.key)}.`)
-    const bytes = await download(new URL(pack.url, manifestDirectory), fetchImpl)
-    verifyBytes(bytes, pack.sha256, `Catalog pack ${pack.key}`)
-    writeRelative(root, joinUrlPath(path.posix.dirname(catalog.manifestPath), pack.url), bytes)
-  }))
-  const assetManifestUrl = new URL(manifest.assetManifestUrl, manifestDirectory)
-  const assetManifestBytes = await download(assetManifestUrl, fetchImpl)
+    const packFile = path.resolve(path.dirname(sourceManifestPath), pack.url)
+    if (!fs.existsSync(packFile)) throw new Error(`Local Catalog pack is missing: ${String(pack.key)}.`)
+    verifyBytes(fs.readFileSync(packFile), pack.sha256, `Catalog pack ${pack.key}`)
+  }
+  const assetManifestPath = path.resolve(path.dirname(sourceManifestPath), manifest.assetManifestUrl)
+  const assetManifestBytes = fs.readFileSync(assetManifestPath)
   verifyBytes(assetManifestBytes, manifest.assetManifestSha256, 'Catalog asset manifest')
   const assetManifest = JSON.parse(assetManifestBytes.toString('utf8'))
-  const assetManifestPath = relativeUrlPath(base, assetManifestUrl)
-  writeRelative(root, assetManifestPath, assetManifestBytes)
-  const assetRootUrl = new URL('./', assetManifestUrl)
-  await parallelMap(assetManifest.assets ?? [], 4, async (asset) => {
+  for (const asset of assetManifest.assets ?? []) {
     if (!safeRelative(asset.path) || !SHA256.test(String(asset.sha256 ?? ''))) throw new Error(`Catalog asset contract is invalid: ${String(asset.path)}.`)
-    const bytes = await download(new URL(asset.path, assetRootUrl), fetchImpl)
-    verifyBytes(bytes, asset.sha256, `Catalog asset ${asset.path}`)
-    writeRelative(root, joinUrlPath(path.posix.dirname(assetManifestPath), asset.path), bytes)
-  })
-  const latest = {
-    catalogVersion: catalog.id,
-    minimumGameVersion: manifest.minimumGameVersion,
-    publishedAt: manifest.publishedAt,
-    releaseManifestSha256: catalog.manifestSha256,
-    releaseManifestUrl: path.posix.relative('game-data', catalog.manifestPath),
-    schemaVersion: manifest.schemaVersion,
+    const assetFile = path.resolve(sourceRoot, 'game-assets', asset.path)
+    if (!fs.existsSync(assetFile)) throw new Error(`Local Catalog asset is missing: ${String(asset.path)}.`)
+    verifyBytes(fs.readFileSync(assetFile), asset.sha256, `Catalog asset ${asset.path}`)
   }
-  writeRelative(root, 'game-data/latest.json', Buffer.from(`${JSON.stringify(latest, null, 2)}\n`))
-  writeRelative(root, 'catalog-asset-provenance.json', Buffer.from(`${JSON.stringify({
-    catalogVersion: catalog.id,
-    catalogManifestSha256: catalog.manifestSha256,
-    ...catalog.assetProvenance,
-  }, null, 2)}\n`))
+  fs.cpSync(sourceRoot, root, { recursive: true, errorOnExist: false })
   return { catalogVersion: catalog.id, manifestSha256: catalog.manifestSha256, assetCount: assetManifest.assets.length }
-}
-
-async function download(url, fetchImpl) {
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const response = await fetchImpl(url, { redirect: 'follow' })
-    if (response.ok) return Buffer.from(await response.arrayBuffer())
-    if ((response.status !== 429 && response.status < 500) || attempt === 5) throw new Error(`Published Catalog download failed (${response.status}) for ${url.pathname}.`)
-    await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)))
-  }
-  throw new Error(`Published Catalog download failed for ${url.pathname}.`)
 }
 
 function verifyBytes(bytes, expected, label) {
@@ -87,45 +65,13 @@ function verifyBytes(bytes, expected, label) {
   if (actual !== expected) throw new Error(`${label} checksum mismatch.`)
 }
 
-function writeRelative(root, relative, bytes) {
-  if (!safeRelative(relative)) throw new Error(`Unsafe Catalog output path: ${relative}.`)
-  const target = path.resolve(root, relative)
-  if (target !== root && !target.startsWith(`${root}${path.sep}`)) throw new Error('Catalog output escaped its root.')
-  fs.mkdirSync(path.dirname(target), { recursive: true })
-  fs.writeFileSync(target, bytes, { flag: 'wx' })
-}
-
 function safeRelative(value) {
   return typeof value === 'string' && value.length > 0 && !path.posix.isAbsolute(value) && !value.split('/').includes('..') && !value.includes('\\')
 }
 
-function ensureSlash(url) {
-  return new URL(url.href.endsWith('/') ? url.href : `${url.href}/`)
-}
-
-function relativeUrlPath(base, target) {
-  const root = ensureSlash(base)
-  if (root.origin !== target.origin || !target.pathname.startsWith(root.pathname)) throw new Error('Published Catalog URL escaped its configured origin.')
-  return decodeURIComponent(target.pathname.slice(root.pathname.length))
-}
-
-function joinUrlPath(directory, relative) {
-  return path.posix.normalize(path.posix.join(directory, relative))
-}
-
-async function parallelMap(items, concurrency, worker) {
-  let index = 0
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (index < items.length) {
-      const item = items[index++]
-      await worker(item)
-    }
-  })
-  await Promise.all(runners)
-}
-
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const candidate = JSON.parse(fs.readFileSync(path.resolve(process.argv[2] ?? 'release/game-update-candidate.json'), 'utf8'))
-  const result = await downloadPublishedCatalog(candidate, process.argv[3] ?? 'catalog-release')
+  const candidateFile = path.resolve(process.argv[2] ?? 'release/game-update-candidate.json')
+  const candidate = JSON.parse(fs.readFileSync(candidateFile, 'utf8'))
+  const result = await downloadPublishedCatalog(candidate, process.argv[3] ?? 'catalog-release', fetch, path.dirname(candidateFile))
   console.log(JSON.stringify(result))
 }

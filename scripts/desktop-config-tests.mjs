@@ -7,9 +7,53 @@ assert.equal(base.identifier, 'com.rollcasters.game')
 assert.equal(local.identifier, 'com.rollcasters.local')
 assert.equal(base.bundle.macOS.signingIdentity, '-', 'The initial macOS channel must use ad-hoc signing.')
 assert.deepEqual(base.bundle.targets, ['dmg', 'nsis'])
+assert.deepEqual(base.bundle.icon, [
+  'icons/32x32.png',
+  'icons/128x128.png',
+  'icons/128x128@2x.png',
+  'icons/icon.icns',
+  'icons/icon.ico',
+], 'macOS and Windows bundles must use the generated Rollcasters icon assets.')
+for (const icon of base.bundle.icon) assert.ok(fs.existsSync(`src-tauri/${icon}`), `Configured desktop icon is missing: ${icon}`)
+const mainWindow = base.app.windows.find((window) => window.label === 'main')
+assert.ok(mainWindow, 'The desktop configuration must define the main game window.')
+assert.deepEqual({
+  width: mainWindow.width,
+  height: mainWindow.height,
+  minWidth: mainWindow.minWidth,
+  minHeight: mainWindow.minHeight,
+}, {
+  width: 1280,
+  height: 720,
+  minWidth: 1280,
+  minHeight: 720,
+}, 'Rollcasters must start from the 1280x720 logical game frame.')
+assert.equal(mainWindow.fullscreen, true, 'Stable Rollcasters must open fullscreen by default.')
+assert.equal(mainWindow.resizable, false, 'Native edge resizing must stay disabled; custom corner handles own resizing.')
+assert.equal(mainWindow.decorations, false, 'Custom desktop chrome requires a borderless native window.')
+assert.equal(mainWindow.visible, false, 'Desktop startup must stay hidden until the saved window mode is applied.')
+assert.equal(mainWindow.maximized, false, 'Stable Rollcasters must use fullscreen rather than a remembered maximized state.')
+const localWindow = local.app.windows.find((window) => window.label === 'main')
+assert.ok(localWindow, 'The local desktop configuration must define the main game window.')
+for (const key of ['width', 'height', 'minWidth', 'minHeight', 'fullscreen', 'resizable', 'decorations', 'visible']) {
+  assert.equal(localWindow[key], mainWindow[key], `Local desktop window must preserve the Stable ${key} policy.`)
+}
 assert.equal(base.bundle.createUpdaterArtifacts, true)
 assert.equal(base.bundle.windows.nsis.installMode, 'currentUser')
+assert.deepEqual(base.bundle.macOS.dmg, {
+  windowSize: { width: 660, height: 400 },
+  appPosition: { x: 180, y: 170 },
+  applicationFolderPosition: { x: 480, y: 170 },
+}, 'Every macOS DMG must use the standard app-to-Applications layout.')
 assert.ok(base.app.security.csp && !base.app.security.csp.includes("default-src *"), 'Desktop CSP must fail closed.')
+assert.ok(base.app.security.csp.match(/img-src[^;]*http:\/\/127\.0\.0\.1:1430/), 'Desktop CSP must allow packaged artwork from the loopback asset server.')
+assert.ok(base.app.security.csp.includes('http://127.0.0.1:1430'), 'Desktop CSP must allow only the loopback catalog server.')
+const catalogReleaseSource = fs.readFileSync('src/lib/catalog-release.ts', 'utf8')
+assert.ok(catalogReleaseSource.includes('tauri://localhost'), 'Catalog URL resolution must handle the macOS Tauri origin.')
+assert.ok(catalogReleaseSource.includes('http://tauri.localhost'), 'Catalog URL resolution must provide an HTTP(S) alias for macOS Tauri assets.')
+assert.ok(catalogReleaseSource.includes('normalizeAppUrl(location.origin)'), 'Catalog cache keys must not use the non-HTTP macOS Tauri origin.')
+const viteConfig = fs.readFileSync('vite.config.ts', 'utf8')
+assert.ok(viteConfig.includes('http://127.0.0.1:1430') && viteConfig.includes('/desktop-catalog/game-data'), 'Desktop builds must use the loopback catalog server.')
 assert.ok(!JSON.stringify(base).match(/service.role|private.key|password/i), 'Desktop configuration must not carry secret material.')
 assert.notEqual(base.plugins.updater.pubkey, '', 'Updater verification may not be disabled.')
 assert.notEqual(base.plugins.updater.pubkey, 'DESKTOP_UPDATER_PUBLIC_KEY_REQUIRED', 'A real updater public key must be compiled into the client.')

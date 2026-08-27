@@ -9,7 +9,7 @@ const css = await readFile(path.join(root, "src", "styles.css"), "utf8");
 
 const skill = (name, classes = "", disabled = false) => `<span class="tooltip-anchor">
   <button class="skill-tile ${classes}" ${disabled ? "disabled" : ""}>
-    <span class="skill-title"><span class="asset-icon">✦</span><strong>${name}</strong></span>
+    <span class="skill-title ${/^\S+$/.test(name) ? "single-word" : ""}"><span class="asset-icon">✦</span><strong>${name}</strong></span>
     <span class="skill-power">PWR 20</span>
     <span class="skill-mana"><span class="asset-icon">◆</span>3</span>
     ${classes.includes("selected") || classes.includes("equipped") ? '<span class="selection-check">✓</span>' : ""}
@@ -17,9 +17,9 @@ const skill = (name, classes = "", disabled = false) => `<span class="tooltip-an
 </span>`;
 
 const grid = (surface) => `<div class="skill-tile-grid" data-surface="${surface}">
-  ${skill("Venom Peck")}
-  ${skill("Rush", "selected equipped")}
-  ${skill("Guard", "equipped", true)}
+  ${skill("Scratch")}
+  ${skill("Small Shield Projector", "selected equipped")}
+  ${skill("Thunderstrike", "equipped", true)}
   ${skill("Focus")}
 </div>`;
 
@@ -52,6 +52,20 @@ try {
       const compact = slotGrid.getBoundingClientRect().width <= 180;
       slotGrid.classList.toggle("compact", compact);
       popupGrid.classList.toggle("compact", compact);
+      document.querySelectorAll(".skill-title strong").forEach((name) => {
+        name.style.removeProperty("font-size");
+        const baseFontSize = Number.parseFloat(getComputedStyle(name).fontSize);
+        const availableWidth = name.getBoundingClientRect().width;
+        if (baseFontSize && availableWidth) {
+          let fittedFontSize = baseFontSize;
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            const renderedWidth = name.scrollWidth;
+            if (renderedWidth <= availableWidth + 0.1) break;
+            fittedFontSize = Math.max(1, fittedFontSize * availableWidth / renderedWidth);
+            name.style.fontSize = `${fittedFontSize}px`;
+          }
+        }
+      });
     }, sourceWidth);
     const result = await page.evaluate(() => {
       const signature = (surface) => {
@@ -59,20 +73,38 @@ try {
         const tile = grid.querySelector(".skill-tile");
         const title = tile.querySelector(".skill-title");
         const icon = title.querySelector(".asset-icon");
+        const name = title.querySelector("strong");
         const power = tile.querySelector(".skill-power");
         const mana = tile.querySelector(".skill-mana");
         const gridStyle = getComputedStyle(grid);
         const tileStyle = getComputedStyle(tile);
         const titleStyle = getComputedStyle(title);
+        const nameStyle = getComputedStyle(name);
         const powerStyle = getComputedStyle(power);
         const manaStyle = getComputedStyle(mana);
         const rect = tile.getBoundingClientRect();
         const gridRect = grid.getBoundingClientRect();
         const powerRect = power.getBoundingClientRect();
-        const nameRect = title.querySelector("strong").getBoundingClientRect();
-        const iconRect = icon.getBoundingClientRect();
-        const manaRect = mana.getBoundingClientRect();
-        const contained = (child) => child.left >= rect.left - .1 && child.right <= rect.right + .1 && child.top >= rect.top - .1 && child.bottom <= rect.bottom + .1;
+          const nameRect = title.querySelector("strong").getBoundingClientRect();
+          const iconRect = icon.getBoundingClientRect();
+          const manaRect = mana.getBoundingClientRect();
+          const multiWordName = [...grid.querySelectorAll(".skill-title strong")].find((candidate) => candidate.textContent === "Small Shield Projector");
+          const wordRects = (() => {
+            if (!multiWordName?.firstChild) return [];
+            const text = multiWordName.textContent ?? "";
+            const ranges = [];
+            let offset = 0;
+            for (const word of text.split(/\s+/)) {
+              const start = text.indexOf(word, offset);
+              const range = document.createRange();
+              range.setStart(multiWordName.firstChild, start);
+              range.setEnd(multiWordName.firstChild, start + word.length);
+              ranges.push({ word, rectCount: range.getClientRects().length, width: Math.max(...[...range.getClientRects()].map((rect) => rect.width), 0) });
+              offset = start + word.length;
+            }
+            return ranges;
+          })();
+          const contained = (child) => child.left >= rect.left - .1 && child.right <= rect.right + .1 && child.top >= rect.top - .1 && child.bottom <= rect.bottom + .1;
         return {
           gridWidth: gridRect.width,
           gridColumns: gridStyle.gridTemplateColumns,
@@ -88,11 +120,27 @@ try {
             columns: tileStyle.gridTemplateColumns,
             rows: tileStyle.gridTemplateRows,
           },
-          title: { column: titleStyle.gridColumn, row: titleStyle.gridRow, fontSize: titleStyle.fontSize, gap: titleStyle.gap },
+          title: { column: titleStyle.gridColumn, row: titleStyle.gridRow, fontSize: nameStyle.fontSize, gap: titleStyle.gap },
+          singleWord: title.classList.contains("single-word"),
+          singleWordWhiteSpace: nameStyle.whiteSpace,
+          nameScrollWidth: name.scrollWidth,
+          nameClientWidth: name.clientWidth,
+          multiWord: multiWordName ? {
+            overflowWrap: getComputedStyle(multiWordName).overflowWrap,
+            wordBreak: getComputedStyle(multiWordName).wordBreak,
+            whiteSpace: getComputedStyle(multiWordName).whiteSpace,
+            clientWidth: multiWordName.clientWidth,
+            wordRects,
+          } : null,
           icon: { width: iconRect.width, height: iconRect.height },
           power: { column: powerStyle.gridColumn, row: powerStyle.gridRow, fontSize: powerStyle.fontSize, topRight: powerRect.top < rect.top + rect.height / 2 && powerRect.right <= rect.right && rect.right - powerRect.right <= Number.parseFloat(tileStyle.paddingRight) + 2 },
           mana: { column: manaStyle.gridColumn, row: manaStyle.gridRow, fontSize: manaStyle.fontSize },
           contentsContained: [nameRect, iconRect, powerRect, manaRect].every(contained),
+          longName: (() => {
+            const longName = [...grid.querySelectorAll(".skill-title strong")].find((candidate) => candidate.textContent === "Thunderstrike");
+            if (!longName) return null;
+            return { scrollWidth: longName.scrollWidth, clientWidth: longName.clientWidth };
+          })(),
         };
       };
       const selectedCheck = document.querySelector('[data-surface="popup"] .skill-tile.selected .selection-check');
@@ -111,6 +159,11 @@ try {
     if (result.slot.tile.background !== "none" || result.popup.tile.background !== "none") throw new Error(`${name} Skill tiles must use a solid background:\n${JSON.stringify(result, null, 2)}`);
     if (!result.slot.directTileWrappers || result.slot.gridColumns.split(" ").length !== 2 || !result.slot.contentsContained) throw new Error(`${name} Skill grid organization failed:\n${JSON.stringify(result, null, 2)}`);
     if (result.slot.title.column !== "1" || result.slot.title.row !== "1 / 3" || result.slot.power.column !== "2" || result.slot.power.row !== "1" || !result.slot.power.topRight || result.slot.mana.column !== "2" || result.slot.mana.row !== "2") throw new Error(`${name} Skill tile organization failed:\n${JSON.stringify(result, null, 2)}`);
+    if (name !== "mobile" && Number.parseFloat(result.slot.title.fontSize) < 10) throw new Error(`${name} Skill names became too small:\n${JSON.stringify(result, null, 2)}`);
+    if (result.slot.singleWord && result.slot.singleWordWhiteSpace !== "nowrap") throw new Error(`${name} Single-word Skill names must stay on one line:\n${JSON.stringify(result, null, 2)}`);
+    if (result.slot.singleWord && result.slot.nameScrollWidth > result.slot.nameClientWidth + 0.5) throw new Error(`${name} Skill name is clipped:\n${JSON.stringify(result, null, 2)}`);
+    if (!result.slot.longName || result.slot.longName.scrollWidth > result.slot.longName.clientWidth + 0.5) throw new Error(`${name} Long Skill name is clipped:\n${JSON.stringify(result, null, 2)}`);
+    if (!result.slot.multiWord || result.slot.multiWord.overflowWrap !== "normal" || result.slot.multiWord.wordBreak !== "normal" || result.slot.multiWord.wordRects.some(({ rectCount, width }) => rectCount !== 1 || width > result.slot.multiWord.clientWidth + 0.5)) throw new Error(`${name} Multi-word Skill names must wrap only between complete words:\n${JSON.stringify(result, null, 2)}`);
     if (!result.selectedCheckLeftMiddle || !result.noHorizontalOverflow) throw new Error(`${name} Skill state or overflow failed:\n${JSON.stringify(result, null, 2)}`);
 
     const screenshot = path.join(outputDir, `skill-parity-${name}.png`);
@@ -119,10 +172,12 @@ try {
   }
 
   const desktop = await inspect("desktop", 1200, 760);
+  const roomyMobile = await inspect("roomy-mobile", 390, 844, 243);
   const mobile = await inspect("mobile", 390, 844, 155);
   if (!desktop.popupParentWider || desktop.slot.gridWidth !== desktop.popup.gridWidth) throw new Error(`Popup size handoff failed:\n${JSON.stringify(desktop, null, 2)}`);
+  if (Number.parseFloat(roomyMobile.slot.title.fontSize) < 12) throw new Error(`Roomy mobile Skill names became too small:\n${JSON.stringify(roomyMobile, null, 2)}`);
   if (desktop.slot.tile.height <= mobile.slot.tile.height || desktop.slot.title.fontSize === mobile.slot.title.fontSize) throw new Error(`Responsive Skill scaling failed:\n${JSON.stringify({ desktop, mobile }, null, 2)}`);
-  console.log(JSON.stringify({ desktop, mobile }, null, 2));
+  console.log(JSON.stringify({ desktop, roomyMobile, mobile }, null, 2));
 } finally {
   await browser.close();
 }

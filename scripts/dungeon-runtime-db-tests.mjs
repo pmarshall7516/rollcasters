@@ -35,6 +35,21 @@ try {
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [userId]);
   await client.query("select public.ensure_user_game_state()");
 
+  const startFunctionDefinition = (await client.query(`
+    select pg_get_functiondef(p.oid) as definition
+    from pg_proc p
+    join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public'
+      and p.proname='start_dungeon_run_v3'
+      and pg_get_function_identity_arguments(p.oid)='p_dungeon_id text, p_request_id uuid'
+  `)).rows[0]?.definition ?? "";
+  check(
+    startFunctionDefinition.includes("release_enemy_rollcasters_for_dungeon")
+      && startFunctionDefinition.includes("release_dungeon_rows")
+      && !startFunctionDefinition.includes("current_game_catalog_snapshot()"),
+    "Dungeon start must use request-scoped release helpers instead of rescanning the full catalog.",
+  );
+
   const starterRollcaster = (await client.query(`
     select rollcaster_id from public.starter_rollcaster_options
     where is_active order by sort_order,rollcaster_id limit 1
@@ -68,6 +83,18 @@ try {
   `, [userId])).rows[0];
   check(dungeon, "The player needs an unlocked active Dungeon.");
 
+  const optimizedStartAt = performance.now();
+  const optimizedStart = (await client.query(
+    "select public.start_dungeon_run_v3($1,$2) as run",
+    [dungeon.id, crypto.randomUUID()],
+  )).rows[0].run;
+  const optimizedStartMs = performance.now() - optimizedStartAt;
+  check(
+    optimizedStartMs < 2_000,
+    `Release-scoped Dungeon start exceeded the 2 second readiness budget: ${Math.round(optimizedStartMs)} ms.`,
+  );
+  await client.query("select public.resolve_dungeon_run($1)", [optimizedStart.id]);
+
   const startRequest = crypto.randomUUID();
   const firstStart = (await client.query(
     "select public.start_dungeon_run_v2($1,$2) as run",
@@ -98,6 +125,38 @@ try {
       && opponent.overrides
     ),
     "Selected opponents must include every normalized combat and reward child.",
+  );
+  const effectSnapshot = {
+    effects: [],
+    loadouts: { playerSkillSlots: [], playerAbilitySlots: [], playerRelicSlots: [], opponents: [] },
+    statuses: [],
+    seed: 1,
+  };
+  await client.query(
+    "select public.snapshot_dungeon_run_effects($1,$2::jsonb)",
+    [firstStart.id, JSON.stringify(effectSnapshot)],
+  );
+  await client.query(
+    "select public.snapshot_dungeon_run_effects($1,$2::jsonb)",
+    [firstStart.id, JSON.stringify(effectSnapshot)],
+  );
+  const storedEffectSnapshot = (await client.query(
+    "select effect_snapshot from public.dungeon_runs where id=$1",
+    [firstStart.id],
+  )).rows[0]?.effect_snapshot;
+  check(
+    storedEffectSnapshot?.seed === effectSnapshot.seed
+      && Array.isArray(storedEffectSnapshot?.effects)
+      && storedEffectSnapshot.effects.length === 0
+      && Array.isArray(storedEffectSnapshot?.statuses)
+      && storedEffectSnapshot.statuses.length === 0,
+    "A retried identical effect snapshot must remain idempotent.",
+  );
+  await expectError(client, "conflicting_effect_snapshot", "Effect snapshot already exists", () =>
+    client.query(
+      "select public.snapshot_dungeon_run_effects($1,$2::jsonb)",
+      [firstStart.id, JSON.stringify({ ...effectSnapshot, seed: 2 })],
+    ),
   );
   const saveRequest = crypto.randomUUID();
   const savedState = { phase: "event_playback", eventCursor: 0, marker: crypto.randomUUID() };
@@ -227,6 +286,54 @@ try {
     `A loss with no defeated opponents must grant no opponent rewards. Received: ${JSON.stringify(emptyLoss.battleRewards)}`,
   );
 
+  const abandonRun = (await client.query(
+    "select public.start_dungeon_run_v2($1,$2) as run",
+    [dungeon.id, crypto.randomUUID()],
+  )).rows[0].run;
+  await client.query("select public.resolve_dungeon_run($1)", [abandonRun.id]);
+  const abandoned = (await client.query(
+    "select status,combat_state,effect_snapshot,resolved_at from public.dungeon_runs where id=$1",
+    [abandonRun.id],
+  )).rows[0];
+  check(
+    abandoned.status === "abandoned"
+      && JSON.stringify(abandoned.combat_state) === "{}"
+      && abandoned.effect_snapshot === null
+      && abandoned.resolved_at !== null,
+    "Abandoning an unfinished run must clear resumable state without granting rewards.",
+  );
+  check(
+    (await client.query("select public.get_active_dungeon_run_v2() as active")).rows[0].active === null,
+    "An abandoned Dungeon run must no longer be returned as active.",
+  );
+
+  const supersededRun = (await client.query(
+    "select public.start_dungeon_run_v2($1,$2) as run",
+    [dungeon.id, crypto.randomUUID()],
+  )).rows[0].run;
+  const replacementRun = (await client.query(
+    "select public.start_dungeon_run_v2($1,$2) as run",
+    [dungeon.id, crypto.randomUUID()],
+  )).rows[0].run;
+  const activeRunRows = (await client.query(
+    "select id,status from public.dungeon_runs where user_id=$1 and status='started' order by started_at,id",
+    [userId],
+  )).rows;
+  check(
+    activeRunRows.length === 1 && activeRunRows[0].id === replacementRun.id,
+    "Starting a new Dungeon must replace the previous active run instead of leaving multiple resumable rows.",
+  );
+  const supersededStatus = (await client.query(
+    "select status from public.dungeon_runs where id=$1",
+    [supersededRun.id],
+  )).rows[0]?.status;
+  check(supersededStatus === "abandoned", "Replacing an active Dungeon must abandon the superseded run.");
+  await client.query("select public.resolve_dungeon_run($1)", [replacementRun.id]);
+  check(
+    (await client.query("select count(*)::int as count from public.dungeon_runs where user_id=$1 and status='started'", [userId])).rows[0].count === 0,
+    "Abandoning the current Dungeon must clear every stale active row for the player.",
+  );
+
   const executePrivileges = (await client.query(`
     select
       has_function_privilege('anon','public.start_dungeon_run_v2(text,uuid)','execute') as anon_start,
@@ -236,24 +343,28 @@ try {
       has_function_privilege('anon','public.save_dungeon_run_state(uuid,integer,jsonb,uuid)','execute') as anon_save,
       has_function_privilege('authenticated','public.save_dungeon_run_state(uuid,integer,jsonb,uuid)','execute') as authenticated_save,
       has_function_privilege('anon','public.get_active_dungeon_run_v2()','execute') as anon_resume,
-      has_function_privilege('authenticated','public.get_active_dungeon_run_v2()','execute') as authenticated_resume
+      has_function_privilege('authenticated','public.get_active_dungeon_run_v2()','execute') as authenticated_resume,
+      has_function_privilege('anon','public.resolve_dungeon_run(uuid)','execute') as anon_abandon,
+      has_function_privilege('authenticated','public.resolve_dungeon_run(uuid)','execute') as authenticated_abandon
   `)).rows[0];
   check(
     !executePrivileges.anon_start
       && !executePrivileges.anon_result
       && !executePrivileges.anon_save
-      && !executePrivileges.anon_resume,
+      && !executePrivileges.anon_resume
+      && !executePrivileges.anon_abandon,
     "Anonymous callers must not execute Dungeon runtime or resume RPCs.",
   );
   check(
     executePrivileges.authenticated_start
       && executePrivileges.authenticated_result
       && executePrivileges.authenticated_save
-      && executePrivileges.authenticated_resume,
+      && executePrivileges.authenticated_resume
+      && executePrivileges.authenticated_abandon,
     "Authenticated players need Dungeon runtime and resume RPCs.",
   );
 
-  console.log("Dungeon runtime migration passed run creation, immutable encounter snapshots, versioned resume state, retry safety, per-battle XP/drops, completion, unlock, and failure checks; all changes will be rolled back.");
+  console.log("Dungeon runtime migration passed run creation, immutable encounter snapshots, versioned resume state, abandon handling, retry safety, per-battle XP/drops, completion, unlock, and failure checks; all changes will be rolled back.");
 } finally {
   if (began) await client.query("rollback").catch(() => undefined);
   await client.end().catch(() => undefined);

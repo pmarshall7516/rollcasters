@@ -160,7 +160,7 @@ try {
         critterNameTextHeight: rect(".loadout-critter-identity .critter-name strong").height,
         critterLevelSize: Number.parseFloat(style(".loadout-critter-level").fontSize),
         statFontSize: Number.parseFloat(style(".loadout-critter-summary .stat-cell").fontSize),
-        skillTitleSize: Number.parseFloat(style(".loadout-slot .skill-title").fontSize),
+        skillTitleSize: Number.parseFloat(style(".loadout-slot .skill-title strong").fontSize),
         skillMetaSize: Number.parseFloat(style(".loadout-slot .skill-power").fontSize),
         skillCompact: document.querySelector(".loadout-slot .skill-tile-grid").classList.contains("compact"),
         skillIconVisible: style(".loadout-slot .skill-title .asset-icon").display !== "none",
@@ -259,7 +259,7 @@ try {
     const skillContents = [viewport.skillName, viewport.skillIcon, viewport.skillPower, viewport.skillMana];
     const skillContentsContained = skillContents.every((entry) => entry.left >= viewport.skill.left - .1 && entry.right <= viewport.skill.right + .1 && entry.top >= viewport.skill.top - .1 && entry.bottom <= viewport.skill.bottom + .1);
     const critterNameLinesFit = viewport.critterNameTextHeight < viewport.critterNameSize * (viewport.width < 360 ? 2.2 : 1.3);
-    const scaleMatches = viewport.sprite.width >= 88 && viewport.sprite.width <= 124 && viewport.skill.height <= 90 && viewport.skill.height >= 54 && viewport.skillTitleSize >= 9 && viewport.skillMetaSize >= (viewport.skillCompact ? 7 : 8) && viewport.skillIcon.width >= (viewport.skillCompact ? 12 : 14) && viewport.skillIconVisible && skillContentsContained && viewport.element.width > 22 && viewport.critterNameSize > 18 && critterNameLinesFit && viewport.critterLevelSize > 12 && viewport.critterLevel.height < viewport.critterLevelSize * 1.3;
+    const scaleMatches = viewport.sprite.width >= 88 && viewport.sprite.width <= 124 && viewport.skill.height <= 90 && viewport.skill.height >= 54 && viewport.skillTitleSize >= 10 && viewport.skillMetaSize >= (viewport.skillCompact ? 7 : 8) && viewport.skillIcon.width >= (viewport.skillCompact ? 12 : 14) && viewport.skillIconVisible && skillContentsContained && viewport.element.width > 22 && viewport.critterNameSize > 18 && critterNameLinesFit && viewport.critterLevelSize > 12 && viewport.critterLevel.height < viewport.critterLevelSize * 1.3;
     const critterXpContentsContained = viewport.critterXpBar.left >= viewport.critterXp.left - .1
       && viewport.critterXpBar.right <= viewport.critterXp.right + .1
       && viewport.critterXpNumbers.left >= viewport.critterXp.left - .1

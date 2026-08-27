@@ -78,6 +78,7 @@ try {
         alt: image.alt,
         box: [boxRect.width, boxRect.height],
         image: [imageRect.width, imageRect.height],
+        natural: [image.naturalWidth, image.naturalHeight],
         objectFit: imageStyle.objectFit,
         objectPosition: imageStyle.objectPosition,
         imagePosition: imageStyle.position,
@@ -85,6 +86,10 @@ try {
         boxOverflow: boxStyle.overflow,
         padding: Number.parseFloat(imageStyle.paddingLeft),
         squareBox: Math.abs(boxRect.width - boxRect.height) <= epsilon,
+        intrinsicAspectPreserved: Math.abs(
+          imageRect.width / imageRect.height - image.naturalWidth / image.naturalHeight,
+        ) <= 0.01,
+        bottomInset: Math.abs(boxRect.bottom - imageRect.bottom - 4) <= epsilon,
         contained:
           imageRect.left >= boxRect.left - epsilon &&
           imageRect.top >= boxRect.top - epsilon &&
@@ -108,8 +113,10 @@ try {
     result.imagePosition !== "absolute" ||
     result.boxPosition !== "relative" ||
     result.boxOverflow !== "hidden" ||
-    result.padding < 1 ||
+    result.padding !== 0 ||
     !result.squareBox ||
+    !result.intrinsicAspectPreserved ||
+    !result.bottomInset ||
     !result.contained
   );
 

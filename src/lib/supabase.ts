@@ -19,6 +19,7 @@ import type {
   DungeonOpponent,
   DungeonOpponentStatOverride,
   DungeonRegularEncounter,
+  DungeonRunHistoryEntry,
   DungeonRunSnapshot,
   ElementDef,
   ElementEffectiveness,
@@ -35,32 +36,87 @@ import type {
 } from "./types";
 import { parseBattleFormat, sortDungeonsNaturally } from "./dungeons";
 import { createRequestId } from "./uuid";
-import { aggregateShopPurchaseReceipts, indexedShopPurchaseRequestId, shopPurchaseRpcErrorDisposition } from "./shop";
+import { createPlayerMutationOutbox } from "./player-mutations";
+import {
+  aggregateShopPurchaseReceipts,
+  indexedShopPurchaseRequestId,
+  isAmbiguousShopPurchaseError,
+  pendingShopPurchaseError,
+  shopPurchaseRpcErrorDisposition,
+} from "./shop";
+import {
+  applyLocalChallengeEvents,
+  emptyLocalChallengePreviewState,
+  mergeLocalChallengeSnapshot,
+  readLocalChallengePreviewState,
+  trackLocalChallenge,
+  untrackLocalChallenge,
+  writeLocalChallengePreviewState,
+} from "./local-challenge-preview";
 import { resolveDesktopProfile } from "./desktop-profile";
-import { createDesktopSessionStorage } from "./desktop-session-storage";
+import {
+  isLocalCatalogPreview,
+  resolveLocalServerCompatibilityIdentity,
+  shouldSyncLocalServerCompatibility,
+  type LocalServerCompatibilityIdentity,
+} from "./local-release-preview";
+import { isTrackableChallenge } from "./collectibles";
+import { recoverLootboxOpening } from "./lootbox";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
   import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
-const configuredGameAssetBaseUrl = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
-const gameCatalogBaseUrl = (import.meta.env.VITE_GAME_CATALOG_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const isSupabaseStorageUrl = (value: string | undefined) => Boolean(value && /supabase\.co\/storage\/v1/i.test(value));
+const configuredGameAssetBaseCandidate = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const configuredGameAssetBaseUrl = isSupabaseStorageUrl(configuredGameAssetBaseCandidate) ? undefined : configuredGameAssetBaseCandidate;
+const gameCatalogBaseCandidate = (import.meta.env.VITE_GAME_CATALOG_BASE_URL as string | undefined)?.replace(/\/+$/, "");
+const gameCatalogBaseUrl = isSupabaseStorageUrl(gameCatalogBaseCandidate) ? undefined : gameCatalogBaseCandidate;
 const gameVersion = (import.meta.env.VITE_GAME_VERSION as string | undefined) ?? "0.1.0";
 export const currentGameVersion = gameVersion;
 const gameCatalogReleaseId = (import.meta.env.VITE_GAME_CATALOG_RELEASE_ID as string | undefined) ?? "unversioned";
 const gameClientProtocol = (import.meta.env.VITE_GAME_CLIENT_PROTOCOL_VERSION as string | undefined) ?? "1";
 export const desktopProfile = resolveDesktopProfile(import.meta.env);
+const desktopRuntime = typeof window !== "undefined"
+  && ("__TAURI_INTERNALS__" in window || window.location.protocol === "tauri:");
+const localCatalogPreview = isLocalCatalogPreview(
+  desktopProfile.profile,
+  import.meta.env.VITE_GAME_LOCAL_CATALOG_PREVIEW === "true",
+);
 // A player build is release-backed unless development explicitly opts into the
 // live authoring catalog. This prevents an omitted env var from weakening the
 // immutable-release boundary.
 const gameCatalogMode = (import.meta.env.VITE_GAME_CATALOG_MODE as string | undefined) === "live" ? "live" : "release";
 const playerBootstrapMode = (import.meta.env.VITE_GAME_PLAYER_BOOTSTRAP_MODE as string | undefined) === "v1" ? "v1" : "legacy";
 const allowLegacyPlayerBootstrap = import.meta.env.VITE_ALLOW_LEGACY_PLAYER_BOOTSTRAP === "true";
-let activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
+// Both release-backed and explicitly local live-catalog development runs must
+// provide their own asset base. There is intentionally no mutable remote
+// fallback for artwork.
+let activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
 const liveAssetVersions = new Map<string, string>();
+const gameplaySessionId = createRequestId();
+let activeGameplaySessionId: string | null = null;
+let latestPlayerStateRevision: bigint | null = null;
+let localPreviewUserId: string | null = null;
+const playerMutationOutbox = createPlayerMutationOutbox<null>(null);
 
-export const GAME_ASSETS_BUCKET = "game-assets";
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
-const desktopRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const gameCompatibilityHeaders: Record<string, string> = {
+  "x-rollcasters-version": gameVersion,
+  "x-rollcasters-catalog-release": gameCatalogReleaseId,
+  "x-rollcasters-protocol": gameClientProtocol,
+};
+
+// Supabase copies the global header object into its Auth and PostgREST
+// clients during construction. The local browser preview updates these
+// compatibility values after reading the active server policy, so inject the
+// current values at request time instead of relying on a stale initial copy.
+const compatibilityFetch: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers);
+  for (const [name, value] of Object.entries(gameCompatibilityHeaders)) {
+    headers.set(name, value);
+  }
+  return globalThis.fetch(input, { ...init, headers });
+};
 
 export const supabase: SupabaseClient | null = hasSupabaseConfig
   ? createClient(supabaseUrl!, supabaseKey!, {
@@ -69,23 +125,63 @@ export const supabase: SupabaseClient | null = hasSupabaseConfig
         autoRefreshToken: true,
         detectSessionInUrl: !desktopRuntime,
         storageKey: desktopProfile.storageNamespace,
-        ...(desktopRuntime ? { storage: createDesktopSessionStorage(desktopProfile.appId, desktopProfile.storageNamespace) } : {}),
       },
       global: {
-        headers: {
-          "x-rollcasters-version": gameVersion,
-          "x-rollcasters-catalog-release": gameCatalogReleaseId,
-          "x-rollcasters-protocol": gameClientProtocol,
-        },
+        headers: gameCompatibilityHeaders,
+        fetch: compatibilityFetch,
       },
     })
   : null;
+
+function applyServerCompatibilityIdentity(identity: LocalServerCompatibilityIdentity): void {
+  Object.assign(gameCompatibilityHeaders, {
+    "x-rollcasters-version": identity.version,
+    "x-rollcasters-catalog-release": identity.catalogReleaseId,
+    "x-rollcasters-protocol": identity.protocol,
+  });
+
+  // Supabase creates independent Auth and PostgREST header collections. Keep
+  // those already-created clients aligned for the first request after the
+  // local preview reads the active server policy.
+  const client = supabase as unknown as {
+    headers?: Record<string, string>;
+    auth?: { headers?: Record<string, string> };
+    rest?: { headers?: Headers };
+  } | null;
+  Object.assign(client?.headers ?? {}, gameCompatibilityHeaders);
+  Object.assign(client?.auth?.headers ?? {}, gameCompatibilityHeaders);
+  for (const [name, value] of Object.entries(gameCompatibilityHeaders)) {
+    client?.rest?.headers?.set(name, value);
+  }
+}
 
 function requireClient(): SupabaseClient {
   if (!supabase) {
     throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY.");
   }
   return supabase;
+}
+
+function localChallengePreviewStorage(): Storage | null {
+  if (!localCatalogPreview || typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function localChallengePreviewStorageKey(): string {
+  const userKey = localPreviewUserId ?? "anonymous";
+  return `${desktopProfile.dataNamespace}.challenge-preview.${gameCatalogReleaseId}.${userKey}`;
+}
+
+function readLocalChallengeState() {
+  return readLocalChallengePreviewState(localChallengePreviewStorage(), localChallengePreviewStorageKey());
+}
+
+function writeLocalChallengeState(state: ReturnType<typeof emptyLocalChallengePreviewState>): void {
+  writeLocalChallengePreviewState(localChallengePreviewStorage(), localChallengePreviewStorageKey(), state);
 }
 
 export type GameUpdateStatus = {
@@ -102,6 +198,41 @@ export async function getGameUpdateStatus(): Promise<GameUpdateStatus> {
   const { data, error } = await requireClient().rpc("get_game_update_status");
   if (error) throw error;
   return data as GameUpdateStatus;
+}
+
+let localServerCompatibilityPromise: Promise<GameUpdateStatus | null> | null = null;
+
+/**
+ * The browser harness is not an installed desktop client, so it cannot use
+ * the Tauri updater to move its version forward. It still needs to satisfy
+ * the Production RPC compatibility hook. Read the active identity through the
+ * deliberately public status RPC, then update the same mutable header object
+ * used by every Supabase request. Stable desktop builds never enter this path.
+ */
+export function syncLocalServerCompatibility(): Promise<GameUpdateStatus | null> {
+  if (!supabase || !shouldSyncLocalServerCompatibility(desktopProfile.profile)) return Promise.resolve(null);
+  if (!localServerCompatibilityPromise) {
+    localServerCompatibilityPromise = (async () => {
+      const status = await getGameUpdateStatus();
+      if (status.active) {
+        applyServerCompatibilityIdentity(
+          resolveLocalServerCompatibilityIdentity(
+            {
+              version: gameCompatibilityHeaders["x-rollcasters-version"],
+              catalogReleaseId: gameCompatibilityHeaders["x-rollcasters-catalog-release"],
+              protocol: gameCompatibilityHeaders["x-rollcasters-protocol"],
+            },
+            status.active,
+          ),
+        );
+      }
+      return status;
+    })().catch((error) => {
+      localServerCompatibilityPromise = null;
+      throw error;
+    });
+  }
+  return localServerCompatibilityPromise;
 }
 
 const LIVE_CATALOG_COLUMNS: Record<string, string> = {
@@ -136,7 +267,7 @@ const LIVE_CATALOG_COLUMNS: Record<string, string> = {
   dungeon_completion_drops: "id,dungeon_id,completion_phase,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
   starter_rollcaster_options: "rollcaster_id,sort_order,is_active",
   starter_options: "critter_id,sort_order,is_active",
-  game_assets: "id,bucket_id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,metadata,is_active,sort_order,updated_at",
+  game_assets: "id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,metadata,is_active,sort_order,updated_at",
   statuses: "id,name,description,classification,asset_path,sort_order,is_active,is_archived,version",
 };
 
@@ -291,7 +422,7 @@ async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
   };
 }
 
-export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
+async function getServerCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
   const client = requireClient();
   const [snapshotResult, lootboxResult] = await Promise.all([
     client.rpc("get_collectible_player_snapshot"),
@@ -312,6 +443,13 @@ export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerS
   };
 }
 
+export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
+  const serverSnapshot = await getServerCollectiblePlayerSnapshot();
+  return localCatalogPreview
+    ? mergeLocalChallengeSnapshot(serverSnapshot, readLocalChallengeState())
+    : serverSnapshot;
+}
+
 async function loadCombatEffects(): Promise<CombatEffectRow[]> {
   const { data, error } = await requireClient()
     .from("combat_effects_v1")
@@ -330,19 +468,23 @@ export async function getSession(): Promise<Session | null> {
   if (error) throw error;
   if (data.session && !(await isGameAccount(client))) {
     await client.auth.signOut({ scope: "local" });
+    localPreviewUserId = null;
     throw new Error("This is a dev-tool account. Sign in with a dedicated Rollcasters game account.");
   }
+  localPreviewUserId = data.session?.user.id ?? null;
   return data.session;
 }
 
 export async function signIn(email: string, password: string): Promise<void> {
   const client = requireClient();
-  const { error } = await client.auth.signInWithPassword({ email, password });
+  const { data, error } = await client.auth.signInWithPassword({ email, password });
   if (error) throw error;
   if (!(await isGameAccount(client))) {
     await client.auth.signOut({ scope: "local" });
+    localPreviewUserId = null;
     throw new Error("This is a dev-tool account. Sign in with a dedicated Rollcasters game account.");
   }
+  localPreviewUserId = data.user?.id ?? data.session?.user.id ?? null;
 }
 
 async function isGameAccount(client: SupabaseClient): Promise<boolean> {
@@ -351,21 +493,103 @@ async function isGameAccount(client: SupabaseClient): Promise<boolean> {
   return data === true;
 }
 
-export async function signUp(email: string, password: string, username: string, inviteCode: string): Promise<boolean> {
+export async function signUp(email: string, password: string, username: string): Promise<boolean> {
   const client = requireClient();
   const { data, error } = await client.auth.signUp({
     email,
     password,
-    options: { data: { username, invite_code: inviteCode.trim() } },
+    options: { data: { username } },
   });
   if (error) throw error;
+  localPreviewUserId = data.user?.id ?? data.session?.user.id ?? null;
   return Boolean(data.session);
 }
 
 export async function signOut(): Promise<void> {
   const client = requireClient();
+  // Release the lease before waiting on any queued writes. A logout is a
+  // session boundary: another device must be able to acquire the account even
+  // if a best-effort mutation flush is slow or unavailable.
+  await releaseGameplaySession().catch(() => undefined);
+  await flushPlayerMutations().catch(() => undefined);
   const { error } = await client.auth.signOut();
   if (error) throw error;
+  localPreviewUserId = null;
+}
+
+export type GameplaySessionResult = {
+  outcome: "ACQUIRED" | "ACCOUNT_ONLINE";
+  session_id?: string;
+  active_session_id?: string;
+  player_state_revision?: string | number;
+  heartbeat_at?: string;
+  expires_at?: string;
+};
+
+export function currentGameplaySessionId(): string | null {
+  return activeGameplaySessionId;
+}
+
+export async function releaseGameplaySession(): Promise<void> {
+  const sessionId = activeGameplaySessionId;
+  activeGameplaySessionId = null;
+  if (!sessionId) return;
+  const { error } = await requireClient().rpc("release_gameplay_session", { p_session_id: sessionId });
+  if (error) throw error;
+}
+
+export async function acquireGameplaySession(takeover = false): Promise<GameplaySessionResult> {
+  const { data, error } = await requireClient().rpc("acquire_gameplay_session", {
+    p_session_id: gameplaySessionId,
+    p_device_install_id: desktopProfile.storageNamespace,
+    p_game_version: gameVersion,
+    p_catalog_release_id: gameCatalogReleaseId,
+    p_client_protocol_version: Number(gameClientProtocol) || 1,
+    p_takeover: takeover,
+  });
+  if (error) throw error;
+  const result = data as GameplaySessionResult;
+  if (result.outcome === "ACQUIRED") activeGameplaySessionId = result.session_id ?? gameplaySessionId;
+  return result;
+}
+
+export async function heartbeatGameplaySession(): Promise<GameplaySessionResult> {
+  if (!activeGameplaySessionId) throw new Error("SESSION_DISPLACED");
+  const { data, error } = await requireClient().rpc("heartbeat_gameplay_session", { p_session_id: activeGameplaySessionId });
+  if (error) throw error;
+  return data as GameplaySessionResult;
+}
+
+export function flushPlayerMutations(): Promise<void> {
+  return playerMutationOutbox.flushPlayerMutations();
+}
+
+function enqueuePlayerMutation<T>(resourceKey: string, operation: () => Promise<T>): Promise<T> {
+  let result: T;
+  return playerMutationOutbox.mutatePlayer({
+    requestId: createRequestId(),
+    resourceKey,
+    apply: (state) => state,
+    send: async () => {
+      result = await operation();
+      return { requestId: createRequestId() };
+    },
+  }).then(() => result!);
+}
+
+function playerMutationResourceKey(name: string, args: Record<string, unknown>): string {
+  if (name.includes("set_squad_critter_slot")) return `${name}:${args.p_slot_index ?? ""}`;
+  if (name.includes("set_critter_skill_slot") || name.includes("set_critter_relic_slot")) {
+    return `${name}:${args.p_user_critter_id ?? ""}:${args.p_slot_index ?? ""}`;
+  }
+  if (name.includes("set_rollcaster_ability_slot")) {
+    return `${name}:${args.p_user_rollcaster_id ?? ""}:${args.p_slot_index ?? ""}`;
+  }
+  if (name.includes("unlock_critter_skill")) return `${name}:${args.p_user_critter_id ?? ""}:${args.p_skill_id ?? ""}`;
+  if (name.includes("unlock_rollcaster_ability")) return `${name}:${args.p_user_rollcaster_id ?? ""}:${args.p_ability_id ?? ""}`;
+  if (name.includes("active_rollcaster")) return name;
+  if (name.includes("challenge")) return `${name}:${args.p_challenge_id ?? ""}`;
+  return `${name}:${JSON.stringify(args)}`;
 }
 
 export async function ensureUserGameState(): Promise<void> {
@@ -388,15 +612,18 @@ export async function selectStarterRollcaster(rollcasterId: string): Promise<voi
 
 export function getGameAssetUrl(assetPath: string | null | undefined): string | null {
   if (!assetPath) return null;
-  if (/^https?:\/\//i.test(assetPath)) return assetPath;
+  if (/^https?:\/\//i.test(assetPath)) {
+    return isSupabaseStorageUrl(assetPath) ? null : assetPath;
+  }
   const [objectPath, query = ""] = assetPath.split("?", 2);
   const normalizedPath = objectPath.replace(/^\/+/, "");
-  const publicUrl = activeGameAssetBaseUrl
-    ? `${activeGameAssetBaseUrl}/${normalizedPath.split("/").map(encodeURIComponent).join("/")}`
-    : requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(normalizedPath).data.publicUrl;
+  if (!activeGameAssetBaseUrl) return null;
+  const publicUrl = `${activeGameAssetBaseUrl}/${normalizedPath.split("/").map(encodeURIComponent).join("/")}`;
   const version = gameCatalogMode === "live" ? liveAssetVersions.get(normalizedPath) : undefined;
   if (!query && !version) return publicUrl;
-  const url = new URL(publicUrl);
+  // Local exact-catalog previews use Vite's relative `/@fs/...` asset root.
+  // `URL` needs an absolute base when a cache-busting query is present.
+  const url = new URL(publicUrl, typeof window === "undefined" ? undefined : window.location.href);
   if (query) url.search = query;
   if (version && !url.searchParams.has("v")) url.searchParams.set("v", version);
   return url.toString();
@@ -407,13 +634,7 @@ export function getGameAssetUrl(assetPath: string | null | undefined): string | 
 // in the current release registry.
 export function getSnapshotGameAssetUrl(assetPath: string | null | undefined): string | null {
   if (!assetPath) return null;
-  if (/^https?:\/\//i.test(assetPath)) return assetPath;
-  const [objectPath, query = ""] = assetPath.split("?", 2);
-  const publicUrl = requireClient().storage.from(GAME_ASSETS_BUCKET).getPublicUrl(objectPath).data.publicUrl;
-  if (!query) return publicUrl;
-  const url = new URL(publicUrl);
-  url.search = query;
-  return url.toString();
+  return getGameAssetUrl(assetPath);
 }
 
 function groupBy<T>(rows: readonly T[], keyFor: (row: T) => string): Map<string, T[]> {
@@ -665,7 +886,7 @@ export function loadCatalog({ force = false }: { force?: boolean } = {}): Promis
       }
       // Live catalog rows contain source-master paths. This branch is reserved
       // for an explicitly configured development build.
-      activeGameAssetBaseUrl = undefined;
+      activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
       const catalog = await fetchLiveCatalog();
       currentCatalogRelease = {
         schemaVersion: 0,
@@ -688,7 +909,7 @@ export function clearCatalogCache(): void {
   catalogPromise = null;
   currentCatalogRelease = undefined;
   liveAssetVersions.clear();
-  activeGameAssetBaseUrl = gameCatalogMode === "release" ? configuredGameAssetBaseUrl : undefined;
+  activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
 }
 
 export function getCurrentCatalogRelease(): CatalogReleaseInfo | undefined {
@@ -707,6 +928,7 @@ type PlayerBootstrapPayload = {
   unlocked_skills: Array<{ user_critter_id: string; skill_id: string }>;
   unlocked_abilities: Array<{ user_rollcaster_id: string; ability_id: string }>;
   dungeon_progress: PlayerState["dungeonProgress"];
+  dungeon_run_history?: PlayerState["dungeonRunHistory"];
   collectible_snapshot: CollectiblePlayerSnapshot;
   player_state_revision: string;
   server_catalog_version: string | null;
@@ -739,7 +961,13 @@ function playerStateFromBootstrap(payload: PlayerBootstrapPayload): PlayerState 
     unlockedSkillIdsByCritter,
     unlockedAbilityIdsByRollcaster,
     dungeonProgress: payload.dungeon_progress ?? [],
-    collectibleSnapshot: { ...emptyCollectibleSnapshot(), ...(payload.collectible_snapshot ?? {}) },
+    dungeonRunHistory: payload.dungeon_run_history ?? [],
+    collectibleSnapshot: localCatalogPreview
+      ? mergeLocalChallengeSnapshot(
+        { ...emptyCollectibleSnapshot(), ...(payload.collectible_snapshot ?? {}) },
+        readLocalChallengeState(),
+      )
+      : { ...emptyCollectibleSnapshot(), ...(payload.collectible_snapshot ?? {}) },
     playerStateRevision: payload.player_state_revision,
     serverCatalogVersion: payload.server_catalog_version,
   };
@@ -747,16 +975,19 @@ function playerStateFromBootstrap(payload: PlayerBootstrapPayload): PlayerState 
 
 async function loadPlayerBootstrapV1(): Promise<PlayerState> {
   const client = requireClient();
-  const [{ data, error }, lootboxResult] = await Promise.all([
+  const [{ data, error }, lootboxResult, dungeonRunHistoryResult] = await Promise.all([
     client.rpc("player_bootstrap_v1"),
     client.from("user_lootboxes").select("lootbox_id,quantity").gt("quantity", 0),
+    client.from("dungeon_runs").select("dungeon_id,status").in("status", ["won", "lost"]),
   ]);
   if (error) throw error;
   if (lootboxResult.error) throw lootboxResult.error;
+  if (dungeonRunHistoryResult.error) throw dungeonRunHistoryResult.error;
   if (!data || typeof data !== "object") throw new Error("Player bootstrap returned no state.");
   const payload = data as PlayerBootstrapPayload;
   return playerStateFromBootstrap({
     ...payload,
+    dungeon_run_history: (dungeonRunHistoryResult.data ?? []) as DungeonRunHistoryEntry[],
     collectible_snapshot: {
       ...payload.collectible_snapshot,
       lootboxes: (lootboxResult.data ?? []).map((row) => ({
@@ -782,6 +1013,7 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
     unlockedSkills,
     unlockedAbilities,
     dungeonProgress,
+    dungeonRunHistory,
   ] = await Promise.all([
     client.from("profiles").select("user_id,username,coins,starter_rollcaster_selected_at,starter_selected_at,active_rollcaster_id").single(),
     client.from("user_rollcasters").select("id,user_id,rollcaster_id,level,xp,ability_points").order("unlocked_at", { ascending: true }),
@@ -794,6 +1026,7 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
     client.from("user_critter_skills").select("user_critter_id,skill_id"),
     client.from("user_rollcaster_abilities").select("user_rollcaster_id,ability_id"),
     client.from("user_dungeon_progress").select("user_id,dungeon_id,is_unlocked,completed_at,clear_count"),
+    client.from("dungeon_runs").select("dungeon_id,status").in("status", ["won", "lost"]),
   ]);
 
   for (const result of [
@@ -808,6 +1041,7 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
     unlockedSkills,
     unlockedAbilities,
     dungeonProgress,
+    dungeonRunHistory,
   ]) {
     if (result.error) throw result.error;
   }
@@ -839,53 +1073,133 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
     unlockedSkillIdsByCritter,
     unlockedAbilityIdsByRollcaster,
     dungeonProgress: dungeonProgress.data ?? [],
+    dungeonRunHistory: (dungeonRunHistory.data ?? []) as DungeonRunHistoryEntry[],
     collectibleSnapshot,
   } as PlayerState;
 }
 
 export async function loadPlayerState(): Promise<PlayerState> {
-  if (playerBootstrapMode === "legacy") return loadLegacyPlayerState();
+  if (playerBootstrapMode === "legacy") {
+    const state = await loadLegacyPlayerState();
+    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    return state;
+  }
   try {
-    return await loadPlayerBootstrapV1();
+    const state = await loadPlayerBootstrapV1();
+    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    return state;
   } catch (error) {
     const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
     const missingRpc = code === "42883" || code === "PGRST202";
     if (!allowLegacyPlayerBootstrap || !missingRpc) throw error;
     console.warn("player_bootstrap_v1 is not installed; using the explicitly enabled legacy Supabase fallback.");
-    return loadLegacyPlayerState();
+    const state = await loadLegacyPlayerState();
+    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    return state;
   }
 }
 
 async function callLoadoutRpc(name: string, args: Record<string, unknown>): Promise<void> {
-  const { error } = await requireClient().rpc(name, args);
+  const { error } = await enqueuePlayerMutation(playerMutationResourceKey(name, args), async () => requireClient().rpc(name, args));
   if (error) throw error;
 }
 
-export const setSquadSlot = (slotIndex: number, userCritterId: string | null) =>
-  callLoadoutRpc("set_squad_critter_slot", { p_slot_index: slotIndex, p_user_critter_id: userCritterId });
+type VersionedPlayerMutationRpc =
+  | "set_squad_critter_slot_v2"
+  | "set_critter_skill_slot_v2"
+  | "set_critter_relic_slot_v2"
+  | "set_active_rollcaster_v2"
+  | "set_rollcaster_ability_slot_v2"
+  | "track_collectible_challenge_v2"
+  | "untrack_collectible_challenge_v2"
+  | "unlock_critter_skill_v2"
+  | "unlock_rollcaster_ability_v2";
 
-export const setCritterSkillSlot = (userCritterId: string, slotIndex: number, skillId: string | null) =>
-  callLoadoutRpc("set_critter_skill_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_skill_id: skillId });
+async function callVersionedPlayerMutationRpc(
+  name: VersionedPlayerMutationRpc,
+  args: Record<string, unknown>,
+): Promise<void> {
+  if (!activeGameplaySessionId || latestPlayerStateRevision === null) {
+    throw new Error("SESSION_NOT_READY");
+  }
+  const sessionId = activeGameplaySessionId;
+  const expectedRevision = latestPlayerStateRevision;
+  const requestId = createRequestId();
+  const { data, error } = await enqueuePlayerMutation(playerMutationResourceKey(name, args), async () => requireClient().rpc(name, {
+      ...args,
+      p_session_id: sessionId,
+      p_expected_revision: expectedRevision.toString(),
+      p_request_id: requestId,
+    }));
+  if (error) throw error;
+  const receipt = data as { resulting_revision?: string | number };
+  if (receipt?.resulting_revision != null) latestPlayerStateRevision = BigInt(receipt.resulting_revision);
+}
 
-export const setCritterRelicSlot = (userCritterId: string, slotIndex: number, relicId: string | null) =>
-  callLoadoutRpc("set_critter_relic_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_relic_id: relicId });
+const callVersionedLoadoutRpc = callVersionedPlayerMutationRpc;
 
-export const setRollcasterAbilitySlot = (userRollcasterId: string, slotIndex: number, abilityId: string | null) =>
-  callLoadoutRpc("set_rollcaster_ability_slot", { p_user_rollcaster_id: userRollcasterId, p_slot_index: slotIndex, p_ability_id: abilityId });
+export const setSquadSlot = async (slotIndex: number, userCritterId: string | null) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("set_squad_critter_slot_v2", { p_slot_index: slotIndex, p_user_critter_id: userCritterId });
+    return;
+  }
+  await callLoadoutRpc("set_squad_critter_slot", { p_slot_index: slotIndex, p_user_critter_id: userCritterId });
+};
 
-export const setActiveRollcaster = (userRollcasterId: string) =>
-  callLoadoutRpc("set_active_rollcaster", { p_user_rollcaster_id: userRollcasterId });
+export const setCritterSkillSlot = async (userCritterId: string, slotIndex: number, skillId: string | null) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedLoadoutRpc("set_critter_skill_slot_v2", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_skill_id: skillId });
+    return;
+  }
+  await callLoadoutRpc("set_critter_skill_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_skill_id: skillId });
+};
 
-export const unlockCritterSkill = (userCritterId: string, skillId: string) =>
-  callLoadoutRpc("unlock_critter_skill", { p_user_critter_id: userCritterId, p_skill_id: skillId });
+export const setCritterRelicSlot = async (userCritterId: string, slotIndex: number, relicId: string | null) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("set_critter_relic_slot_v2", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_relic_id: relicId });
+    return;
+  }
+  await callLoadoutRpc("set_critter_relic_slot", { p_user_critter_id: userCritterId, p_slot_index: slotIndex, p_relic_id: relicId });
+};
 
-export const unlockRollcasterAbility = (userRollcasterId: string, abilityId: string) =>
-  callLoadoutRpc("unlock_rollcaster_ability", { p_user_rollcaster_id: userRollcasterId, p_ability_id: abilityId });
+export const setRollcasterAbilitySlot = async (userRollcasterId: string, slotIndex: number, abilityId: string | null) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedLoadoutRpc("set_rollcaster_ability_slot_v2", { p_user_rollcaster_id: userRollcasterId, p_slot_index: slotIndex, p_ability_id: abilityId });
+    return;
+  }
+  await callLoadoutRpc("set_rollcaster_ability_slot", { p_user_rollcaster_id: userRollcasterId, p_slot_index: slotIndex, p_ability_id: abilityId });
+};
+
+export const setActiveRollcaster = async (userRollcasterId: string) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("set_active_rollcaster_v2", { p_user_rollcaster_id: userRollcasterId });
+    return;
+  }
+  await callLoadoutRpc("set_active_rollcaster", { p_user_rollcaster_id: userRollcasterId });
+};
+
+export const unlockCritterSkill = async (userCritterId: string, skillId: string) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("unlock_critter_skill_v2", { p_user_critter_id: userCritterId, p_skill_id: skillId });
+    return;
+  }
+  await callLoadoutRpc("unlock_critter_skill", { p_user_critter_id: userCritterId, p_skill_id: skillId });
+};
+
+export const unlockRollcasterAbility = async (userRollcasterId: string, abilityId: string) => {
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("unlock_rollcaster_ability_v2", { p_user_rollcaster_id: userRollcasterId, p_ability_id: abilityId });
+    return;
+  }
+  await callLoadoutRpc("unlock_rollcaster_ability", { p_user_rollcaster_id: userRollcasterId, p_ability_id: abilityId });
+};
 
 export async function loadAppData(): Promise<AppData> {
   const [catalog, player] = await Promise.all([loadCatalog(), loadPlayerState()]);
   const catalogRelease = getCurrentCatalogRelease();
-  assertServerCatalogCompatibility(catalogRelease, player.serverCatalogVersion, playerBootstrapMode === "v1");
+  if (!localCatalogPreview) {
+    assertServerCatalogCompatibility(catalogRelease, player.serverCatalogVersion, playerBootstrapMode === "v1");
+  }
   return { catalog, player, catalogRelease };
 }
 
@@ -979,6 +1293,89 @@ export async function startDungeonRun(
   return run;
 }
 
+type DungeonEntryAttempt = {
+  phase: "starting" | "recovering" | "confirming";
+  attempt: number;
+  maxAttempts: number;
+};
+
+function dungeonEntryErrorText(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return String(error ?? "");
+}
+
+function isRetryableDungeonEntryError(error: unknown): boolean {
+  const code = error && typeof error === "object" && "code" in error ? String(error.code ?? "") : "";
+  const text = dungeonEntryErrorText(error).toLowerCase();
+  return code === "408"
+    || code === "429"
+    || code === "57014"
+    || code.startsWith("5")
+    || text.includes("timeout")
+    || text.includes("timed out")
+    || text.includes("network")
+    || text.includes("fetch")
+    || text.includes("failed to fetch")
+    || text.includes("connection reset")
+    || text.includes("connection closed");
+}
+
+function dungeonEntryDelay(delayMs: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+}
+
+async function withDungeonEntryTimeout<T>(operation: Promise<T>, step: string): Promise<T> {
+  let timer: number | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(`DUNGEON_ENTRY_TIMEOUT:${step}`)), 12_000);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
+  }
+}
+
+export function flushPlayerMutationsWithTimeout(): Promise<void> {
+  return withDungeonEntryTimeout(flushPlayerMutations(), "flush");
+}
+
+async function activeDungeonRunForRecovery(): Promise<ActiveDungeonRun | null> {
+  try {
+    return await withDungeonEntryTimeout(getActiveDungeonRun(), "resume");
+  } catch {
+    // A recovery read is best effort. The original typed or timeout error is
+    // more useful than replacing it with a second network failure.
+    return null;
+  }
+}
+
+export async function startDungeonRunWithRecovery(
+  dungeonId: string,
+  requestId = createRequestId(),
+  onAttempt?: (attempt: DungeonEntryAttempt & { requestId: string }) => void,
+): Promise<DungeonRunSnapshot> {
+  const maxAttempts = 3;
+  let lastError: unknown = new Error("Dungeon entry failed.");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const phase = attempt === 1 ? "starting" : "recovering";
+    onAttempt?.({ phase, attempt, maxAttempts, requestId });
+    if (attempt > 1) await dungeonEntryDelay(250 * 2 ** (attempt - 2));
+    try {
+      return await withDungeonEntryTimeout(startDungeonRun(dungeonId, requestId), "start");
+    } catch (error) {
+      lastError = error;
+      const active = await activeDungeonRunForRecovery();
+      if (active?.run.dungeonId === dungeonId) return active.run;
+      if (!isRetryableDungeonEntryError(error) || attempt === maxAttempts) throw error;
+    }
+  }
+  throw lastError;
+}
+
 export async function recordDungeonBattleResult(
   run: DungeonRunSnapshot,
   submission: {
@@ -1006,6 +1403,38 @@ export async function recordDungeonBattleResult(
   };
 }
 
+type DungeonResultAttempt = {
+  attempt: number;
+  maxAttempts: number;
+};
+
+export async function recordDungeonBattleResultWithRecovery(
+  run: DungeonRunSnapshot,
+  submission: Parameters<typeof recordDungeonBattleResult>[1],
+  requestId = createRequestId(),
+  onAttempt?: (attempt: DungeonResultAttempt) => void,
+): Promise<DungeonBattleResult> {
+  const maxAttempts = 3;
+  let lastError: unknown = new Error("Encounter result could not be saved.");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    onAttempt?.({ attempt, maxAttempts });
+    if (attempt > 1) await dungeonEntryDelay(400 * 2 ** (attempt - 2));
+    try {
+      // Keep the request ID stable. If the server committed before a timeout
+      // or lost response, the retry returns the original result instead of
+      // applying rewards twice.
+      return await withDungeonEntryTimeout(
+        recordDungeonBattleResult(run, submission, requestId),
+        "result",
+      );
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableDungeonEntryError(error) || attempt === maxAttempts) throw error;
+    }
+  }
+  throw lastError;
+}
+
 export async function getActiveDungeonRun(): Promise<ActiveDungeonRun | null> {
   const { data, error } = await requireClient().rpc("get_active_dungeon_run_v2");
   if (error) throw error;
@@ -1015,6 +1444,10 @@ export async function getActiveDungeonRun(): Promise<ActiveDungeonRun | null> {
     ...active,
     run: normalizeDungeonRunSnapshot(active.run),
   };
+}
+
+export function getActiveDungeonRunWithTimeout(): Promise<ActiveDungeonRun | null> {
+  return withDungeonEntryTimeout(getActiveDungeonRun(), "resume");
 }
 
 export async function saveDungeonRunState(
@@ -1036,9 +1469,47 @@ export async function saveDungeonRunState(
   };
 }
 
+export function saveDungeonRunStateWithTimeout(
+  run: DungeonRunSnapshot,
+  combatState: Record<string, unknown>,
+  requestId = createRequestId(),
+): Promise<{ run: DungeonRunSnapshot; combatState: unknown }> {
+  return withDungeonEntryTimeout(saveDungeonRunState(run, combatState, requestId), "save");
+}
+
 export async function snapshotDungeonRunEffects(runId: string, snapshot: unknown): Promise<void> {
   const { error } = await requireClient().rpc("snapshot_dungeon_run_effects", { p_run_id: runId, p_snapshot: snapshot });
   if (error) throw error;
+}
+
+export async function snapshotDungeonRunEffectsWithRecovery(
+  runId: string,
+  snapshot: unknown,
+  onAttempt?: (attempt: DungeonEntryAttempt) => void,
+): Promise<unknown> {
+  const maxAttempts = 3;
+  let lastError: unknown = new Error("Dungeon effect snapshot failed.");
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    onAttempt?.({ phase: attempt === 1 ? "confirming" : "recovering", attempt, maxAttempts });
+    if (attempt > 1) await dungeonEntryDelay(250 * 2 ** (attempt - 2));
+    try {
+      await withDungeonEntryTimeout(snapshotDungeonRunEffects(runId, snapshot), "effects");
+      return snapshot;
+    } catch (error) {
+      lastError = error;
+      const active = await activeDungeonRunForRecovery();
+      if (active?.run.id === runId && active.effectSnapshot != null) {
+        // A previous request may have committed a different client snapshot
+        // before its response was lost. The server snapshot is authoritative;
+        // adopting it keeps the run resumable without overwriting it.
+        return active.effectSnapshot;
+      }
+      if (!isRetryableDungeonEntryError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+    }
+  }
+  throw lastError;
 }
 
 export async function resolveDungeonRun(runId: string): Promise<void> {
@@ -1047,21 +1518,99 @@ export async function resolveDungeonRun(runId: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function trackCollectibleChallenge(challengeId: string): Promise<CollectiblePlayerSnapshot> {
-  const { error } = await requireClient().rpc("track_collectible_challenge", { p_challenge_id: challengeId });
-  if (error) throw error;
-  return getCollectiblePlayerSnapshot();
+export function resolveDungeonRunWithTimeout(runId: string): Promise<void> {
+  return withDungeonEntryTimeout(resolveDungeonRun(runId), "abandon");
 }
 
-export async function untrackCollectibleChallenge(challengeId: string): Promise<CollectiblePlayerSnapshot> {
-  const { error } = await requireClient().rpc("untrack_collectible_challenge", { p_challenge_id: challengeId });
+export async function trackCollectibleChallenge(challengeId: string): Promise<void> {
+  if (localCatalogPreview) {
+    const catalog = await loadCatalog();
+    const challenge = catalog.collectibleUnlockChallenges.find((row) => row.id === challengeId);
+    if (!challenge || !isTrackableChallenge(challenge, catalog.unlockChallengeTemplates)) {
+      throw new Error("LOCAL_PREVIEW_CHALLENGE_NOT_TRACKABLE");
+    }
+    writeLocalChallengeState(trackLocalChallenge(readLocalChallengeState(), challenge));
+    return;
+  }
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("track_collectible_challenge_v2", { p_challenge_id: challengeId });
+    return;
+  }
+  const { error } = await enqueuePlayerMutation(`rpc:track_collectible_challenge:${challengeId}`, async () => requireClient().rpc("track_collectible_challenge", { p_challenge_id: challengeId }));
   if (error) throw error;
-  return getCollectiblePlayerSnapshot();
+}
+
+export async function untrackCollectibleChallenge(challengeId: string): Promise<void> {
+  if (localCatalogPreview) {
+    writeLocalChallengeState(untrackLocalChallenge(readLocalChallengeState(), challengeId));
+    return;
+  }
+  if (activeGameplaySessionId && latestPlayerStateRevision !== null) {
+    await callVersionedPlayerMutationRpc("untrack_collectible_challenge_v2", { p_challenge_id: challengeId });
+    return;
+  }
+  const { error } = await enqueuePlayerMutation(`rpc:untrack_collectible_challenge:${challengeId}`, async () => requireClient().rpc("untrack_collectible_challenge", { p_challenge_id: challengeId }));
+  if (error) throw error;
 }
 
 export async function acknowledgeCollectibleUnlockEvent(eventId: string): Promise<void> {
   const { error } = await requireClient().rpc("acknowledge_collectible_unlock_event", { p_event_id: eventId });
   if (error) throw error;
+}
+
+async function getShopPurchaseReceipt(requestId: string): Promise<ShopPurchaseReceipt | null> {
+  const { data, error } = await requireClient().rpc("get_shop_purchase_receipt", { p_request_id: requestId });
+  if (error) throw error;
+  return data ? data as ShopPurchaseReceipt : null;
+}
+
+function waitForShopPurchaseConfirmation(delayMs: number): Promise<void> {
+  return delayMs > 0 ? new Promise((resolve) => window.setTimeout(resolve, delayMs)) : Promise.resolve();
+}
+
+async function recoverAmbiguousShopPurchase(
+  entryId: string,
+  requestId: string,
+  quantity: number,
+  firstError: unknown,
+): Promise<ShopPurchaseReceipt> {
+  const client = requireClient();
+  // The first lookup is immediate. If the transaction is still in flight, one
+  // replay with the same idempotency key is safe; later passes only look up the
+  // exact receipt. The full window stays bounded so the UI can honestly move
+  // into a durable pending state instead of claiming failure.
+  const confirmationDelays = [0, 250, 750, 1500, 2500, 3500, 750];
+  let lastError: unknown = firstError;
+  for (let index = 0; index < confirmationDelays.length; index += 1) {
+    await waitForShopPurchaseConfirmation(confirmationDelays[index]);
+    if (index === 1) {
+      const retried = await client.rpc("purchase_shop_entry", {
+        p_entry_id: entryId,
+        p_request_id: requestId,
+        p_quantity: quantity,
+      });
+      if (!retried.error) return retried.data as ShopPurchaseReceipt;
+      lastError = retried.error;
+      if (!isAmbiguousShopPurchaseError(retried.error)) {
+        try {
+          const recovered = await getShopPurchaseReceipt(requestId);
+          if (recovered) return recovered;
+        } catch (receiptError) {
+          lastError = receiptError;
+        }
+        throw retried.error;
+      }
+    }
+    try {
+      const receipt = await getShopPurchaseReceipt(requestId);
+      if (receipt) return receipt;
+    } catch (receiptError) {
+      lastError = receiptError;
+    }
+  }
+  const pending = pendingShopPurchaseError(requestId);
+  Object.assign(pending, { cause: lastError });
+  throw pending;
 }
 
 export async function purchaseShopEntry(entryId: string, requestId: string, quantity = 1): Promise<ShopPurchaseReceipt> {
@@ -1075,6 +1624,9 @@ export async function purchaseShopEntry(entryId: string, requestId: string, quan
     p_quantity: quantity,
   });
   const errorDisposition = shopPurchaseRpcErrorDisposition(error, quantity);
+  if (error && isAmbiguousShopPurchaseError(error)) {
+    return recoverAmbiguousShopPurchase(entryId, requestId, quantity, error);
+  }
   if (errorDisposition === "throw") throw error;
   if (errorDisposition === "legacy") {
     const purchaseLegacyUnit = async (unitRequestId: string): Promise<ShopPurchaseReceipt> => {
@@ -1145,12 +1697,14 @@ export async function purchaseShopEntries(purchases: ShopPurchaseIntent[]): Prom
 }
 
 export async function openLootbox(lootboxId: string, requestId: string): Promise<LootboxOpeningReceipt> {
-  const { data, error } = await requireClient().rpc("open_lootbox", {
-    p_lootbox_id: lootboxId,
-    p_request_id: requestId,
-  });
-  if (error) throw error;
-  return data as LootboxOpeningReceipt;
+  return recoverLootboxOpening(async (requestedLootboxId, requestedRequestId) => {
+    const { data, error } = await requireClient().rpc("open_lootbox", {
+      p_lootbox_id: requestedLootboxId,
+      p_request_id: requestedRequestId,
+    });
+    if (error) throw error;
+    return data as LootboxOpeningReceipt;
+  }, lootboxId, requestId);
 }
 
 function normalizePromoCodeReward(value: unknown): PromoCodeReward {
@@ -1208,6 +1762,20 @@ export async function submitCollectibleCombatEvents(
   events: CombatProgressEvent[],
 ): Promise<CollectiblePlayerSnapshot> {
   if (events.length === 0) return getCollectiblePlayerSnapshot();
+  if (localCatalogPreview) {
+    const [catalog, serverSnapshot] = await Promise.all([
+      loadCatalog(),
+      getServerCollectiblePlayerSnapshot(),
+    ]);
+    const nextState = applyLocalChallengeEvents(
+      readLocalChallengeState(),
+      catalog.collectibleUnlockChallenges,
+      events,
+      catalog.dungeons,
+    );
+    writeLocalChallengeState(nextState);
+    return mergeLocalChallengeSnapshot(serverSnapshot, nextState);
+  }
   const { data, error } = await requireClient().rpc("submit_collectible_combat_events", {
     p_run_id: runId,
     p_turn_number: turnNumber,

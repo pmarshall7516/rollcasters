@@ -318,7 +318,7 @@ try {
   })));
   check(
     rewardImages.length === 3
-      && rewardImages.every((image) => image.complete && image.naturalWidth > 0 && image.src.includes("/game-releases/game-assets/")),
+      && rewardImages.every((image) => image.complete && image.naturalWidth > 0 && image.src.includes("/game-assets/") && !image.src.includes("supabase.co/storage/v1")),
     `Every Promo reward sprite must load from an optimized release variant: ${JSON.stringify(rewardImages)}.`,
   );
   check(

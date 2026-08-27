@@ -11,8 +11,9 @@ check(appSource.includes("combatLoadingNarration"),
   "CombatScreen must use the shared loading narration for result recording.");
 check(/submittingProgress\s*\|\|\s*recordingResult/.test(appSource),
   "Combat narration loading must cover both submitted turns and encounter-result recording.");
-check(appSource.includes("useLayoutEffect(() => {\n    if (combat.phase !== \"battle_result\" || recordingResult) return;"),
-  "Result loading must be established before the post-knockout frame can paint.");
+check(appSource.includes("if (combat.phase !== \"battle_result\")")
+  && appSource.includes("if (recordingResult) return;\n    const requestId = resultRequestIdRef.current ?? createRequestId();"),
+  "Result loading must be established before the post-knockout frame can paint and retries must keep one request ID.");
 check(!appSource.includes("sectionRef.current?.scrollIntoView"),
   "Completion XP reveal must not scroll the combat shell during the KO transition.");
 check(appSource.includes('aria-label={loadingNarration ? (recordingResult ? "Waiting for encounter results" : "Loading") :'),

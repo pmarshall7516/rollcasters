@@ -1,5 +1,5 @@
 import { critterElementIds } from "./game.js";
-import { collectibleIsUnlocked, safeBigInt } from "./collectibles.js";
+import { collectibleIsUnlocked, safeBigInt, TRACKED_CHALLENGE_TYPES } from "./collectibles.js";
 import { collectionDiversityProgress } from "./collection-diversity.js";
 import { maximumDistinctElementMatches } from "./element-matching.js";
 import type {
@@ -52,14 +52,6 @@ export type ChallengeEvent = {
   payload?: Record<string, unknown>;
 };
 
-const trackedTypes = new Set([
-  "knock_out_critters", "deal_damage", "take_damage", "use_skill",
-  "squad_composition", "dungeon_clear", "resource_spending",
-  "swap_action", "block_action", "dice_roll",
-  "heal_hp", "afflict_status", "stun_activation",
-  "shields_shattered",
-]);
-
 function parametersOf(challenge: CollectibleUnlockChallenge): Record<string, unknown> {
   if (challenge.parameters && typeof challenge.parameters === "object") return challenge.parameters;
   return {
@@ -96,6 +88,10 @@ function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: Chal
   const payload = event.payload ?? {};
   const sourceElements = event.sourceElementIds ?? stringArray(payload.source_element_ids);
   const targetElements = event.targetElementIds ?? stringArray(payload.target_element_ids);
+  const targetCritterIds = [
+    ...(event.targetCritterId ? [event.targetCritterId] : []),
+    ...stringArray(payload.target_critter_ids),
+  ];
   const sourceTags = eventArray(event, "sourceCritterTagIds", "source_critter_tag_ids");
   const targetTags = eventArray(event, "targetCritterTagIds", "target_critter_tag_ids");
   const skillTags = eventArray(event, "skillTagIds", "skill_tag_ids");
@@ -104,7 +100,7 @@ function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: Chal
   if (!matchesAnyFilter(p.source_element_ids, sourceElements)) return false;
   if (!matchesAnyFilter(p.source_critter_tag_ids, sourceTags)) return false;
   if (!matchesAnyFilter(p.source_skill_tag_ids, skillTags)) return false;
-  if (!matchesAnyFilter(p.target_critter_ids, event.targetCritterId)) return false;
+  if (!matchesAnyFilter(p.target_critter_ids, targetCritterIds)) return false;
   if (!matchesAnyFilter(p.target_element_ids, targetElements)) return false;
   if (!matchesAnyFilter(p.target_critter_tag_ids, targetTags)) return false;
   if (challenge.challenge_type === "use_skill") {
@@ -179,7 +175,11 @@ function compare(value: number, operator: string, target: number): boolean {
   return false;
 }
 
-export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): number {
+export function challengeEventIncrement(
+  challenge: CollectibleUnlockChallenge,
+  event: ChallengeEvent,
+  dungeonOrders?: ReadonlyMap<string, number>,
+): number {
   const type = challenge.challenge_type;
   const p = parametersOf(challenge);
   const expectedType = type === "squad_composition"
@@ -266,35 +266,60 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
   if (type === "swap_action") {
     const payload = event.payload ?? {};
     if (!includesOrAny(stringArray(p.dungeon_ids), event.dungeonId ?? String(payload.dungeon_id ?? ""))) return 0;
-    if (!includesOrAny(stringArray(p.critter_ids), event.sourceCritterId ?? String(payload.incoming_critter_id ?? ""))) return 0;
-    const sourceElements = event.sourceElementIds ?? stringArray(payload.source_element_ids ?? payload.incoming_element_ids);
-    if (!includesOrAny(stringArray(p.element_ids), sourceElements[0])) return 0;
+    const incomingCritterId = event.targetCritterId ?? String(payload.incoming_critter_id ?? "");
+    if (!includesOrAny(stringArray(p.critter_ids), incomingCritterId)) return 0;
+    const incomingElements = event.targetElementIds ?? stringArray(payload.target_element_ids ?? payload.incoming_element_ids);
+    if (!matchesAnyFilter(p.element_ids, incomingElements)) return 0;
     const action = String(p.tracked_action);
     if (action === "unique_critters_swapped_in") return payload.unique === true ? 1 : 0;
     if (action === "damage_avoided_by_swap") return Math.max(0, Math.floor(Number(payload.damage_avoided ?? event.amount ?? 0)));
-    return action === "knockout_after_swap" ? (payload.knockout_after_swap === true ? 1 : 0) : 1;
+    if (action === "knockout_after_swap") {
+      const allowedTurns = Number(p.allowed_turns_after_swap ?? Infinity);
+      const turnsSinceSwap = Number(payload.turns_since_swap ?? Infinity);
+      return payload.knockout_after_swap === true && turnsSinceSwap <= allowedTurns ? 1 : 0;
+    }
+    return 1;
   }
 
   if (type === "block_action") {
-    if (!includesOrAny(stringArray(p.dungeon_ids), event.dungeonId)) return 0;
+    const payload = event.payload ?? {};
+    if (!includesOrAny(stringArray(p.dungeon_ids), event.dungeonId ?? String(payload.dungeon_id ?? ""))) return 0;
     if (!includesOrAny(stringArray(p.critter_ids), event.sourceCritterId)) return 0;
-    if (!includesOrAny(stringArray(p.enemy_critter_ids), event.targetCritterId)) return 0;
+    if (!matchesAnyFilter(p.element_ids, event.sourceElementIds ?? stringArray(payload.source_element_ids))) return 0;
+    const enemyCritterIds = [
+      ...(event.targetCritterId ? [event.targetCritterId] : []),
+      ...stringArray(payload.target_critter_ids),
+    ];
+    if (!matchesAnyFilter(p.enemy_critter_ids, enemyCritterIds)) return 0;
+    if (!matchesAnyFilter(p.enemy_element_ids, event.targetElementIds ?? stringArray(payload.target_element_ids))) return 0;
     const action = String(p.tracked_action);
-    if (action === "damage_prevented") return Math.max(0, Math.floor(Number(event.payload?.damage_prevented ?? event.amount ?? 0)));
-    if (action === "attacks_fully_blocked") return event.payload?.fully_blocked === true ? 1 : 0;
-    if (action === "survived_attack_after_block") return event.payload?.survived === true ? 1 : 0;
-    return 1;
+    if (action === "damage_prevented") {
+      if (payload.damage_prevented === undefined && payload.block_action === true) return 0;
+      return Math.max(0, Math.floor(Number(payload.damage_prevented ?? event.amount ?? 0)));
+    }
+    if (action === "attacks_fully_blocked") return payload.fully_blocked === true ? 1 : 0;
+    if (action === "survived_attack_after_block") return payload.survived === true ? 1 : 0;
+    if (action === "blocks_performed") {
+      if (payload.damage_prevented !== undefined || payload.fully_blocked !== undefined || payload.survived !== undefined) return 0;
+      return payload.blocks_performed === true || payload.blocks_performed === 1 || payload.blocks_performed === undefined ? 1 : 0;
+    }
+    return 0;
   }
 
   if (type === "dice_roll") {
     const payload = event.payload ?? {};
     if (!includesOrAny(stringArray(p.die_types), String(payload.die_type ?? ""))) return 0;
-    if (!includesOrAny(stringArray(p.ability_ids), event.abilityId)) return 0;
+    if (!includesOrAny(stringArray(p.ability_ids), event.abilityId ?? String(payload.ability_id ?? ""))
+      && !matchesAnyFilter(p.ability_ids, stringArray(payload.ability_ids))) return 0;
     if (!includesOrAny(stringArray(p.critter_ids), event.sourceCritterId)) return 0;
+    if (!includesOrAny(stringArray(p.rollcaster_ids), event.rollcasterId ?? String(payload.rollcaster_id ?? ""))) return 0;
+    if (!includesOrAny(stringArray(p.dungeon_ids), event.dungeonId ?? String(payload.dungeon_id ?? ""))) return 0;
     const resultType = String(p.tracked_result);
+    if (resultType === "turn_mana_total" && payload.turn_mana_total_event === false) return 0;
+    const includeModifiers = p.include_modifiers !== false;
     const value = resultType === "turn_mana_total"
       ? Number(payload.turn_mana_total ?? event.amount ?? 0)
-      : Number(payload.modified_value ?? payload.natural_value ?? event.amount ?? 0);
+      : Number((includeModifiers ? payload.modified_value : payload.natural_value) ?? event.amount ?? 0);
     if (resultType === "matching_dice" && Number(payload.matching_count ?? 0) < Number(p.target_value ?? 0)) return 0;
     if (resultType === "maximum_die_result" && Number(payload.natural_value) !== Number(payload.natural_maximum)) return 0;
     return compare(value, String(p.comparison ?? "equal"), Number(p.target_value ?? 0)) ? 1 : 0;
@@ -329,7 +354,16 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
     if (selected === "specific_dungeon" && !dungeonIds.includes(dungeonId)) return 0;
     if (selected === "dungeon_id_range") {
       const order = Number(event.payload?.dungeon_order ?? NaN);
-      if (!Number.isFinite(order) || order < Number(p.minimum_dungeon_order ?? -Infinity) || order > Number(p.maximum_dungeon_order ?? Infinity)) return 0;
+      const minimumId = stringArray(p.minimum_dungeon_ids)[0];
+      const maximumId = stringArray(p.maximum_dungeon_ids)[0];
+      const minimumOrder = p.minimum_dungeon_order != null
+        ? Number(p.minimum_dungeon_order)
+        : dungeonOrders?.get(minimumId ?? "") ?? NaN;
+      const maximumOrder = p.maximum_dungeon_order != null
+        ? Number(p.maximum_dungeon_order)
+        : dungeonOrders?.get(maximumId ?? "") ?? NaN;
+      if (!Number.isFinite(order) || !Number.isFinite(minimumOrder) || !Number.isFinite(maximumOrder)
+        || order < minimumOrder || order > maximumOrder) return 0;
     }
     if (p.require_relic_activation === true && event.payload?.required_relics_activated !== true) return 0;
     return 1;
@@ -371,9 +405,9 @@ export function derivedChallengeProgress(data: AppData, challenge: CollectibleUn
     if (category === "rollcaster") return BigInt(player.rollcasters.filter((owned) => collectibleIsUnlocked(data, "rollcaster", owned.rollcaster_id) && (ids.length === 0 || ids.includes(owned.rollcaster_id))).length);
     const rows = player.relicInventory.filter((owned) => collectibleIsUnlocked(data, "relic", owned.relic_id) && (ids.length === 0 || ids.includes(owned.relic_id)) && owned.discovered_at !== null);
     const specificMode = String(p.specific_collectible_mode ?? "");
-    return BigInt((ids.length > 0 && ["all", "count"].includes(specificMode)) || p.require_unique_collectibles !== false
-      ? rows.filter((row) => row.quantity > 0).length
-      : rows.reduce((sum, row) => sum + row.quantity, 0));
+    return BigInt(specificMode === "quantity" || p.require_unique_collectibles === false
+      ? rows.reduce((sum, row) => sum + row.quantity, 0)
+      : rows.length);
   }
   if (challenge.challenge_type === "collection_diversity") {
     return collectionDiversityProgress(
@@ -387,7 +421,7 @@ export function derivedChallengeProgress(data: AppData, challenge: CollectibleUn
 }
 
 export function isTrackedChallengeType(challenge: CollectibleUnlockChallenge): boolean {
-  return trackedTypes.has(challenge.challenge_type)
+  return TRACKED_CHALLENGE_TYPES.has(challenge.challenge_type)
     && parametersOf(challenge).tracking_required !== false;
 }
 

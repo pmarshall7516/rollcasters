@@ -21,8 +21,10 @@ import {
   rollManaDie,
   resolveCombatActions,
   MULTI_TARGET_DAMAGE_MULTIPLIER,
+  MAX_STATUSES_PER_CRITTER,
   skillTargets,
   skillAvailability,
+  splitCombatNarration,
 } from "../src/lib/game.js";
 import {
   advanceDungeonEvent,
@@ -39,6 +41,7 @@ import {
   type DungeonRunState,
 } from "../src/lib/dungeon-run.js";
 import { battlefieldSlotsForCount, effectiveDungeon, parseBattleFormat, sortDungeonsNaturally } from "../src/lib/dungeons.js";
+import { applyDungeonXpRewards } from "../src/lib/progression.js";
 import type { BattleFormat, Catalog, CombatAction, DungeonOpponent, DungeonRunSnapshot, EffectOwnerType, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -241,6 +244,42 @@ check(eventResult.turnEvents.some((event) => event.event_type === "resource_spen
 check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0 && event.payload?.hp_damage === event.amount && event.payload?.shield_damage === 0), "Unshielded player damage must emit HP-only normalized damage components.");
 check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
+check(eventResult.turnEvents.every((event) => event.payload?.dungeon_id === "d" && event.payload?.battle_id === "progress-events" && event.payload?.rollcaster_id === "rc"), "Combat progress events must carry the active Dungeon, battle, and Rollcaster context.");
+const multiTargetResult = takeTurn(
+  { ...battle(eventCatalog, makePlayer(), "multi-target-progress-events"), opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }],
+);
+const multiTargetSkillEvent = multiTargetResult.turnEvents.find((event) => event.event_type === "skill_resolved" && event.skill_id === "wave");
+check(
+  Array.isArray(multiTargetSkillEvent?.payload?.target_critter_ids)
+    && multiTargetSkillEvent.payload.target_critter_ids.length === 2
+    && multiTargetSkillEvent.payload.target_critter_ids.includes("o1")
+    && multiTargetSkillEvent.payload.target_critter_ids.includes("o2"),
+  "Multi-target Skill progress events must expose every resolved target for challenge filters.",
+);
+const blockContextBase = battle(eventCatalog, makePlayer(), "block-context-progress-events");
+const blockContextState = resolveCombatActions(
+  {
+    ...startTurn({ ...blockContextBase, phase: "ready" }),
+    phase: "selecting",
+    playerMana: 50,
+    opponentMana: 50,
+    opponentUnits: blockContextBase.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, skills: [eventCatalog.skills[0]] } : unit),
+  },
+  [{ actorKey: "p1", type: "block", cost: 0 }],
+  [{ actorKey: "o1", type: "skill", skillId: "strike", targetKey: "p1", cost: 0 }],
+);
+check(
+  blockContextState.turnEvents.some((event) => event.event_type === "block_completed"
+    && event.payload?.block_action === true
+    && event.target_critter_id === "o1"
+    && Array.isArray(event.payload?.target_element_ids)
+    && event.payload.target_element_ids.includes("basic")),
+  "Successful Block action events must be enriched with the enemy that the Block prevented damage from.",
+);
+const diceEventState = startTurn({ ...battle(eventCatalog, makePlayer(), "dice-progress-events"), phase: "ready" });
+const diceEvents = diceEventState.turnEvents.filter((event) => event.event_type === "dice_resolved");
+check(diceEvents.length > 0 && diceEvents.filter((event) => event.payload?.turn_mana_total_event === true).length === 1 && diceEvents.every((event) => typeof event.payload?.matching_count === "number" && event.payload?.dungeon_id === "d" && event.payload?.rollcaster_id === "rc"), "Dice progress events must carry matching-dice context and mark exactly one committed Turn Mana total.");
 const statusBattle = battle(eventCatalog, makePlayer(), "status-progress-events");
 const statusTarget = statusBattle.opponentUnits[0];
 const statusResult = takeTurn(statusBattle, [{ actorKey: statusBattle.playerUnits[0].key, type: "skill", skillId: "mark", targetKey: statusTarget.key, cost: 1 }]);
@@ -1274,21 +1313,45 @@ check(
   firstClearDungeon.mode === "boss"
     && firstClearDungeon.logoPath === "boss.png"
     && firstClearDungeon.battleCount === 2
-    && firstClearDungeon.difficulty === 7,
-  "An uncleared Boss Dungeon must derive its lineup, count, logo, and average difficulty from ordered Boss rows.",
+    && firstClearDungeon.difficulty === 12
+    && !firstClearDungeon.encounterPoolRevealed,
+  "An uncleared Boss Dungeon must derive its lineup, count, logo, and maximum difficulty from ordered Boss rows while hiding its encounter identities.",
 );
 const repeatDungeon = effectiveDungeon(
   bossDungeon,
   bossOpponents,
   { ...bossProgress, completed_at: "now", clear_count: 1 },
-  makePlayer(),
+  { ...makePlayer(), dungeonRunHistory: [{ dungeon_id: "boss", status: "won" }] },
 );
 check(
   repeatDungeon.mode === "regular"
     && repeatDungeon.logoPath === "regular.png"
     && repeatDungeon.battleCount === 4
-    && repeatDungeon.difficulty === 7,
-  "A cleared Boss Dungeon must switch to its authored regular pool while preserving authored Battle Count.",
+    && repeatDungeon.difficulty === 9
+    && repeatDungeon.encounterPoolRevealed,
+  "A cleared Boss Dungeon must switch to its authored regular pool, use its maximum difficulty, and reveal identities after a completed run.",
+);
+const lostDungeon = effectiveDungeon(
+  bossDungeon,
+  bossOpponents,
+  bossProgress,
+  { ...makePlayer(), dungeonRunHistory: [{ dungeon_id: "boss", status: "lost" }] },
+);
+check(
+  lostDungeon.encounterPoolRevealed
+    && !effectiveDungeon(
+    bossDungeon,
+    bossOpponents,
+    bossProgress,
+    { ...makePlayer(), dungeonRunHistory: [{ dungeon_id: "boss", status: "abandoned" }] },
+  ).encounterPoolRevealed
+    && !effectiveDungeon(
+      bossDungeon,
+      bossOpponents,
+      { ...bossProgress, is_unlocked: false },
+      { ...makePlayer(), dungeonRunHistory: [{ dungeon_id: "boss", status: "lost" }] },
+    ).encounterPoolRevealed,
+  "Abandoned runs and locked Dungeons must not reveal encounter identities.",
 );
 
 check(
@@ -1801,6 +1864,65 @@ check(
     && carriedDungeon.battle.playerUnits.find((unit) => unit.key === "p1")?.stats.atk === 33,
   "Dungeon encounters must carry surviving finite and indefinite Statuses, their current HP, and their attached modifiers into the next encounter.",
 );
+
+const levelUpCatalog = structuredClone(mechCoreCatalog);
+levelUpCatalog.critterProgression = [
+  {
+    critter_id: "p1", level: 1, total_required_xp: 0, grant_skill_points: 0,
+    hp_delta: 0, atk_delta: 0, def_delta: 0, spd_delta: 0, dice_min_delta: 0, dice_max_delta: 0,
+    block_cost_delta: 0, swap_cost_delta: 0, total_unlocked_relic_slots: 1,
+  },
+  {
+    critter_id: "p1", level: 2, total_required_xp: 100, grant_skill_points: 1,
+    hp_delta: 25, atk_delta: 3, def_delta: 2, spd_delta: 1, dice_min_delta: 0, dice_max_delta: 1,
+    block_cost_delta: 0, swap_cost_delta: 0, total_unlocked_relic_slots: 1,
+  },
+];
+const levelUpPlayer = makePlayer();
+levelUpPlayer.critters = levelUpPlayer.critters.map((owned) => owned.id === "up1" ? { ...owned, xp: 90 } : owned);
+const levelUpRun = {
+  ...mechRun,
+  id: "level-up-run",
+  battleCount: 2,
+  selectedOpponents: mechRun.selectedOpponents.map((opponent) => ({ ...opponent, battleIndex: 0 })),
+};
+const levelUpState = createDungeonRunState(levelUpCatalog, levelUpPlayer, levelUpCatalog.dungeons[0], levelUpRun);
+const levelUpStateWithDamage = {
+  ...levelUpState,
+  battle: {
+    ...levelUpState.battle,
+    playerUnits: levelUpState.battle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 77 } : unit),
+  },
+};
+const levelUpPlayerAfterRewards = applyDungeonXpRewards(
+  levelUpPlayer,
+  { critterXp: { up1: 10 }, rollcasterXp: 0 },
+  levelUpCatalog.critterProgression,
+  levelUpCatalog.rollcasterProgression,
+);
+const levelUpNextRun = {
+  ...levelUpRun,
+  battleIndex: 1,
+  selectedOpponents: levelUpRun.selectedOpponents.map((opponent) => ({ ...opponent, battleIndex: 1 })),
+};
+const levelUpNextEncounter = applyDungeonBattleResult(
+  levelUpStateWithDamage,
+  {
+    run: levelUpNextRun,
+    battleRewards: { entries: [], defeatedOpponentInstanceIds: [], critterXp: { up1: 10 }, rollcasterXp: 0 },
+  },
+  levelUpCatalog,
+  levelUpPlayerAfterRewards,
+);
+const leveledUnit = levelUpNextEncounter.battle.playerUnits.find((unit) => unit.key === "p1");
+check(
+  leveledUnit?.level === 2
+    && leveledUnit.baseStats.hp === 125
+    && leveledUnit.stats.hp === 125
+    && leveledUnit.maxHp === 125
+    && leveledUnit.hp === 77,
+  "A Critter that levels up after an encounter must keep its new level and level-derived base stats in the next encounter while preserving current HP.",
+);
 const enemyDefeatedDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "defeat" as const };
 check(currentDungeonDialogue(enemyDefeatedDialogue)?.line === "This is not over." && continueDungeonDialogue(enemyDefeatedDialogue).phase === "battle_result", "A user victory must show the enemy Defeat line before encounter results.");
 const enemyVictoryDialogue = { ...confirmedMechDungeon, phase: "outcome_dialogue" as const, dialogueMoment: "victory" as const };
@@ -1817,6 +1939,50 @@ const noOutcomeDialogue = {
   },
 };
 check(outcomePhaseForBattle(noOutcomeDialogue, "defeat").phase === "battle_result", "An encounter without authored outcome dialogue must skip the extra Continue step.");
+const terminalOutcomeBattle = {
+  ...confirmedMechDungeon.battle,
+  opponentUnits: confirmedMechDungeon.battle.opponentUnits.map((unit) => ({ ...unit, hp: 0 })),
+};
+const terminalOutcomeDialogue = advanceDungeonEvent({
+  ...confirmedMechDungeon,
+  phase: "event_playback",
+  battle: confirmedMechDungeon.battle,
+  pendingBattle: terminalOutcomeBattle,
+  events: [{
+    id: "terminal-outcome",
+    turn: 1,
+    phase: "resolution",
+    message: "The enemy Opponent One took 100 damage.",
+    requiresAdvance: true,
+    kind: "damage",
+    actorKey: "p1",
+    targetKeys: ["o1"],
+    hpChanges: [],
+  }],
+  eventCursor: 0,
+});
+check(
+  terminalOutcomeDialogue.phase === "outcome_dialogue"
+    && currentDungeonDialogue(terminalOutcomeDialogue)?.line === "This is not over."
+    && continueDungeonDialogue(terminalOutcomeDialogue).phase === "battle_result",
+  "A terminal encounter must show the enemy Defeat line before exposing the battle result.",
+);
+const terminalBattleResult = applyDungeonBattleResult(
+  continueDungeonDialogue(terminalOutcomeDialogue),
+  {
+    run: { ...mechRun, status: "won" },
+    battleRewards: { entries: [], defeatedOpponentInstanceIds: ["mech-opponent-0"], critterXp: { p1: 10 }, rollcasterXp: 5 },
+    dungeonRewards: { entries: [], defeatedOpponentInstanceIds: [], critterXp: {}, rollcasterXp: 0 },
+  },
+  mechCoreCatalog,
+  mechCorePlayer,
+);
+check(
+  terminalBattleResult.phase === "dungeon_complete"
+    && terminalBattleResult.lastBattleRewards?.critterXp.p1 === 10
+    && terminalBattleResult.lastBattleRewards?.rollcasterXp === 5,
+  "After terminal outcome narration, the saved battle result must advance to the dungeon completion rewards screen.",
+);
 const opponentReserve = { ...confirmedMechDungeon.battle.opponentUnits[1], key: "opponent-reserve", active: false, battlefieldSlot: null };
 const opponentAfterKnockout = confirmedMechDungeon.battle.opponentUnits
   .map((unit, index) => index === 0 ? { ...unit, hp: 0 } : unit)
@@ -2326,6 +2492,93 @@ check(
   "A knocked-out opponent must emit exactly one normalized knockout progress event.",
 );
 
+const terminalTurnCatalog = makeCatalog();
+terminalTurnCatalog.dungeons[0] = {
+  ...terminalTurnCatalog.dungeons[0],
+  battle_format: "2v1",
+  player_active_count: 2,
+  opponent_active_count: 1,
+};
+terminalTurnCatalog.dungeonOpponents = [
+  { ...terminalTurnCatalog.dungeonOpponents[0], skill_ids: ["strike"] },
+];
+terminalTurnCatalog.effectsBySkill.strike = [
+  effect("skill", "strike", "after-lethal", "apply_status", { status_id: "finite", chance: 1, target: "self", indefinite: true }),
+];
+const terminalBattle = createInitialCombatState(
+  terminalTurnCatalog,
+  makePlayer(),
+  terminalTurnCatalog.dungeons[0],
+  "terminal-turn",
+);
+const terminalStart = startTurn({
+  ...terminalBattle,
+  opponentUnits: terminalBattle.opponentUnits.map((unit) => ({ ...unit, hp: 1 })),
+  phase: "ready",
+});
+const terminalResolved = resolveCombatActions(
+  { ...terminalStart, phase: "selecting", playerMana: 50, opponentMana: 50 },
+  [
+    { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 },
+    { actorKey: "p2", type: "skill", skillId: "ritual", cost: 0 },
+  ],
+  [{ actorKey: "o1", type: "skill", skillId: "strike", targetKey: "p1", cost: 0 }],
+);
+const terminalSkillMessages = terminalResolved.presentationEvents
+  .filter((event) => event.kind === "skill")
+  .map((event) => event.message);
+check(
+  terminalResolved.phase === "won"
+    && terminalResolved.playerUnits.find((unit) => unit.key === "p1")?.hp === terminalStart.playerUnits.find((unit) => unit.key === "p1")?.hp
+    && terminalResolved.statuses.some((status) => status.statusId === "finite" && status.holderKey === "p1")
+    && terminalSkillMessages.some((message) => message === "Your Player One used Strike!")
+    && !terminalSkillMessages.some((message) => message === "Your Player Two used Ritual!")
+    && !terminalSkillMessages.some((message) => message === "The enemy Opponent One used Strike!"),
+  `A final Critter knockout must resolve the lethal Skill's effects, then skip later actions in the turn. Received: ${JSON.stringify(terminalSkillMessages)}`,
+);
+
+const playerTerminalCatalog = structuredClone(terminalTurnCatalog);
+playerTerminalCatalog.dungeons[0] = {
+  ...playerTerminalCatalog.dungeons[0],
+  battle_format: "2v2",
+  opponent_active_count: 2,
+};
+playerTerminalCatalog.dungeonOpponents = terminalTurnCatalog.dungeonOpponents.concat({
+  ...makeCatalog().dungeonOpponents[1],
+  skill_ids: ["ritual"],
+});
+const playerTerminalBattle = createInitialCombatState(
+  playerTerminalCatalog,
+  makePlayer(),
+  playerTerminalCatalog.dungeons[0],
+  "player-terminal-turn",
+);
+const playerTerminalStart = startTurn({
+  ...playerTerminalBattle,
+  playerUnits: playerTerminalBattle.playerUnits.map((unit) => (
+    unit.key === "p1" ? { ...unit, hp: 1 } : { ...unit, hp: 0 }
+  )),
+  phase: "ready",
+});
+const playerTerminalResolved = resolveCombatActions(
+  { ...playerTerminalStart, phase: "selecting", playerMana: 50, opponentMana: 50 },
+  [{ actorKey: "p1", type: "skip", cost: 0 }],
+  [
+    { actorKey: "o1", type: "skill", skillId: "strike", targetKey: "p1", cost: 0 },
+    { actorKey: "o2", type: "skill", skillId: "ritual", cost: 0 },
+  ],
+);
+const playerTerminalSkillMessages = playerTerminalResolved.presentationEvents
+  .filter((event) => event.kind === "skill")
+  .map((event) => event.message);
+check(
+  playerTerminalResolved.phase === "lost"
+    && playerTerminalResolved.statuses.some((status) => status.statusId === "finite" && status.holderKey === "o1")
+    && playerTerminalSkillMessages.includes("The enemy Opponent One used Strike!")
+    && !playerTerminalSkillMessages.includes("The enemy Opponent Two used Ritual!"),
+  `A final player Critter knockout must also stop later actions after the decisive Skill's effects. Received: ${JSON.stringify(playerTerminalSkillMessages)}`,
+);
+
 const debuffCatalog = makeCatalog();
 debuffCatalog.effectsBySkill.ritual = [
   effect("skill", "ritual", "menace", "stat_modifier", { stat: "def", value_mode: "percentage", amount: -0.2, chance: 1, target: "all_enemies" }),
@@ -2393,6 +2646,47 @@ indefiniteCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "indefinite
 const indefinite = takeTurn(battle(indefiniteCatalog, makePlayer(), "indefinite-status"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
 check(indefinite.statuses[0].duration === null, "Indefinite Status applications must not synthesize a Status-owned duration.");
 
+const statusLimitCatalog = makeCatalog();
+const extraStatusIds = ["status-four", "status-five", "status-six"];
+statusLimitCatalog.statuses.push(...extraStatusIds.map((id, index) => ({
+  id,
+  name: id.replace("status-", "Status ").replace(/^./, (letter) => letter.toUpperCase()),
+  description: `${id}.`,
+  asset_path: null,
+  sort_order: 10 + index,
+  version: 1,
+})));
+const statusLimitIds = ["finite", "aura", "stun", ...extraStatusIds];
+statusLimitCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "status-limit-application",
+  "apply_status",
+  { status_id: statusLimitIds[MAX_STATUSES_PER_CRITTER], chance: 1, target: "self", indefinite: true },
+)];
+let statusLimitState = battle(statusLimitCatalog, makePlayer(), "status-limit");
+for (const statusId of statusLimitIds.slice(0, MAX_STATUSES_PER_CRITTER)) statusLimitState = simApplyStatus(statusLimitState, statusId, "p1", null);
+check(
+  statusLimitState.statuses.filter((status) => status.holderKey === "p1").length === MAX_STATUSES_PER_CRITTER,
+  `A Critter must be able to carry exactly ${MAX_STATUSES_PER_CRITTER} simultaneous Statuses.`,
+);
+const rejectedLimitStatus = simApplyStatus(statusLimitState, statusLimitIds[MAX_STATUSES_PER_CRITTER]!, "p1", null);
+check(
+  rejectedLimitStatus.statuses.filter((status) => status.holderKey === "p1").length === MAX_STATUSES_PER_CRITTER,
+  `A sixth Status must be rejected when a Critter already has ${MAX_STATUSES_PER_CRITTER} Statuses.`,
+);
+const failedLimitSkill = takeTurn(statusLimitState, [{ actorKey: "p1", type: "skill", skillId: "mark", cost: 0 }]);
+const limitFailureNarrations = failedLimitSkill.presentationEvents.map((event) => event.message);
+check(
+  failedLimitSkill.statuses.filter((status) => status.holderKey === "p1").length === MAX_STATUSES_PER_CRITTER
+    && JSON.stringify(limitFailureNarrations.slice(-2)) === JSON.stringify([
+      `Your Player One already has the maximum of ${MAX_STATUSES_PER_CRITTER} statuses.`,
+      "Mark failed.",
+    ])
+    && !failedLimitSkill.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "mark"),
+  `A Skill that exceeds the Status limit must fail atomically with a clear limit message. Received: ${JSON.stringify(limitFailureNarrations)}`,
+);
+
 const selectedCatalog = makeCatalog();
 selectedCatalog.effectsBySkill.wave = [effect("skill", "wave", "target-status", "apply_status", { status_id: "finite", chance: 1, target: "target_enemies", indefinite: false, turns: 3 })];
 const selected = takeTurn(battle(selectedCatalog, makePlayer(), "target-enemies"), [{ actorKey: "p1", type: "skill", skillId: "wave", cost: 0 }]);
@@ -2447,13 +2741,16 @@ let duplicateSkillState = takeTurn(
 const duplicateTargetHp = duplicateSkillState.opponentUnits[0].hp;
 const duplicateDuration = duplicateSkillState.statuses.find((status) => status.statusId === "finite")?.duration;
 duplicateSkillState = takeTurn(startTurn(duplicateSkillState), [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 }], 50);
+const duplicateFailureNarrations = duplicateSkillState.presentationEvents
+  .filter((event) => event.message.includes("already afflicted with Finite") || event.message.includes("Strike failed"))
+  .map((event) => event.message);
 check(
-    duplicateSkillState.opponentUnits[0].hp === duplicateTargetHp
+  duplicateSkillState.opponentUnits[0].hp === duplicateTargetHp
     && duplicateSkillState.statuses.length === 1
     && duplicateSkillState.statuses[0].duration === Number(duplicateDuration) - 1
-    && duplicateSkillState.presentationEvents.some((event) => event.message.includes("already afflicted with Finite") && event.message.includes("Strike failed"))
+    && JSON.stringify(duplicateFailureNarrations) === JSON.stringify(["The enemy Opponent One is already afflicted with Finite.", "Strike failed."])
     && !duplicateSkillState.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "strike"),
-  "A Skill that cannot apply its duplicate Status must fail atomically without dealing damage or refreshing the Status.",
+  `A Skill that cannot apply its duplicate Status must fail atomically, with one sentence per narration step. Received: ${JSON.stringify(duplicateFailureNarrations)}`,
 );
 
 const freshDifferentStatusCatalog = makeCatalog();
@@ -2766,9 +3063,16 @@ incrementalStatusState = takeTurn(incrementalStatusState, [{ actorKey: "p1", typ
 incrementalStatusState = startTurn(incrementalStatusState);
 check(incrementalStatusState.playerUnits[0].stats.atk === 27, "Spacing 2 must apply an incremental Status Stat Modifier every other turn.");
 const incrementalTriggerEvent = incrementalStatusState.presentationEvents.find((event) => event.kind === "status" && event.message.includes("ATK"));
-const incrementalCountdownEvent = incrementalStatusState.presentationEvents.find((event) => event.kind === "status" && event.message.includes("turn") && event.message.includes("Aura"));
+const incrementalCountdownNarrations = incrementalStatusState.presentationEvents
+  .filter((event) => event.kind === "status" && (event.message.includes("affected by Aura") || event.message.toLowerCase().includes("turn")))
+  .map((event) => event.message);
 check(Boolean(incrementalTriggerEvent), "A start-of-turn Status stat change must emit a presentation event for text and animation playback.");
-check(Boolean(incrementalCountdownEvent), "A finite start-of-turn Status checkup must narrate its remaining duration.");
+check(
+  incrementalCountdownNarrations.length === 2
+    && incrementalCountdownNarrations[0]?.includes("affected by Aura.")
+    && incrementalCountdownNarrations[1] === "2 Turns remain.",
+  `A finite start-of-turn Status checkup must narrate its remaining duration as separate steps. Received: ${JSON.stringify(incrementalCountdownNarrations)}`,
+);
 check(
   incrementalStatusState.playerUnits[0].manaRoll > 0
     && Number(incrementalTriggerEvent?.state?.playerMana ?? 0) > 0,
@@ -2834,6 +3138,117 @@ allySkipCatalog.effectsByStatus.stun = [effect("status", "stun", "ally-skip", "s
 let allySkipped = takeTurn(battle(allySkipCatalog, makePlayer(), "ally-skip"), [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }], 10);
 allySkipped = takeTurn(allySkipped, [{ actorKey: "p2", type: "block", cost: 2 }], 10);
 check(allySkipped.playerMana === 8 && !allySkipped.playerUnits[1].blocking, "Status skip targeting must resolve holder-relative recipients, cancel Swap/Block/Skill, and retain the submitted Mana cost.");
+
+for (const [statusId, statusName] of [["paralysis", "Paralysis"], ["frostbite", "Frostbite"]] as const) {
+  const statusSkipCatalog = makeCatalog();
+  statusSkipCatalog.statuses.push({ id: statusId, name: statusName, description: `${statusName}.`, asset_path: null, sort_order: 10, version: 1 });
+  statusSkipCatalog.effectsByStatus[statusId] = [effect("status", statusId, `${statusId}-skip`, "skip_action_chance", { chance: 1, combat_action: "skill", target: "status_holder" })];
+  const afflicted = simApplyStatus(battle(statusSkipCatalog, makePlayer(), `${statusId}-skip`), statusId, "p1");
+  const statusSkipped = takeTurn(afflicted, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }], 10);
+  const skipNarration = statusSkipped.presentationEvents.at(-1)?.message;
+  check(skipNarration === `Your Player One could not move due to ${statusName}!`, `${statusName} action skips must use the Status name and explain that the Critter could not move.`);
+  check(!statusSkipped.presentationEvents.some((event) => /reserved mana|mana was lost/i.test(event.message)), `${statusName} action skips must not narrate reserved Mana as lost.`);
+}
+
+const sameTurnTimingCatalog = makeCatalog();
+sameTurnTimingCatalog.critters = sameTurnTimingCatalog.critters.map((critter) => (
+  critter.id === "p1" ? { ...critter, base_spd: 100 } : critter.id === "o1" ? { ...critter, base_spd: 70 } : critter
+));
+sameTurnTimingCatalog.statuses.push({ id: "paralysis", name: "Paralysis", description: "Paralysis.", asset_path: null, sort_order: 10, version: 1, classification: "negative" });
+sameTurnTimingCatalog.skills = [
+  ...sameTurnTimingCatalog.skills,
+  { ...sameTurnTimingCatalog.skills[1], id: "enemy-observe", name: "Enemy Observe", mana_cost: 0, priority: 0 },
+];
+sameTurnTimingCatalog.dungeonOpponents = sameTurnTimingCatalog.dungeonOpponents.map((opponent) => (
+  opponent.id === "opp1" ? { ...opponent, skill_ids: ["enemy-observe"] } : opponent
+));
+sameTurnTimingCatalog.skills = sameTurnTimingCatalog.skills.map((skill) => skill.id === "mark" ? { ...skill, priority: 6 } : skill);
+sameTurnTimingCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "mark-paralysis",
+  "apply_status",
+  { status_id: "paralysis", chance: 1, target: "targets", indefinite: true },
+)];
+sameTurnTimingCatalog.effectsByStatus.paralysis = [
+  effect("status", "paralysis", "paralysis-skip", "skip_action_chance", { chance: 1, combat_action: "skill", target: "status_holder" }),
+  { ...effect("status", "paralysis", "paralysis-speed", "stat_modifier", { stat: "spd", value_mode: "percentage", amount: -0.5, chance: 1, application_mode: "single_application", target: "status_holder" }), runtimeVersion: 2, classification: "negative", execution: "root" },
+];
+const sameTurnTimingInitial = startTurn({ ...battle(sameTurnTimingCatalog, makePlayer(), "same-turn-status-timing"), phase: "ready" });
+const sameTurnTimingResult = resolveCombatActions(
+  { ...sameTurnTimingInitial, phase: "selecting", playerMana: 50, opponentMana: 50 },
+  [
+    { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 },
+    { actorKey: "p2", type: "skill", skillId: "mark", targetKey: "p1", cost: 0 },
+  ],
+  [{ actorKey: "o1", type: "skill", skillId: "enemy-observe", targetKey: "p1", cost: 0 }],
+);
+const sameTurnTimingEnemyIndex = sameTurnTimingResult.presentationEvents.findIndex((event) => event.actorKey === "o1" && event.skillId === "enemy-observe");
+const sameTurnTimingSkipIndex = sameTurnTimingResult.presentationEvents.findIndex((event) => event.actorKey === "p1" && event.message === "Your Player One could not move due to Paralysis!");
+check(sameTurnTimingResult.playerUnits[0].stats.spd === 50, "A Status stat modifier must be active immediately when the Status is applied during the same turn.");
+check(sameTurnTimingEnemyIndex >= 0 && sameTurnTimingSkipIndex > sameTurnTimingEnemyIndex, "A same-turn Speed reduction must reorder a not-yet-acted Critter behind an enemy with the newly higher effective Speed.");
+check(sameTurnTimingSkipIndex >= 0 && !sameTurnTimingResult.presentationEvents.some((event) => event.actorKey === "p1" && event.kind === "skill" && event.skillId === "strike"), "A Status applied before a Critter's action must affect that same-turn action's skip check.");
+
+const sameTurnDamageCatalog = makeCatalog();
+sameTurnDamageCatalog.skills = sameTurnDamageCatalog.skills.map((skill) => skill.id === "mark" ? { ...skill, priority: 6 } : skill);
+sameTurnDamageCatalog.statuses.push({ id: "empowered", name: "Empowered", description: "Empowered.", asset_path: null, sort_order: 10, version: 1, classification: "positive" });
+sameTurnDamageCatalog.effectsBySkill.mark = [effect(
+  "skill",
+  "mark",
+  "mark-empowered",
+  "apply_status",
+  { status_id: "empowered", chance: 1, target: "targets", indefinite: true },
+)];
+sameTurnDamageCatalog.effectsByStatus.empowered = [{
+  ...effect("status", "empowered", "empowered-atk", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 10, chance: 1, application_mode: "single_application", target: "status_holder" }),
+  runtimeVersion: 2,
+  classification: "positive",
+  execution: "root",
+}];
+const sameTurnDamageBaseCatalog = structuredClone(sameTurnDamageCatalog);
+sameTurnDamageBaseCatalog.effectsBySkill.mark = [];
+sameTurnDamageBaseCatalog.effectsByStatus.empowered = [];
+const sameTurnDamageActions = [
+  { actorKey: "p1", type: "skill" as const, skillId: "strike", targetKey: "o1", cost: 0 },
+  { actorKey: "p2", type: "skill" as const, skillId: "mark", targetKey: "p1", cost: 0 },
+];
+const sameTurnDamageInitial = startTurn({ ...battle(sameTurnDamageCatalog, makePlayer(), "same-turn-damage-stat"), phase: "ready" });
+const sameTurnDamageResult = resolveCombatActions(
+  { ...sameTurnDamageInitial, phase: "selecting", playerMana: 50, opponentMana: 0 },
+  sameTurnDamageActions,
+  [],
+);
+const sameTurnDamageBaselineInitial = startTurn({ ...battle(sameTurnDamageBaseCatalog, makePlayer(), "same-turn-damage-stat"), phase: "ready" });
+const sameTurnDamageBaselineResult = resolveCombatActions(
+  { ...sameTurnDamageBaselineInitial, phase: "selecting", playerMana: 50, opponentMana: 0 },
+  sameTurnDamageActions,
+  [],
+);
+const sameTurnDamageTaken = sameTurnDamageInitial.opponentUnits[0].hp - sameTurnDamageResult.opponentUnits[0].hp;
+const sameTurnDamageBaseline = sameTurnDamageBaselineInitial.opponentUnits[0].hp - sameTurnDamageBaselineResult.opponentUnits[0].hp;
+check(sameTurnDamageResult.playerUnits[0].stats.atk === 35, "A same-turn Status ATK modifier must be active before the affected Critter's later Skill resolves.");
+check(sameTurnDamageTaken > sameTurnDamageBaseline, "A later same-turn attack must calculate damage from the affected Critter's updated ATK.");
+
+const noTargetCatalog = makeCatalog();
+const noTargetState = battle(noTargetCatalog, makePlayer(), "no-target-fizzle");
+const noTargetResult = takeTurn({
+  ...noTargetState,
+  opponentUnits: noTargetState.opponentUnits.map((unit) => unit.key === "o1" ? { ...unit, hp: 1 } : unit),
+}, [
+  { actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 },
+  { actorKey: "p2", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 },
+], 10);
+const noTargetNarrations = noTargetResult.presentationEvents.map((event) => event.message);
+check(
+  JSON.stringify(noTargetNarrations.slice(-2)) === JSON.stringify(["Your Player Two's Strike fizzled.", "It had no valid target."]),
+  "A Skill with no valid target must fizzle without mentioning reserved Mana.",
+);
+check(!noTargetResult.presentationEvents.some((event) => /reserved mana|mana was lost/i.test(event.message)), "A no-target fizzle must not narrate reserved Mana as lost.");
+
+check(
+  JSON.stringify(splitCombatNarration("your critter moved; the enemy critter was hit.")) === JSON.stringify(["Your critter moved.", "The enemy critter was hit."]),
+  "Every narration step must begin with a capital letter, including semicolon-separated authored text.",
+);
 
 const slotCatalog = makeCatalog();
 let slotted = battle(slotCatalog, makePlayer(), "slot-following");

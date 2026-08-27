@@ -4,12 +4,15 @@ import { chromium } from "playwright";
 
 const root = path.resolve(import.meta.dirname, "..");
 const styles = fs.readFileSync(path.join(root, "src", "styles.css"), "utf8");
+const app = fs.readFileSync(path.join(root, "src", "App.tsx"), "utf8");
 const outputDir = path.join(root, "output", "combat-panel-layout");
 fs.mkdirSync(outputDir, { recursive: true });
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+check(!app.includes("combat-phase-badge"), "Combat must not render the removed phase badge.");
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
@@ -28,7 +31,7 @@ try {
       <body>
         <section class="combat-screen">
           <div class="combat-viewport-fit">
-            <div class="combat-header"><span></span><div><h1>Combat</h1></div><span class="combat-phase-badge">Select actions</span></div>
+            <div class="combat-header"><span></span><div><h1>Combat</h1></div></div>
             <div class="combat-board">
               <aside class="combat-mana-panel rollcaster-mana-panel">
                 <span class="combat-sprite-frame rollcaster-combat-frame"><span class="fixture-sprite"></span></span>
@@ -62,6 +65,7 @@ try {
   `);
 
   const viewports = [
+    { name: "ultra-wide-desktop", width: 2560, height: 1440, expectedSquadRows: 3 },
     { name: "wide-desktop", width: 1500, height: 900, expectedSquadRows: 3 },
     { name: "narrow-desktop", width: 1100, height: 780, expectedSquadRows: 3 },
     { name: "tablet", width: 960, height: 720, expectedSquadRows: 1 },
@@ -102,7 +106,6 @@ try {
       clientHeight: document.documentElement.clientHeight,
       headerColumns: getComputedStyle(document.querySelector(".combat-header")).gridTemplateColumns.split(" ").length,
       boardColumns: getComputedStyle(document.querySelector(".combat-board")).gridTemplateColumns.split(" ").length,
-      phaseDisplay: getComputedStyle(document.querySelector(".combat-phase-badge")).display,
     }));
 
     for (const layout of layouts) {
@@ -114,9 +117,7 @@ try {
       check(layout.squadRows === viewport.expectedSquadRows, `Squad layout should adapt to panel width at ${viewport.name}: ${JSON.stringify(layout)}`);
     }
     if (viewport.expectMobileFormat) {
-      check(documentBounds.headerColumns === 2 && documentBounds.boardColumns === 2 && documentBounds.phaseDisplay === "none", `Small PC combat must use the mobile header and two-column board format at ${viewport.name}: ${JSON.stringify(documentBounds)}`);
-    } else {
-      check(documentBounds.phaseDisplay !== "none", `Intermediate and desktop combat formats must retain the phase badge at ${viewport.name}: ${JSON.stringify(documentBounds)}`);
+      check(documentBounds.headerColumns === 2 && documentBounds.boardColumns === 2, `Small PC combat must use the mobile header and two-column board format at ${viewport.name}: ${JSON.stringify(documentBounds)}`);
     }
     check(documentBounds.scrollWidth <= documentBounds.clientWidth, `Combat panel fixture must not create horizontal viewport overflow at ${viewport.name}: ${JSON.stringify(documentBounds)}`);
 

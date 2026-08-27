@@ -1,0 +1,2411 @@
+{
+  "artifacts": [
+    {
+      "byteSize": 108886,
+      "change": "changed",
+      "key": "asset-manifest",
+      "previousByteSize": 105604
+    },
+    {
+      "byteSize": 44878,
+      "change": "changed",
+      "key": "asset:0166f77b-b209-46a8-bdda-64ddcdbcfdfb:battle",
+      "previousByteSize": 35532
+    },
+    {
+      "byteSize": 44878,
+      "change": "changed",
+      "key": "asset:0166f77b-b209-46a8-bdda-64ddcdbcfdfb:card",
+      "previousByteSize": 35532
+    },
+    {
+      "byteSize": 44878,
+      "change": "changed",
+      "key": "asset:0166f77b-b209-46a8-bdda-64ddcdbcfdfb:portrait",
+      "previousByteSize": 35532
+    },
+    {
+      "byteSize": 28760,
+      "change": "changed",
+      "key": "asset:0166f77b-b209-46a8-bdda-64ddcdbcfdfb:thumb",
+      "previousByteSize": 22586
+    },
+    {
+      "byteSize": 49316,
+      "change": "changed",
+      "key": "asset:02ab7fa3-c0e8-4af5-8166-c54308fabd12:card",
+      "previousByteSize": 40388
+    },
+    {
+      "byteSize": 7568,
+      "change": "changed",
+      "key": "asset:02ab7fa3-c0e8-4af5-8166-c54308fabd12:icon",
+      "previousByteSize": 6384
+    },
+    {
+      "byteSize": 30644,
+      "change": "changed",
+      "key": "asset:02ab7fa3-c0e8-4af5-8166-c54308fabd12:thumb",
+      "previousByteSize": 25604
+    },
+    {
+      "byteSize": 98478,
+      "change": "changed",
+      "key": "asset:03066a2a-9958-410a-bf41-78f2c2e927f4:battle",
+      "previousByteSize": 75930
+    },
+    {
+      "byteSize": 98478,
+      "change": "changed",
+      "key": "asset:03066a2a-9958-410a-bf41-78f2c2e927f4:card",
+      "previousByteSize": 75930
+    },
+    {
+      "byteSize": 98478,
+      "change": "changed",
+      "key": "asset:03066a2a-9958-410a-bf41-78f2c2e927f4:portrait",
+      "previousByteSize": 75930
+    },
+    {
+      "byteSize": 40188,
+      "change": "changed",
+      "key": "asset:03066a2a-9958-410a-bf41-78f2c2e927f4:thumb",
+      "previousByteSize": 32376
+    },
+    {
+      "byteSize": 5334,
+      "change": "changed",
+      "key": "asset:0432c971-96be-4b17-ac8b-7fc2c026be7e:icon",
+      "previousByteSize": 4550
+    },
+    {
+      "byteSize": 43778,
+      "change": "changed",
+      "key": "asset:07ffa6c4-177c-4c40-bd99-3b46d204ff84:battle",
+      "previousByteSize": 34090
+    },
+    {
+      "byteSize": 43778,
+      "change": "changed",
+      "key": "asset:07ffa6c4-177c-4c40-bd99-3b46d204ff84:card",
+      "previousByteSize": 34090
+    },
+    {
+      "byteSize": 43778,
+      "change": "changed",
+      "key": "asset:07ffa6c4-177c-4c40-bd99-3b46d204ff84:portrait",
+      "previousByteSize": 34090
+    },
+    {
+      "byteSize": 22420,
+      "change": "changed",
+      "key": "asset:07ffa6c4-177c-4c40-bd99-3b46d204ff84:thumb",
+      "previousByteSize": 17832
+    },
+    {
+      "byteSize": 33458,
+      "change": "changed",
+      "key": "asset:08149324-29a0-46b6-8f4e-4a04c303c100:battle",
+      "previousByteSize": 27354
+    },
+    {
+      "byteSize": 33458,
+      "change": "changed",
+      "key": "asset:08149324-29a0-46b6-8f4e-4a04c303c100:card",
+      "previousByteSize": 27354
+    },
+    {
+      "byteSize": 33458,
+      "change": "changed",
+      "key": "asset:08149324-29a0-46b6-8f4e-4a04c303c100:portrait",
+      "previousByteSize": 27354
+    },
+    {
+      "byteSize": 21328,
+      "change": "changed",
+      "key": "asset:08149324-29a0-46b6-8f4e-4a04c303c100:thumb",
+      "previousByteSize": 17548
+    },
+    {
+      "byteSize": 44800,
+      "change": "changed",
+      "key": "asset:08e65aa9-765b-4782-83fa-847fbfd655cc:battle",
+      "previousByteSize": 36026
+    },
+    {
+      "byteSize": 44800,
+      "change": "changed",
+      "key": "asset:08e65aa9-765b-4782-83fa-847fbfd655cc:card",
+      "previousByteSize": 36026
+    },
+    {
+      "byteSize": 44800,
+      "change": "changed",
+      "key": "asset:08e65aa9-765b-4782-83fa-847fbfd655cc:portrait",
+      "previousByteSize": 36026
+    },
+    {
+      "byteSize": 23520,
+      "change": "changed",
+      "key": "asset:08e65aa9-765b-4782-83fa-847fbfd655cc:thumb",
+      "previousByteSize": 19166
+    },
+    {
+      "byteSize": 30710,
+      "change": "added",
+      "key": "asset:0acaa6ba-d44d-4ca7-9e61-3779fb17f043:battle"
+    },
+    {
+      "byteSize": 30710,
+      "change": "added",
+      "key": "asset:0acaa6ba-d44d-4ca7-9e61-3779fb17f043:card"
+    },
+    {
+      "byteSize": 30710,
+      "change": "added",
+      "key": "asset:0acaa6ba-d44d-4ca7-9e61-3779fb17f043:portrait"
+    },
+    {
+      "byteSize": 16872,
+      "change": "added",
+      "key": "asset:0acaa6ba-d44d-4ca7-9e61-3779fb17f043:thumb"
+    },
+    {
+      "byteSize": 29598,
+      "change": "changed",
+      "key": "asset:0c287bdf-19c3-4ac3-9bea-b2c217507e2b:battle",
+      "previousByteSize": 24110
+    },
+    {
+      "byteSize": 29598,
+      "change": "changed",
+      "key": "asset:0c287bdf-19c3-4ac3-9bea-b2c217507e2b:card",
+      "previousByteSize": 24110
+    },
+    {
+      "byteSize": 29598,
+      "change": "changed",
+      "key": "asset:0c287bdf-19c3-4ac3-9bea-b2c217507e2b:portrait",
+      "previousByteSize": 24110
+    },
+    {
+      "byteSize": 20874,
+      "change": "changed",
+      "key": "asset:0c287bdf-19c3-4ac3-9bea-b2c217507e2b:thumb",
+      "previousByteSize": 16810
+    },
+    {
+      "byteSize": 94596,
+      "change": "changed",
+      "key": "asset:0cab4742-db44-4129-be4f-1fe1b3819885:battle",
+      "previousByteSize": 75438
+    },
+    {
+      "byteSize": 94596,
+      "change": "changed",
+      "key": "asset:0cab4742-db44-4129-be4f-1fe1b3819885:card",
+      "previousByteSize": 75438
+    },
+    {
+      "byteSize": 94596,
+      "change": "changed",
+      "key": "asset:0cab4742-db44-4129-be4f-1fe1b3819885:portrait",
+      "previousByteSize": 75438
+    },
+    {
+      "byteSize": 38396,
+      "change": "changed",
+      "key": "asset:0cab4742-db44-4129-be4f-1fe1b3819885:thumb",
+      "previousByteSize": 31422
+    },
+    {
+      "byteSize": 42788,
+      "change": "changed",
+      "key": "asset:0cf94afd-b52d-4566-adb6-6a3fc98c9919:battle",
+      "previousByteSize": 35174
+    },
+    {
+      "byteSize": 42788,
+      "change": "changed",
+      "key": "asset:0cf94afd-b52d-4566-adb6-6a3fc98c9919:card",
+      "previousByteSize": 35174
+    },
+    {
+      "byteSize": 42788,
+      "change": "changed",
+      "key": "asset:0cf94afd-b52d-4566-adb6-6a3fc98c9919:portrait",
+      "previousByteSize": 35174
+    },
+    {
+      "byteSize": 29488,
+      "change": "changed",
+      "key": "asset:0cf94afd-b52d-4566-adb6-6a3fc98c9919:thumb",
+      "previousByteSize": 24374
+    },
+    {
+      "byteSize": 71680,
+      "change": "changed",
+      "key": "asset:0dc78f62-8953-48fe-886a-a01ca9b05dc1:battle",
+      "previousByteSize": 56604
+    },
+    {
+      "byteSize": 71680,
+      "change": "changed",
+      "key": "asset:0dc78f62-8953-48fe-886a-a01ca9b05dc1:card",
+      "previousByteSize": 56604
+    },
+    {
+      "byteSize": 71680,
+      "change": "changed",
+      "key": "asset:0dc78f62-8953-48fe-886a-a01ca9b05dc1:portrait",
+      "previousByteSize": 56604
+    },
+    {
+      "byteSize": 36426,
+      "change": "changed",
+      "key": "asset:0dc78f62-8953-48fe-886a-a01ca9b05dc1:thumb",
+      "previousByteSize": 29274
+    },
+    {
+      "byteSize": 41976,
+      "change": "changed",
+      "key": "asset:1199d77b-8a48-44a2-a18a-57c0b128ec3d:card",
+      "previousByteSize": 32616
+    },
+    {
+      "byteSize": 6160,
+      "change": "changed",
+      "key": "asset:1199d77b-8a48-44a2-a18a-57c0b128ec3d:icon",
+      "previousByteSize": 5168
+    },
+    {
+      "byteSize": 25842,
+      "change": "changed",
+      "key": "asset:1199d77b-8a48-44a2-a18a-57c0b128ec3d:thumb",
+      "previousByteSize": 20642
+    },
+    {
+      "byteSize": 18538,
+      "change": "changed",
+      "key": "asset:1750f321-4c3a-4abf-92b5-f94bdd4231d7:portrait",
+      "previousByteSize": 14896
+    },
+    {
+      "byteSize": 36040,
+      "change": "changed",
+      "key": "asset:17a43c6b-de86-4584-ae82-eef22a315178:battle",
+      "previousByteSize": 28864
+    },
+    {
+      "byteSize": 36040,
+      "change": "changed",
+      "key": "asset:17a43c6b-de86-4584-ae82-eef22a315178:card",
+      "previousByteSize": 28864
+    },
+    {
+      "byteSize": 36040,
+      "change": "changed",
+      "key": "asset:17a43c6b-de86-4584-ae82-eef22a315178:portrait",
+      "previousByteSize": 28864
+    },
+    {
+      "byteSize": 23422,
+      "change": "changed",
+      "key": "asset:17a43c6b-de86-4584-ae82-eef22a315178:thumb",
+      "previousByteSize": 18988
+    },
+    {
+      "byteSize": 32598,
+      "change": "changed",
+      "key": "asset:1dc04143-3613-4e2c-8883-8cafaa93db14:battle",
+      "previousByteSize": 25888
+    },
+    {
+      "byteSize": 32598,
+      "change": "changed",
+      "key": "asset:1dc04143-3613-4e2c-8883-8cafaa93db14:card",
+      "previousByteSize": 25888
+    },
+    {
+      "byteSize": 32598,
+      "change": "changed",
+      "key": "asset:1dc04143-3613-4e2c-8883-8cafaa93db14:portrait",
+      "previousByteSize": 25888
+    },
+    {
+      "byteSize": 21996,
+      "change": "changed",
+      "key": "asset:1dc04143-3613-4e2c-8883-8cafaa93db14:thumb",
+      "previousByteSize": 17600
+    },
+    {
+      "byteSize": 28320,
+      "change": "changed",
+      "key": "asset:224e2a57-761d-46ed-a0d2-43ba5d8411af:battle",
+      "previousByteSize": 23380
+    },
+    {
+      "byteSize": 28320,
+      "change": "changed",
+      "key": "asset:224e2a57-761d-46ed-a0d2-43ba5d8411af:card",
+      "previousByteSize": 23380
+    },
+    {
+      "byteSize": 28320,
+      "change": "changed",
+      "key": "asset:224e2a57-761d-46ed-a0d2-43ba5d8411af:portrait",
+      "previousByteSize": 23380
+    },
+    {
+      "byteSize": 19568,
+      "change": "changed",
+      "key": "asset:224e2a57-761d-46ed-a0d2-43ba5d8411af:thumb",
+      "previousByteSize": 16126
+    },
+    {
+      "byteSize": 6942,
+      "change": "changed",
+      "key": "asset:24162606-d859-40e2-8fef-7218c018d290:icon",
+      "previousByteSize": 5880
+    },
+    {
+      "byteSize": 9232,
+      "change": "changed",
+      "key": "asset:2599fcf4-fc12-40b5-88b9-c090c895305b:icon",
+      "previousByteSize": 7550
+    },
+    {
+      "byteSize": 86386,
+      "change": "changed",
+      "key": "asset:2656510e-13b9-4c2e-8831-e74cc7cb0986:battle",
+      "previousByteSize": 66592
+    },
+    {
+      "byteSize": 86386,
+      "change": "changed",
+      "key": "asset:2656510e-13b9-4c2e-8831-e74cc7cb0986:card",
+      "previousByteSize": 66592
+    },
+    {
+      "byteSize": 86386,
+      "change": "changed",
+      "key": "asset:2656510e-13b9-4c2e-8831-e74cc7cb0986:portrait",
+      "previousByteSize": 66592
+    },
+    {
+      "byteSize": 36512,
+      "change": "changed",
+      "key": "asset:2656510e-13b9-4c2e-8831-e74cc7cb0986:thumb",
+      "previousByteSize": 28714
+    },
+    {
+      "byteSize": 32150,
+      "change": "changed",
+      "key": "asset:281f5c5f-3828-4f40-914d-646137675335:battle",
+      "previousByteSize": 26232
+    },
+    {
+      "byteSize": 32150,
+      "change": "changed",
+      "key": "asset:281f5c5f-3828-4f40-914d-646137675335:card",
+      "previousByteSize": 26232
+    },
+    {
+      "byteSize": 32150,
+      "change": "changed",
+      "key": "asset:281f5c5f-3828-4f40-914d-646137675335:portrait",
+      "previousByteSize": 26232
+    },
+    {
+      "byteSize": 24404,
+      "change": "changed",
+      "key": "asset:281f5c5f-3828-4f40-914d-646137675335:thumb",
+      "previousByteSize": 20078
+    },
+    {
+      "byteSize": 47544,
+      "change": "changed",
+      "key": "asset:2885d1e6-cd99-471a-8b0e-66e75779a0a7:battle",
+      "previousByteSize": 37044
+    },
+    {
+      "byteSize": 47544,
+      "change": "changed",
+      "key": "asset:2885d1e6-cd99-471a-8b0e-66e75779a0a7:card",
+      "previousByteSize": 37044
+    },
+    {
+      "byteSize": 47544,
+      "change": "changed",
+      "key": "asset:2885d1e6-cd99-471a-8b0e-66e75779a0a7:portrait",
+      "previousByteSize": 37044
+    },
+    {
+      "byteSize": 33246,
+      "change": "changed",
+      "key": "asset:2885d1e6-cd99-471a-8b0e-66e75779a0a7:thumb",
+      "previousByteSize": 25876
+    },
+    {
+      "byteSize": 47632,
+      "change": "changed",
+      "key": "asset:28abe800-8b1e-4450-aa49-d30d3b098505:card",
+      "previousByteSize": 37012
+    },
+    {
+      "byteSize": 8598,
+      "change": "changed",
+      "key": "asset:28abe800-8b1e-4450-aa49-d30d3b098505:icon",
+      "previousByteSize": 7194
+    },
+    {
+      "byteSize": 30596,
+      "change": "changed",
+      "key": "asset:28abe800-8b1e-4450-aa49-d30d3b098505:thumb",
+      "previousByteSize": 24236
+    },
+    {
+      "byteSize": 25780,
+      "change": "added",
+      "key": "asset:29a51bb3-26de-4a29-a64f-143cce52c56b:battle"
+    },
+    {
+      "byteSize": 25780,
+      "change": "added",
+      "key": "asset:29a51bb3-26de-4a29-a64f-143cce52c56b:card"
+    },
+    {
+      "byteSize": 25780,
+      "change": "added",
+      "key": "asset:29a51bb3-26de-4a29-a64f-143cce52c56b:portrait"
+    },
+    {
+      "byteSize": 13788,
+      "change": "added",
+      "key": "asset:29a51bb3-26de-4a29-a64f-143cce52c56b:thumb"
+    },
+    {
+      "byteSize": 4684,
+      "change": "changed",
+      "key": "asset:2c0086c8-10e4-4d9e-8c00-6083285561a3:icon",
+      "previousByteSize": 3740
+    },
+    {
+      "byteSize": 5332,
+      "change": "changed",
+      "key": "asset:305ddb1a-b571-4c17-b4ec-a5d0d03aee9f:icon",
+      "previousByteSize": 4322
+    },
+    {
+      "byteSize": 28024,
+      "change": "changed",
+      "key": "asset:33e644c9-1dd1-4def-920c-2541b8c27bf1:card",
+      "previousByteSize": 21100
+    },
+    {
+      "byteSize": 5410,
+      "change": "changed",
+      "key": "asset:33e644c9-1dd1-4def-920c-2541b8c27bf1:icon",
+      "previousByteSize": 4374
+    },
+    {
+      "byteSize": 18480,
+      "change": "changed",
+      "key": "asset:33e644c9-1dd1-4def-920c-2541b8c27bf1:thumb",
+      "previousByteSize": 14190
+    },
+    {
+      "byteSize": 7170,
+      "change": "changed",
+      "key": "asset:36def5e0-f06b-4582-82ac-4610766ce817:icon",
+      "previousByteSize": 6112
+    },
+    {
+      "byteSize": 65718,
+      "change": "changed",
+      "key": "asset:37e2fb4d-3a28-433d-bbed-f2e7c376cefd:battle",
+      "previousByteSize": 54838
+    },
+    {
+      "byteSize": 65718,
+      "change": "changed",
+      "key": "asset:37e2fb4d-3a28-433d-bbed-f2e7c376cefd:card",
+      "previousByteSize": 54838
+    },
+    {
+      "byteSize": 65718,
+      "change": "changed",
+      "key": "asset:37e2fb4d-3a28-433d-bbed-f2e7c376cefd:portrait",
+      "previousByteSize": 54838
+    },
+    {
+      "byteSize": 43942,
+      "change": "changed",
+      "key": "asset:37e2fb4d-3a28-433d-bbed-f2e7c376cefd:thumb",
+      "previousByteSize": 37350
+    },
+    {
+      "byteSize": 29332,
+      "change": "changed",
+      "key": "asset:3bfde2e7-8f94-4585-a5c2-16dc40dfa63d:card",
+      "previousByteSize": 23172
+    },
+    {
+      "byteSize": 4820,
+      "change": "changed",
+      "key": "asset:3bfde2e7-8f94-4585-a5c2-16dc40dfa63d:icon",
+      "previousByteSize": 3966
+    },
+    {
+      "byteSize": 17930,
+      "change": "changed",
+      "key": "asset:3bfde2e7-8f94-4585-a5c2-16dc40dfa63d:thumb",
+      "previousByteSize": 14568
+    },
+    {
+      "byteSize": 29666,
+      "change": "changed",
+      "key": "asset:3c379424-d518-40fa-b202-a4036fd837cb:battle",
+      "previousByteSize": 23114
+    },
+    {
+      "byteSize": 29666,
+      "change": "changed",
+      "key": "asset:3c379424-d518-40fa-b202-a4036fd837cb:card",
+      "previousByteSize": 23114
+    },
+    {
+      "byteSize": 29666,
+      "change": "changed",
+      "key": "asset:3c379424-d518-40fa-b202-a4036fd837cb:portrait",
+      "previousByteSize": 23114
+    },
+    {
+      "byteSize": 19886,
+      "change": "changed",
+      "key": "asset:3c379424-d518-40fa-b202-a4036fd837cb:thumb",
+      "previousByteSize": 15812
+    },
+    {
+      "byteSize": 24592,
+      "change": "changed",
+      "key": "asset:3f4d9783-024f-4550-8f27-fd8d3d188229:battle",
+      "previousByteSize": 18370
+    },
+    {
+      "byteSize": 24592,
+      "change": "changed",
+      "key": "asset:3f4d9783-024f-4550-8f27-fd8d3d188229:card",
+      "previousByteSize": 18370
+    },
+    {
+      "byteSize": 24592,
+      "change": "changed",
+      "key": "asset:3f4d9783-024f-4550-8f27-fd8d3d188229:portrait",
+      "previousByteSize": 18370
+    },
+    {
+      "byteSize": 16072,
+      "change": "changed",
+      "key": "asset:3f4d9783-024f-4550-8f27-fd8d3d188229:thumb",
+      "previousByteSize": 12388
+    },
+    {
+      "byteSize": 34720,
+      "change": "changed",
+      "key": "asset:40e24a9e-1fcb-42c7-a3c9-a217a42278b8:battle",
+      "previousByteSize": 28136
+    },
+    {
+      "byteSize": 34720,
+      "change": "changed",
+      "key": "asset:40e24a9e-1fcb-42c7-a3c9-a217a42278b8:card",
+      "previousByteSize": 28136
+    },
+    {
+      "byteSize": 34720,
+      "change": "changed",
+      "key": "asset:40e24a9e-1fcb-42c7-a3c9-a217a42278b8:portrait",
+      "previousByteSize": 28136
+    },
+    {
+      "byteSize": 22132,
+      "change": "changed",
+      "key": "asset:40e24a9e-1fcb-42c7-a3c9-a217a42278b8:thumb",
+      "previousByteSize": 18122
+    },
+    {
+      "byteSize": 55414,
+      "change": "changed",
+      "key": "asset:48b10894-24dc-4a93-84da-f88827314dcc:card",
+      "previousByteSize": 46122
+    },
+    {
+      "byteSize": 7648,
+      "change": "changed",
+      "key": "asset:48b10894-24dc-4a93-84da-f88827314dcc:icon",
+      "previousByteSize": 6298
+    },
+    {
+      "byteSize": 33046,
+      "change": "changed",
+      "key": "asset:48b10894-24dc-4a93-84da-f88827314dcc:thumb",
+      "previousByteSize": 27830
+    },
+    {
+      "byteSize": 37512,
+      "change": "added",
+      "key": "asset:4d322412-5dbd-4ff1-8060-61fba6249f59:battle"
+    },
+    {
+      "byteSize": 37512,
+      "change": "added",
+      "key": "asset:4d322412-5dbd-4ff1-8060-61fba6249f59:card"
+    },
+    {
+      "byteSize": 37512,
+      "change": "added",
+      "key": "asset:4d322412-5dbd-4ff1-8060-61fba6249f59:portrait"
+    },
+    {
+      "byteSize": 20036,
+      "change": "added",
+      "key": "asset:4d322412-5dbd-4ff1-8060-61fba6249f59:thumb"
+    },
+    {
+      "byteSize": 52472,
+      "change": "changed",
+      "key": "asset:4f78b73e-87a9-41ba-bfaa-ab80b4a247cd:battle",
+      "previousByteSize": 43508
+    },
+    {
+      "byteSize": 52472,
+      "change": "changed",
+      "key": "asset:4f78b73e-87a9-41ba-bfaa-ab80b4a247cd:card",
+      "previousByteSize": 43508
+    },
+    {
+      "byteSize": 52472,
+      "change": "changed",
+      "key": "asset:4f78b73e-87a9-41ba-bfaa-ab80b4a247cd:portrait",
+      "previousByteSize": 43508
+    },
+    {
+      "byteSize": 22704,
+      "change": "changed",
+      "key": "asset:4f78b73e-87a9-41ba-bfaa-ab80b4a247cd:thumb",
+      "previousByteSize": 19004
+    },
+    {
+      "byteSize": 35074,
+      "change": "changed",
+      "key": "asset:519bb1a2-5ce1-4f32-9e54-f5c0f7b7a916:battle",
+      "previousByteSize": 28086
+    },
+    {
+      "byteSize": 35074,
+      "change": "changed",
+      "key": "asset:519bb1a2-5ce1-4f32-9e54-f5c0f7b7a916:card",
+      "previousByteSize": 28086
+    },
+    {
+      "byteSize": 35074,
+      "change": "changed",
+      "key": "asset:519bb1a2-5ce1-4f32-9e54-f5c0f7b7a916:portrait",
+      "previousByteSize": 28086
+    },
+    {
+      "byteSize": 24308,
+      "change": "changed",
+      "key": "asset:519bb1a2-5ce1-4f32-9e54-f5c0f7b7a916:thumb",
+      "previousByteSize": 19704
+    },
+    {
+      "byteSize": 88724,
+      "change": "changed",
+      "key": "asset:529681cb-d5ae-41a8-aff1-6c8d92fafd4d:battle",
+      "previousByteSize": 68460
+    },
+    {
+      "byteSize": 88724,
+      "change": "changed",
+      "key": "asset:529681cb-d5ae-41a8-aff1-6c8d92fafd4d:card",
+      "previousByteSize": 68460
+    },
+    {
+      "byteSize": 88724,
+      "change": "changed",
+      "key": "asset:529681cb-d5ae-41a8-aff1-6c8d92fafd4d:portrait",
+      "previousByteSize": 68460
+    },
+    {
+      "byteSize": 36272,
+      "change": "changed",
+      "key": "asset:529681cb-d5ae-41a8-aff1-6c8d92fafd4d:thumb",
+      "previousByteSize": 28992
+    },
+    {
+      "byteSize": 74862,
+      "change": "changed",
+      "key": "asset:5411cd03-fe5d-40c6-a9a5-7fb6ad06346e:card",
+      "previousByteSize": 58062
+    },
+    {
+      "byteSize": 12268,
+      "change": "changed",
+      "key": "asset:5411cd03-fe5d-40c6-a9a5-7fb6ad06346e:icon",
+      "previousByteSize": 10092
+    },
+    {
+      "byteSize": 47808,
+      "change": "changed",
+      "key": "asset:5411cd03-fe5d-40c6-a9a5-7fb6ad06346e:thumb",
+      "previousByteSize": 37492
+    },
+    {
+      "byteSize": 28822,
+      "change": "changed",
+      "key": "asset:54fbd415-3ec3-4bfe-9e51-5214086a1167:battle",
+      "previousByteSize": 22386
+    },
+    {
+      "byteSize": 28822,
+      "change": "changed",
+      "key": "asset:54fbd415-3ec3-4bfe-9e51-5214086a1167:card",
+      "previousByteSize": 22386
+    },
+    {
+      "byteSize": 28822,
+      "change": "changed",
+      "key": "asset:54fbd415-3ec3-4bfe-9e51-5214086a1167:portrait",
+      "previousByteSize": 22386
+    },
+    {
+      "byteSize": 19316,
+      "change": "changed",
+      "key": "asset:54fbd415-3ec3-4bfe-9e51-5214086a1167:thumb",
+      "previousByteSize": 15288
+    },
+    {
+      "byteSize": 29822,
+      "change": "changed",
+      "key": "asset:56260cf3-2b4a-40ff-ac64-193637d1b57b:battle",
+      "previousByteSize": 24574
+    },
+    {
+      "byteSize": 29822,
+      "change": "changed",
+      "key": "asset:56260cf3-2b4a-40ff-ac64-193637d1b57b:card",
+      "previousByteSize": 24574
+    },
+    {
+      "byteSize": 29822,
+      "change": "changed",
+      "key": "asset:56260cf3-2b4a-40ff-ac64-193637d1b57b:portrait",
+      "previousByteSize": 24574
+    },
+    {
+      "byteSize": 20024,
+      "change": "changed",
+      "key": "asset:56260cf3-2b4a-40ff-ac64-193637d1b57b:thumb",
+      "previousByteSize": 16294
+    },
+    {
+      "byteSize": 71038,
+      "change": "changed",
+      "key": "asset:59ea4341-713c-4769-9dfe-ef7929cb8567:battle",
+      "previousByteSize": 56248
+    },
+    {
+      "byteSize": 71038,
+      "change": "changed",
+      "key": "asset:59ea4341-713c-4769-9dfe-ef7929cb8567:card",
+      "previousByteSize": 56248
+    },
+    {
+      "byteSize": 71038,
+      "change": "changed",
+      "key": "asset:59ea4341-713c-4769-9dfe-ef7929cb8567:portrait",
+      "previousByteSize": 56248
+    },
+    {
+      "byteSize": 45254,
+      "change": "changed",
+      "key": "asset:59ea4341-713c-4769-9dfe-ef7929cb8567:thumb",
+      "previousByteSize": 36512
+    },
+    {
+      "byteSize": 33820,
+      "change": "changed",
+      "key": "asset:5c066221-ea33-4fc0-ae79-fb7a7d436a86:battle",
+      "previousByteSize": 26200
+    },
+    {
+      "byteSize": 33820,
+      "change": "changed",
+      "key": "asset:5c066221-ea33-4fc0-ae79-fb7a7d436a86:card",
+      "previousByteSize": 26200
+    },
+    {
+      "byteSize": 33820,
+      "change": "changed",
+      "key": "asset:5c066221-ea33-4fc0-ae79-fb7a7d436a86:portrait",
+      "previousByteSize": 26200
+    },
+    {
+      "byteSize": 22372,
+      "change": "changed",
+      "key": "asset:5c066221-ea33-4fc0-ae79-fb7a7d436a86:thumb",
+      "previousByteSize": 17616
+    },
+    {
+      "byteSize": 24616,
+      "change": "changed",
+      "key": "asset:5d6283e1-c225-45bc-adae-1d74c61ae07b:battle",
+      "previousByteSize": 20228
+    },
+    {
+      "byteSize": 24616,
+      "change": "changed",
+      "key": "asset:5d6283e1-c225-45bc-adae-1d74c61ae07b:card",
+      "previousByteSize": 20228
+    },
+    {
+      "byteSize": 24616,
+      "change": "changed",
+      "key": "asset:5d6283e1-c225-45bc-adae-1d74c61ae07b:portrait",
+      "previousByteSize": 20228
+    },
+    {
+      "byteSize": 20570,
+      "change": "changed",
+      "key": "asset:5d6283e1-c225-45bc-adae-1d74c61ae07b:thumb",
+      "previousByteSize": 16910
+    },
+    {
+      "byteSize": 33262,
+      "change": "changed",
+      "key": "asset:5e29a76d-dc05-415e-8f34-512d5326a831:battle",
+      "previousByteSize": 32340
+    },
+    {
+      "byteSize": 33262,
+      "change": "changed",
+      "key": "asset:5e29a76d-dc05-415e-8f34-512d5326a831:card",
+      "previousByteSize": 32340
+    },
+    {
+      "byteSize": 33262,
+      "change": "changed",
+      "key": "asset:5e29a76d-dc05-415e-8f34-512d5326a831:portrait",
+      "previousByteSize": 32340
+    },
+    {
+      "byteSize": 24294,
+      "change": "changed",
+      "key": "asset:5e29a76d-dc05-415e-8f34-512d5326a831:thumb",
+      "previousByteSize": 22322
+    },
+    {
+      "byteSize": 29508,
+      "change": "changed",
+      "key": "asset:5fddf467-af43-4c15-9b0d-b706e9ffe498:battle",
+      "previousByteSize": 24434
+    },
+    {
+      "byteSize": 29508,
+      "change": "changed",
+      "key": "asset:5fddf467-af43-4c15-9b0d-b706e9ffe498:card",
+      "previousByteSize": 24434
+    },
+    {
+      "byteSize": 29508,
+      "change": "changed",
+      "key": "asset:5fddf467-af43-4c15-9b0d-b706e9ffe498:portrait",
+      "previousByteSize": 24434
+    },
+    {
+      "byteSize": 19674,
+      "change": "changed",
+      "key": "asset:5fddf467-af43-4c15-9b0d-b706e9ffe498:thumb",
+      "previousByteSize": 16396
+    },
+    {
+      "byteSize": 51610,
+      "change": "changed",
+      "key": "asset:614988e0-1cb3-465e-a2bc-7a6f585e9227:card",
+      "previousByteSize": 41288
+    },
+    {
+      "byteSize": 7310,
+      "change": "changed",
+      "key": "asset:614988e0-1cb3-465e-a2bc-7a6f585e9227:icon",
+      "previousByteSize": 5980
+    },
+    {
+      "byteSize": 31910,
+      "change": "changed",
+      "key": "asset:614988e0-1cb3-465e-a2bc-7a6f585e9227:thumb",
+      "previousByteSize": 25718
+    },
+    {
+      "byteSize": 28360,
+      "change": "changed",
+      "key": "asset:6233bb55-6f04-4afe-9fb5-65c80bb947e7:card",
+      "previousByteSize": 21608
+    },
+    {
+      "byteSize": 4918,
+      "change": "changed",
+      "key": "asset:647d661c-9551-4452-b139-3fc3f890566f:icon",
+      "previousByteSize": 3952
+    },
+    {
+      "byteSize": 13822,
+      "change": "changed",
+      "key": "asset:6653b3ac-887a-4660-8aa8-ea5e93af19fb:card",
+      "previousByteSize": 11044
+    },
+    {
+      "byteSize": 3310,
+      "change": "changed",
+      "key": "asset:6653b3ac-887a-4660-8aa8-ea5e93af19fb:icon",
+      "previousByteSize": 2812
+    },
+    {
+      "byteSize": 10012,
+      "change": "changed",
+      "key": "asset:6653b3ac-887a-4660-8aa8-ea5e93af19fb:thumb",
+      "previousByteSize": 8108
+    },
+    {
+      "byteSize": 79894,
+      "change": "changed",
+      "key": "asset:669c0d51-831a-4a9f-a3a9-251639ad025a:battle",
+      "previousByteSize": 62236
+    },
+    {
+      "byteSize": 79894,
+      "change": "changed",
+      "key": "asset:669c0d51-831a-4a9f-a3a9-251639ad025a:card",
+      "previousByteSize": 62236
+    },
+    {
+      "byteSize": 79894,
+      "change": "changed",
+      "key": "asset:669c0d51-831a-4a9f-a3a9-251639ad025a:portrait",
+      "previousByteSize": 62236
+    },
+    {
+      "byteSize": 33728,
+      "change": "changed",
+      "key": "asset:669c0d51-831a-4a9f-a3a9-251639ad025a:thumb",
+      "previousByteSize": 26974
+    },
+    {
+      "byteSize": 4662,
+      "change": "changed",
+      "key": "asset:67c04fa2-8cb8-4728-994b-31ad07e42e31:icon",
+      "previousByteSize": 3718
+    },
+    {
+      "byteSize": 5608,
+      "change": "changed",
+      "key": "asset:6e3ac383-57b3-48de-816b-9b6234a44d5d:icon",
+      "previousByteSize": 4198
+    },
+    {
+      "byteSize": 30990,
+      "change": "changed",
+      "key": "asset:71793b8c-ef38-4815-8d03-325dbd582db4:card",
+      "previousByteSize": 24384
+    },
+    {
+      "byteSize": 6522,
+      "change": "changed",
+      "key": "asset:71793b8c-ef38-4815-8d03-325dbd582db4:icon",
+      "previousByteSize": 5434
+    },
+    {
+      "byteSize": 20650,
+      "change": "changed",
+      "key": "asset:71793b8c-ef38-4815-8d03-325dbd582db4:thumb",
+      "previousByteSize": 16464
+    },
+    {
+      "byteSize": 30176,
+      "change": "changed",
+      "key": "asset:7680b72b-a409-403c-8118-c33b6080968b:card",
+      "previousByteSize": 24566
+    },
+    {
+      "byteSize": 5456,
+      "change": "changed",
+      "key": "asset:7680b72b-a409-403c-8118-c33b6080968b:icon",
+      "previousByteSize": 4544
+    },
+    {
+      "byteSize": 20112,
+      "change": "changed",
+      "key": "asset:7680b72b-a409-403c-8118-c33b6080968b:thumb",
+      "previousByteSize": 16490
+    },
+    {
+      "byteSize": 29166,
+      "change": "changed",
+      "key": "asset:79486e1a-f32f-4311-8c56-57e7e2d576d0:battle",
+      "previousByteSize": 23902
+    },
+    {
+      "byteSize": 29166,
+      "change": "changed",
+      "key": "asset:79486e1a-f32f-4311-8c56-57e7e2d576d0:card",
+      "previousByteSize": 23902
+    },
+    {
+      "byteSize": 29166,
+      "change": "changed",
+      "key": "asset:79486e1a-f32f-4311-8c56-57e7e2d576d0:portrait",
+      "previousByteSize": 23902
+    },
+    {
+      "byteSize": 18974,
+      "change": "changed",
+      "key": "asset:79486e1a-f32f-4311-8c56-57e7e2d576d0:thumb",
+      "previousByteSize": 15506
+    },
+    {
+      "byteSize": 5134,
+      "change": "changed",
+      "key": "asset:7a1f0f72-c8d0-4914-a6bf-f07b24accde6:icon",
+      "previousByteSize": 4332
+    },
+    {
+      "byteSize": 31742,
+      "change": "changed",
+      "key": "asset:7d9ba69d-7ca7-400d-84d1-5187d36c2b05:battle",
+      "previousByteSize": 25008
+    },
+    {
+      "byteSize": 31742,
+      "change": "changed",
+      "key": "asset:7d9ba69d-7ca7-400d-84d1-5187d36c2b05:card",
+      "previousByteSize": 25008
+    },
+    {
+      "byteSize": 31742,
+      "change": "changed",
+      "key": "asset:7d9ba69d-7ca7-400d-84d1-5187d36c2b05:portrait",
+      "previousByteSize": 25008
+    },
+    {
+      "byteSize": 21548,
+      "change": "changed",
+      "key": "asset:7d9ba69d-7ca7-400d-84d1-5187d36c2b05:thumb",
+      "previousByteSize": 17296
+    },
+    {
+      "byteSize": 37152,
+      "change": "changed",
+      "key": "asset:7f978159-9cfe-490a-88e5-b6a4ebf4172a:battle",
+      "previousByteSize": 28812
+    },
+    {
+      "byteSize": 37152,
+      "change": "changed",
+      "key": "asset:7f978159-9cfe-490a-88e5-b6a4ebf4172a:card",
+      "previousByteSize": 28812
+    },
+    {
+      "byteSize": 37152,
+      "change": "changed",
+      "key": "asset:7f978159-9cfe-490a-88e5-b6a4ebf4172a:portrait",
+      "previousByteSize": 28812
+    },
+    {
+      "byteSize": 24002,
+      "change": "changed",
+      "key": "asset:7f978159-9cfe-490a-88e5-b6a4ebf4172a:thumb",
+      "previousByteSize": 19174
+    },
+    {
+      "byteSize": 25780,
+      "change": "changed",
+      "key": "asset:807b57ac-c940-4bc5-b065-45ee9d52631f:battle",
+      "previousByteSize": 21054
+    },
+    {
+      "byteSize": 25780,
+      "change": "changed",
+      "key": "asset:807b57ac-c940-4bc5-b065-45ee9d52631f:card",
+      "previousByteSize": 21054
+    },
+    {
+      "byteSize": 25780,
+      "change": "changed",
+      "key": "asset:807b57ac-c940-4bc5-b065-45ee9d52631f:portrait",
+      "previousByteSize": 21054
+    },
+    {
+      "byteSize": 18050,
+      "change": "changed",
+      "key": "asset:807b57ac-c940-4bc5-b065-45ee9d52631f:thumb",
+      "previousByteSize": 14760
+    },
+    {
+      "byteSize": 91118,
+      "change": "changed",
+      "key": "asset:822accfb-a2fe-457c-a650-b7d9663c53dc:battle",
+      "previousByteSize": 71830
+    },
+    {
+      "byteSize": 91118,
+      "change": "changed",
+      "key": "asset:822accfb-a2fe-457c-a650-b7d9663c53dc:card",
+      "previousByteSize": 71830
+    },
+    {
+      "byteSize": 91118,
+      "change": "changed",
+      "key": "asset:822accfb-a2fe-457c-a650-b7d9663c53dc:portrait",
+      "previousByteSize": 71830
+    },
+    {
+      "byteSize": 38976,
+      "change": "changed",
+      "key": "asset:822accfb-a2fe-457c-a650-b7d9663c53dc:thumb",
+      "previousByteSize": 31386
+    },
+    {
+      "byteSize": 38500,
+      "change": "changed",
+      "key": "asset:82f4e5bd-78db-4de5-9512-4a30677e3fd8:battle",
+      "previousByteSize": 30102
+    },
+    {
+      "byteSize": 38500,
+      "change": "changed",
+      "key": "asset:82f4e5bd-78db-4de5-9512-4a30677e3fd8:card",
+      "previousByteSize": 30102
+    },
+    {
+      "byteSize": 38500,
+      "change": "changed",
+      "key": "asset:82f4e5bd-78db-4de5-9512-4a30677e3fd8:portrait",
+      "previousByteSize": 30102
+    },
+    {
+      "byteSize": 25314,
+      "change": "changed",
+      "key": "asset:82f4e5bd-78db-4de5-9512-4a30677e3fd8:thumb",
+      "previousByteSize": 19936
+    },
+    {
+      "byteSize": 58360,
+      "change": "changed",
+      "key": "asset:839e8192-4183-4dfe-bb2d-e8f82c674c06:card",
+      "previousByteSize": 46278
+    },
+    {
+      "byteSize": 9362,
+      "change": "changed",
+      "key": "asset:839e8192-4183-4dfe-bb2d-e8f82c674c06:icon",
+      "previousByteSize": 7392
+    },
+    {
+      "byteSize": 35810,
+      "change": "changed",
+      "key": "asset:839e8192-4183-4dfe-bb2d-e8f82c674c06:thumb",
+      "previousByteSize": 28174
+    },
+    {
+      "byteSize": 50584,
+      "change": "changed",
+      "key": "asset:85651aae-3d68-47d0-9da0-6be783b13caa:card",
+      "previousByteSize": 40626
+    },
+    {
+      "byteSize": 53690,
+      "change": "changed",
+      "key": "asset:86767b2a-3169-4bd1-a1a4-b6060c4847f3:card",
+      "previousByteSize": 42770
+    },
+    {
+      "byteSize": 7468,
+      "change": "changed",
+      "key": "asset:86767b2a-3169-4bd1-a1a4-b6060c4847f3:icon",
+      "previousByteSize": 5876
+    },
+    {
+      "byteSize": 32812,
+      "change": "changed",
+      "key": "asset:86767b2a-3169-4bd1-a1a4-b6060c4847f3:thumb",
+      "previousByteSize": 26444
+    },
+    {
+      "byteSize": 4824,
+      "change": "changed",
+      "key": "asset:880ba663-30cb-4d0b-9c5b-997eab9a1ebc:icon",
+      "previousByteSize": 3808
+    },
+    {
+      "byteSize": 4344,
+      "change": "changed",
+      "key": "asset:884298d4-bbfa-4fd4-a2cf-5c604e79a5ba:icon",
+      "previousByteSize": 3372
+    },
+    {
+      "byteSize": 5712,
+      "change": "changed",
+      "key": "asset:8d71bf71-addc-4faa-9836-1b9635731651:icon",
+      "previousByteSize": 4788
+    },
+    {
+      "byteSize": 3780,
+      "change": "changed",
+      "key": "asset:8f0ac83c-f03e-41fa-b0a7-47cffb2a2c36:icon",
+      "previousByteSize": 3052
+    },
+    {
+      "byteSize": 35256,
+      "change": "changed",
+      "key": "asset:91d0198c-7011-4214-a362-8590ee5f71ad:battle",
+      "previousByteSize": 28544
+    },
+    {
+      "byteSize": 35256,
+      "change": "changed",
+      "key": "asset:91d0198c-7011-4214-a362-8590ee5f71ad:card",
+      "previousByteSize": 28544
+    },
+    {
+      "byteSize": 35256,
+      "change": "changed",
+      "key": "asset:91d0198c-7011-4214-a362-8590ee5f71ad:portrait",
+      "previousByteSize": 28544
+    },
+    {
+      "byteSize": 22696,
+      "change": "changed",
+      "key": "asset:91d0198c-7011-4214-a362-8590ee5f71ad:thumb",
+      "previousByteSize": 18342
+    },
+    {
+      "byteSize": 33468,
+      "change": "changed",
+      "key": "asset:91e850b3-cfb6-4ed8-ac04-f4f7a42659d2:battle",
+      "previousByteSize": 27356
+    },
+    {
+      "byteSize": 33468,
+      "change": "changed",
+      "key": "asset:91e850b3-cfb6-4ed8-ac04-f4f7a42659d2:card",
+      "previousByteSize": 27356
+    },
+    {
+      "byteSize": 33468,
+      "change": "changed",
+      "key": "asset:91e850b3-cfb6-4ed8-ac04-f4f7a42659d2:portrait",
+      "previousByteSize": 27356
+    },
+    {
+      "byteSize": 22436,
+      "change": "changed",
+      "key": "asset:91e850b3-cfb6-4ed8-ac04-f4f7a42659d2:thumb",
+      "previousByteSize": 18456
+    },
+    {
+      "byteSize": 37900,
+      "change": "changed",
+      "key": "asset:92fbc7b7-9709-433b-9219-8c3ed81d5bc8:battle",
+      "previousByteSize": 29952
+    },
+    {
+      "byteSize": 37900,
+      "change": "changed",
+      "key": "asset:92fbc7b7-9709-433b-9219-8c3ed81d5bc8:card",
+      "previousByteSize": 29952
+    },
+    {
+      "byteSize": 37900,
+      "change": "changed",
+      "key": "asset:92fbc7b7-9709-433b-9219-8c3ed81d5bc8:portrait",
+      "previousByteSize": 29952
+    },
+    {
+      "byteSize": 25460,
+      "change": "changed",
+      "key": "asset:92fbc7b7-9709-433b-9219-8c3ed81d5bc8:thumb",
+      "previousByteSize": 20414
+    },
+    {
+      "byteSize": 5782,
+      "change": "changed",
+      "key": "asset:965837f5-dae7-408b-8536-24766d056aab:icon",
+      "previousByteSize": 4634
+    },
+    {
+      "byteSize": 63810,
+      "change": "changed",
+      "key": "asset:972244a2-d94a-4f2d-bd7a-890908666157:battle",
+      "previousByteSize": 49932
+    },
+    {
+      "byteSize": 63810,
+      "change": "changed",
+      "key": "asset:972244a2-d94a-4f2d-bd7a-890908666157:card",
+      "previousByteSize": 49932
+    },
+    {
+      "byteSize": 63810,
+      "change": "changed",
+      "key": "asset:972244a2-d94a-4f2d-bd7a-890908666157:portrait",
+      "previousByteSize": 49932
+    },
+    {
+      "byteSize": 40420,
+      "change": "changed",
+      "key": "asset:972244a2-d94a-4f2d-bd7a-890908666157:thumb",
+      "previousByteSize": 32400
+    },
+    {
+      "byteSize": 51954,
+      "change": "changed",
+      "key": "asset:97cc72fd-fdaa-4dbb-8e9d-acdb831edd84:card",
+      "previousByteSize": 39164
+    },
+    {
+      "byteSize": 9048,
+      "change": "changed",
+      "key": "asset:97cc72fd-fdaa-4dbb-8e9d-acdb831edd84:icon",
+      "previousByteSize": 7364
+    },
+    {
+      "byteSize": 33254,
+      "change": "changed",
+      "key": "asset:97cc72fd-fdaa-4dbb-8e9d-acdb831edd84:thumb",
+      "previousByteSize": 25156
+    },
+    {
+      "byteSize": 4922,
+      "change": "changed",
+      "key": "asset:989426fb-1d08-43e3-84c3-1c4ba77d3974:icon",
+      "previousByteSize": 4150
+    },
+    {
+      "byteSize": 98198,
+      "change": "changed",
+      "key": "asset:9b40d2c7-e364-4ce6-b6e0-7e77fd214717:battle",
+      "previousByteSize": 79408
+    },
+    {
+      "byteSize": 98198,
+      "change": "changed",
+      "key": "asset:9b40d2c7-e364-4ce6-b6e0-7e77fd214717:card",
+      "previousByteSize": 79408
+    },
+    {
+      "byteSize": 98198,
+      "change": "changed",
+      "key": "asset:9b40d2c7-e364-4ce6-b6e0-7e77fd214717:portrait",
+      "previousByteSize": 79408
+    },
+    {
+      "byteSize": 41990,
+      "change": "changed",
+      "key": "asset:9b40d2c7-e364-4ce6-b6e0-7e77fd214717:thumb",
+      "previousByteSize": 34308
+    },
+    {
+      "byteSize": 77032,
+      "change": "changed",
+      "key": "asset:9b6eb57b-97cc-4831-9568-1e0fa5fb98b5:battle",
+      "previousByteSize": 60764
+    },
+    {
+      "byteSize": 77032,
+      "change": "changed",
+      "key": "asset:9b6eb57b-97cc-4831-9568-1e0fa5fb98b5:card",
+      "previousByteSize": 60764
+    },
+    {
+      "byteSize": 77032,
+      "change": "changed",
+      "key": "asset:9b6eb57b-97cc-4831-9568-1e0fa5fb98b5:portrait",
+      "previousByteSize": 60764
+    },
+    {
+      "byteSize": 31614,
+      "change": "changed",
+      "key": "asset:9b6eb57b-97cc-4831-9568-1e0fa5fb98b5:thumb",
+      "previousByteSize": 25082
+    },
+    {
+      "byteSize": 37124,
+      "change": "changed",
+      "key": "asset:9ca7ccee-c6f6-47c1-8c82-5dca930dc16a:card",
+      "previousByteSize": 28872
+    },
+    {
+      "byteSize": 27352,
+      "change": "changed",
+      "key": "asset:a296f9ed-5428-4e9e-8d46-c84c5d0bd1b9:battle",
+      "previousByteSize": 21556
+    },
+    {
+      "byteSize": 27352,
+      "change": "changed",
+      "key": "asset:a296f9ed-5428-4e9e-8d46-c84c5d0bd1b9:card",
+      "previousByteSize": 21556
+    },
+    {
+      "byteSize": 27352,
+      "change": "changed",
+      "key": "asset:a296f9ed-5428-4e9e-8d46-c84c5d0bd1b9:portrait",
+      "previousByteSize": 21556
+    },
+    {
+      "byteSize": 18256,
+      "change": "changed",
+      "key": "asset:a296f9ed-5428-4e9e-8d46-c84c5d0bd1b9:thumb",
+      "previousByteSize": 14616
+    },
+    {
+      "byteSize": 37280,
+      "change": "changed",
+      "key": "asset:a73de7bb-4f52-4397-92c7-345015f902e3:battle",
+      "previousByteSize": 29092
+    },
+    {
+      "byteSize": 37280,
+      "change": "changed",
+      "key": "asset:a73de7bb-4f52-4397-92c7-345015f902e3:card",
+      "previousByteSize": 29092
+    },
+    {
+      "byteSize": 37280,
+      "change": "changed",
+      "key": "asset:a73de7bb-4f52-4397-92c7-345015f902e3:portrait",
+      "previousByteSize": 29092
+    },
+    {
+      "byteSize": 25736,
+      "change": "changed",
+      "key": "asset:a73de7bb-4f52-4397-92c7-345015f902e3:thumb",
+      "previousByteSize": 20516
+    },
+    {
+      "byteSize": 4476,
+      "change": "changed",
+      "key": "asset:a75d1246-7973-417b-b4c8-52a51d825cfd:icon",
+      "previousByteSize": 3540
+    },
+    {
+      "byteSize": 39502,
+      "change": "changed",
+      "key": "asset:a847623a-9f5e-4878-9297-62d4062eeaae:battle",
+      "previousByteSize": 31702
+    },
+    {
+      "byteSize": 39502,
+      "change": "changed",
+      "key": "asset:a847623a-9f5e-4878-9297-62d4062eeaae:card",
+      "previousByteSize": 31702
+    },
+    {
+      "byteSize": 39502,
+      "change": "changed",
+      "key": "asset:a847623a-9f5e-4878-9297-62d4062eeaae:portrait",
+      "previousByteSize": 31702
+    },
+    {
+      "byteSize": 26030,
+      "change": "changed",
+      "key": "asset:a847623a-9f5e-4878-9297-62d4062eeaae:thumb",
+      "previousByteSize": 21306
+    },
+    {
+      "byteSize": 28420,
+      "change": "changed",
+      "key": "asset:a865e806-679e-490d-bade-21f9490385ca:card",
+      "previousByteSize": 21362
+    },
+    {
+      "byteSize": 5284,
+      "change": "changed",
+      "key": "asset:a865e806-679e-490d-bade-21f9490385ca:icon",
+      "previousByteSize": 4314
+    },
+    {
+      "byteSize": 18614,
+      "change": "changed",
+      "key": "asset:a865e806-679e-490d-bade-21f9490385ca:thumb",
+      "previousByteSize": 14582
+    },
+    {
+      "byteSize": 4142,
+      "change": "changed",
+      "key": "asset:a87327ce-e191-4dc7-8cd0-0237908445b7:icon",
+      "previousByteSize": 3390
+    },
+    {
+      "byteSize": 40356,
+      "change": "changed",
+      "key": "asset:a88a25cf-108e-42ff-8df8-99bc2f35e59f:battle",
+      "previousByteSize": 32246
+    },
+    {
+      "byteSize": 40356,
+      "change": "changed",
+      "key": "asset:a88a25cf-108e-42ff-8df8-99bc2f35e59f:card",
+      "previousByteSize": 32246
+    },
+    {
+      "byteSize": 40356,
+      "change": "changed",
+      "key": "asset:a88a25cf-108e-42ff-8df8-99bc2f35e59f:portrait",
+      "previousByteSize": 32246
+    },
+    {
+      "byteSize": 25856,
+      "change": "changed",
+      "key": "asset:a88a25cf-108e-42ff-8df8-99bc2f35e59f:thumb",
+      "previousByteSize": 20890
+    },
+    {
+      "byteSize": 49156,
+      "change": "changed",
+      "key": "asset:aabb3ace-7bda-4583-8720-5958c1f5dae6:battle",
+      "previousByteSize": 40544
+    },
+    {
+      "byteSize": 49156,
+      "change": "changed",
+      "key": "asset:aabb3ace-7bda-4583-8720-5958c1f5dae6:card",
+      "previousByteSize": 40544
+    },
+    {
+      "byteSize": 49156,
+      "change": "changed",
+      "key": "asset:aabb3ace-7bda-4583-8720-5958c1f5dae6:portrait",
+      "previousByteSize": 40544
+    },
+    {
+      "byteSize": 31598,
+      "change": "changed",
+      "key": "asset:aabb3ace-7bda-4583-8720-5958c1f5dae6:thumb",
+      "previousByteSize": 26212
+    },
+    {
+      "byteSize": 40258,
+      "change": "changed",
+      "key": "asset:ab97de85-0e09-473f-a8c7-ca12c9ba82de:battle",
+      "previousByteSize": 33042
+    },
+    {
+      "byteSize": 40258,
+      "change": "changed",
+      "key": "asset:ab97de85-0e09-473f-a8c7-ca12c9ba82de:card",
+      "previousByteSize": 33042
+    },
+    {
+      "byteSize": 40258,
+      "change": "changed",
+      "key": "asset:ab97de85-0e09-473f-a8c7-ca12c9ba82de:portrait",
+      "previousByteSize": 33042
+    },
+    {
+      "byteSize": 25892,
+      "change": "changed",
+      "key": "asset:ab97de85-0e09-473f-a8c7-ca12c9ba82de:thumb",
+      "previousByteSize": 20922
+    },
+    {
+      "byteSize": 19846,
+      "change": "changed",
+      "key": "asset:ace1397d-eb93-4d23-b7ef-6f3af17e0291:battle",
+      "previousByteSize": 16102
+    },
+    {
+      "byteSize": 19846,
+      "change": "changed",
+      "key": "asset:ace1397d-eb93-4d23-b7ef-6f3af17e0291:card",
+      "previousByteSize": 16102
+    },
+    {
+      "byteSize": 19846,
+      "change": "changed",
+      "key": "asset:ace1397d-eb93-4d23-b7ef-6f3af17e0291:portrait",
+      "previousByteSize": 16102
+    },
+    {
+      "byteSize": 19846,
+      "change": "changed",
+      "key": "asset:ace1397d-eb93-4d23-b7ef-6f3af17e0291:thumb",
+      "previousByteSize": 16102
+    },
+    {
+      "byteSize": 38164,
+      "change": "changed",
+      "key": "asset:ad356a26-1173-4373-be92-06eb1a11a70c:card",
+      "previousByteSize": 28918
+    },
+    {
+      "byteSize": 7108,
+      "change": "changed",
+      "key": "asset:ad356a26-1173-4373-be92-06eb1a11a70c:icon",
+      "previousByteSize": 5824
+    },
+    {
+      "byteSize": 24700,
+      "change": "changed",
+      "key": "asset:ad356a26-1173-4373-be92-06eb1a11a70c:thumb",
+      "previousByteSize": 19488
+    },
+    {
+      "byteSize": 55206,
+      "change": "changed",
+      "key": "asset:ad9d03e9-bb5f-4dbb-90ef-f39ca33f1d67:battle",
+      "previousByteSize": 43400
+    },
+    {
+      "byteSize": 55206,
+      "change": "changed",
+      "key": "asset:ad9d03e9-bb5f-4dbb-90ef-f39ca33f1d67:card",
+      "previousByteSize": 43400
+    },
+    {
+      "byteSize": 55206,
+      "change": "changed",
+      "key": "asset:ad9d03e9-bb5f-4dbb-90ef-f39ca33f1d67:portrait",
+      "previousByteSize": 43400
+    },
+    {
+      "byteSize": 29212,
+      "change": "changed",
+      "key": "asset:ad9d03e9-bb5f-4dbb-90ef-f39ca33f1d67:thumb",
+      "previousByteSize": 23000
+    },
+    {
+      "byteSize": 4528,
+      "change": "changed",
+      "key": "asset:ae8d5037-f6ff-4468-9991-6ee3a34a1650:icon",
+      "previousByteSize": 3642
+    },
+    {
+      "byteSize": 41238,
+      "change": "changed",
+      "key": "asset:afb9b7e4-7cc4-489c-a8dd-fc2d0e7ef8a5:battle",
+      "previousByteSize": 32562
+    },
+    {
+      "byteSize": 41238,
+      "change": "changed",
+      "key": "asset:afb9b7e4-7cc4-489c-a8dd-fc2d0e7ef8a5:card",
+      "previousByteSize": 32562
+    },
+    {
+      "byteSize": 41238,
+      "change": "changed",
+      "key": "asset:afb9b7e4-7cc4-489c-a8dd-fc2d0e7ef8a5:portrait",
+      "previousByteSize": 32562
+    },
+    {
+      "byteSize": 27818,
+      "change": "changed",
+      "key": "asset:afb9b7e4-7cc4-489c-a8dd-fc2d0e7ef8a5:thumb",
+      "previousByteSize": 22292
+    },
+    {
+      "byteSize": 23818,
+      "change": "changed",
+      "key": "asset:b0c60988-13c6-4353-8622-e10d531d8443:card",
+      "previousByteSize": 18112
+    },
+    {
+      "byteSize": 70180,
+      "change": "changed",
+      "key": "asset:b1c4b63a-b631-4eaf-b037-37bb460f18a2:battle",
+      "previousByteSize": 56600
+    },
+    {
+      "byteSize": 70180,
+      "change": "changed",
+      "key": "asset:b1c4b63a-b631-4eaf-b037-37bb460f18a2:card",
+      "previousByteSize": 56600
+    },
+    {
+      "byteSize": 70180,
+      "change": "changed",
+      "key": "asset:b1c4b63a-b631-4eaf-b037-37bb460f18a2:portrait",
+      "previousByteSize": 56600
+    },
+    {
+      "byteSize": 35736,
+      "change": "changed",
+      "key": "asset:b1c4b63a-b631-4eaf-b037-37bb460f18a2:thumb",
+      "previousByteSize": 29452
+    },
+    {
+      "byteSize": 25022,
+      "change": "changed",
+      "key": "asset:b21025ef-6570-4c79-a0dd-c0f0d00da792:battle",
+      "previousByteSize": 19716
+    },
+    {
+      "byteSize": 25022,
+      "change": "changed",
+      "key": "asset:b21025ef-6570-4c79-a0dd-c0f0d00da792:card",
+      "previousByteSize": 19716
+    },
+    {
+      "byteSize": 25022,
+      "change": "changed",
+      "key": "asset:b21025ef-6570-4c79-a0dd-c0f0d00da792:portrait",
+      "previousByteSize": 19716
+    },
+    {
+      "byteSize": 20470,
+      "change": "changed",
+      "key": "asset:b21025ef-6570-4c79-a0dd-c0f0d00da792:thumb",
+      "previousByteSize": 16146
+    },
+    {
+      "byteSize": 35274,
+      "change": "changed",
+      "key": "asset:b26eb7a7-9093-41cf-894e-f466b180f4bd:card",
+      "previousByteSize": 27496
+    },
+    {
+      "byteSize": 60972,
+      "change": "changed",
+      "key": "asset:b3879d3a-0066-44ee-b81c-66e9ed56c718:battle",
+      "previousByteSize": 45736
+    },
+    {
+      "byteSize": 60972,
+      "change": "changed",
+      "key": "asset:b3879d3a-0066-44ee-b81c-66e9ed56c718:card",
+      "previousByteSize": 45736
+    },
+    {
+      "byteSize": 60972,
+      "change": "changed",
+      "key": "asset:b3879d3a-0066-44ee-b81c-66e9ed56c718:portrait",
+      "previousByteSize": 45736
+    },
+    {
+      "byteSize": 25774,
+      "change": "changed",
+      "key": "asset:b3879d3a-0066-44ee-b81c-66e9ed56c718:thumb",
+      "previousByteSize": 19826
+    },
+    {
+      "byteSize": 3632,
+      "change": "changed",
+      "key": "asset:b4e8c2e7-9851-4b73-9c8f-8473b1f9618c:icon",
+      "previousByteSize": 2974
+    },
+    {
+      "byteSize": 33422,
+      "change": "changed",
+      "key": "asset:bfe170c3-506a-4cb8-8a9e-a4938d74f9a3:battle",
+      "previousByteSize": 26012
+    },
+    {
+      "byteSize": 33422,
+      "change": "changed",
+      "key": "asset:bfe170c3-506a-4cb8-8a9e-a4938d74f9a3:card",
+      "previousByteSize": 26012
+    },
+    {
+      "byteSize": 33422,
+      "change": "changed",
+      "key": "asset:bfe170c3-506a-4cb8-8a9e-a4938d74f9a3:portrait",
+      "previousByteSize": 26012
+    },
+    {
+      "byteSize": 21812,
+      "change": "changed",
+      "key": "asset:bfe170c3-506a-4cb8-8a9e-a4938d74f9a3:thumb",
+      "previousByteSize": 17290
+    },
+    {
+      "byteSize": 37558,
+      "change": "changed",
+      "key": "asset:c0f73194-0289-44ab-8462-96dc577ba4d6:battle",
+      "previousByteSize": 30886
+    },
+    {
+      "byteSize": 37558,
+      "change": "changed",
+      "key": "asset:c0f73194-0289-44ab-8462-96dc577ba4d6:card",
+      "previousByteSize": 30886
+    },
+    {
+      "byteSize": 37558,
+      "change": "changed",
+      "key": "asset:c0f73194-0289-44ab-8462-96dc577ba4d6:portrait",
+      "previousByteSize": 30886
+    },
+    {
+      "byteSize": 24380,
+      "change": "changed",
+      "key": "asset:c0f73194-0289-44ab-8462-96dc577ba4d6:thumb",
+      "previousByteSize": 20470
+    },
+    {
+      "byteSize": 28626,
+      "change": "changed",
+      "key": "asset:c36018dd-79e0-4443-800d-1034fc27ebb0:battle",
+      "previousByteSize": 22272
+    },
+    {
+      "byteSize": 28626,
+      "change": "changed",
+      "key": "asset:c36018dd-79e0-4443-800d-1034fc27ebb0:card",
+      "previousByteSize": 22272
+    },
+    {
+      "byteSize": 28626,
+      "change": "changed",
+      "key": "asset:c36018dd-79e0-4443-800d-1034fc27ebb0:portrait",
+      "previousByteSize": 22272
+    },
+    {
+      "byteSize": 19014,
+      "change": "changed",
+      "key": "asset:c36018dd-79e0-4443-800d-1034fc27ebb0:thumb",
+      "previousByteSize": 14970
+    },
+    {
+      "byteSize": 21080,
+      "change": "changed",
+      "key": "asset:c47aa301-e4f1-4427-a9df-0bf56e4be500:battle",
+      "previousByteSize": 16716
+    },
+    {
+      "byteSize": 21080,
+      "change": "changed",
+      "key": "asset:c47aa301-e4f1-4427-a9df-0bf56e4be500:card",
+      "previousByteSize": 16716
+    },
+    {
+      "byteSize": 21080,
+      "change": "changed",
+      "key": "asset:c47aa301-e4f1-4427-a9df-0bf56e4be500:portrait",
+      "previousByteSize": 16716
+    },
+    {
+      "byteSize": 15484,
+      "change": "changed",
+      "key": "asset:c47aa301-e4f1-4427-a9df-0bf56e4be500:thumb",
+      "previousByteSize": 12196
+    },
+    {
+      "byteSize": 25726,
+      "change": "changed",
+      "key": "asset:c4cd1f35-aca2-4d51-9dad-624d66944b73:battle",
+      "previousByteSize": 20032
+    },
+    {
+      "byteSize": 25726,
+      "change": "changed",
+      "key": "asset:c4cd1f35-aca2-4d51-9dad-624d66944b73:card",
+      "previousByteSize": 20032
+    },
+    {
+      "byteSize": 25726,
+      "change": "changed",
+      "key": "asset:c4cd1f35-aca2-4d51-9dad-624d66944b73:portrait",
+      "previousByteSize": 20032
+    },
+    {
+      "byteSize": 17726,
+      "change": "changed",
+      "key": "asset:c4cd1f35-aca2-4d51-9dad-624d66944b73:thumb",
+      "previousByteSize": 13854
+    },
+    {
+      "byteSize": 36528,
+      "change": "changed",
+      "key": "asset:c53ff13d-f24b-4f1e-828f-5866bd928e17:battle",
+      "previousByteSize": 30200
+    },
+    {
+      "byteSize": 36528,
+      "change": "changed",
+      "key": "asset:c53ff13d-f24b-4f1e-828f-5866bd928e17:card",
+      "previousByteSize": 30200
+    },
+    {
+      "byteSize": 36528,
+      "change": "changed",
+      "key": "asset:c53ff13d-f24b-4f1e-828f-5866bd928e17:portrait",
+      "previousByteSize": 30200
+    },
+    {
+      "byteSize": 23602,
+      "change": "changed",
+      "key": "asset:c53ff13d-f24b-4f1e-828f-5866bd928e17:thumb",
+      "previousByteSize": 19428
+    },
+    {
+      "byteSize": 34596,
+      "change": "changed",
+      "key": "asset:c544a8c9-e30a-4bc4-a6b3-34d30c784ff9:card",
+      "previousByteSize": 26934
+    },
+    {
+      "byteSize": 6434,
+      "change": "changed",
+      "key": "asset:c544a8c9-e30a-4bc4-a6b3-34d30c784ff9:icon",
+      "previousByteSize": 5312
+    },
+    {
+      "byteSize": 22720,
+      "change": "changed",
+      "key": "asset:c544a8c9-e30a-4bc4-a6b3-34d30c784ff9:thumb",
+      "previousByteSize": 17994
+    },
+    {
+      "byteSize": 35648,
+      "change": "changed",
+      "key": "asset:c9401f5b-318d-4d64-b5ba-ced735933bbc:battle",
+      "previousByteSize": 29468
+    },
+    {
+      "byteSize": 35648,
+      "change": "changed",
+      "key": "asset:c9401f5b-318d-4d64-b5ba-ced735933bbc:card",
+      "previousByteSize": 29468
+    },
+    {
+      "byteSize": 35648,
+      "change": "changed",
+      "key": "asset:c9401f5b-318d-4d64-b5ba-ced735933bbc:portrait",
+      "previousByteSize": 29468
+    },
+    {
+      "byteSize": 22926,
+      "change": "changed",
+      "key": "asset:c9401f5b-318d-4d64-b5ba-ced735933bbc:thumb",
+      "previousByteSize": 18824
+    },
+    {
+      "byteSize": 39262,
+      "change": "changed",
+      "key": "asset:cad63165-44c8-4876-b3e7-133ae6396a8b:card",
+      "previousByteSize": 30806
+    },
+    {
+      "byteSize": 6792,
+      "change": "changed",
+      "key": "asset:cad63165-44c8-4876-b3e7-133ae6396a8b:icon",
+      "previousByteSize": 5656
+    },
+    {
+      "byteSize": 24642,
+      "change": "changed",
+      "key": "asset:cad63165-44c8-4876-b3e7-133ae6396a8b:thumb",
+      "previousByteSize": 19714
+    },
+    {
+      "byteSize": 47718,
+      "change": "changed",
+      "key": "asset:cc0ecf28-ee95-483b-9fb0-873db9e6272f:battle",
+      "previousByteSize": 38972
+    },
+    {
+      "byteSize": 47718,
+      "change": "changed",
+      "key": "asset:cc0ecf28-ee95-483b-9fb0-873db9e6272f:card",
+      "previousByteSize": 38972
+    },
+    {
+      "byteSize": 47718,
+      "change": "changed",
+      "key": "asset:cc0ecf28-ee95-483b-9fb0-873db9e6272f:portrait",
+      "previousByteSize": 38972
+    },
+    {
+      "byteSize": 32566,
+      "change": "changed",
+      "key": "asset:cc0ecf28-ee95-483b-9fb0-873db9e6272f:thumb",
+      "previousByteSize": 26710
+    },
+    {
+      "byteSize": 37100,
+      "change": "changed",
+      "key": "asset:cc9b55c5-8fa0-46d5-899e-5721cf9761ae:card",
+      "previousByteSize": 29176
+    },
+    {
+      "byteSize": 7630,
+      "change": "changed",
+      "key": "asset:cc9b55c5-8fa0-46d5-899e-5721cf9761ae:icon",
+      "previousByteSize": 6470
+    },
+    {
+      "byteSize": 25350,
+      "change": "changed",
+      "key": "asset:cc9b55c5-8fa0-46d5-899e-5721cf9761ae:thumb",
+      "previousByteSize": 20098
+    },
+    {
+      "byteSize": 22276,
+      "change": "changed",
+      "key": "asset:cee8afa1-09b3-4e91-b406-3994fb9c209a:battle",
+      "previousByteSize": 17816
+    },
+    {
+      "byteSize": 22276,
+      "change": "changed",
+      "key": "asset:cee8afa1-09b3-4e91-b406-3994fb9c209a:card",
+      "previousByteSize": 17816
+    },
+    {
+      "byteSize": 22276,
+      "change": "changed",
+      "key": "asset:cee8afa1-09b3-4e91-b406-3994fb9c209a:portrait",
+      "previousByteSize": 17816
+    },
+    {
+      "byteSize": 14898,
+      "change": "changed",
+      "key": "asset:cee8afa1-09b3-4e91-b406-3994fb9c209a:thumb",
+      "previousByteSize": 11914
+    },
+    {
+      "byteSize": 4180,
+      "change": "changed",
+      "key": "asset:d0709f8d-42cc-45f9-8add-9da819f00270:icon",
+      "previousByteSize": 3386
+    },
+    {
+      "byteSize": 102976,
+      "change": "changed",
+      "key": "asset:d4dde01c-f9a2-47fd-be80-96d77dfa8b23:card",
+      "previousByteSize": 78888
+    },
+    {
+      "byteSize": 13406,
+      "change": "changed",
+      "key": "asset:d4dde01c-f9a2-47fd-be80-96d77dfa8b23:icon",
+      "previousByteSize": 10548
+    },
+    {
+      "byteSize": 61210,
+      "change": "changed",
+      "key": "asset:d4dde01c-f9a2-47fd-be80-96d77dfa8b23:thumb",
+      "previousByteSize": 47480
+    },
+    {
+      "byteSize": 4862,
+      "change": "changed",
+      "key": "asset:d7313b4a-5779-4825-ba40-e735165e790a:icon",
+      "previousByteSize": 3940
+    },
+    {
+      "byteSize": 5628,
+      "change": "changed",
+      "key": "asset:d8810b89-60ae-439a-a3b9-92ad1f599a6a:icon",
+      "previousByteSize": 4274
+    },
+    {
+      "byteSize": 54584,
+      "change": "changed",
+      "key": "asset:da339f4c-732c-4075-bfbd-c49b4f9b665d:battle",
+      "previousByteSize": 44178
+    },
+    {
+      "byteSize": 54584,
+      "change": "changed",
+      "key": "asset:da339f4c-732c-4075-bfbd-c49b4f9b665d:card",
+      "previousByteSize": 44178
+    },
+    {
+      "byteSize": 54584,
+      "change": "changed",
+      "key": "asset:da339f4c-732c-4075-bfbd-c49b4f9b665d:portrait",
+      "previousByteSize": 44178
+    },
+    {
+      "byteSize": 36534,
+      "change": "changed",
+      "key": "asset:da339f4c-732c-4075-bfbd-c49b4f9b665d:thumb",
+      "previousByteSize": 29866
+    },
+    {
+      "byteSize": 47068,
+      "change": "changed",
+      "key": "asset:deebe462-a325-49b5-8538-9a87edae318f:card",
+      "previousByteSize": 36104
+    },
+    {
+      "byteSize": 32248,
+      "change": "changed",
+      "key": "asset:df820c78-8a8d-4f1f-b264-3f453d836bd4:battle",
+      "previousByteSize": 26308
+    },
+    {
+      "byteSize": 32248,
+      "change": "changed",
+      "key": "asset:df820c78-8a8d-4f1f-b264-3f453d836bd4:card",
+      "previousByteSize": 26308
+    },
+    {
+      "byteSize": 32248,
+      "change": "changed",
+      "key": "asset:df820c78-8a8d-4f1f-b264-3f453d836bd4:portrait",
+      "previousByteSize": 26308
+    },
+    {
+      "byteSize": 22150,
+      "change": "changed",
+      "key": "asset:df820c78-8a8d-4f1f-b264-3f453d836bd4:thumb",
+      "previousByteSize": 18336
+    },
+    {
+      "byteSize": 5806,
+      "change": "changed",
+      "key": "asset:e4e4f0c0-c149-47e3-9534-d5c0e8cc3c09:icon",
+      "previousByteSize": 4824
+    },
+    {
+      "byteSize": 82496,
+      "change": "changed",
+      "key": "asset:e51e4223-d690-4109-af50-46967451daf6:battle",
+      "previousByteSize": 66290
+    },
+    {
+      "byteSize": 82496,
+      "change": "changed",
+      "key": "asset:e51e4223-d690-4109-af50-46967451daf6:card",
+      "previousByteSize": 66290
+    },
+    {
+      "byteSize": 82496,
+      "change": "changed",
+      "key": "asset:e51e4223-d690-4109-af50-46967451daf6:portrait",
+      "previousByteSize": 66290
+    },
+    {
+      "byteSize": 42292,
+      "change": "changed",
+      "key": "asset:e51e4223-d690-4109-af50-46967451daf6:thumb",
+      "previousByteSize": 34850
+    },
+    {
+      "byteSize": 33352,
+      "change": "changed",
+      "key": "asset:e6b8dc9f-73d8-4d7e-a860-bc276fa5b68c:battle",
+      "previousByteSize": 27954
+    },
+    {
+      "byteSize": 33352,
+      "change": "changed",
+      "key": "asset:e6b8dc9f-73d8-4d7e-a860-bc276fa5b68c:card",
+      "previousByteSize": 27954
+    },
+    {
+      "byteSize": 33352,
+      "change": "changed",
+      "key": "asset:e6b8dc9f-73d8-4d7e-a860-bc276fa5b68c:portrait",
+      "previousByteSize": 27954
+    },
+    {
+      "byteSize": 22094,
+      "change": "changed",
+      "key": "asset:e6b8dc9f-73d8-4d7e-a860-bc276fa5b68c:thumb",
+      "previousByteSize": 18610
+    },
+    {
+      "byteSize": 46426,
+      "change": "changed",
+      "key": "asset:e6bd844c-c7ea-496e-9f5a-f10397122e25:battle",
+      "previousByteSize": 38660
+    },
+    {
+      "byteSize": 46426,
+      "change": "changed",
+      "key": "asset:e6bd844c-c7ea-496e-9f5a-f10397122e25:card",
+      "previousByteSize": 38660
+    },
+    {
+      "byteSize": 46426,
+      "change": "changed",
+      "key": "asset:e6bd844c-c7ea-496e-9f5a-f10397122e25:portrait",
+      "previousByteSize": 38660
+    },
+    {
+      "byteSize": 30962,
+      "change": "changed",
+      "key": "asset:e6bd844c-c7ea-496e-9f5a-f10397122e25:thumb",
+      "previousByteSize": 26106
+    },
+    {
+      "byteSize": 74278,
+      "change": "changed",
+      "key": "asset:e7b06ab8-77c8-4904-84db-914765373eca:battle",
+      "previousByteSize": 58400
+    },
+    {
+      "byteSize": 74278,
+      "change": "changed",
+      "key": "asset:e7b06ab8-77c8-4904-84db-914765373eca:card",
+      "previousByteSize": 58400
+    },
+    {
+      "byteSize": 74278,
+      "change": "changed",
+      "key": "asset:e7b06ab8-77c8-4904-84db-914765373eca:portrait",
+      "previousByteSize": 58400
+    },
+    {
+      "byteSize": 38418,
+      "change": "changed",
+      "key": "asset:e7b06ab8-77c8-4904-84db-914765373eca:thumb",
+      "previousByteSize": 30830
+    },
+    {
+      "byteSize": 24300,
+      "change": "changed",
+      "key": "asset:ecefea36-fd46-4265-a1b9-7494a7e78325:battle",
+      "previousByteSize": 20074
+    },
+    {
+      "byteSize": 24300,
+      "change": "changed",
+      "key": "asset:ecefea36-fd46-4265-a1b9-7494a7e78325:card",
+      "previousByteSize": 20074
+    },
+    {
+      "byteSize": 24300,
+      "change": "changed",
+      "key": "asset:ecefea36-fd46-4265-a1b9-7494a7e78325:portrait",
+      "previousByteSize": 20074
+    },
+    {
+      "byteSize": 16210,
+      "change": "changed",
+      "key": "asset:ecefea36-fd46-4265-a1b9-7494a7e78325:thumb",
+      "previousByteSize": 13522
+    },
+    {
+      "byteSize": 51256,
+      "change": "changed",
+      "key": "asset:f11500fa-c347-4d8f-a7eb-bc9cb12b674b:card",
+      "previousByteSize": 42426
+    },
+    {
+      "byteSize": 6786,
+      "change": "changed",
+      "key": "asset:f11500fa-c347-4d8f-a7eb-bc9cb12b674b:icon",
+      "previousByteSize": 5500
+    },
+    {
+      "byteSize": 30210,
+      "change": "changed",
+      "key": "asset:f11500fa-c347-4d8f-a7eb-bc9cb12b674b:thumb",
+      "previousByteSize": 24768
+    },
+    {
+      "byteSize": 39232,
+      "change": "changed",
+      "key": "asset:f63d3594-2782-485f-87b3-63adb13c1c29:card",
+      "previousByteSize": 30960
+    },
+    {
+      "byteSize": 7188,
+      "change": "changed",
+      "key": "asset:f63d3594-2782-485f-87b3-63adb13c1c29:icon",
+      "previousByteSize": 5990
+    },
+    {
+      "byteSize": 25988,
+      "change": "changed",
+      "key": "asset:f63d3594-2782-485f-87b3-63adb13c1c29:thumb",
+      "previousByteSize": 20674
+    },
+    {
+      "byteSize": 99646,
+      "change": "changed",
+      "key": "asset:f75a4418-63e7-4f01-ad15-0aa4e8586437:battle",
+      "previousByteSize": 78478
+    },
+    {
+      "byteSize": 99646,
+      "change": "changed",
+      "key": "asset:f75a4418-63e7-4f01-ad15-0aa4e8586437:card",
+      "previousByteSize": 78478
+    },
+    {
+      "byteSize": 99646,
+      "change": "changed",
+      "key": "asset:f75a4418-63e7-4f01-ad15-0aa4e8586437:portrait",
+      "previousByteSize": 78478
+    },
+    {
+      "byteSize": 41292,
+      "change": "changed",
+      "key": "asset:f75a4418-63e7-4f01-ad15-0aa4e8586437:thumb",
+      "previousByteSize": 33426
+    },
+    {
+      "byteSize": 26926,
+      "change": "changed",
+      "key": "asset:fb2b2c21-2805-440a-a50e-91e376334d25:battle",
+      "previousByteSize": 20798
+    },
+    {
+      "byteSize": 26926,
+      "change": "changed",
+      "key": "asset:fb2b2c21-2805-440a-a50e-91e376334d25:card",
+      "previousByteSize": 20798
+    },
+    {
+      "byteSize": 26926,
+      "change": "changed",
+      "key": "asset:fb2b2c21-2805-440a-a50e-91e376334d25:portrait",
+      "previousByteSize": 20798
+    },
+    {
+      "byteSize": 18614,
+      "change": "changed",
+      "key": "asset:fb2b2c21-2805-440a-a50e-91e376334d25:thumb",
+      "previousByteSize": 14438
+    },
+    {
+      "byteSize": 1370365,
+      "change": "changed",
+      "key": "pack:collectibles",
+      "previousByteSize": 1299389
+    },
+    {
+      "byteSize": 403482,
+      "change": "changed",
+      "key": "pack:combat",
+      "previousByteSize": 392873
+    },
+    {
+      "byteSize": 250208,
+      "change": "changed",
+      "key": "pack:core",
+      "previousByteSize": 256937
+    },
+    {
+      "byteSize": 1742563,
+      "change": "changed",
+      "key": "pack:dungeons",
+      "previousByteSize": 1742558
+    },
+    {
+      "byteSize": 1516,
+      "change": "changed",
+      "key": "release-manifest",
+      "previousByteSize": 1516
+    }
+  ],
+  "previousReleaseId": "2026.08.23.2"
+}
