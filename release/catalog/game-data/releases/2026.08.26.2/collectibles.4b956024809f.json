@@ -1,5 +1,5 @@
 {
-  "catalogVersion": "2026.08.26.1",
+  "catalogVersion": "2026.08.26.2",
   "collectibleUnlockChallenges": [
     {
       "any_target": false,
@@ -101,6 +101,56 @@
     },
     {
       "any_target": false,
+      "challenge_type": "deal_damage",
+      "collectible_id": "001",
+      "collectible_type": "critter",
+      "display_text": null,
+      "gate_order": null,
+      "id": "4a45d5ca-9077-4210-94fc-e90955a79b28",
+      "parameters": {
+        "damage_mode": "shield_only",
+        "required_amount": 1,
+        "source_critter_ids": [],
+        "source_critter_tag_ids": [],
+        "source_element_ids": [],
+        "source_skill_tag_ids": [],
+        "target_critter_ids": [],
+        "target_critter_tag_ids": [],
+        "target_element_ids": [],
+        "tracking_required": false,
+        "tracking_scope": "lifetime"
+      },
+      "required_amount": "1",
+      "required_level": null,
+      "sort_order": 4,
+      "target_category": null,
+      "target_id": null,
+      "target_ids": [],
+      "target_mode": null
+    },
+    {
+      "any_target": false,
+      "challenge_type": "shields_shattered",
+      "collectible_id": "001",
+      "collectible_type": "critter",
+      "display_text": null,
+      "gate_order": null,
+      "id": "6e045a4d-92a3-4dc2-a252-8d3f8b81ac64",
+      "parameters": {
+        "required_amount": 10,
+        "shield_side": "friendlies",
+        "tracking_required": true
+      },
+      "required_amount": "10",
+      "required_level": null,
+      "sort_order": 5,
+      "target_category": null,
+      "target_id": null,
+      "target_ids": [],
+      "target_mode": null
+    },
+    {
+      "any_target": false,
       "challenge_type": "own_collectible",
       "collectible_id": "002",
       "collectible_type": "critter",
@@ -112,9 +162,11 @@
         "collectible_ids": [
           "001"
         ],
+        "critter_tag_ids": [],
         "require_unique_collectibles": true,
         "required_amount": 1,
-        "retroactive": true
+        "retroactive": true,
+        "specific_collectible_mode": "count"
       },
       "required_amount": "1",
       "required_level": null,
@@ -4450,7 +4502,7 @@
     {
       "collectible_id": "002",
       "collectible_type": "critter",
-      "required_challenges": 1
+      "required_challenges": 2
     },
     {
       "collectible_id": "003",
@@ -45402,7 +45454,7 @@
       "tag_ids": [
         "first-stage"
       ],
-      "version": 39
+      "version": 40
     },
     {
       "asset_path": "critter/004.card.dba6c1fd452a.webp",
@@ -45517,7 +45569,7 @@
       "tag_ids": [
         "middle-stage"
       ],
-      "version": 22
+      "version": 23
     },
     {
       "asset_path": "critter/003.card.08cf7705f8d2.webp",

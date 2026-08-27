@@ -1,0 +1,43 @@
+{
+  "assetBaseUrl": "../../../game-assets",
+  "assetGitRevision": "72a47845ade2088d14cc3085fceaaa5f14817d00",
+  "assetGitStatus": "clean",
+  "assetManifestSha256": "ac2064f16a7898c2e608098f0fd309dcf52699fb607b637b89c35f1a03061e39",
+  "assetManifestUrl": "../../../game-assets/asset-manifest.ac2064f16a78.json",
+  "buildToolVersion": "rollcasters-catalog-builder/2",
+  "catalogVersion": "2026.08.26.2",
+  "minimumGameVersion": "1.0.0",
+  "packs": [
+    {
+      "byteSize": 250208,
+      "key": "core",
+      "sha256": "dbacdb687064460efc060c488954be3e7a9b8cf3e7a432b2c061d2fdc8babe03",
+      "url": "core.dbacdb687064.json"
+    },
+    {
+      "byteSize": 403482,
+      "key": "combat",
+      "sha256": "b22f9ddfaedf98c1ae0d5bcf89794a0e681923f9daab306bffdcb42279e72c4a",
+      "url": "combat.b22f9ddfaedf.json"
+    },
+    {
+      "byteSize": 1371886,
+      "key": "collectibles",
+      "sha256": "4b956024809fab0db99c17c2b9ee63e52a3c613fa3f50dfbb2dd1d22c4187426",
+      "url": "collectibles.4b956024809f.json"
+    },
+    {
+      "byteSize": 1742563,
+      "key": "dungeons",
+      "sha256": "1ac77ccd4e291da119dca84439e15a35504f97485e540f0dd1830e21354e5695",
+      "url": "dungeons.1ac77ccd4e29.json"
+    }
+  ],
+  "previousCatalogVersion": null,
+  "publishedAt": "2026-08-26T00:00:00.000Z",
+  "runtimeContractVersion": 2,
+  "schemaVersion": 2,
+  "serverCatalogVersion": "2026.08.26.2",
+  "sourceEnvironment": "production",
+  "sourceSnapshotSha256": "c8876a9aad9efa9a2d4afe3e56bbf675b99b481351c16364bbfa63902f2deac8"
+}

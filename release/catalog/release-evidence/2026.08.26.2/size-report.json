@@ -1,7 +1,7 @@
 {
-  "catalogPackBytes": 3766618,
-  "compressedBundleEstimateBytes": 14580303,
-  "deltaBytes": 3206809,
+  "catalogPackBytes": 3768139,
+  "compressedBundleEstimateBytes": 14580383,
+  "deltaBytes": 1521,
   "manifestBytes": 110402,
   "masterInputBytes": 22854586,
   "optimizedAssetBytes": 14278460,
@@ -18,6 +18,6 @@
     "status": 35970,
     "ui": 24344
   },
-  "previousArtifactBytes": 14948671,
-  "totalArtifactBytes": 18155480
+  "previousArtifactBytes": 18155480,
+  "totalArtifactBytes": 18157001
 }

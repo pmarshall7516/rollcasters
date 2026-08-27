@@ -1,5 +1,5 @@
 {
-  "catalogVersion": "2026.08.26.1",
+  "catalogVersion": "2026.08.26.2",
   "effectsByAbility": {
     "basic-boost-1": [
       {
@@ -10480,7 +10480,7 @@
     "paralysis": [
       {
         "classification": "negative",
-        "description": "Has a 30% chance to prevent the afflicted critter from acting each turn.",
+        "description": "Has a 13% chance to prevent the afflicted critter from acting each turn.",
         "execution": "root",
         "id": "c6920656-9acc-4f13-99d3-3f8470881b23",
         "name": "Paralysis",
@@ -13513,7 +13513,7 @@
       "name": "Paralysis",
       "sort_order": 0,
       "stacking_policy": "refresh",
-      "version": 5
+      "version": 6
     },
     {
       "asset_path": "status/toxic.icon.839fdaad6971.webp",
