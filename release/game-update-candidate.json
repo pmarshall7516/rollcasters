@@ -20,13 +20,13 @@
   "clientProtocolVersion": 1,
   "combatRuntimeVersion": 2,
   "contentSchemaVersion": 2,
-  "createdAt": "2026-08-27T00:54:08.428Z",
+  "createdAt": "2026-08-27T01:13:55.147Z",
   "distribution": {
     "repository": "pmarshall7516/rollcaster-releases",
     "tag": "game-v1.0.6"
   },
   "releaseNotes": "Game Ready",
-  "sourceCommit": "6d51d90ffc00dcedb032e05e73d6eea027af706b",
+  "sourceCommit": "63cdc247c5dcd7ae6428052a63b43466d4099e8c",
   "sourceTag": "game-v1.0.6-source",
   "version": "1.0.6"
 }
