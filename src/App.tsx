@@ -284,6 +284,11 @@ type BannerNotification =
       id: string;
       kind: "shop-error";
       message: string;
+    }
+  | {
+      id: string;
+      kind: "lootbox-error";
+      message: string;
     };
 
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
@@ -294,6 +299,14 @@ function createShopErrorNotification(error: unknown): BannerNotification {
     id: `shop-error:${createRequestId()}`,
     kind: "shop-error",
     message: shopErrorMessage(error),
+  };
+}
+
+function createLootboxErrorNotification(error: unknown): BannerNotification {
+  return {
+    id: `lootbox-error:${createRequestId()}`,
+    kind: "lootbox-error",
+    message: errorMessage(error, "Unable to open this Lootbox."),
   };
 }
 
@@ -1572,6 +1585,7 @@ export function App() {
             if (desktopUpdate) throw new Error("A required Game Update is ready. Update before opening another Lootbox.");
           }}
           onPurchaseError={(purchaseFailure) => enqueueNotification(createShopErrorNotification(purchaseFailure))}
+          onOpenError={(openingFailure) => enqueueNotification(createLootboxErrorNotification(openingFailure))}
           onBack={() => navigate("home")}
         />
       )}
@@ -3437,6 +3451,7 @@ function BagScreen({
   onRefresh,
   onBeforeOpenLootbox,
   onPurchaseError,
+  onOpenError,
 }: {
   data: AppData;
   tab: BagTab;
@@ -3445,6 +3460,7 @@ function BagScreen({
   onRefresh: () => Promise<void>;
   onBeforeOpenLootbox: () => Promise<void>;
   onPurchaseError: (error: unknown) => void;
+  onOpenError: (error: unknown) => void;
 }) {
   const [selectedLootbox, setSelectedLootbox] = useState<string | null>(null);
   const currencies = orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite");
@@ -3537,7 +3553,7 @@ function BagScreen({
           {ownedLootboxes.length === 0 && <div className="shop-empty"><Gift /><h2>No Lootboxes yet</h2><p>Purchased and earned Lootboxes will appear here.</p></div>}
         </div>
       </div>}
-      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onBeforeOpen={onBeforeOpenLootbox} onPurchaseError={onPurchaseError} onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
+      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onBeforeOpen={onBeforeOpenLootbox} onPurchaseError={onPurchaseError} onOpenError={onOpenError} onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
     </section>
   );
 }
@@ -3781,6 +3797,7 @@ function ShopScreen({
         onPurchaseRequested={(quantity) => queuePurchase(selectedLootboxEntry, quantity)}
         onBeforeOpen={async () => undefined}
         onPurchaseError={(purchaseFailure) => onNotify(createShopErrorNotification(purchaseFailure))}
+        onOpenError={(openingFailure) => onNotify(createLootboxErrorNotification(openingFailure))}
         onRefresh={onRefresh}
         onPurchased={() => setPurchasedLootboxEntries((current) => new Set(current).add(selectedLootboxEntry.id))}
         onPurchaseFailed={() => setPurchasedLootboxEntries((current) => {
@@ -3941,7 +3958,7 @@ function LootboxRewardProgress({ data, progress, duplicateAmount, duplicateCurre
   </div>;
 }
 
-function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onBeforeOpen, onPurchaseError, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
+function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onBeforeOpen, onPurchaseError, onOpenError, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
   data: AppData;
   lootboxId: string;
   mode: "purchase" | "owned";
@@ -3951,6 +3968,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   onPurchaseRequested?: (quantity: number) => Promise<ShopPurchaseReceipt>;
   onBeforeOpen?: () => Promise<void>;
   onPurchaseError?: (error: unknown) => void;
+  onOpenError?: (error: unknown) => void;
   onRefresh: () => Promise<void>;
   onPurchased?: () => void;
   onPurchaseFailed?: () => void;
@@ -3967,7 +3985,6 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   const initialBagQuantity = lootboxQuantity(data, lootboxId);
   const startingBagQuantityRef = useRef(initialBagQuantity);
   const [availableToOpen, setAvailableToOpen] = useState<bigint | null>(() => mode === "owned" || initialPurchased ? initialBagQuantity : null);
-  const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<LootboxModalPhase>("idle");
   const [receipt, setReceipt] = useState<LootboxOpeningReceipt | null>(null);
   const [rewardProgress, setRewardProgress] = useState<LootboxRewardProgressState | null>(null);
@@ -3995,7 +4012,6 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
 
   async function purchaseBox() {
     if (!shopEntry || !onPurchaseRequested || busy || purchasePending) return;
-    setError(null);
     setPurchasePending(true);
     try {
       const receipt = await onPurchaseRequested(selectedPurchaseQuantity);
@@ -4019,12 +4035,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
 
   async function openBox(force = false) {
     if ((!force && !canOpen) || !lootbox || (availableToOpen !== null && availableToOpen <= 0n)) return;
-    setBusy(true); setError(null);
+    setBusy(true);
     try {
       try {
         await onBeforeOpen?.();
-      } catch (purchaseFailure) {
-        onPurchaseError?.(purchaseFailure);
+      } catch (beforeOpenError) {
+        onOpenError?.(beforeOpenError);
         return;
       }
       const opening = await openLootbox(lootbox.id, openingRequest.current);
@@ -4047,12 +4063,12 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
       timers.current.push(window.setTimeout(() => setPhase("opened"),650));
       timers.current.push(window.setTimeout(() => setPhase("reel"),950));
     } catch (openingFailure) {
-      const openingErrorMessage = errorMessage(openingFailure, "Unable to open this Lootbox.");
-      if (/purchase_shop_entries|purchase_shop_entry|purchase could not be completed/i.test(openingErrorMessage)) {
+      const openingErrorText = rawErrorMessage(openingFailure, "");
+      if (/purchase_shop_entries|purchase_shop_entry|purchase could not be completed/i.test(openingErrorText)) {
         onPurchaseError?.(openingFailure);
         return;
       }
-      setError(openingErrorMessage);
+      onOpenError?.(openingFailure);
     } finally { setBusy(false); }
   }
 
@@ -4190,7 +4206,6 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
         </div>
       </div> : <>
         <button className="lootbox-click-target" disabled={!canOpen} aria-label={canOpen?`Open ${lootbox.name}`:lootbox.name} onClick={() => void openBox()}><LootboxSprite lootbox={lootbox} variant="closed" /></button>
-        {error&&<p className="notice error" role="alert">{error}</p>}
         <footer>{!purchased&&shopEntry&&currency?<div className="lootbox-modal-purchase-stack">
           <div className="shop-price lootbox-modal-purchase-price" aria-live="polite"><span className="shop-purchase-quantity">{formatAmount(selectedPurchaseQuantity)}×</span><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt={currency.name} loading="eager" fallback={<Coins />} /><span className="shop-price-cost">{formatAmount(shopPurchasePrice(shopEntry, selectedPurchaseQuantity))}</span></div>
           <div className="shop-purchase-row lootbox-modal-purchase-row">
@@ -7602,12 +7617,12 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
     );
   }
 
-  if (notification.kind === "shop-error") {
+  if (notification.kind === "shop-error" || notification.kind === "lootbox-error") {
     return (
       <aside className="unlock-notification error-notification" role="status" aria-live="polite" aria-atomic="true">
         <span className="notification-banner-icon" aria-hidden="true"><AlertTriangle size={25} /></span>
         <div className="unlock-notification-copy">
-          <span className="unlock-notification-label"><AlertTriangle size={14} aria-hidden="true" /> Purchase error</span>
+          <span className="unlock-notification-label"><AlertTriangle size={14} aria-hidden="true" /> {notification.kind === "shop-error" ? "Purchase error" : "Lootbox error"}</span>
           <h2>{notification.message}</h2>
         </div>
       </aside>

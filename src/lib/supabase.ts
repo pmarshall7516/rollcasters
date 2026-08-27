@@ -61,6 +61,7 @@ import {
   type LocalServerCompatibilityIdentity,
 } from "./local-release-preview";
 import { isTrackableChallenge } from "./collectibles";
+import { recoverLootboxOpening } from "./lootbox";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
@@ -1696,12 +1697,14 @@ export async function purchaseShopEntries(purchases: ShopPurchaseIntent[]): Prom
 }
 
 export async function openLootbox(lootboxId: string, requestId: string): Promise<LootboxOpeningReceipt> {
-  const { data, error } = await requireClient().rpc("open_lootbox", {
-    p_lootbox_id: lootboxId,
-    p_request_id: requestId,
-  });
-  if (error) throw error;
-  return data as LootboxOpeningReceipt;
+  return recoverLootboxOpening(async (requestedLootboxId, requestedRequestId) => {
+    const { data, error } = await requireClient().rpc("open_lootbox", {
+      p_lootbox_id: requestedLootboxId,
+      p_request_id: requestedRequestId,
+    });
+    if (error) throw error;
+    return data as LootboxOpeningReceipt;
+  }, lootboxId, requestId);
 }
 
 function normalizePromoCodeReward(value: unknown): PromoCodeReward {
@@ -1768,6 +1771,7 @@ export async function submitCollectibleCombatEvents(
       readLocalChallengeState(),
       catalog.collectibleUnlockChallenges,
       events,
+      catalog.dungeons,
     );
     writeLocalChallengeState(nextState);
     return mergeLocalChallengeSnapshot(serverSnapshot, nextState);

@@ -175,7 +175,11 @@ function compare(value: number, operator: string, target: number): boolean {
   return false;
 }
 
-export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): number {
+export function challengeEventIncrement(
+  challenge: CollectibleUnlockChallenge,
+  event: ChallengeEvent,
+  dungeonOrders?: ReadonlyMap<string, number>,
+): number {
   const type = challenge.challenge_type;
   const p = parametersOf(challenge);
   const expectedType = type === "squad_composition"
@@ -350,7 +354,16 @@ export function challengeEventIncrement(challenge: CollectibleUnlockChallenge, e
     if (selected === "specific_dungeon" && !dungeonIds.includes(dungeonId)) return 0;
     if (selected === "dungeon_id_range") {
       const order = Number(event.payload?.dungeon_order ?? NaN);
-      if (!Number.isFinite(order) || order < Number(p.minimum_dungeon_order ?? -Infinity) || order > Number(p.maximum_dungeon_order ?? Infinity)) return 0;
+      const minimumId = stringArray(p.minimum_dungeon_ids)[0];
+      const maximumId = stringArray(p.maximum_dungeon_ids)[0];
+      const minimumOrder = p.minimum_dungeon_order != null
+        ? Number(p.minimum_dungeon_order)
+        : dungeonOrders?.get(minimumId ?? "") ?? NaN;
+      const maximumOrder = p.maximum_dungeon_order != null
+        ? Number(p.maximum_dungeon_order)
+        : dungeonOrders?.get(maximumId ?? "") ?? NaN;
+      if (!Number.isFinite(order) || !Number.isFinite(minimumOrder) || !Number.isFinite(maximumOrder)
+        || order < minimumOrder || order > maximumOrder) return 0;
     }
     if (p.require_relic_activation === true && event.payload?.required_relics_activated !== true) return 0;
     return 1;

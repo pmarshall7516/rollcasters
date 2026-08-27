@@ -487,4 +487,19 @@ check(dungeonEvent([
   { critter_id: "frostling", element_ids: ["frost"] },
 ], "battle_completed") === 0, "The dungeon challenge must ignore battle-completed events.");
 
+const dungeonRange = challenge("dungeon_clear", {
+  dungeon_selection: "dungeon_id_range",
+  minimum_dungeon_ids: ["002"],
+  maximum_dungeon_ids: ["010"],
+  required_clears: 1,
+});
+const rangeEvent = {
+  eventId: "dungeon:range",
+  type: "dungeon_completed" as const,
+  dungeonId: "007",
+  payload: { won: true, dungeon_order: 7 },
+};
+check(challengeEventIncrement(dungeonRange, rangeEvent, new Map([["002", 2], ["010", 10]])) === 1, "Dungeon ranges must resolve authored boundary IDs through the catalog sort order.");
+check(challengeEventIncrement(dungeonRange, rangeEvent) === 0, "Dungeon ranges must not silently accept ID bounds without a catalog order lookup.");
+
 console.log(`Challenge text and progression audit passed for ${cases.length + 7} representative definitions.`);

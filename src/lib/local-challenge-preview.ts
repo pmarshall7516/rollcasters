@@ -4,6 +4,7 @@ import type {
   CollectiblePlayerSnapshot,
   CollectibleUnlockChallenge,
   CombatProgressEvent,
+  Dungeon,
   UserCollectibleChallengeProgress,
   UserTrackedCollectibleChallenge,
 } from "./types.js";
@@ -95,8 +96,10 @@ export function applyLocalChallengeEvents(
   state: LocalChallengePreviewState,
   challenges: CollectibleUnlockChallenge[],
   events: CombatProgressEvent[],
+  dungeons: Pick<Dungeon, "id" | "sort_order">[] = [],
 ): LocalChallengePreviewState {
   const challengesById = new Map(challenges.map((challenge) => [challenge.id, challenge]));
+  const dungeonOrders = new Map(dungeons.map((dungeon) => [dungeon.id, dungeon.sort_order]));
   const trackedIds = new Set(state.tracked.map((row) => row.challenge_id));
   const processed = new Set(state.processedEventKeys);
   const progressById = new Map(state.progress.map((row) => [row.challenge_id, row]));
@@ -108,7 +111,7 @@ export function applyLocalChallengeEvents(
     for (const challengeId of trackedIds) {
       const challenge = challengesById.get(challengeId);
       if (!challenge) continue;
-      const increment = BigInt(Math.max(0, Math.floor(challengeEventIncrement(challenge, normalized))));
+      const increment = BigInt(Math.max(0, Math.floor(challengeEventIncrement(challenge, normalized, dungeonOrders))));
       if (increment <= 0n) continue;
       const previous = progressById.get(challengeId) ?? progressRow(challenge, 0n);
       progressById.set(challengeId, progressRow(
