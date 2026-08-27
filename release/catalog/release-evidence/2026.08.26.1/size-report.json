@@ -1,0 +1,23 @@
+{
+  "catalogPackBytes": 3766618,
+  "compressedBundleEstimateBytes": 14580303,
+  "deltaBytes": 3206809,
+  "manifestBytes": 110402,
+  "masterInputBytes": 22854586,
+  "optimizedAssetBytes": 14278460,
+  "optimizedAssetBytesByCategory": {
+    "critter": 6737566,
+    "currency": 14564,
+    "eclipse-order": 2728390,
+    "element": 63512,
+    "lootbox": 156744,
+    "lootboxes": 65484,
+    "mana": 5782,
+    "relic": 1772080,
+    "rollcaster": 2674024,
+    "status": 35970,
+    "ui": 24344
+  },
+  "previousArtifactBytes": 14948671,
+  "totalArtifactBytes": 18155480
+}

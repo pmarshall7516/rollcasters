@@ -1,0 +1,3579 @@
+{
+  "assets": [
+    {
+      "height": 347,
+      "ownerId": "005",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/005.thumb.3e06122c4869.webp",
+      "sha256": "3e06122c4869107d6824a4537cb35859896133d685454da64ef0d0f151fd32d1",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 619,
+      "ownerId": "005",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/005.card.c73c475ee548.webp",
+      "sha256": "c73c475ee548881b1953937457b9840cd6ad3198d1a90f76b73b135bd7fc5633",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 619,
+      "ownerId": "005",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/005.battle.c73c475ee548.webp",
+      "sha256": "c73c475ee548881b1953937457b9840cd6ad3198d1a90f76b73b135bd7fc5633",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 619,
+      "ownerId": "005",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/005.portrait.c73c475ee548.webp",
+      "sha256": "c73c475ee548881b1953937457b9840cd6ad3198d1a90f76b73b135bd7fc5633",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 98,
+      "ownerId": "basic",
+      "ownerTable": "elements",
+      "path": "element/basic.icon.68f3c01593f4.webp",
+      "sha256": "68f3c01593f43dbfb43770ec5ff8eec8525a9dc2c9212f50b53065ba6f8402d7",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 123,
+      "ownerId": "logo",
+      "ownerTable": "global",
+      "path": "ui/logo.portrait.7b5bb3f13b69.webp",
+      "sha256": "7b5bb3f13b69356dc18e38ba3b14273479ff8a3ae6c12d95551accfc2a5f7d66",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 97,
+      "ownerId": "vile",
+      "ownerTable": "elements",
+      "path": "element/vile.icon.ba9b3c39bc77.webp",
+      "sha256": "ba9b3c39bc77ba156e45357cabc2f89c24cdf6872bad145519d23db5118df7d6",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 83,
+      "ownerId": "logo",
+      "ownerTable": "global",
+      "path": "ui/logo.icon.a31db9e9ecf1.webp",
+      "sha256": "a31db9e9ecf14153099757abef572104046b48d672865bed069af89cd8adb7a0",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 97,
+      "ownerId": "bloom",
+      "ownerTable": "elements",
+      "path": "element/bloom.icon.9c1b55205225.webp",
+      "sha256": "9c1b55205225cb5950fadf97ea51393e0a5cd10065599976050393e278e01713",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 98,
+      "ownerId": "aqua",
+      "ownerTable": "elements",
+      "path": "element/aqua.icon.9d5857c3223c.webp",
+      "sha256": "9d5857c3223cb9b24e597787aef5b44ddaa8b48aff1aa06db81d5bd921e6d111",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 116,
+      "ownerId": "coins",
+      "ownerTable": "currency",
+      "path": "currency/coins.icon.c84ce9381d78.webp",
+      "sha256": "c84ce9381d78104f4a031e8c626fdc5317f0621dfd1c6fd0bfa16bcd83f8d560",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 97,
+      "ownerId": "mana",
+      "ownerTable": "global",
+      "path": "mana/mana.icon.d874152a858f.webp",
+      "sha256": "d874152a858f3c5ad06d5917b5d825558a32bd8cc0c4f5cb71e045447c527b5a",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 96,
+      "ownerId": "ember",
+      "ownerTable": "elements",
+      "path": "element/ember.icon.4e5225b613ae.webp",
+      "sha256": "4e5225b613aeec2f0d669c9a80201527b901061472467c4a7599fe90cf3ba7f5",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 322,
+      "ownerId": "002",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/002.thumb.107b39db127e.webp",
+      "sha256": "107b39db127eab72c2aaf4d373b5e186bad4c6046342458c6eb4b67af7cfc768",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 431,
+      "ownerId": "002",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/002.card.7b3c4ce08749.webp",
+      "sha256": "7b3c4ce087493c4e6cd2b9cd4ea882f86fa1b6cf070657f7d3190731f16f7d2e",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 431,
+      "ownerId": "002",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/002.battle.7b3c4ce08749.webp",
+      "sha256": "7b3c4ce087493c4e6cd2b9cd4ea882f86fa1b6cf070657f7d3190731f16f7d2e",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 431,
+      "ownerId": "002",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/002.portrait.7b3c4ce08749.webp",
+      "sha256": "7b3c4ce087493c4e6cd2b9cd4ea882f86fa1b6cf070657f7d3190731f16f7d2e",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 109,
+      "ownerId": "frostbite",
+      "ownerTable": "statuses",
+      "path": "status/frostbite.icon.04b9e2718390.webp",
+      "sha256": "04b9e2718390e2f9bf260f2281fa98a4cf9a8bb1d9e58e066f7f8383c48ee01f",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 110,
+      "ownerId": "paralysis",
+      "ownerTable": "statuses",
+      "path": "status/paralysis.icon.32474e09a98f.webp",
+      "sha256": "32474e09a98ffefc927969545891e6169b93c7e0a6aee6bb01ea6067e614b8c0",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 109,
+      "ownerId": "toxic",
+      "ownerTable": "statuses",
+      "path": "status/toxic.icon.839fdaad6971.webp",
+      "sha256": "839fdaad697149dcae142a4cccfa0b0a97a48ceb7ec9b66734a661bd8cf39d4a",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 98,
+      "ownerId": "003",
+      "ownerTable": "relics",
+      "path": "relic/003.icon.9be10d59250f.webp",
+      "sha256": "9be10d59250f4dd0c757ba3ab38023b2107b9fec3dd0d3c716d9f0d761feddda",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 228,
+      "ownerId": "003",
+      "ownerTable": "relics",
+      "path": "relic/003.thumb.8a2b4aed9cc4.webp",
+      "sha256": "8a2b4aed9cc41c659011238e21f267556197936df3f045c6def24c4d732ad29c",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 306,
+      "ownerId": "003",
+      "ownerTable": "relics",
+      "path": "relic/003.card.dfdb4f9186aa.webp",
+      "sha256": "dfdb4f9186aac3cde8bce7e539e611fafbb84fdc756ffee24436b9a158f53f26",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 213,
+      "ownerId": "002",
+      "ownerTable": "critters",
+      "path": "critter/002.thumb.cff8ec3feab0.webp",
+      "sha256": "cff8ec3feab06379e132152ae484adc75d61d7eeb4674fc0f7e5e4138e8caeb6",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 277,
+      "ownerId": "002",
+      "ownerTable": "critters",
+      "path": "critter/002.card.ee4583493473.webp",
+      "sha256": "ee458349347359778c3ea72c5069b4136e3ff898fcc8476c5eee98d1a885271c",
+      "variant": "card",
+      "width": 291
+    },
+    {
+      "height": 277,
+      "ownerId": "002",
+      "ownerTable": "critters",
+      "path": "critter/002.battle.ee4583493473.webp",
+      "sha256": "ee458349347359778c3ea72c5069b4136e3ff898fcc8476c5eee98d1a885271c",
+      "variant": "battle",
+      "width": 291
+    },
+    {
+      "height": 277,
+      "ownerId": "002",
+      "ownerTable": "critters",
+      "path": "critter/002.portrait.ee4583493473.webp",
+      "sha256": "ee458349347359778c3ea72c5069b4136e3ff898fcc8476c5eee98d1a885271c",
+      "variant": "portrait",
+      "width": 291
+    },
+    {
+      "height": 178,
+      "ownerId": "003",
+      "ownerTable": "critters",
+      "path": "critter/003.thumb.3f944dd4cffc.webp",
+      "sha256": "3f944dd4cffc9591ca745a3c467e5d84bbe04a528134cb33f4b3f4d16d9de9b6",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 239,
+      "ownerId": "003",
+      "ownerTable": "critters",
+      "path": "critter/003.card.08cf7705f8d2.webp",
+      "sha256": "08cf7705f8d2c4462af23865258a6980ea96e26a89c933dd8a84835b06554e35",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 239,
+      "ownerId": "003",
+      "ownerTable": "critters",
+      "path": "critter/003.battle.08cf7705f8d2.webp",
+      "sha256": "08cf7705f8d2c4462af23865258a6980ea96e26a89c933dd8a84835b06554e35",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 239,
+      "ownerId": "003",
+      "ownerTable": "critters",
+      "path": "critter/003.portrait.08cf7705f8d2.webp",
+      "sha256": "08cf7705f8d2c4462af23865258a6980ea96e26a89c933dd8a84835b06554e35",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 195,
+      "ownerId": "005",
+      "ownerTable": "critters",
+      "path": "critter/005.thumb.aebb38426ddf.webp",
+      "sha256": "aebb38426ddfdde70ae4be34beee555130476f164d2a8acba368a160a7977003",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 261,
+      "ownerId": "005",
+      "ownerTable": "critters",
+      "path": "critter/005.card.cf8708a37053.webp",
+      "sha256": "cf8708a37053aad5e1546fbc6aae3e1f988014f3d6fd29f33a3f9ca68c0b051b",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 261,
+      "ownerId": "005",
+      "ownerTable": "critters",
+      "path": "critter/005.battle.cf8708a37053.webp",
+      "sha256": "cf8708a37053aad5e1546fbc6aae3e1f988014f3d6fd29f33a3f9ca68c0b051b",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 261,
+      "ownerId": "005",
+      "ownerTable": "critters",
+      "path": "critter/005.portrait.cf8708a37053.webp",
+      "sha256": "cf8708a37053aad5e1546fbc6aae3e1f988014f3d6fd29f33a3f9ca68c0b051b",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 232,
+      "ownerId": "006",
+      "ownerTable": "critters",
+      "path": "critter/006.thumb.2068f3d02747.webp",
+      "sha256": "2068f3d02747b2165388c5995b46f489bfb60f52562f6d1ba7fbd015643a61e7",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 311,
+      "ownerId": "006",
+      "ownerTable": "critters",
+      "path": "critter/006.card.a6b6827423a8.webp",
+      "sha256": "a6b6827423a8efaee9d2c3b522bc873ab804f01b59df6a2258302bef3febc7d7",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 311,
+      "ownerId": "006",
+      "ownerTable": "critters",
+      "path": "critter/006.battle.a6b6827423a8.webp",
+      "sha256": "a6b6827423a8efaee9d2c3b522bc873ab804f01b59df6a2258302bef3febc7d7",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 311,
+      "ownerId": "006",
+      "ownerTable": "critters",
+      "path": "critter/006.portrait.a6b6827423a8.webp",
+      "sha256": "a6b6827423a8efaee9d2c3b522bc873ab804f01b59df6a2258302bef3febc7d7",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 244,
+      "ownerId": "007",
+      "ownerTable": "critters",
+      "path": "critter/007.thumb.c3c2c4a8693b.webp",
+      "sha256": "c3c2c4a8693b35872cba803b14c51fc3eed95f6eaa7e1f487ccdd72e1aaf4f58",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 278,
+      "ownerId": "007",
+      "ownerTable": "critters",
+      "path": "critter/007.card.549049dc8fd7.webp",
+      "sha256": "549049dc8fd77b32f754ed9b7b372aad6439599b300e316d01af9b91586dfeb2",
+      "variant": "card",
+      "width": 255
+    },
+    {
+      "height": 278,
+      "ownerId": "007",
+      "ownerTable": "critters",
+      "path": "critter/007.battle.549049dc8fd7.webp",
+      "sha256": "549049dc8fd77b32f754ed9b7b372aad6439599b300e316d01af9b91586dfeb2",
+      "variant": "battle",
+      "width": 255
+    },
+    {
+      "height": 278,
+      "ownerId": "007",
+      "ownerTable": "critters",
+      "path": "critter/007.portrait.549049dc8fd7.webp",
+      "sha256": "549049dc8fd77b32f754ed9b7b372aad6439599b300e316d01af9b91586dfeb2",
+      "variant": "portrait",
+      "width": 255
+    },
+    {
+      "height": 193,
+      "ownerId": "008",
+      "ownerTable": "critters",
+      "path": "critter/008.thumb.6b2bdf1f52f6.webp",
+      "sha256": "6b2bdf1f52f6894973e6da4c0df6d091321ab6a846006f4e33b5bbd2a6c2c938",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 259,
+      "ownerId": "008",
+      "ownerTable": "critters",
+      "path": "critter/008.card.8413e826dbfd.webp",
+      "sha256": "8413e826dbfdb2ac2ab1e2e97e941acd566c5bc7e0154dfd5a7086fbc2978222",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 259,
+      "ownerId": "008",
+      "ownerTable": "critters",
+      "path": "critter/008.battle.8413e826dbfd.webp",
+      "sha256": "8413e826dbfdb2ac2ab1e2e97e941acd566c5bc7e0154dfd5a7086fbc2978222",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 259,
+      "ownerId": "008",
+      "ownerTable": "critters",
+      "path": "critter/008.portrait.8413e826dbfd.webp",
+      "sha256": "8413e826dbfdb2ac2ab1e2e97e941acd566c5bc7e0154dfd5a7086fbc2978222",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 178,
+      "ownerId": "009",
+      "ownerTable": "critters",
+      "path": "critter/009.thumb.2a8d9c69df22.webp",
+      "sha256": "2a8d9c69df22a0c924744e0525dab33918f8fbb3b81d500baa1067fa7cbada64",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 239,
+      "ownerId": "009",
+      "ownerTable": "critters",
+      "path": "critter/009.card.e6108a3618aa.webp",
+      "sha256": "e6108a3618aa986b4002c15a763d10b764b4b2c9643bd8f65d261721b43594f4",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 239,
+      "ownerId": "009",
+      "ownerTable": "critters",
+      "path": "critter/009.battle.e6108a3618aa.webp",
+      "sha256": "e6108a3618aa986b4002c15a763d10b764b4b2c9643bd8f65d261721b43594f4",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 239,
+      "ownerId": "009",
+      "ownerTable": "critters",
+      "path": "critter/009.portrait.e6108a3618aa.webp",
+      "sha256": "e6108a3618aa986b4002c15a763d10b764b4b2c9643bd8f65d261721b43594f4",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 246,
+      "ownerId": "010",
+      "ownerTable": "critters",
+      "path": "critter/010.thumb.bbc22c28869b.webp",
+      "sha256": "bbc22c28869b5650ce121084865ed83028b144bb7e1f36f811002ce9d7de2545",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 330,
+      "ownerId": "010",
+      "ownerTable": "critters",
+      "path": "critter/010.card.8fcbf8d1034b.webp",
+      "sha256": "8fcbf8d1034ba456b230cff84b857867c795948e0c4ec94a4220961de50daad8",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 330,
+      "ownerId": "010",
+      "ownerTable": "critters",
+      "path": "critter/010.battle.8fcbf8d1034b.webp",
+      "sha256": "8fcbf8d1034ba456b230cff84b857867c795948e0c4ec94a4220961de50daad8",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 330,
+      "ownerId": "010",
+      "ownerTable": "critters",
+      "path": "critter/010.portrait.8fcbf8d1034b.webp",
+      "sha256": "8fcbf8d1034ba456b230cff84b857867c795948e0c4ec94a4220961de50daad8",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 122,
+      "ownerId": "prismite",
+      "ownerTable": "currency",
+      "path": "currency/prismite.icon.cf9102344927.webp",
+      "sha256": "cf910234492787a52c26830b947e36310c993fe425733172950b6cb29e222258",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 199,
+      "ownerId": "011",
+      "ownerTable": "critters",
+      "path": "critter/011.thumb.4dfb0a872992.webp",
+      "sha256": "4dfb0a87299203c695213ca85e1321f61d68019235b844d01f6c80a07eee810a",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 267,
+      "ownerId": "011",
+      "ownerTable": "critters",
+      "path": "critter/011.card.dc30f8300e8e.webp",
+      "sha256": "dc30f8300e8e8d530955ca64d5abd2f941522fc201c064f2b221e1c6f241e272",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 267,
+      "ownerId": "011",
+      "ownerTable": "critters",
+      "path": "critter/011.battle.dc30f8300e8e.webp",
+      "sha256": "dc30f8300e8e8d530955ca64d5abd2f941522fc201c064f2b221e1c6f241e272",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 267,
+      "ownerId": "011",
+      "ownerTable": "critters",
+      "path": "critter/011.portrait.dc30f8300e8e.webp",
+      "sha256": "dc30f8300e8e8d530955ca64d5abd2f941522fc201c064f2b221e1c6f241e272",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 311,
+      "ownerId": "013",
+      "ownerTable": "critters",
+      "path": "critter/013.thumb.4c919ea2fa71.webp",
+      "sha256": "4c919ea2fa7168137b157f50fa3a1739a2c465f471eacf3c7326b9a64c7108e2",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 417,
+      "ownerId": "013",
+      "ownerTable": "critters",
+      "path": "critter/013.card.cc9eb132e220.webp",
+      "sha256": "cc9eb132e22032223044d18afa4582c04a1d2bbf9e0ed873b2ff43e13123a93b",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 417,
+      "ownerId": "013",
+      "ownerTable": "critters",
+      "path": "critter/013.battle.cc9eb132e220.webp",
+      "sha256": "cc9eb132e22032223044d18afa4582c04a1d2bbf9e0ed873b2ff43e13123a93b",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 417,
+      "ownerId": "013",
+      "ownerTable": "critters",
+      "path": "critter/013.portrait.cc9eb132e220.webp",
+      "sha256": "cc9eb132e22032223044d18afa4582c04a1d2bbf9e0ed873b2ff43e13123a93b",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 214,
+      "ownerId": "014",
+      "ownerTable": "critters",
+      "path": "critter/014.thumb.789ba6947e5b.webp",
+      "sha256": "789ba6947e5be27aba412297c0128c3fc9d916685da0b8d3f853502a5b4ef0c5",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 287,
+      "ownerId": "014",
+      "ownerTable": "critters",
+      "path": "critter/014.card.1f70e4237c35.webp",
+      "sha256": "1f70e4237c351851920f37339cefa7f17cf3d3950e7e4678119cb1e8c9f3e55d",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 287,
+      "ownerId": "014",
+      "ownerTable": "critters",
+      "path": "critter/014.battle.1f70e4237c35.webp",
+      "sha256": "1f70e4237c351851920f37339cefa7f17cf3d3950e7e4678119cb1e8c9f3e55d",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 287,
+      "ownerId": "014",
+      "ownerTable": "critters",
+      "path": "critter/014.portrait.1f70e4237c35.webp",
+      "sha256": "1f70e4237c351851920f37339cefa7f17cf3d3950e7e4678119cb1e8c9f3e55d",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 96,
+      "ownerId": "frost",
+      "ownerTable": "elements",
+      "path": "element/frost.icon.4e100e94898d.webp",
+      "sha256": "4e100e94898dc5876541160da391882a42dfa7d93606ae8b3dee18068053de04",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 98,
+      "ownerId": "thunder",
+      "ownerTable": "elements",
+      "path": "element/thunder.icon.a4fd52ac89b3.webp",
+      "sha256": "a4fd52ac89b3ed425ac95628d7bddd5e53b82c39a193fde9739ebd6900a0c9ac",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 276,
+      "ownerId": "003",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/003.thumb.e63310d8eafc.webp",
+      "sha256": "e63310d8eafceea74206e93e50af43043da43e7201d39646016232d54302523c",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 369,
+      "ownerId": "003",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/003.card.b8a64e45e197.webp",
+      "sha256": "b8a64e45e19735c498b821c69c27d67b09eee9bac875bd06b388d6f7adbf9123",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 369,
+      "ownerId": "003",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/003.battle.b8a64e45e197.webp",
+      "sha256": "b8a64e45e19735c498b821c69c27d67b09eee9bac875bd06b388d6f7adbf9123",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 369,
+      "ownerId": "003",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/003.portrait.b8a64e45e197.webp",
+      "sha256": "b8a64e45e19735c498b821c69c27d67b09eee9bac875bd06b388d6f7adbf9123",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 369,
+      "ownerId": "015",
+      "ownerTable": "critters",
+      "path": "critter/015.thumb.53ad87397495.webp",
+      "sha256": "53ad87397495914f83ea0539de6dc49715ce49936e657cfef336e7f11125012a",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 494,
+      "ownerId": "015",
+      "ownerTable": "critters",
+      "path": "critter/015.card.29dde27885b4.webp",
+      "sha256": "29dde27885b463d48828575e6af339ac6c69d099fc8be22a7092e8a55ee69448",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 494,
+      "ownerId": "015",
+      "ownerTable": "critters",
+      "path": "critter/015.battle.29dde27885b4.webp",
+      "sha256": "29dde27885b463d48828575e6af339ac6c69d099fc8be22a7092e8a55ee69448",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 494,
+      "ownerId": "015",
+      "ownerTable": "critters",
+      "path": "critter/015.portrait.29dde27885b4.webp",
+      "sha256": "29dde27885b463d48828575e6af339ac6c69d099fc8be22a7092e8a55ee69448",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 291,
+      "ownerId": "016",
+      "ownerTable": "critters",
+      "path": "critter/016.thumb.122f5c09f69f.webp",
+      "sha256": "122f5c09f69f7fd23f8ce74fa0bf7840f026f76ee8b904a21bb8973f65145c22",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 390,
+      "ownerId": "016",
+      "ownerTable": "critters",
+      "path": "critter/016.card.992b28afb47b.webp",
+      "sha256": "992b28afb47b0d5ec3f262500116e817de20c67141608877d10ecb3c5ec28f03",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 390,
+      "ownerId": "016",
+      "ownerTable": "critters",
+      "path": "critter/016.battle.992b28afb47b.webp",
+      "sha256": "992b28afb47b0d5ec3f262500116e817de20c67141608877d10ecb3c5ec28f03",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 390,
+      "ownerId": "016",
+      "ownerTable": "critters",
+      "path": "critter/016.portrait.992b28afb47b.webp",
+      "sha256": "992b28afb47b0d5ec3f262500116e817de20c67141608877d10ecb3c5ec28f03",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 220,
+      "ownerId": "017",
+      "ownerTable": "critters",
+      "path": "critter/017.thumb.cc4d929bf91b.webp",
+      "sha256": "cc4d929bf91b6cbeaf495accfa5ba726f348f6d0e9685c8842e55dced4c4b295",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 294,
+      "ownerId": "017",
+      "ownerTable": "critters",
+      "path": "critter/017.card.8032a6ed7b62.webp",
+      "sha256": "8032a6ed7b620e99496147139818846637e626d195de89ee06fc2fad5a7d6e37",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 294,
+      "ownerId": "017",
+      "ownerTable": "critters",
+      "path": "critter/017.battle.8032a6ed7b62.webp",
+      "sha256": "8032a6ed7b620e99496147139818846637e626d195de89ee06fc2fad5a7d6e37",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 294,
+      "ownerId": "017",
+      "ownerTable": "critters",
+      "path": "critter/017.portrait.8032a6ed7b62.webp",
+      "sha256": "8032a6ed7b620e99496147139818846637e626d195de89ee06fc2fad5a7d6e37",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 286,
+      "ownerId": "018",
+      "ownerTable": "critters",
+      "path": "critter/018.thumb.9ee148d7c20d.webp",
+      "sha256": "9ee148d7c20dca6d946b52e595ec3b5cac4dd79c27e43f36c78e3d2c337559e6",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 384,
+      "ownerId": "018",
+      "ownerTable": "critters",
+      "path": "critter/018.card.16749ff232e3.webp",
+      "sha256": "16749ff232e34745515ac18c065970c8f0d516948ac3aa4ea40e4fa8d4ab7af4",
+      "variant": "card",
+      "width": 301
+    },
+    {
+      "height": 384,
+      "ownerId": "018",
+      "ownerTable": "critters",
+      "path": "critter/018.battle.16749ff232e3.webp",
+      "sha256": "16749ff232e34745515ac18c065970c8f0d516948ac3aa4ea40e4fa8d4ab7af4",
+      "variant": "battle",
+      "width": 301
+    },
+    {
+      "height": 384,
+      "ownerId": "018",
+      "ownerTable": "critters",
+      "path": "critter/018.portrait.16749ff232e3.webp",
+      "sha256": "16749ff232e34745515ac18c065970c8f0d516948ac3aa4ea40e4fa8d4ab7af4",
+      "variant": "portrait",
+      "width": 301
+    },
+    {
+      "height": 231,
+      "ownerId": "019",
+      "ownerTable": "critters",
+      "path": "critter/019.thumb.0d04f3ded49a.webp",
+      "sha256": "0d04f3ded49af9df415cd27477be6a425ab4998dd493c2d46eac774ba69ff223",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 310,
+      "ownerId": "019",
+      "ownerTable": "critters",
+      "path": "critter/019.card.cdfe7113fb91.webp",
+      "sha256": "cdfe7113fb91b1cf1822be28cc998fd8c23e0f281040b4610d0ee29bb70f56bb",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 310,
+      "ownerId": "019",
+      "ownerTable": "critters",
+      "path": "critter/019.battle.cdfe7113fb91.webp",
+      "sha256": "cdfe7113fb91b1cf1822be28cc998fd8c23e0f281040b4610d0ee29bb70f56bb",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 310,
+      "ownerId": "019",
+      "ownerTable": "critters",
+      "path": "critter/019.portrait.cdfe7113fb91.webp",
+      "sha256": "cdfe7113fb91b1cf1822be28cc998fd8c23e0f281040b4610d0ee29bb70f56bb",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 284,
+      "ownerId": "001",
+      "ownerTable": "critters",
+      "path": "critter/001.thumb.c929adef8ae5.webp",
+      "sha256": "c929adef8ae5fe5d78a88bc1b3b9668b32203c0998b0fdca3e61e9878e146d04",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 338,
+      "ownerId": "001",
+      "ownerTable": "critters",
+      "path": "critter/001.card.1b782e51d70f.webp",
+      "sha256": "1b782e51d70fe50516ef5036dc5ad8fb6743386d3fb8ff9e7b1916c0b2365ec2",
+      "variant": "card",
+      "width": 267
+    },
+    {
+      "height": 338,
+      "ownerId": "001",
+      "ownerTable": "critters",
+      "path": "critter/001.battle.1b782e51d70f.webp",
+      "sha256": "1b782e51d70fe50516ef5036dc5ad8fb6743386d3fb8ff9e7b1916c0b2365ec2",
+      "variant": "battle",
+      "width": 267
+    },
+    {
+      "height": 338,
+      "ownerId": "001",
+      "ownerTable": "critters",
+      "path": "critter/001.portrait.1b782e51d70f.webp",
+      "sha256": "1b782e51d70fe50516ef5036dc5ad8fb6743386d3fb8ff9e7b1916c0b2365ec2",
+      "variant": "portrait",
+      "width": 267
+    },
+    {
+      "height": 98,
+      "ownerId": "ancient",
+      "ownerTable": "elements",
+      "path": "element/ancient.icon.01375c74ac04.webp",
+      "sha256": "01375c74ac04ef1b6204fab91473726dc9ac7511f9e31e45db4771161312ff33",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 99,
+      "ownerId": "flying",
+      "ownerTable": "element",
+      "path": "element/flying.icon.72426fbc75e0.webp",
+      "sha256": "72426fbc75e0ecce8a2c07274290bbf13c0da5e1b9b9cb71695dc814f1f40d68",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 98,
+      "ownerId": "mechanical",
+      "ownerTable": "elements",
+      "path": "element/mechanical.icon.f72d10512e89.webp",
+      "sha256": "f72d10512e89c86751faed42cbae53be834c598c7124e2a9981fb2dd452f3a8c",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 97,
+      "ownerId": "spirit",
+      "ownerTable": "elements",
+      "path": "element/spirit.icon.015a447cd28f.webp",
+      "sha256": "015a447cd28fbd78ce02de7b34cd0faf88e42c026bcbb6aa6642cf5fb759280c",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 97,
+      "ownerId": "tera",
+      "ownerTable": "elements",
+      "path": "element/tera.icon.2affa020b9b2.webp",
+      "sha256": "2affa020b9b2b16c1ff9cf5f8f81e4aebff412998c5be1b8f9b2909285c0e9b6",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 274,
+      "ownerId": "020",
+      "ownerTable": "critters",
+      "path": "critter/020.thumb.5bc8ef9406d0.webp",
+      "sha256": "5bc8ef9406d0c6835cab5d0ede6b4df9a5168cd42d7f21dc1cb4d8d8c70268f5",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 370,
+      "ownerId": "020",
+      "ownerTable": "critters",
+      "path": "critter/020.card.8c5be29931a8.webp",
+      "sha256": "8c5be29931a8dc2b9cbce09ee42946a22de2e8f17c448b5901c64a0d54642a6a",
+      "variant": "card",
+      "width": 302
+    },
+    {
+      "height": 370,
+      "ownerId": "020",
+      "ownerTable": "critters",
+      "path": "critter/020.battle.8c5be29931a8.webp",
+      "sha256": "8c5be29931a8dc2b9cbce09ee42946a22de2e8f17c448b5901c64a0d54642a6a",
+      "variant": "battle",
+      "width": 302
+    },
+    {
+      "height": 370,
+      "ownerId": "020",
+      "ownerTable": "critters",
+      "path": "critter/020.portrait.8c5be29931a8.webp",
+      "sha256": "8c5be29931a8dc2b9cbce09ee42946a22de2e8f17c448b5901c64a0d54642a6a",
+      "variant": "portrait",
+      "width": 302
+    },
+    {
+      "height": 214,
+      "ownerId": "021",
+      "ownerTable": "critters",
+      "path": "critter/021.thumb.afd924a1115f.webp",
+      "sha256": "afd924a1115f7499eb7bbaf7e772b2009f43040eff4e9a345c6c5425c2bc0289",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 286,
+      "ownerId": "021",
+      "ownerTable": "critters",
+      "path": "critter/021.card.070ab3b77006.webp",
+      "sha256": "070ab3b77006acf1aad464c48621660bf92ef382da377d0ab60a1879646b5031",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 286,
+      "ownerId": "021",
+      "ownerTable": "critters",
+      "path": "critter/021.battle.070ab3b77006.webp",
+      "sha256": "070ab3b77006acf1aad464c48621660bf92ef382da377d0ab60a1879646b5031",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 286,
+      "ownerId": "021",
+      "ownerTable": "critters",
+      "path": "critter/021.portrait.070ab3b77006.webp",
+      "sha256": "070ab3b77006acf1aad464c48621660bf92ef382da377d0ab60a1879646b5031",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 256,
+      "ownerId": "023",
+      "ownerTable": "critters",
+      "path": "critter/023.thumb.e8da9f9c5c60.webp",
+      "sha256": "e8da9f9c5c60e312d83fd80e2c5be222e0ebaa5125f63c63fb8e5a018ba889cf",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 345,
+      "ownerId": "023",
+      "ownerTable": "critters",
+      "path": "critter/023.card.1123640afb55.webp",
+      "sha256": "1123640afb555db0bd16474af071fefb84e5f7b1396b888fccea9963da34eed8",
+      "variant": "card",
+      "width": 302
+    },
+    {
+      "height": 345,
+      "ownerId": "023",
+      "ownerTable": "critters",
+      "path": "critter/023.battle.1123640afb55.webp",
+      "sha256": "1123640afb555db0bd16474af071fefb84e5f7b1396b888fccea9963da34eed8",
+      "variant": "battle",
+      "width": 302
+    },
+    {
+      "height": 345,
+      "ownerId": "023",
+      "ownerTable": "critters",
+      "path": "critter/023.portrait.1123640afb55.webp",
+      "sha256": "1123640afb555db0bd16474af071fefb84e5f7b1396b888fccea9963da34eed8",
+      "variant": "portrait",
+      "width": 302
+    },
+    {
+      "height": 199,
+      "ownerId": "024",
+      "ownerTable": "critters",
+      "path": "critter/024.thumb.bb3926630d60.webp",
+      "sha256": "bb3926630d60a2f81661f8c8fc0b8a44d20fece40d87661f5b08f66cae1cce04",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 267,
+      "ownerId": "024",
+      "ownerTable": "critters",
+      "path": "critter/024.card.72b672ed2749.webp",
+      "sha256": "72b672ed2749c208efa56090cc6407028ea6d0bcd1308000c782a650e3da45f7",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 267,
+      "ownerId": "024",
+      "ownerTable": "critters",
+      "path": "critter/024.battle.72b672ed2749.webp",
+      "sha256": "72b672ed2749c208efa56090cc6407028ea6d0bcd1308000c782a650e3da45f7",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 267,
+      "ownerId": "024",
+      "ownerTable": "critters",
+      "path": "critter/024.portrait.72b672ed2749.webp",
+      "sha256": "72b672ed2749c208efa56090cc6407028ea6d0bcd1308000c782a650e3da45f7",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 174,
+      "ownerId": "025",
+      "ownerTable": "critters",
+      "path": "critter/025.thumb.3d0432a20440.webp",
+      "sha256": "3d0432a2044099b36e03549269f0a7c0ff96b26cc02eb8e73ceced7b5af96b57",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 233,
+      "ownerId": "025",
+      "ownerTable": "critters",
+      "path": "critter/025.card.259cbef337c5.webp",
+      "sha256": "259cbef337c54c6ee45d0bcd68e0b747bc75ee38320ae2a7fcffd5c70450110a",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 233,
+      "ownerId": "025",
+      "ownerTable": "critters",
+      "path": "critter/025.battle.259cbef337c5.webp",
+      "sha256": "259cbef337c54c6ee45d0bcd68e0b747bc75ee38320ae2a7fcffd5c70450110a",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 233,
+      "ownerId": "025",
+      "ownerTable": "critters",
+      "path": "critter/025.portrait.259cbef337c5.webp",
+      "sha256": "259cbef337c54c6ee45d0bcd68e0b747bc75ee38320ae2a7fcffd5c70450110a",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 122,
+      "ownerId": "026",
+      "ownerTable": "critters",
+      "path": "critter/026.thumb.2bb90f3d4f8e.webp",
+      "sha256": "2bb90f3d4f8ebe462959fb2277efd1a9b98138d9e1ea55b74727767fcd9f4fbb",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 164,
+      "ownerId": "026",
+      "ownerTable": "critters",
+      "path": "critter/026.card.b13ddaeac6a6.webp",
+      "sha256": "b13ddaeac6a60bd00332473785ebe108290a74756204f41f7772312d8ec935b0",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 164,
+      "ownerId": "026",
+      "ownerTable": "critters",
+      "path": "critter/026.battle.b13ddaeac6a6.webp",
+      "sha256": "b13ddaeac6a60bd00332473785ebe108290a74756204f41f7772312d8ec935b0",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 164,
+      "ownerId": "026",
+      "ownerTable": "critters",
+      "path": "critter/026.portrait.b13ddaeac6a6.webp",
+      "sha256": "b13ddaeac6a60bd00332473785ebe108290a74756204f41f7772312d8ec935b0",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 297,
+      "ownerId": "027",
+      "ownerTable": "critters",
+      "path": "critter/027.thumb.13f6b12ec1b5.webp",
+      "sha256": "13f6b12ec1b5b1ed52ece5d0a88839f0d1da4889ca48ad4e312fb0de004ef529",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 400,
+      "ownerId": "027",
+      "ownerTable": "critters",
+      "path": "critter/027.card.e7d737699e2e.webp",
+      "sha256": "e7d737699e2ecb2872aabb9db4a2313adb34b51f7217e1c3a9139d2725ccc2a5",
+      "variant": "card",
+      "width": 302
+    },
+    {
+      "height": 400,
+      "ownerId": "027",
+      "ownerTable": "critters",
+      "path": "critter/027.battle.e7d737699e2e.webp",
+      "sha256": "e7d737699e2ecb2872aabb9db4a2313adb34b51f7217e1c3a9139d2725ccc2a5",
+      "variant": "battle",
+      "width": 302
+    },
+    {
+      "height": 400,
+      "ownerId": "027",
+      "ownerTable": "critters",
+      "path": "critter/027.portrait.e7d737699e2e.webp",
+      "sha256": "e7d737699e2ecb2872aabb9db4a2313adb34b51f7217e1c3a9139d2725ccc2a5",
+      "variant": "portrait",
+      "width": 302
+    },
+    {
+      "height": 264,
+      "ownerId": "028",
+      "ownerTable": "critters",
+      "path": "critter/028.thumb.e34fe026cb3d.webp",
+      "sha256": "e34fe026cb3d77e7221b51069c5c5aff4b31d2122092291211109a0ba4043b30",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 357,
+      "ownerId": "028",
+      "ownerTable": "critters",
+      "path": "critter/028.card.66da83bd994d.webp",
+      "sha256": "66da83bd994dc30e13837ea1ce59627e3eda1870cac885a6826f3f9f9184732f",
+      "variant": "card",
+      "width": 303
+    },
+    {
+      "height": 357,
+      "ownerId": "028",
+      "ownerTable": "critters",
+      "path": "critter/028.battle.66da83bd994d.webp",
+      "sha256": "66da83bd994dc30e13837ea1ce59627e3eda1870cac885a6826f3f9f9184732f",
+      "variant": "battle",
+      "width": 303
+    },
+    {
+      "height": 357,
+      "ownerId": "028",
+      "ownerTable": "critters",
+      "path": "critter/028.portrait.66da83bd994d.webp",
+      "sha256": "66da83bd994dc30e13837ea1ce59627e3eda1870cac885a6826f3f9f9184732f",
+      "variant": "portrait",
+      "width": 303
+    },
+    {
+      "height": 181,
+      "ownerId": "029",
+      "ownerTable": "critters",
+      "path": "critter/029.thumb.20891825f10d.webp",
+      "sha256": "20891825f10d9805808d2a7482823220df65dc2c054477e999f889e0dd2306f6",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 242,
+      "ownerId": "029",
+      "ownerTable": "critters",
+      "path": "critter/029.card.1fb00d85d0f8.webp",
+      "sha256": "1fb00d85d0f892db4cacf41bfd12ad7ceb2f75eed4dbc7f0b3bc638c63864275",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 242,
+      "ownerId": "029",
+      "ownerTable": "critters",
+      "path": "critter/029.battle.1fb00d85d0f8.webp",
+      "sha256": "1fb00d85d0f892db4cacf41bfd12ad7ceb2f75eed4dbc7f0b3bc638c63864275",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 242,
+      "ownerId": "029",
+      "ownerTable": "critters",
+      "path": "critter/029.portrait.1fb00d85d0f8.webp",
+      "sha256": "1fb00d85d0f892db4cacf41bfd12ad7ceb2f75eed4dbc7f0b3bc638c63864275",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 270,
+      "ownerId": "030",
+      "ownerTable": "critters",
+      "path": "critter/030.thumb.59794893b8b5.webp",
+      "sha256": "59794893b8b5386c5fd5750ecaf5dc414ce7a96adb64222dacb84d54612c38be",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 362,
+      "ownerId": "030",
+      "ownerTable": "critters",
+      "path": "critter/030.card.e0c58d5cd092.webp",
+      "sha256": "e0c58d5cd0929a4b0940404051a8dea670e29cbad760d27397ce5f4df2189b51",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 362,
+      "ownerId": "030",
+      "ownerTable": "critters",
+      "path": "critter/030.battle.e0c58d5cd092.webp",
+      "sha256": "e0c58d5cd0929a4b0940404051a8dea670e29cbad760d27397ce5f4df2189b51",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 362,
+      "ownerId": "030",
+      "ownerTable": "critters",
+      "path": "critter/030.portrait.e0c58d5cd092.webp",
+      "sha256": "e0c58d5cd0929a4b0940404051a8dea670e29cbad760d27397ce5f4df2189b51",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 255,
+      "ownerId": "031",
+      "ownerTable": "critters",
+      "path": "critter/031.thumb.d40394d6fe9c.webp",
+      "sha256": "d40394d6fe9cc91b6714ae25dc15e4b55812aa1aea12afa3e721ae0c01d4ab93",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 341,
+      "ownerId": "031",
+      "ownerTable": "critters",
+      "path": "critter/031.card.bbcdf17fc7a3.webp",
+      "sha256": "bbcdf17fc7a39875275aff08c1422980b061b140bcf5f424ef1d034294098454",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 341,
+      "ownerId": "031",
+      "ownerTable": "critters",
+      "path": "critter/031.battle.bbcdf17fc7a3.webp",
+      "sha256": "bbcdf17fc7a39875275aff08c1422980b061b140bcf5f424ef1d034294098454",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 341,
+      "ownerId": "031",
+      "ownerTable": "critters",
+      "path": "critter/031.portrait.bbcdf17fc7a3.webp",
+      "sha256": "bbcdf17fc7a39875275aff08c1422980b061b140bcf5f424ef1d034294098454",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 196,
+      "ownerId": "032",
+      "ownerTable": "critters",
+      "path": "critter/032.thumb.18f1ea6393cf.webp",
+      "sha256": "18f1ea6393cfb6931ae660520fc9b0f69cabaadd06eb18316f3aa54bd76f1653",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 263,
+      "ownerId": "032",
+      "ownerTable": "critters",
+      "path": "critter/032.card.f75e61c9dfa3.webp",
+      "sha256": "f75e61c9dfa3d8d4a2f4645ed40edf8af4432ee4a062db9ac8b5f1e80e2053fd",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 263,
+      "ownerId": "032",
+      "ownerTable": "critters",
+      "path": "critter/032.battle.f75e61c9dfa3.webp",
+      "sha256": "f75e61c9dfa3d8d4a2f4645ed40edf8af4432ee4a062db9ac8b5f1e80e2053fd",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 263,
+      "ownerId": "032",
+      "ownerTable": "critters",
+      "path": "critter/032.portrait.f75e61c9dfa3.webp",
+      "sha256": "f75e61c9dfa3d8d4a2f4645ed40edf8af4432ee4a062db9ac8b5f1e80e2053fd",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 389,
+      "ownerId": "001",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/001.thumb.6f173380966a.webp",
+      "sha256": "6f173380966a6c1d93379e5fc4f62df6b9cad9c7082033800cdea517b8adf963",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 521,
+      "ownerId": "001",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/001.card.3fd2bb9656fc.webp",
+      "sha256": "3fd2bb9656fc97b90f169817b5a9d28bc33f453021bfd595c8eeef25aedb2102",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 521,
+      "ownerId": "001",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/001.battle.3fd2bb9656fc.webp",
+      "sha256": "3fd2bb9656fc97b90f169817b5a9d28bc33f453021bfd595c8eeef25aedb2102",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 521,
+      "ownerId": "001",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/001.portrait.3fd2bb9656fc.webp",
+      "sha256": "3fd2bb9656fc97b90f169817b5a9d28bc33f453021bfd595c8eeef25aedb2102",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 92,
+      "ownerId": "002",
+      "ownerTable": "relics",
+      "path": "relic/002.icon.feaf490508cb.webp",
+      "sha256": "feaf490508cb8f4cb8ea869327d88711106fef1d38bb30f75fc56a0a46496e00",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 215,
+      "ownerId": "002",
+      "ownerTable": "relics",
+      "path": "relic/002.thumb.b99c6e312ad6.webp",
+      "sha256": "b99c6e312ad65c87c86119a0c18fef04e61f983d166ed3016f333fa4526226f3",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 288,
+      "ownerId": "002",
+      "ownerTable": "relics",
+      "path": "relic/002.card.7e7c707c1034.webp",
+      "sha256": "7e7c707c10342b5b695d86389148b0ac2bfa4330eb2061e779faa6f54a2a84a8",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 102,
+      "ownerId": "004",
+      "ownerTable": "relics",
+      "path": "relic/004.icon.b38438a2769f.webp",
+      "sha256": "b38438a2769f1fb26ecbb241a9abab1b05dd3f38400333635b7eb0867a0e222d",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 239,
+      "ownerId": "004",
+      "ownerTable": "relics",
+      "path": "relic/004.thumb.e4610e0ff148.webp",
+      "sha256": "e4610e0ff14804d5b15e6dea965e92648aafb43a992bfdc014c80a19a0a54284",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 320,
+      "ownerId": "004",
+      "ownerTable": "relics",
+      "path": "relic/004.card.3012fbd5a826.webp",
+      "sha256": "3012fbd5a826e0807dd47c22e92e5d5b57c8e17088c36724ef5380597319b8de",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 100,
+      "ownerId": "005",
+      "ownerTable": "relics",
+      "path": "relic/005.icon.f600bb5b18ab.webp",
+      "sha256": "f600bb5b18abd3cdf64141a651f7f7000066a47f5e54644a2d1feff1c93e6090",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 232,
+      "ownerId": "005",
+      "ownerTable": "relics",
+      "path": "relic/005.thumb.9c1b91474ddf.webp",
+      "sha256": "9c1b91474ddf34ecf954bc36d56b60efd958ce9710f3a69dafab7c2a1ad359ba",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 311,
+      "ownerId": "005",
+      "ownerTable": "relics",
+      "path": "relic/005.card.c59e0d641e64.webp",
+      "sha256": "c59e0d641e6418feb4133bc8ebe198003d6e63fb11ee7d27121c97bbc12eae62",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 100,
+      "ownerId": "006",
+      "ownerTable": "relics",
+      "path": "relic/006.icon.c513f194ae73.webp",
+      "sha256": "c513f194ae7337f8317a3401b66317aacaf6e33dee7ac4c2e55c15a79028dbfb",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 234,
+      "ownerId": "006",
+      "ownerTable": "relics",
+      "path": "relic/006.thumb.fe93f53cd406.webp",
+      "sha256": "fe93f53cd4065d3641134ae82072d4b0f04803fb43b1615e4c5618fcc8c59c20",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 314,
+      "ownerId": "006",
+      "ownerTable": "relics",
+      "path": "relic/006.card.5e2c8c71192b.webp",
+      "sha256": "5e2c8c71192b4d746274122d969d2852a5259e330dd9e63134f832a951c73f7c",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 369,
+      "ownerId": "004",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/004.thumb.d383207ec91e.webp",
+      "sha256": "d383207ec91ef8fd2148b50af53f1ad09181a2301dda95237f9f9846d959344f",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 494,
+      "ownerId": "004",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/004.card.a97c64df1e66.webp",
+      "sha256": "a97c64df1e660200cd13a2ab59bd5218502ff74fe89c953c574abc5fb10196dc",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 494,
+      "ownerId": "004",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/004.battle.a97c64df1e66.webp",
+      "sha256": "a97c64df1e660200cd13a2ab59bd5218502ff74fe89c953c574abc5fb10196dc",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 494,
+      "ownerId": "004",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/004.portrait.a97c64df1e66.webp",
+      "sha256": "a97c64df1e660200cd13a2ab59bd5218502ff74fe89c953c574abc5fb10196dc",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 160,
+      "ownerId": "007",
+      "ownerTable": "relics",
+      "path": "relic/007.icon.b00adca1aae9.webp",
+      "sha256": "b00adca1aae911d42fd2cabe8f1f32d54d11818402f9d03d8f4961c87540a134",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 374,
+      "ownerId": "007",
+      "ownerTable": "relics",
+      "path": "relic/007.thumb.f1b5d1cad6fb.webp",
+      "sha256": "f1b5d1cad6fbbb41e67a428377d90f6c9b6d04fc7b3ae6638941f7510c05f269",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 501,
+      "ownerId": "007",
+      "ownerTable": "relics",
+      "path": "relic/007.card.2f757cc45a2f.webp",
+      "sha256": "2f757cc45a2f3b4d589e3cc5d2b62ca15ee497843d1303eae48dc1413062969f",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 97,
+      "ownerId": "008",
+      "ownerTable": "relics",
+      "path": "relic/008.icon.50216d7adf96.webp",
+      "sha256": "50216d7adf96f31ca25ff42263e9ac98fb4a900f7228a7c677935c1973e444b3",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 227,
+      "ownerId": "008",
+      "ownerTable": "relics",
+      "path": "relic/008.thumb.217bc7f0f28a.webp",
+      "sha256": "217bc7f0f28aa503027530a6d743828520e3259a342f5b67bda0ed4ca145fa51",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 304,
+      "ownerId": "008",
+      "ownerTable": "relics",
+      "path": "relic/008.card.ab9628799ffc.webp",
+      "sha256": "ab9628799ffc48348e54696ca12831227232da4bf436efb77a10851c978220cd",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 91,
+      "ownerId": "009",
+      "ownerTable": "relics",
+      "path": "relic/009.icon.cfd1bfe60a84.webp",
+      "sha256": "cfd1bfe60a841d71245befb3a68620b1038dcaaa84a7d7a970c945bbb5440ad9",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 212,
+      "ownerId": "009",
+      "ownerTable": "relics",
+      "path": "relic/009.thumb.6912b4fc8275.webp",
+      "sha256": "6912b4fc82758736f08b6ac38d1fbbbf01a88f3558ffe5541658c09d16050d64",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 284,
+      "ownerId": "009",
+      "ownerTable": "relics",
+      "path": "relic/009.card.bf88504157b6.webp",
+      "sha256": "bf88504157b6e90cf0ff805ca743c44c87779c91c0d243dbc67d4739f8d39974",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 81,
+      "ownerId": "010",
+      "ownerTable": "relics",
+      "path": "relic/010.icon.ad3289775cbb.webp",
+      "sha256": "ad3289775cbb9acea55f69df3e6a15bfae23d52625642e58feff1050a2aac539",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 190,
+      "ownerId": "010",
+      "ownerTable": "relics",
+      "path": "relic/010.thumb.2208fb15b86c.webp",
+      "sha256": "2208fb15b86c45515819a2888ac2d8e18dac31a5b0950eeb3bc28ffd272966b5",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 254,
+      "ownerId": "010",
+      "ownerTable": "relics",
+      "path": "relic/010.card.af9d0a80f1f3.webp",
+      "sha256": "af9d0a80f1f3ddc2fcd3ecb5cae497302efa845c4bb3e472f66782c892f84c66",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 307,
+      "ownerId": "033",
+      "ownerTable": "critters",
+      "path": "critter/033.thumb.1e40733a3c0e.webp",
+      "sha256": "1e40733a3c0e43a12131dbc6bbbcc8e0c17f6f81a272568988b10717ed87f9d0",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 413,
+      "ownerId": "033",
+      "ownerTable": "critters",
+      "path": "critter/033.card.28aaa181f890.webp",
+      "sha256": "28aaa181f890a36ad980cd8a7389319b270632b40068653bb48ebfef53896fa6",
+      "variant": "card",
+      "width": 301
+    },
+    {
+      "height": 413,
+      "ownerId": "033",
+      "ownerTable": "critters",
+      "path": "critter/033.battle.28aaa181f890.webp",
+      "sha256": "28aaa181f890a36ad980cd8a7389319b270632b40068653bb48ebfef53896fa6",
+      "variant": "battle",
+      "width": 301
+    },
+    {
+      "height": 413,
+      "ownerId": "033",
+      "ownerTable": "critters",
+      "path": "critter/033.portrait.28aaa181f890.webp",
+      "sha256": "28aaa181f890a36ad980cd8a7389319b270632b40068653bb48ebfef53896fa6",
+      "variant": "portrait",
+      "width": 301
+    },
+    {
+      "height": 258,
+      "ownerId": "034",
+      "ownerTable": "critters",
+      "path": "critter/034.thumb.fc9d49a0ec0a.webp",
+      "sha256": "fc9d49a0ec0abd92e5b5c51909e866c1aa6507bb7735d6822644139e4380ac31",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 346,
+      "ownerId": "034",
+      "ownerTable": "critters",
+      "path": "critter/034.card.242bddd61539.webp",
+      "sha256": "242bddd61539a4139bfec6e711b3db4b43f2dfe025f1db0770f57e980315ad76",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 346,
+      "ownerId": "034",
+      "ownerTable": "critters",
+      "path": "critter/034.battle.242bddd61539.webp",
+      "sha256": "242bddd61539a4139bfec6e711b3db4b43f2dfe025f1db0770f57e980315ad76",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 346,
+      "ownerId": "034",
+      "ownerTable": "critters",
+      "path": "critter/034.portrait.242bddd61539.webp",
+      "sha256": "242bddd61539a4139bfec6e711b3db4b43f2dfe025f1db0770f57e980315ad76",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 268,
+      "ownerId": "035",
+      "ownerTable": "critters",
+      "path": "critter/035.thumb.b4f7939f7d16.webp",
+      "sha256": "b4f7939f7d16050748a4fde3d156fcb62e2ca2c9d94aa02c732dc6683d32f0f5",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 359,
+      "ownerId": "035",
+      "ownerTable": "critters",
+      "path": "critter/035.card.39fa6ef59bd6.webp",
+      "sha256": "39fa6ef59bd622d6a3a3285846e05a1b22d575ea30341585a46c7202b96c12eb",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 359,
+      "ownerId": "035",
+      "ownerTable": "critters",
+      "path": "critter/035.battle.39fa6ef59bd6.webp",
+      "sha256": "39fa6ef59bd622d6a3a3285846e05a1b22d575ea30341585a46c7202b96c12eb",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 359,
+      "ownerId": "035",
+      "ownerTable": "critters",
+      "path": "critter/035.portrait.39fa6ef59bd6.webp",
+      "sha256": "39fa6ef59bd622d6a3a3285846e05a1b22d575ea30341585a46c7202b96c12eb",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 311,
+      "ownerId": "036",
+      "ownerTable": "critters",
+      "path": "critter/036.thumb.6158dc1679c3.webp",
+      "sha256": "6158dc1679c30cbee02826095265ecc7617357073c8f074fd9785cb02c1ef775",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 417,
+      "ownerId": "036",
+      "ownerTable": "critters",
+      "path": "critter/036.card.3f96873c4f94.webp",
+      "sha256": "3f96873c4f94680b5e59215ad05ac079b89621b5241518e1ff48d891a0473323",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 417,
+      "ownerId": "036",
+      "ownerTable": "critters",
+      "path": "critter/036.battle.3f96873c4f94.webp",
+      "sha256": "3f96873c4f94680b5e59215ad05ac079b89621b5241518e1ff48d891a0473323",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 417,
+      "ownerId": "036",
+      "ownerTable": "critters",
+      "path": "critter/036.portrait.3f96873c4f94.webp",
+      "sha256": "3f96873c4f94680b5e59215ad05ac079b89621b5241518e1ff48d891a0473323",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 265,
+      "ownerId": "037",
+      "ownerTable": "critters",
+      "path": "critter/037.thumb.61d4416c0c4a.webp",
+      "sha256": "61d4416c0c4a7ad562802719e7b684daa55ddac66936a3850315c0e560e4f47c",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 355,
+      "ownerId": "037",
+      "ownerTable": "critters",
+      "path": "critter/037.card.e6525d9b1d20.webp",
+      "sha256": "e6525d9b1d2012127367befe9d94a63f8664e78ed8490a56ff3776637ac3ff0b",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 355,
+      "ownerId": "037",
+      "ownerTable": "critters",
+      "path": "critter/037.battle.e6525d9b1d20.webp",
+      "sha256": "e6525d9b1d2012127367befe9d94a63f8664e78ed8490a56ff3776637ac3ff0b",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 355,
+      "ownerId": "037",
+      "ownerTable": "critters",
+      "path": "critter/037.portrait.e6525d9b1d20.webp",
+      "sha256": "e6525d9b1d2012127367befe9d94a63f8664e78ed8490a56ff3776637ac3ff0b",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 249,
+      "ownerId": "038",
+      "ownerTable": "critters",
+      "path": "critter/038.thumb.ff4841b182e0.webp",
+      "sha256": "ff4841b182e068a6d1431c08b8e4ff5bcad36f3795a7677c7c6f0768e1e64580",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 333,
+      "ownerId": "038",
+      "ownerTable": "critters",
+      "path": "critter/038.card.4241031251af.webp",
+      "sha256": "4241031251afa6958bcc149d4c0024f439db16b13aa511366929940a589a6c0d",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 333,
+      "ownerId": "038",
+      "ownerTable": "critters",
+      "path": "critter/038.battle.4241031251af.webp",
+      "sha256": "4241031251afa6958bcc149d4c0024f439db16b13aa511366929940a589a6c0d",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 333,
+      "ownerId": "038",
+      "ownerTable": "critters",
+      "path": "critter/038.portrait.4241031251af.webp",
+      "sha256": "4241031251afa6958bcc149d4c0024f439db16b13aa511366929940a589a6c0d",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 150,
+      "ownerId": "039",
+      "ownerTable": "critters",
+      "path": "critter/039.thumb.3e3f8bf80b78.webp",
+      "sha256": "3e3f8bf80b78539da6c4aa5cf3d9a9fd8a3d3f3fa9d8e40ba07f93c47faf998b",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 201,
+      "ownerId": "039",
+      "ownerTable": "critters",
+      "path": "critter/039.card.c977775c9a57.webp",
+      "sha256": "c977775c9a57b90bcdc92d8a9eb9b4404660f59c28b5bc5d01e0bd2ab6487777",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 201,
+      "ownerId": "039",
+      "ownerTable": "critters",
+      "path": "critter/039.battle.c977775c9a57.webp",
+      "sha256": "c977775c9a57b90bcdc92d8a9eb9b4404660f59c28b5bc5d01e0bd2ab6487777",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 201,
+      "ownerId": "039",
+      "ownerTable": "critters",
+      "path": "critter/039.portrait.c977775c9a57.webp",
+      "sha256": "c977775c9a57b90bcdc92d8a9eb9b4404660f59c28b5bc5d01e0bd2ab6487777",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 246,
+      "ownerId": "040",
+      "ownerTable": "critters",
+      "path": "critter/040.thumb.af17d987740b.webp",
+      "sha256": "af17d987740bef11ee6c1b371e1ef3619362bcd2aebbc114f019dc8a3ee24630",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 330,
+      "ownerId": "040",
+      "ownerTable": "critters",
+      "path": "critter/040.card.dbc87c29df40.webp",
+      "sha256": "dbc87c29df40c7808672cd21c3e6e619a9502102a8d22faf44d17d3a180b6226",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 330,
+      "ownerId": "040",
+      "ownerTable": "critters",
+      "path": "critter/040.battle.dbc87c29df40.webp",
+      "sha256": "dbc87c29df40c7808672cd21c3e6e619a9502102a8d22faf44d17d3a180b6226",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 330,
+      "ownerId": "040",
+      "ownerTable": "critters",
+      "path": "critter/040.portrait.dbc87c29df40.webp",
+      "sha256": "dbc87c29df40c7808672cd21c3e6e619a9502102a8d22faf44d17d3a180b6226",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 202,
+      "ownerId": "041",
+      "ownerTable": "critters",
+      "path": "critter/041.thumb.777dd31736ac.webp",
+      "sha256": "777dd31736ac31c19ff9d04cad2dee184c220f900aea592f260b658f074a207f",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 271,
+      "ownerId": "041",
+      "ownerTable": "critters",
+      "path": "critter/041.card.36ea9ab55a73.webp",
+      "sha256": "36ea9ab55a7343eab843e71f960f959eba619c2c7dc8a51fc736dda939f4c0bc",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 271,
+      "ownerId": "041",
+      "ownerTable": "critters",
+      "path": "critter/041.battle.36ea9ab55a73.webp",
+      "sha256": "36ea9ab55a7343eab843e71f960f959eba619c2c7dc8a51fc736dda939f4c0bc",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 271,
+      "ownerId": "041",
+      "ownerTable": "critters",
+      "path": "critter/041.portrait.36ea9ab55a73.webp",
+      "sha256": "36ea9ab55a7343eab843e71f960f959eba619c2c7dc8a51fc736dda939f4c0bc",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 182,
+      "ownerId": "042",
+      "ownerTable": "critters",
+      "path": "critter/042.thumb.5c90eac1f606.webp",
+      "sha256": "5c90eac1f606c3d2ef76b34542029feaa94ad5266703e4c3040d74efa924ceaa",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 285,
+      "ownerId": "042",
+      "ownerTable": "critters",
+      "path": "critter/042.card.86569882d8d4.webp",
+      "sha256": "86569882d8d489c614c4a9344c45dd373d83da7bf92c45d3b79a980eee1d8e4d",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 285,
+      "ownerId": "042",
+      "ownerTable": "critters",
+      "path": "critter/042.battle.86569882d8d4.webp",
+      "sha256": "86569882d8d489c614c4a9344c45dd373d83da7bf92c45d3b79a980eee1d8e4d",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 285,
+      "ownerId": "042",
+      "ownerTable": "critters",
+      "path": "critter/042.portrait.86569882d8d4.webp",
+      "sha256": "86569882d8d489c614c4a9344c45dd373d83da7bf92c45d3b79a980eee1d8e4d",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 147,
+      "ownerId": "011",
+      "ownerTable": "relics",
+      "path": "relic/011.icon.cdd4c2676a13.webp",
+      "sha256": "cdd4c2676a13efa0170ec11930a1cb00f7f2b5f10956b6ecddbb3cddc92344b0",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 343,
+      "ownerId": "011",
+      "ownerTable": "relics",
+      "path": "relic/011.thumb.522760243b5a.webp",
+      "sha256": "522760243b5a621e5edb7a2d482dcb776b58dd2f585882e740535f323a72fa94",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 459,
+      "ownerId": "011",
+      "ownerTable": "relics",
+      "path": "relic/011.card.d6b4af4f44c9.webp",
+      "sha256": "d6b4af4f44c9219841eaf34003321dfaf126214ea6ed5f238280077ba07e5420",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 175,
+      "ownerId": "012",
+      "ownerTable": "relics",
+      "path": "relic/012.icon.2146b26ca80a.webp",
+      "sha256": "2146b26ca80a98d2d13efdbdbba3a705d2607a4294f0a2cb6ea9f8b13bb4eec3",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 408,
+      "ownerId": "012",
+      "ownerTable": "relics",
+      "path": "relic/012.thumb.f15f40c364a7.webp",
+      "sha256": "f15f40c364a70a2d8e619e4affc86819cc585a79af90654ce10bc6e5c3a14335",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 546,
+      "ownerId": "012",
+      "ownerTable": "relics",
+      "path": "relic/012.card.581bf88a2f80.webp",
+      "sha256": "581bf88a2f80289cfaa55da58989256ced2a98454d318d7f9ed546dd41862137",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 184,
+      "ownerId": "013",
+      "ownerTable": "relics",
+      "path": "relic/013.icon.27fc9d929cde.webp",
+      "sha256": "27fc9d929cde43ac89b3e5c0879649eae9128c7ff8604ebb77f128dab1c6f017",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 429,
+      "ownerId": "013",
+      "ownerTable": "relics",
+      "path": "relic/013.thumb.871025bd58fc.webp",
+      "sha256": "871025bd58fceefc04ab7a3c4139f0a04d7fc4f69eaf06bf947003b525f37eee",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 575,
+      "ownerId": "013",
+      "ownerTable": "relics",
+      "path": "relic/013.card.d612452d695f.webp",
+      "sha256": "d612452d695f4871366c4664b23df6c1627ade0691cd0aea0b2cd6a9fc54e6ee",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 380,
+      "ownerId": "001",
+      "ownerTable": "lootboxes",
+      "path": "lootboxes/001.card.9ab44349578d.webp",
+      "sha256": "9ab44349578d37b388eb6f8786eff355b062b6bbb7e4b6ee01d8527ffafc67ec",
+      "variant": "card",
+      "width": 343
+    },
+    {
+      "height": 380,
+      "ownerId": "001",
+      "ownerTable": "lootboxes",
+      "path": "lootboxes/001.card.880a7b3d7cdf.webp",
+      "sha256": "880a7b3d7cdf6ecdfcbe7ac2f0fe6b076e5cb1e3d0e8b190dc0ac8297c541b2b",
+      "variant": "card",
+      "width": 343
+    },
+    {
+      "height": 267,
+      "ownerId": "043",
+      "ownerTable": "critters",
+      "path": "critter/043.thumb.1ab5f596e0a2.webp",
+      "sha256": "1ab5f596e0a2c0d84ccfd590913462b69f79e1aa604647b4baeb705e9803b9be",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 358,
+      "ownerId": "043",
+      "ownerTable": "critters",
+      "path": "critter/043.card.3ffbfe0be766.webp",
+      "sha256": "3ffbfe0be766459f32f3097f75c3daf9529a682fc20d8b4fef40a659cfc0d0ae",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 358,
+      "ownerId": "043",
+      "ownerTable": "critters",
+      "path": "critter/043.battle.3ffbfe0be766.webp",
+      "sha256": "3ffbfe0be766459f32f3097f75c3daf9529a682fc20d8b4fef40a659cfc0d0ae",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 358,
+      "ownerId": "043",
+      "ownerTable": "critters",
+      "path": "critter/043.portrait.3ffbfe0be766.webp",
+      "sha256": "3ffbfe0be766459f32f3097f75c3daf9529a682fc20d8b4fef40a659cfc0d0ae",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 287,
+      "ownerId": "044",
+      "ownerTable": "critters",
+      "path": "critter/044.thumb.6d7373bd54ea.webp",
+      "sha256": "6d7373bd54ea2b43cb60af3a258c579e9542649fefad1624b319533122dbe251",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 385,
+      "ownerId": "044",
+      "ownerTable": "critters",
+      "path": "critter/044.card.fec41b7f6f20.webp",
+      "sha256": "fec41b7f6f20d80582bc41a01f9112e444387204655f8b99edf152963172d661",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 385,
+      "ownerId": "044",
+      "ownerTable": "critters",
+      "path": "critter/044.battle.fec41b7f6f20.webp",
+      "sha256": "fec41b7f6f20d80582bc41a01f9112e444387204655f8b99edf152963172d661",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 385,
+      "ownerId": "044",
+      "ownerTable": "critters",
+      "path": "critter/044.portrait.fec41b7f6f20.webp",
+      "sha256": "fec41b7f6f20d80582bc41a01f9112e444387204655f8b99edf152963172d661",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 194,
+      "ownerId": "045",
+      "ownerTable": "critters",
+      "path": "critter/045.thumb.cdedb67fff20.webp",
+      "sha256": "cdedb67fff20133e8a08c423dcbdd27972281c21d5ea87ad51abc48688344f7f",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 303,
+      "ownerId": "045",
+      "ownerTable": "critters",
+      "path": "critter/045.card.39694e05f63d.webp",
+      "sha256": "39694e05f63d7361e7d68e1619e13592aa9a8882860fb06c831d73d41a9cd91b",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 303,
+      "ownerId": "045",
+      "ownerTable": "critters",
+      "path": "critter/045.battle.39694e05f63d.webp",
+      "sha256": "39694e05f63d7361e7d68e1619e13592aa9a8882860fb06c831d73d41a9cd91b",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 303,
+      "ownerId": "045",
+      "ownerTable": "critters",
+      "path": "critter/045.portrait.39694e05f63d.webp",
+      "sha256": "39694e05f63d7361e7d68e1619e13592aa9a8882860fb06c831d73d41a9cd91b",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 105,
+      "ownerId": "014",
+      "ownerTable": "relics",
+      "path": "relic/014.icon.a946126ec4f4.webp",
+      "sha256": "a946126ec4f4db348f259156f60fc782636464ac721c4adb432ac5eae3b288ac",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 245,
+      "ownerId": "014",
+      "ownerTable": "relics",
+      "path": "relic/014.thumb.576dd44564c1.webp",
+      "sha256": "576dd44564c16310a4bc96db231572365a25d052764687770c0fd3cfda9d6de5",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 328,
+      "ownerId": "014",
+      "ownerTable": "relics",
+      "path": "relic/014.card.528bbcc1bacb.webp",
+      "sha256": "528bbcc1bacb9f4065be5dfd480732e9fd945685ac59cfd1c35e255b5bf470aa",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 411,
+      "ownerId": "006",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/006.thumb.00a985f00868.webp",
+      "sha256": "00a985f00868697c5a9df9adb240ee00b7f8c9acc737b4c8959bc49c86e50dc5",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 734,
+      "ownerId": "006",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/006.card.66ca4cb7a8e0.webp",
+      "sha256": "66ca4cb7a8e0bd61a99ded57fa6a688fee906c1d4a17f12b09abb12012a0a1f4",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 734,
+      "ownerId": "006",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/006.battle.66ca4cb7a8e0.webp",
+      "sha256": "66ca4cb7a8e0bd61a99ded57fa6a688fee906c1d4a17f12b09abb12012a0a1f4",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 734,
+      "ownerId": "006",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/006.portrait.66ca4cb7a8e0.webp",
+      "sha256": "66ca4cb7a8e0bd61a99ded57fa6a688fee906c1d4a17f12b09abb12012a0a1f4",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 129,
+      "ownerId": "015",
+      "ownerTable": "relics",
+      "path": "relic/015.icon.4ca03e04c275.webp",
+      "sha256": "4ca03e04c275a0a7c1b1c3af217db19ee65a4064874debed7b40cd9b1bdc44cc",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 301,
+      "ownerId": "015",
+      "ownerTable": "relics",
+      "path": "relic/015.thumb.2bb4b9e107e8.webp",
+      "sha256": "2bb4b9e107e85c30d9f275a758521916afffee7df5b9cbc10bc7db99aeacf84a",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 403,
+      "ownerId": "015",
+      "ownerTable": "relics",
+      "path": "relic/015.card.0a502d924563.webp",
+      "sha256": "0a502d9245632352b18d4d1387c73bf34ebff2c7a42f9635c70c60b223aa7466",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 380,
+      "ownerId": "002",
+      "ownerTable": "lootboxes",
+      "path": "lootbox/002.card.cc4876f39c0c.webp",
+      "sha256": "cc4876f39c0cc306ed2a19c899fc5fe97c43f08e8a1dd40cfad5f19155125c3b",
+      "variant": "card",
+      "width": 343
+    },
+    {
+      "height": 380,
+      "ownerId": "002",
+      "ownerTable": "lootboxes",
+      "path": "lootbox/002.card.902d068dd163.webp",
+      "sha256": "902d068dd163ffd451e44c59ab49aa0a10842eeb22ad539a8e522717f67675c6",
+      "variant": "card",
+      "width": 343
+    },
+    {
+      "height": 380,
+      "ownerId": "005",
+      "ownerTable": "lootboxes",
+      "path": "lootbox/005.card.b81d3ca8a33e.webp",
+      "sha256": "b81d3ca8a33e4783099901c265914239703dc62ba8797769627b2ab4078e66b0",
+      "variant": "card",
+      "width": 343
+    },
+    {
+      "height": 380,
+      "ownerId": "005",
+      "ownerTable": "lootboxes",
+      "path": "lootbox/005.card.748622a592bf.webp",
+      "sha256": "748622a592bfbc72409e0f4c12ef4fdb1e727d23238f54dd052c45a95cd6e3b9",
+      "variant": "card",
+      "width": 343
+    },
+    {
+      "height": 346,
+      "ownerId": "001",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/001.thumb.69f4cbd88ba7.webp",
+      "sha256": "69f4cbd88ba75d5dcceade3006ee79b70cf8f690cf3b2b504e31a763db474fa2",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 464,
+      "ownerId": "001",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/001.card.a0ae4d3aa931.webp",
+      "sha256": "a0ae4d3aa931ce4ce9e41b5b5fda6fdf13c02c217ea0d34a8c51e1b795b979a3",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 464,
+      "ownerId": "001",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/001.battle.a0ae4d3aa931.webp",
+      "sha256": "a0ae4d3aa931ce4ce9e41b5b5fda6fdf13c02c217ea0d34a8c51e1b795b979a3",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 464,
+      "ownerId": "001",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/001.portrait.a0ae4d3aa931.webp",
+      "sha256": "a0ae4d3aa931ce4ce9e41b5b5fda6fdf13c02c217ea0d34a8c51e1b795b979a3",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 345,
+      "ownerId": "002",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/002.thumb.3c9dc27c6c9d.webp",
+      "sha256": "3c9dc27c6c9d6d104b7cff1989196cefff65dd4348a3aae15847e4fc5dff30e2",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 616,
+      "ownerId": "002",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/002.card.2cd70b5b2cac.webp",
+      "sha256": "2cd70b5b2cacce79d226d37a0e7732c4e5d44c137b89f17d87fe2764766acb4a",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 616,
+      "ownerId": "002",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/002.battle.2cd70b5b2cac.webp",
+      "sha256": "2cd70b5b2cacce79d226d37a0e7732c4e5d44c137b89f17d87fe2764766acb4a",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 616,
+      "ownerId": "002",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/002.portrait.2cd70b5b2cac.webp",
+      "sha256": "2cd70b5b2cacce79d226d37a0e7732c4e5d44c137b89f17d87fe2764766acb4a",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 352,
+      "ownerId": "003",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/003.thumb.a215825e3bbc.webp",
+      "sha256": "a215825e3bbc81527a0691aaa108b8bfab3f9acb6079b744cf4164bff6c023e9",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 628,
+      "ownerId": "003",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/003.card.bc040ed966d3.webp",
+      "sha256": "bc040ed966d3f01a78dbae8050bca8bb1f184cb9ae396340f82b9c0fecdffb90",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 628,
+      "ownerId": "003",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/003.battle.bc040ed966d3.webp",
+      "sha256": "bc040ed966d3f01a78dbae8050bca8bb1f184cb9ae396340f82b9c0fecdffb90",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 628,
+      "ownerId": "003",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/003.portrait.bc040ed966d3.webp",
+      "sha256": "bc040ed966d3f01a78dbae8050bca8bb1f184cb9ae396340f82b9c0fecdffb90",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 456,
+      "ownerId": "004",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/004.thumb.7458262d5e55.webp",
+      "sha256": "7458262d5e55412bd1fd6a531a398b3d329b9092d626947c95e5dd4ae9db215e",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 611,
+      "ownerId": "004",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/004.card.c3135a16af83.webp",
+      "sha256": "c3135a16af83bea616253dacdccc37ee7f8a9821547825c981ded238c5b76fbb",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 611,
+      "ownerId": "004",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/004.battle.c3135a16af83.webp",
+      "sha256": "c3135a16af83bea616253dacdccc37ee7f8a9821547825c981ded238c5b76fbb",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 611,
+      "ownerId": "004",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/004.portrait.c3135a16af83.webp",
+      "sha256": "c3135a16af83bea616253dacdccc37ee7f8a9821547825c981ded238c5b76fbb",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 345,
+      "ownerId": "006",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/006.thumb.6be648647082.webp",
+      "sha256": "6be648647082a4d9a15e6ac0060ead282d93262f6c8612100509a79049e2b530",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 616,
+      "ownerId": "006",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/006.card.d89356cebc5c.webp",
+      "sha256": "d89356cebc5c8256166846ddf1554627fb31c5540dd09ac9a5534e9fe1d50df2",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 616,
+      "ownerId": "006",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/006.battle.d89356cebc5c.webp",
+      "sha256": "d89356cebc5c8256166846ddf1554627fb31c5540dd09ac9a5534e9fe1d50df2",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 616,
+      "ownerId": "006",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/006.portrait.d89356cebc5c.webp",
+      "sha256": "d89356cebc5c8256166846ddf1554627fb31c5540dd09ac9a5534e9fe1d50df2",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 339,
+      "ownerId": "007",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/007.thumb.cfeeffcba5a1.webp",
+      "sha256": "cfeeffcba5a1de52374194307cd5275949b4fe5f52320293973d26e35a0e406e",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 529,
+      "ownerId": "007",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/007.card.3c776a7ca488.webp",
+      "sha256": "3c776a7ca48885955c5f3fbacd5117ef0c03b61ae0da9073307839934ca317ca",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 529,
+      "ownerId": "007",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/007.battle.3c776a7ca488.webp",
+      "sha256": "3c776a7ca48885955c5f3fbacd5117ef0c03b61ae0da9073307839934ca317ca",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 529,
+      "ownerId": "007",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/007.portrait.3c776a7ca488.webp",
+      "sha256": "3c776a7ca48885955c5f3fbacd5117ef0c03b61ae0da9073307839934ca317ca",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 339,
+      "ownerId": "008",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/008.thumb.da7e3629b433.webp",
+      "sha256": "da7e3629b433d44f3aa2cf284c437bec8170d27bcaa973422b255f871eda0595",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 530,
+      "ownerId": "008",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/008.card.27eafbd8c75c.webp",
+      "sha256": "27eafbd8c75cdaffd040145ea461230898810b3467c88c01e906b485c0b0affb",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 530,
+      "ownerId": "008",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/008.battle.27eafbd8c75c.webp",
+      "sha256": "27eafbd8c75cdaffd040145ea461230898810b3467c88c01e906b485c0b0affb",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 530,
+      "ownerId": "008",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/008.portrait.27eafbd8c75c.webp",
+      "sha256": "27eafbd8c75cdaffd040145ea461230898810b3467c88c01e906b485c0b0affb",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 368,
+      "ownerId": "009",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/009.thumb.27601d85824d.webp",
+      "sha256": "27601d85824dc3b26b143fa5a65db291bdf16a3140713410d913c21f328137e4",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 575,
+      "ownerId": "009",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/009.card.b2aad30fdc9d.webp",
+      "sha256": "b2aad30fdc9d28fd52ee6e644cf8f7cf4446506ebbcc20b814782fdfd94fb4a7",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 575,
+      "ownerId": "009",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/009.battle.b2aad30fdc9d.webp",
+      "sha256": "b2aad30fdc9d28fd52ee6e644cf8f7cf4446506ebbcc20b814782fdfd94fb4a7",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 575,
+      "ownerId": "009",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/009.portrait.b2aad30fdc9d.webp",
+      "sha256": "b2aad30fdc9d28fd52ee6e644cf8f7cf4446506ebbcc20b814782fdfd94fb4a7",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 387,
+      "ownerId": "010",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/010.thumb.403cb2783608.webp",
+      "sha256": "403cb2783608bfa56496a939b2b9eb36dc96188e27dcc46f72d86c5b661c76c6",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 604,
+      "ownerId": "010",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/010.card.0dea60880228.webp",
+      "sha256": "0dea60880228a6a6ffa8c4c2ab1561ceab85aa6ddba4bfb17a91ee11b7b3bab1",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 604,
+      "ownerId": "010",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/010.battle.0dea60880228.webp",
+      "sha256": "0dea60880228a6a6ffa8c4c2ab1561ceab85aa6ddba4bfb17a91ee11b7b3bab1",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 604,
+      "ownerId": "010",
+      "ownerTable": "eclipse-order",
+      "path": "eclipse-order/010.portrait.0dea60880228.webp",
+      "sha256": "0dea60880228a6a6ffa8c4c2ab1561ceab85aa6ddba4bfb17a91ee11b7b3bab1",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 98,
+      "ownerId": "air",
+      "ownerTable": "elements",
+      "path": "element/air.icon.515c384e3a8a.webp",
+      "sha256": "515c384e3a8abae12a5fcce7bffdc73c0307c0a9ec42e4cc57ad42054108ef36",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 104,
+      "ownerId": "016",
+      "ownerTable": "relics",
+      "path": "relic/016.icon.ea291e621eb0.webp",
+      "sha256": "ea291e621eb0ec119427643bfdf37ef4abf5cfdda71c03bb5e5499d812e24d4a",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 242,
+      "ownerId": "016",
+      "ownerTable": "relics",
+      "path": "relic/016.thumb.b5986e78e7b6.webp",
+      "sha256": "b5986e78e7b6751ebdb897fa226e911fb421a2685a6e2810963eea018a2a8561",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 324,
+      "ownerId": "016",
+      "ownerTable": "relics",
+      "path": "relic/016.card.b6bd55ad49b2.webp",
+      "sha256": "b6bd55ad49b2a8cea9986767c268b418bad52ea88120f2808bd4a37fdef8e1a2",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 86,
+      "ownerId": "017",
+      "ownerTable": "relics",
+      "path": "relic/017.icon.257a527bcda4.webp",
+      "sha256": "257a527bcda45c58bfedf6c167191acc81403e8b8db41a5ba8b6c3b7d4fb8cfd",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 200,
+      "ownerId": "017",
+      "ownerTable": "relics",
+      "path": "relic/017.thumb.548b9eaeb554.webp",
+      "sha256": "548b9eaeb5542ee953063605005c8e4814d67dcff5fa1f6dec5782caec444f28",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 268,
+      "ownerId": "017",
+      "ownerTable": "relics",
+      "path": "relic/017.card.a1901a4b96b5.webp",
+      "sha256": "a1901a4b96b5a8e97d859c9c135e0c3831f8515f70c7a28c38e385d92188dec9",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 211,
+      "ownerId": "046",
+      "ownerTable": "critters",
+      "path": "critter/046.thumb.9a0b3f9c6e17.webp",
+      "sha256": "9a0b3f9c6e17981ee081fe1956ae73f79827bf715b58220c0e7b8f8d751e4526",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 282,
+      "ownerId": "046",
+      "ownerTable": "critters",
+      "path": "critter/046.card.367df97e0f7f.webp",
+      "sha256": "367df97e0f7fb17c041b411959d5042215d2ea59944a9d6651593f39a2d08ccc",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 282,
+      "ownerId": "046",
+      "ownerTable": "critters",
+      "path": "critter/046.battle.367df97e0f7f.webp",
+      "sha256": "367df97e0f7fb17c041b411959d5042215d2ea59944a9d6651593f39a2d08ccc",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 282,
+      "ownerId": "046",
+      "ownerTable": "critters",
+      "path": "critter/046.portrait.367df97e0f7f.webp",
+      "sha256": "367df97e0f7fb17c041b411959d5042215d2ea59944a9d6651593f39a2d08ccc",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 187,
+      "ownerId": "047",
+      "ownerTable": "critters",
+      "path": "critter/047.thumb.cf8d15d0bf0f.webp",
+      "sha256": "cf8d15d0bf0f43ef8202452eba9cf5255f7558f5444a0e014ef81912195512ba",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 251,
+      "ownerId": "047",
+      "ownerTable": "critters",
+      "path": "critter/047.card.e488ad578988.webp",
+      "sha256": "e488ad578988a47c0713e5e5625f2274379bd205ce448949d3e342d463482074",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 251,
+      "ownerId": "047",
+      "ownerTable": "critters",
+      "path": "critter/047.battle.e488ad578988.webp",
+      "sha256": "e488ad578988a47c0713e5e5625f2274379bd205ce448949d3e342d463482074",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 251,
+      "ownerId": "047",
+      "ownerTable": "critters",
+      "path": "critter/047.portrait.e488ad578988.webp",
+      "sha256": "e488ad578988a47c0713e5e5625f2274379bd205ce448949d3e342d463482074",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 117,
+      "ownerId": "atk-decay",
+      "ownerTable": "statuses",
+      "path": "status/atk-decay.icon.c64a1bb46cf5.webp",
+      "sha256": "c64a1bb46cf547ce7a7d784044230a07719a01c41298ebf3e3e71fed75d8e9a9",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 402,
+      "ownerId": "048",
+      "ownerTable": "critters",
+      "path": "critter/048.thumb.84c006ad5656.webp",
+      "sha256": "84c006ad56560e34529c9bc58e3b1deaab368a1a9f1742043ac5a92466f9a97c",
+      "variant": "thumb",
+      "width": 212
+    },
+    {
+      "height": 402,
+      "ownerId": "048",
+      "ownerTable": "critters",
+      "path": "critter/048.card.84c006ad5656.webp",
+      "sha256": "84c006ad56560e34529c9bc58e3b1deaab368a1a9f1742043ac5a92466f9a97c",
+      "variant": "card",
+      "width": 212
+    },
+    {
+      "height": 402,
+      "ownerId": "048",
+      "ownerTable": "critters",
+      "path": "critter/048.battle.84c006ad5656.webp",
+      "sha256": "84c006ad56560e34529c9bc58e3b1deaab368a1a9f1742043ac5a92466f9a97c",
+      "variant": "battle",
+      "width": 212
+    },
+    {
+      "height": 402,
+      "ownerId": "048",
+      "ownerTable": "critters",
+      "path": "critter/048.portrait.84c006ad5656.webp",
+      "sha256": "84c006ad56560e34529c9bc58e3b1deaab368a1a9f1742043ac5a92466f9a97c",
+      "variant": "portrait",
+      "width": 212
+    },
+    {
+      "height": 179,
+      "ownerId": "049",
+      "ownerTable": "critters",
+      "path": "critter/049.thumb.64892e492e34.webp",
+      "sha256": "64892e492e3441c9c3c1366705b0202316842e7fc94384a9b55c0356729a1a27",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 240,
+      "ownerId": "049",
+      "ownerTable": "critters",
+      "path": "critter/049.card.9a3add663a45.webp",
+      "sha256": "9a3add663a45cce48850c9db157d384af3616c4528791c7c0338d221534ec619",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 240,
+      "ownerId": "049",
+      "ownerTable": "critters",
+      "path": "critter/049.battle.9a3add663a45.webp",
+      "sha256": "9a3add663a45cce48850c9db157d384af3616c4528791c7c0338d221534ec619",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 240,
+      "ownerId": "049",
+      "ownerTable": "critters",
+      "path": "critter/049.portrait.9a3add663a45.webp",
+      "sha256": "9a3add663a45cce48850c9db157d384af3616c4528791c7c0338d221534ec619",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 158,
+      "ownerId": "050",
+      "ownerTable": "critters",
+      "path": "critter/050.thumb.ea94d96261d2.webp",
+      "sha256": "ea94d96261d2ce4a620bcf62a6990c5d15987df5ffc484ce6a77e4389af139b1",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 282,
+      "ownerId": "050",
+      "ownerTable": "critters",
+      "path": "critter/050.card.cfba567df22a.webp",
+      "sha256": "cfba567df22a46e8f9983dcd06570a8a9706bab29450eb73aa5a7029e22cafec",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 282,
+      "ownerId": "050",
+      "ownerTable": "critters",
+      "path": "critter/050.battle.cfba567df22a.webp",
+      "sha256": "cfba567df22a46e8f9983dcd06570a8a9706bab29450eb73aa5a7029e22cafec",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 282,
+      "ownerId": "050",
+      "ownerTable": "critters",
+      "path": "critter/050.portrait.cfba567df22a.webp",
+      "sha256": "cfba567df22a46e8f9983dcd06570a8a9706bab29450eb73aa5a7029e22cafec",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 111,
+      "ownerId": "atk-boost",
+      "ownerTable": "statuses",
+      "path": "status/atk-boost.icon.6db2e7f70fca.webp",
+      "sha256": "6db2e7f70fca2872f10d36622519c254ace70f53f84f98fcf8753c54434db9ca",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 215,
+      "ownerId": "022",
+      "ownerTable": "critters",
+      "path": "critter/022.thumb.3b7875cbed6d.webp",
+      "sha256": "3b7875cbed6d5ace7528b4e70468f2c5bdb59310ca6f5a804565ad760edd05ec",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 288,
+      "ownerId": "022",
+      "ownerTable": "critters",
+      "path": "critter/022.card.66c23c060775.webp",
+      "sha256": "66c23c0607755e8078d4a61a194b74a1328afa98e3e86a7e702f25135629c7d6",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 288,
+      "ownerId": "022",
+      "ownerTable": "critters",
+      "path": "critter/022.battle.66c23c060775.webp",
+      "sha256": "66c23c0607755e8078d4a61a194b74a1328afa98e3e86a7e702f25135629c7d6",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 288,
+      "ownerId": "022",
+      "ownerTable": "critters",
+      "path": "critter/022.portrait.66c23c060775.webp",
+      "sha256": "66c23c0607755e8078d4a61a194b74a1328afa98e3e86a7e702f25135629c7d6",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 129,
+      "ownerId": "018",
+      "ownerTable": "relics",
+      "path": "relic/018.icon.9f0e194a5b9f.webp",
+      "sha256": "9f0e194a5b9fc15f8bc6ca94f12649ce5df4462847e5e8dcd72a481eee29ee7a",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 302,
+      "ownerId": "018",
+      "ownerTable": "relics",
+      "path": "relic/018.thumb.72226f8e361a.webp",
+      "sha256": "72226f8e361a58dfa30213373fd37b8ff28273d67c7c019f9597d98c253ac761",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 404,
+      "ownerId": "018",
+      "ownerTable": "relics",
+      "path": "relic/018.card.cba8d15016ab.webp",
+      "sha256": "cba8d15016ab94d510b6de176cdb939c7336f853b4965771cb0bba7902cc5286",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 408,
+      "ownerId": "007",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/007.thumb.dc69a47ee081.webp",
+      "sha256": "dc69a47ee0815f8b25b5cbd7342d5a9e6d2209f1955dd5e8963718c7c006d90c",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 637,
+      "ownerId": "007",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/007.card.d05e48bc2667.webp",
+      "sha256": "d05e48bc2667d1fe6516b2eed213ef071a40b6d9d5eaf86465d0972c99284fbd",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 637,
+      "ownerId": "007",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/007.battle.d05e48bc2667.webp",
+      "sha256": "d05e48bc2667d1fe6516b2eed213ef071a40b6d9d5eaf86465d0972c99284fbd",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 637,
+      "ownerId": "007",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/007.portrait.d05e48bc2667.webp",
+      "sha256": "d05e48bc2667d1fe6516b2eed213ef071a40b6d9d5eaf86465d0972c99284fbd",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 378,
+      "ownerId": "008",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/008.thumb.b92afc26ea6b.webp",
+      "sha256": "b92afc26ea6b4b23467eaaf22612680ffdff2680785d5c3b53ba2488854c9de0",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 675,
+      "ownerId": "008",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/008.card.d2f851d352cc.webp",
+      "sha256": "d2f851d352cc99c7bd66a8e1056e7c9157af0a466ba54782a48253b666d3ea7c",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 675,
+      "ownerId": "008",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/008.battle.d2f851d352cc.webp",
+      "sha256": "d2f851d352cc99c7bd66a8e1056e7c9157af0a466ba54782a48253b666d3ea7c",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 675,
+      "ownerId": "008",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/008.portrait.d2f851d352cc.webp",
+      "sha256": "d2f851d352cc99c7bd66a8e1056e7c9157af0a466ba54782a48253b666d3ea7c",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 377,
+      "ownerId": "009",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/009.thumb.088113e74095.webp",
+      "sha256": "088113e7409584315ce94d449b1cd2f5955e337e6722463baae66486a45ea796",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 673,
+      "ownerId": "009",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/009.card.40771ec455b8.webp",
+      "sha256": "40771ec455b83f9823dd394c41769bb7978b6cde522926461f1b53d5f2542175",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 673,
+      "ownerId": "009",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/009.battle.40771ec455b8.webp",
+      "sha256": "40771ec455b83f9823dd394c41769bb7978b6cde522926461f1b53d5f2542175",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 673,
+      "ownerId": "009",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/009.portrait.40771ec455b8.webp",
+      "sha256": "40771ec455b83f9823dd394c41769bb7978b6cde522926461f1b53d5f2542175",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 366,
+      "ownerId": "005",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/005.thumb.600fc1c32b97.webp",
+      "sha256": "600fc1c32b97e163966370286459fa0b4ddc3a2801575f670a5c7daccbd31121",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 653,
+      "ownerId": "005",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/005.card.2c43ec829254.webp",
+      "sha256": "2c43ec829254c37faa2d8e73e229f7bc2aa634fbe25dff34cb74f9ba8933db38",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 653,
+      "ownerId": "005",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/005.battle.2c43ec829254.webp",
+      "sha256": "2c43ec829254c37faa2d8e73e229f7bc2aa634fbe25dff34cb74f9ba8933db38",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 653,
+      "ownerId": "005",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/005.portrait.2c43ec829254.webp",
+      "sha256": "2c43ec829254c37faa2d8e73e229f7bc2aa634fbe25dff34cb74f9ba8933db38",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 369,
+      "ownerId": "010",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/010.thumb.0670e8024dba.webp",
+      "sha256": "0670e8024dba4e76ec0ca42a3c8be58e3f2a26ef4e1dd9f30df640b4526ebdab",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 659,
+      "ownerId": "010",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/010.card.b4bfc9c82e6a.webp",
+      "sha256": "b4bfc9c82e6a812b4d29b9949eb5580ab4f457cf099ec8d82d56b10e86a73d0a",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 659,
+      "ownerId": "010",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/010.battle.b4bfc9c82e6a.webp",
+      "sha256": "b4bfc9c82e6a812b4d29b9949eb5580ab4f457cf099ec8d82d56b10e86a73d0a",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 659,
+      "ownerId": "010",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/010.portrait.b4bfc9c82e6a.webp",
+      "sha256": "b4bfc9c82e6a812b4d29b9949eb5580ab4f457cf099ec8d82d56b10e86a73d0a",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 145,
+      "ownerId": "019",
+      "ownerTable": "relics",
+      "path": "relic/019.icon.36b4a494ff1d.webp",
+      "sha256": "36b4a494ff1d14d23528f857c21c2c36bbc787ab7bfc80a55cfaab4d2f576e98",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 339,
+      "ownerId": "019",
+      "ownerTable": "relics",
+      "path": "relic/019.thumb.43cf0f2b72e0.webp",
+      "sha256": "43cf0f2b72e0a0ec877883681cac7e9a5b2f37e68e9cad1ba64c40a90c31b93f",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 454,
+      "ownerId": "019",
+      "ownerTable": "relics",
+      "path": "relic/019.card.ede54445e897.webp",
+      "sha256": "ede54445e897451a4baf6a3df1cce948814d31652251d1cf418780c2f09245bb",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 104,
+      "ownerId": "020",
+      "ownerTable": "relics",
+      "path": "relic/020.icon.342439088c9b.webp",
+      "sha256": "342439088c9b619a8c104f59a82ae4fbb018ee10bf31c5d16fa5ed2eaa9a69aa",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 242,
+      "ownerId": "020",
+      "ownerTable": "relics",
+      "path": "relic/020.thumb.34485bc5943b.webp",
+      "sha256": "34485bc5943b931852e009bb364919bec77a53011bfc9fdbce0c163c0a86fe2d",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 324,
+      "ownerId": "020",
+      "ownerTable": "relics",
+      "path": "relic/020.card.be3918bc392b.webp",
+      "sha256": "be3918bc392bba1e51b2239e83d3d8012f0c4cf23b6d31aab97b22a03cde4c5f",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 94,
+      "ownerId": "021",
+      "ownerTable": "relics",
+      "path": "relic/021.icon.86b4156d2985.webp",
+      "sha256": "86b4156d298552e14d342eb4d541483abf3fc6932823a5dfbe5b77700bd90459",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 219,
+      "ownerId": "021",
+      "ownerTable": "relics",
+      "path": "relic/021.thumb.763b79982399.webp",
+      "sha256": "763b799823996690cd71d87f971011400215e8b6873595473bcb6527c28c14f4",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 293,
+      "ownerId": "021",
+      "ownerTable": "relics",
+      "path": "relic/021.card.2542ca7393f1.webp",
+      "sha256": "2542ca7393f16588a8b84d0efa60a08ce049dad9528cfe18d75b79a05c8c3499",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 117,
+      "ownerId": "mana-boost",
+      "ownerTable": "statuses",
+      "path": "status/mana-boost.icon.1c21c5327a6c.webp",
+      "sha256": "1c21c5327a6c67a81b798b2e11de953caf7622458089f1e71ba345e7a5713e4d",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 116,
+      "ownerId": "mana-tax",
+      "ownerTable": "statuses",
+      "path": "status/mana-tax.icon.6d9629e2d978.webp",
+      "sha256": "6d9629e2d9788f742eaa6773c18319897a34b896b8a06470faf29c4eb6d7fde5",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 206,
+      "ownerId": "051",
+      "ownerTable": "critters",
+      "path": "critter/051.thumb.2a637f367824.webp",
+      "sha256": "2a637f3678245e693c82da94f309701b30be45f50e92f6b49cf2500b1493e36e",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 276,
+      "ownerId": "051",
+      "ownerTable": "critters",
+      "path": "critter/051.card.02e0cab95eb3.webp",
+      "sha256": "02e0cab95eb319f16646c2dece616b536baff7ec76b82d1d26d8933c957191db",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 276,
+      "ownerId": "051",
+      "ownerTable": "critters",
+      "path": "critter/051.battle.02e0cab95eb3.webp",
+      "sha256": "02e0cab95eb319f16646c2dece616b536baff7ec76b82d1d26d8933c957191db",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 276,
+      "ownerId": "051",
+      "ownerTable": "critters",
+      "path": "critter/051.portrait.02e0cab95eb3.webp",
+      "sha256": "02e0cab95eb319f16646c2dece616b536baff7ec76b82d1d26d8933c957191db",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 92,
+      "ownerId": "022",
+      "ownerTable": "relics",
+      "path": "relic/022.icon.97be5433692d.webp",
+      "sha256": "97be5433692da084ef7b385b73ffcbb8ec64e8ba7a623708bc733861c54a259b",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 215,
+      "ownerId": "022",
+      "ownerTable": "relics",
+      "path": "relic/022.thumb.da0aed794da7.webp",
+      "sha256": "da0aed794da7434ed35f5a3bc97a1f65d09feab45e430ef69ffd0f57b8f55a70",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 288,
+      "ownerId": "022",
+      "ownerTable": "relics",
+      "path": "relic/022.card.c2a3c7b15cf7.webp",
+      "sha256": "c2a3c7b15cf7e98eb72d65ad47ae75754014da24f54f3389a38c378cbb416429",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 193,
+      "ownerId": "052",
+      "ownerTable": "critters",
+      "path": "critter/052.thumb.3e7f6556c808.webp",
+      "sha256": "3e7f6556c80807200ddf6acbcd20133382832856d07c8f7ca11b040830f97200",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 301,
+      "ownerId": "052",
+      "ownerTable": "critters",
+      "path": "critter/052.card.f0760a7b64f4.webp",
+      "sha256": "f0760a7b64f4f28fb718d29051525013bb8d68e32fc3863a39f63052f44027e6",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 301,
+      "ownerId": "052",
+      "ownerTable": "critters",
+      "path": "critter/052.battle.f0760a7b64f4.webp",
+      "sha256": "f0760a7b64f4f28fb718d29051525013bb8d68e32fc3863a39f63052f44027e6",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 301,
+      "ownerId": "052",
+      "ownerTable": "critters",
+      "path": "critter/052.portrait.f0760a7b64f4.webp",
+      "sha256": "f0760a7b64f4f28fb718d29051525013bb8d68e32fc3863a39f63052f44027e6",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 155,
+      "ownerId": "053",
+      "ownerTable": "critters",
+      "path": "critter/053.thumb.30f58b422e26.webp",
+      "sha256": "30f58b422e264d1702262e07bad9e04d83380cb3f71c3599cd8b9b8b172ee88c",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 242,
+      "ownerId": "053",
+      "ownerTable": "critters",
+      "path": "critter/053.card.306a142a507c.webp",
+      "sha256": "306a142a507c3b66e86a366e092121404bdcc4171e5b3f2dea7b6fa3da4eb061",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 242,
+      "ownerId": "053",
+      "ownerTable": "critters",
+      "path": "critter/053.battle.306a142a507c.webp",
+      "sha256": "306a142a507c3b66e86a366e092121404bdcc4171e5b3f2dea7b6fa3da4eb061",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 242,
+      "ownerId": "053",
+      "ownerTable": "critters",
+      "path": "critter/053.portrait.306a142a507c.webp",
+      "sha256": "306a142a507c3b66e86a366e092121404bdcc4171e5b3f2dea7b6fa3da4eb061",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 147,
+      "ownerId": "054",
+      "ownerTable": "critters",
+      "path": "critter/054.thumb.18b2ad82fe46.webp",
+      "sha256": "18b2ad82fe46823cdf19bf28662862299df9270c910c16b6e762824b227e8b8a",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 229,
+      "ownerId": "054",
+      "ownerTable": "critters",
+      "path": "critter/054.card.1c347e9cd7fd.webp",
+      "sha256": "1c347e9cd7fd8d73ed328bff5dda65cd50bff02e430187904073eb2a69cfbce7",
+      "variant": "card",
+      "width": 350
+    },
+    {
+      "height": 229,
+      "ownerId": "054",
+      "ownerTable": "critters",
+      "path": "critter/054.battle.1c347e9cd7fd.webp",
+      "sha256": "1c347e9cd7fd8d73ed328bff5dda65cd50bff02e430187904073eb2a69cfbce7",
+      "variant": "battle",
+      "width": 350
+    },
+    {
+      "height": 229,
+      "ownerId": "054",
+      "ownerTable": "critters",
+      "path": "critter/054.portrait.1c347e9cd7fd.webp",
+      "sha256": "1c347e9cd7fd8d73ed328bff5dda65cd50bff02e430187904073eb2a69cfbce7",
+      "variant": "portrait",
+      "width": 350
+    },
+    {
+      "height": 288,
+      "ownerId": "011",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/011.thumb.1e22d12a4b6e.webp",
+      "sha256": "1e22d12a4b6edfe7f09e04da946cfa62124867c8f86754555aac97e6cb8d006a",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 515,
+      "ownerId": "011",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/011.card.7b30fe51b7ac.webp",
+      "sha256": "7b30fe51b7acc751e10b69de130361399a7a2c4992d5da77aab918e15a15fdb8",
+      "variant": "card",
+      "width": 400
+    },
+    {
+      "height": 515,
+      "ownerId": "011",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/011.battle.7b30fe51b7ac.webp",
+      "sha256": "7b30fe51b7acc751e10b69de130361399a7a2c4992d5da77aab918e15a15fdb8",
+      "variant": "battle",
+      "width": 400
+    },
+    {
+      "height": 515,
+      "ownerId": "011",
+      "ownerTable": "rollcasters",
+      "path": "rollcaster/011.portrait.7b30fe51b7ac.webp",
+      "sha256": "7b30fe51b7acc751e10b69de130361399a7a2c4992d5da77aab918e15a15fdb8",
+      "variant": "portrait",
+      "width": 400
+    },
+    {
+      "height": 265,
+      "ownerId": "004",
+      "ownerTable": "critters",
+      "path": "critter/004.thumb.8ce1f914578d.webp",
+      "sha256": "8ce1f914578dc7dc4f91677fa7d2f7483b46ae5540765dfc1a36b3afe4e0cdea",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 316,
+      "ownerId": "004",
+      "ownerTable": "critters",
+      "path": "critter/004.card.dba6c1fd452a.webp",
+      "sha256": "dba6c1fd452a6f09eabe332c5c817ade91896584d5706c503e6f56fbb586aaff",
+      "variant": "card",
+      "width": 267
+    },
+    {
+      "height": 316,
+      "ownerId": "004",
+      "ownerTable": "critters",
+      "path": "critter/004.battle.dba6c1fd452a.webp",
+      "sha256": "dba6c1fd452a6f09eabe332c5c817ade91896584d5706c503e6f56fbb586aaff",
+      "variant": "battle",
+      "width": 267
+    },
+    {
+      "height": 316,
+      "ownerId": "004",
+      "ownerTable": "critters",
+      "path": "critter/004.portrait.dba6c1fd452a.webp",
+      "sha256": "dba6c1fd452a6f09eabe332c5c817ade91896584d5706c503e6f56fbb586aaff",
+      "variant": "portrait",
+      "width": 267
+    },
+    {
+      "height": 315,
+      "ownerId": "012",
+      "ownerTable": "critters",
+      "path": "critter/012.thumb.d1123c3fd9c0.webp",
+      "sha256": "d1123c3fd9c0229b8da641a67e463d0fc77773cc516d8bade5c2364dbfc8e53e",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 422,
+      "ownerId": "012",
+      "ownerTable": "critters",
+      "path": "critter/012.card.a40105bfa08c.webp",
+      "sha256": "a40105bfa08c6d3864a0b14806dffe3952a995d2ac10f94ea821e4097db7c3ae",
+      "variant": "card",
+      "width": 300
+    },
+    {
+      "height": 422,
+      "ownerId": "012",
+      "ownerTable": "critters",
+      "path": "critter/012.battle.a40105bfa08c.webp",
+      "sha256": "a40105bfa08c6d3864a0b14806dffe3952a995d2ac10f94ea821e4097db7c3ae",
+      "variant": "battle",
+      "width": 300
+    },
+    {
+      "height": 422,
+      "ownerId": "012",
+      "ownerTable": "critters",
+      "path": "critter/012.portrait.a40105bfa08c.webp",
+      "sha256": "a40105bfa08c6d3864a0b14806dffe3952a995d2ac10f94ea821e4097db7c3ae",
+      "variant": "portrait",
+      "width": 300
+    },
+    {
+      "height": 97,
+      "ownerId": "001",
+      "ownerTable": "relics",
+      "path": "relic/001.icon.70b2e53def91.webp",
+      "sha256": "70b2e53def91cfa58346ea25cd8d3e1e0dc0c06061a1ad41f03978bc7dec9fb8",
+      "variant": "icon",
+      "width": 96
+    },
+    {
+      "height": 227,
+      "ownerId": "001",
+      "ownerTable": "relics",
+      "path": "relic/001.thumb.0dbf6a6c6cca.webp",
+      "sha256": "0dbf6a6c6ccac0708ba29b40031062ba9ada2cf4e3716ee88b2a55cb05ac6fb5",
+      "variant": "thumb",
+      "width": 224
+    },
+    {
+      "height": 304,
+      "ownerId": "001",
+      "ownerTable": "relics",
+      "path": "relic/001.card.f98d06e9135e.webp",
+      "sha256": "f98d06e9135e2063fd66d40148942dc34f3b92e9ca52df44e51e7859444ea6ee",
+      "variant": "card",
+      "width": 300
+    }
+  ],
+  "catalogVersion": "2026.08.26.1",
+  "schemaVersion": 2
+}

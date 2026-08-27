@@ -3,30 +3,30 @@
     "activatesAt": null,
     "mode": "immediate"
   },
-  "aiLabCommit": "137b4c83d51b6601bdc3377b6325434dfbd750fb",
+  "aiLabCommit": "a6d1d55b1d9292ad03ea8df591277e6eb4160d0d",
   "catalogRelease": {
     "assetProvenance": {
-      "commit": "b899a5771946ace3e1a99d164655db1093896250",
+      "commit": "72a47845ade2088d14cc3085fceaaa5f14817d00",
       "repository": "pmarshall7516/rollcaster-assets",
       "status": "catalog-manifest-clean"
     },
-    "id": "2026.08.23.2",
-    "manifestPath": "game-data/releases/2026.08.23.2/release-manifest.d2f3e799696d.json",
-    "manifestSha256": "d2f3e799696d07590ea93c7abdaefce8f25976284cb5737e4a9a541b3019b1fb",
-    "source": "local",
-    "localPath": "catalog"
+    "id": "2026.08.26.1",
+    "localPath": "catalog",
+    "manifestPath": "game-data/releases/2026.08.26.1/release-manifest.1b0bece26af2.json",
+    "manifestSha256": "1b0bece26af25c7cd02e1f1167bdd46629af164d622a800284ef07d8bf428879",
+    "source": "local"
   },
   "channel": "stable",
   "clientProtocolVersion": 1,
   "combatRuntimeVersion": 2,
   "contentSchemaVersion": 2,
-  "createdAt": "2026-08-24T19:37:53.064Z",
+  "createdAt": "2026-08-27T00:38:50.592Z",
   "distribution": {
     "repository": "pmarshall7516/rollcaster-releases",
     "tag": "game-v1.0.6"
   },
-  "releaseNotes": "Bugfixes documented and fixed",
-  "sourceCommit": "cbeefadaab606b0e3052feb674b52cbac2114623",
+  "releaseNotes": "Game Ready",
+  "sourceCommit": "788f5ee2137d0705b1540d129ace01d31fd71df4",
   "sourceTag": "game-v1.0.6-source",
   "version": "1.0.6"
 }
