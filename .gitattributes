@@ -1,0 +1,3 @@
+# Catalog Release bundles are immutable byte-addressed artifacts. Keep their
+# manifest, pack, and asset bytes identical on every runner, including Windows.
+release/catalog/** -text
