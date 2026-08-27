@@ -27,6 +27,12 @@ export function isTauriDesktop(): boolean {
     && ("__TAURI_INTERNALS__" in window || window.location.protocol === "tauri:");
 }
 
+export function isWindowsDesktop(): boolean {
+  return isTauriDesktop()
+    && typeof navigator !== "undefined"
+    && /Windows/i.test(navigator.userAgent);
+}
+
 export async function checkForDesktopUpdate(): Promise<DesktopUpdate | null> {
   if (!isTauriDesktop()) return null;
   const [{ check }, { relaunch }] = await Promise.all([

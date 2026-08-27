@@ -196,7 +196,7 @@ import type {
   View,
 } from "./lib/types";
 import rollcastersLogoUrl from "./assets/rollcasters-logo.webp";
-import { checkForDesktopUpdate, isTauriDesktop, resolveDesktopUpdateGate, type DesktopUpdate } from "./lib/desktop-updater";
+import { checkForDesktopUpdate, isTauriDesktop, isWindowsDesktop, resolveDesktopUpdateGate, type DesktopUpdate } from "./lib/desktop-updater";
 import { downloadDiagnosticReport } from "./lib/diagnostics";
 import {
   initializeDesktopWindow,
@@ -1851,13 +1851,28 @@ function useViewportFitScale(bottomGutter = 4) {
 
 function Shell({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   const desktopWindow = useDesktopWindow();
+  const windowsDesktop = isWindowsDesktop();
   return (
-    <main className={`app-shell ${className}`.trim()} data-game-profile={desktopProfile.profile} data-game-environment={desktopProfile.environment} data-window-mode={desktopWindow.mode}>
+    <main className={`app-shell ${className}`.trim()} data-game-profile={desktopProfile.profile} data-game-environment={desktopProfile.environment} data-window-mode={desktopWindow.mode} data-desktop-platform={windowsDesktop ? "windows" : undefined}>
+      <DesktopWindowChrome mode={desktopWindow.mode} />
       <DesktopWindowResizeHandles mode={desktopWindow.mode} />
       <div className="world-glow" />
       {desktopProfile.badge && <span className={`game-profile-badge ${desktopProfile.profile}`} aria-label={`${desktopProfile.appName} profile`}>{desktopProfile.badge}</span>}
       {children}
     </main>
+  );
+}
+
+function DesktopWindowChrome({ mode }: { mode: WindowMode }) {
+  if (!isWindowsDesktop() || mode !== "windowed") return null;
+  return (
+    <div
+      className="desktop-window-chrome"
+      data-tauri-drag-region="deep"
+      aria-label="Move Rollcasters window"
+    >
+      <span>Rollcasters</span>
+    </div>
   );
 }
 

@@ -1074,6 +1074,32 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 3
 }
 .world-glow { width: 620px; height: 620px; background: radial-gradient(circle, rgb(79 228 225 / 15%), transparent 68%); }
 
+/* Borderless Windows builds need a small native drag target in windowed mode.
+   Fullscreen keeps the game flush with the display and does not reserve this space. */
+.app-shell[data-window-mode="windowed"][data-desktop-platform="windows"] {
+  padding-top: 56px;
+}
+
+.desktop-window-chrome {
+  position: fixed;
+  z-index: 10001;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 14px;
+  border-bottom: 1px solid rgb(121 136 216 / 28%);
+  background: linear-gradient(180deg, rgb(16 21 42 / 98%), rgb(8 10 24 / 94%));
+  box-shadow: 0 8px 22px rgb(0 0 0 / 22%);
+  color: var(--text-muted);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.desktop-window-chrome:active { cursor: grabbing; }
+.desktop-window-chrome span { color: var(--text-secondary); font-size: 11px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+
 .brand-lockup { position: relative; display: grid; place-items: center; min-height: 64px; }
 .brand-logo { display: block; width: clamp(240px, 42vw, 520px); max-height: 180px; object-fit: contain; }
 .brand-logo.signed-in { width: clamp(180px, 28vw, 360px); max-height: 88px; }

@@ -31,6 +31,7 @@ let snapshot: DesktopWindowSnapshot = {
   ready: !isTauriDesktop(),
 };
 let initialization: Promise<void> | null = null;
+let nativeModeChangeInFlight = false;
 
 function publish(next: Partial<DesktopWindowSnapshot>) {
   snapshot = { ...snapshot, ...next };
@@ -102,6 +103,30 @@ function logicalMonitorBounds(monitor: {
   };
 }
 
+function logicalMonitorScreenBounds(monitor: {
+  scaleFactor: number;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+}) {
+  const scale = monitor.scaleFactor || 1;
+  return {
+    x: monitor.position.x / scale,
+    y: monitor.position.y / scale,
+    width: monitor.size.width / scale,
+    height: monitor.size.height / scale,
+  };
+}
+
+function notifyViewportChanged() {
+  if (typeof window === "undefined") return;
+  const refresh = () => window.dispatchEvent(new Event("resize"));
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(refresh);
+  } else {
+    refresh();
+  }
+}
+
 async function nativeWindow() {
   if (!isTauriDesktop()) return null;
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -128,6 +153,7 @@ export async function initializeDesktopWindow(): Promise<void> {
     publish({ windowedSize: appliedSize });
     persistPreferences(preferences.mode, appliedSize);
     const unlisten = await appWindow.onResized(async ({ payload }) => {
+      if (nativeModeChangeInFlight) return;
       const fullscreen = await appWindow.isFullscreen();
       if (fullscreen) {
         if (snapshot.mode !== "fullscreen") publish({ mode: "fullscreen" });
@@ -196,9 +222,23 @@ async function applyNativeWindowMode(
 ): Promise<WindowedSize> {
   const { LogicalPosition, LogicalSize } = await import("@tauri-apps/api/dpi");
   if (mode === "fullscreen") {
+    const [{ currentMonitor }] = await Promise.all([
+      import("@tauri-apps/api/window"),
+    ]);
+    const monitor = await currentMonitor();
+    const screenBounds = monitor ? logicalMonitorScreenBounds(monitor) : null;
     await appWindow.setSizeConstraints(null);
+    await appWindow.setDecorations(false);
     await appWindow.setResizable(false);
     await appWindow.setFullscreen(true);
+    // Tauri's borderless fullscreen transition is asynchronous on Windows.
+    // Reapply the physical monitor's logical bounds after entering fullscreen
+    // so a prior windowed work-area size cannot leave a strip of the desktop
+    // visible at the edge of the display.
+    if (screenBounds) {
+      await appWindow.setPosition(new LogicalPosition(screenBounds.x, screenBounds.y));
+      await appWindow.setSize(new LogicalSize(screenBounds.width, screenBounds.height));
+    }
     await appWindow.show();
     return requestedSize;
   }
@@ -240,9 +280,15 @@ export async function setDesktopWindowMode(mode: WindowMode): Promise<void> {
   const appWindow = await nativeWindow();
   if (!appWindow) return;
   const size = snapshot.windowedSize;
-  const appliedSize = await applyNativeWindowMode(appWindow, mode, size, true);
-  persistPreferences(mode, appliedSize);
-  publish({ mode, windowedSize: appliedSize, ready: true });
+  nativeModeChangeInFlight = true;
+  try {
+    const appliedSize = await applyNativeWindowMode(appWindow, mode, size, true);
+    persistPreferences(mode, appliedSize);
+    publish({ mode, windowedSize: appliedSize, ready: true });
+    notifyViewportChanged();
+  } finally {
+    nativeModeChangeInFlight = false;
+  }
 }
 
 export async function startDesktopCornerResize(corner: ResizeCorner, event: PointerScreenPosition): Promise<void> {
