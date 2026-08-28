@@ -9,6 +9,7 @@
   "scripts": {
     "test:server-update-gate": "tsc scripts/desktop-server-update-gate-tests.ts src/lib/desktop-updater.ts --outDir /tmp/rollcasters-server-update-gate-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck && node /tmp/rollcasters-server-update-gate-tests/scripts/desktop-server-update-gate-tests.js",
     "test:offline": "node scripts/offline-tests.mjs",
+    "test:routing": "tsc scripts/routing-tests.ts src/app/routing.ts src/lib/types.ts --outDir /tmp/rollcasters-routing-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node /tmp/rollcasters-routing-tests/scripts/routing-tests.js",
     "test:stable-policy:db": "node scripts/stable-policy-db-tests.mjs",
     "dev": "node scripts/dev-local.mjs",
     "dev:catalog": "node scripts/dev-with-catalog.mjs",

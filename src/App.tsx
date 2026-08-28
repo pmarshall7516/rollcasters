@@ -217,10 +217,10 @@ import {
   type ControlBindings,
 } from "./lib/control-preferences";
 import { focusedEnabledControl } from "./lib/keyboard-controls";
+import { routeFromLocation, viewUrl, type ShopTab } from "./app/routing";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type BagTab = "currency" | "shards" | "lootboxes";
-type ShopTab = "shard" | "relic" | "lootbox" | "promo";
 const SHOP_PURCHASE_LEDGER_PREFIX = "rollcasters:shop-purchases:";
 
 function clearLegacyShopPurchaseLedger(userId: string) {
@@ -308,27 +308,6 @@ function createLootboxErrorNotification(error: unknown): BannerNotification {
     kind: "lootbox-error",
     message: errorMessage(error, "Unable to open this Lootbox."),
   };
-}
-
-function routeFromLocation(): { view: View; shopTab: ShopTab } {
-  const params = new URLSearchParams(window.location.search);
-  const requestedTab = params.get("tab");
-  const shopTab: ShopTab = requestedTab === "relic" || requestedTab === "lootbox" || requestedTab === "promo"
-    ? requestedTab
-    : "shard";
-  if (window.location.pathname === "/shop") return { view: "shop", shopTab };
-  if (window.location.pathname === "/collection") return { view: "collection", shopTab };
-  if (window.location.pathname === "/bag") return { view: "bag", shopTab };
-  if (window.location.pathname === "/play") return { view: "play", shopTab };
-  return { view: "home", shopTab };
-}
-
-function viewUrl(view: View, shopTab: ShopTab): string {
-  if (view === "shop") return `/shop?tab=${shopTab}`;
-  if (view === "collection") return "/collection";
-  if (view === "bag") return "/bag";
-  if (view === "play") return "/play";
-  return "/";
 }
 
 function requiredStarterView(player: PlayerState | null | undefined): View | null {
