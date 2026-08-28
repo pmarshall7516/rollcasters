@@ -5,6 +5,7 @@ function check(condition, message) {
 }
 
 const app = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const shopPrimitives = fs.readFileSync(new URL("../src/features/shop/ShopPrimitives.tsx", import.meta.url), "utf8");
 const supabase = fs.readFileSync(new URL("../src/lib/supabase.ts", import.meta.url), "utf8");
 const styles = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
@@ -31,7 +32,7 @@ check(
 check(
   /const projected = quantity > 1[\s\S]{0,180}: statusAvailability\.current;/.test(app)
     && /projected=\{projected\}/.test(app)
-    && /className="shop-progress-projected"/.test(app)
+    && /className="shop-progress-projected"/.test(shopPrimitives)
     && /\.shop-progress-projected/.test(styles),
   "Shard and Relic Shop bars must render projected fill only after the selected quantity rises above one.",
 );
