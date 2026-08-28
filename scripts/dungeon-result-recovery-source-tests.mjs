@@ -7,6 +7,7 @@ function check(condition, message) {
 }
 
 const appSource = fs.readFileSync(path.join(root, "src", "App.tsx"), "utf8");
+const errorSource = fs.readFileSync(path.join(root, "src", "app", "errors.ts"), "utf8");
 const supabaseSource = fs.readFileSync(path.join(root, "src", "lib", "supabase.ts"), "utf8");
 const resultHandler = appSource.match(/onBattleResult=\{([\s\S]*?)\n\s*\}\}\s*onBack=/)?.[1] ?? "";
 
@@ -18,8 +19,8 @@ check(resultHandler.includes("recordDungeonBattleResultWithRecovery"),
   "The combat result handler must use retry-safe encounter persistence.");
 check(!resultHandler.includes("setError(errorMessage(resultError"),
   "Encounter result failures must not become a global error banner.");
-check(appSource.includes("function isStatementTimeoutMessage")
-  && appSource.includes('"The save service is busy right now. Please try again."'),
+check(errorSource.includes("function isStatementTimeoutMessage")
+  && errorSource.includes('"The save service is busy right now. Please try again."'),
   "Statement timeout text must be sanitized before any generic error banner is rendered.");
 check(appSource.includes("function DungeonResultSaveDialog"),
   "Encounter result save failures must have a dedicated recovery dialog.");
