@@ -214,6 +214,7 @@ import {
 import { focusedEnabledControl } from "./lib/keyboard-controls";
 import { routeFromLocation, viewUrl, type ShopTab } from "./app/routing";
 import { enqueueBannerNotification, type BannerNotification } from "./app/notifications";
+import { dungeonEntryErrorMessage, errorMessage, loadoutErrorMessage, rawErrorMessage } from "./app/errors";
 import { catalogAssetPath, findAssetPath, preferredAssetPath } from "./lib/asset-paths";
 import { Modal } from "./components/shared/Modal";
 import { AssetIcon, Sprite, SpriteFrame } from "./components/shared/Sprite";
@@ -1692,33 +1693,6 @@ export function App() {
   );
 }
 
-function errorMessage(error: unknown, fallback: string): string {
-  const raw = rawErrorMessage(error, fallback);
-  return isStatementTimeoutMessage(raw)
-    ? "The save service is busy right now. Please try again."
-    : raw;
-}
-
-function rawErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
-  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
-    return error.message;
-  }
-  return fallback;
-}
-
-function isStatementTimeoutMessage(message: string): boolean {
-  return message.toLowerCase().includes("canceling statement due to statement timeout");
-}
-
-function dungeonEntryErrorMessage(error: unknown): string {
-  const raw = rawErrorMessage(error, "Unable to start dungeon.");
-  if (raw.includes("DUNGEON_ENTRY_TIMEOUT") || isStatementTimeoutMessage(raw)) {
-    return "Dungeon entry is taking longer than expected. No combat was started; please try again.";
-  }
-  return errorMessage(error, "Unable to start dungeon.");
-}
-
 function applyAuthoritativeDungeonEffectSnapshot(
   state: DungeonRunState,
   effectSnapshot: unknown,
@@ -1730,20 +1704,6 @@ function applyAuthoritativeDungeonEffectSnapshot(
     battle: { ...state.battle, snapshot },
     pendingBattle: state.pendingBattle ? { ...state.pendingBattle, snapshot } : null,
   };
-}
-
-function loadoutErrorMessage(error: unknown, fallback: string): string {
-  const raw = errorMessage(error, fallback);
-  const messages: Record<string, string> = {
-    SKILL_NOT_IN_PUBLISHED_RELEASE: "This Skill is not part of the current published release.",
-    ABILITY_NOT_IN_PUBLISHED_RELEASE: "This Ability is not part of the current published release.",
-    SKILL_NOT_ALLOWED_FOR_CRITTER: "This Skill is not available for this Critter.",
-    ABILITY_NOT_ALLOWED_FOR_ROLLCASTER: "This Ability is not available for this Rollcaster.",
-    PLAYER_REVISION_CONFLICT: "Your loadout changed elsewhere. Reloading the latest state…",
-    SESSION_DISPLACED: "This account moved to another session.",
-  };
-  const code = Object.keys(messages).find((candidate) => raw.includes(candidate));
-  return code ? messages[code] : raw;
 }
 
 function useViewportFitScale(bottomGutter = 4) {
