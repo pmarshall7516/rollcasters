@@ -170,7 +170,6 @@ import type {
   AppData,
   ActiveDungeonRun,
   CombatAction,
-  CollectibleUnlockEvent,
   CurrencyDef,
   CollectibleType,
   CollectibleUnlockChallenge,
@@ -218,6 +217,7 @@ import {
 } from "./lib/control-preferences";
 import { focusedEnabledControl } from "./lib/keyboard-controls";
 import { routeFromLocation, viewUrl, type ShopTab } from "./app/routing";
+import { enqueueBannerNotification, type BannerNotification } from "./app/notifications";
 
 type CollectionTab = "rollcasters" | "critters" | "relics";
 type BagTab = "currency" | "shards" | "lootboxes";
@@ -255,42 +255,6 @@ type PromoRenderState = {
   claimedPlayerUsesRemaining: string | null;
   claimedGlobalUsesRemaining: string | null;
 };
-type BannerNotification =
-  | {
-      id: string;
-      kind: "collectible-unlock";
-      event: CollectibleUnlockEvent;
-    }
-  | {
-      id: string;
-      kind: "challenge-completed";
-      challengeId: string;
-    }
-  | {
-      id: string;
-      kind: "shop-reward";
-      targetCategory: CollectibleType;
-      targetId: string;
-      shard: boolean;
-      granted: string;
-      discarded: string;
-    }
-  | {
-      id: string;
-      kind: "promo-reward";
-      redemption: PromoCodeRedemption;
-    }
-  | {
-      id: string;
-      kind: "shop-error";
-      message: string;
-    }
-  | {
-      id: string;
-      kind: "lootbox-error";
-      message: string;
-    };
-
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
 const DESKTOP_CLOSE_SAVE_TIMEOUT_MS = 4_000;
 
@@ -558,21 +522,7 @@ export function App() {
   }
 
   function enqueueNotification(notification: BannerNotification) {
-    setNotificationQueue((current) => {
-      if (current.some((queued) => queued.id === notification.id)) return current;
-      if (notification.kind !== "shop-reward") return [...current, notification];
-
-      const firstShopRewardIndex = current.findIndex((queued) => queued.kind === "shop-reward");
-      if (firstShopRewardIndex === -1) return [...current, notification];
-
-      const withoutOlderShopRewards = current.filter((queued) => queued.kind !== "shop-reward");
-      const insertionIndex = Math.min(firstShopRewardIndex, withoutOlderShopRewards.length);
-      return [
-        ...withoutOlderShopRewards.slice(0, insertionIndex),
-        notification,
-        ...withoutOlderShopRewards.slice(insertionIndex),
-      ];
-    });
+    setNotificationQueue((current) => enqueueBannerNotification(current, notification));
   }
 
   function localNotificationStorage(): NotificationStorage | null {
