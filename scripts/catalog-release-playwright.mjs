@@ -5,6 +5,7 @@ import path from "node:path";
 const appUrl = process.env.APP_BASE_URL ?? "http://127.0.0.1:5173";
 const catalogBaseUrl = process.env.CATALOG_BASE_URL ?? process.env.VITE_GAME_CATALOG_BASE_URL;
 if (!catalogBaseUrl) throw new Error("Set VITE_GAME_CATALOG_BASE_URL (or the CATALOG_BASE_URL test override) to the generated or staged game-data URL.");
+const gameVersion = process.env.GAME_VERSION ?? process.env.VITE_GAME_VERSION ?? "0.1.0";
 const outputDir = path.resolve(process.env.OUTPUT_DIR ?? "output/catalog-release-browser");
 fs.mkdirSync(outputDir, { recursive: true });
 
@@ -22,9 +23,9 @@ page.on("pageerror", (error) => errors.push(error.message));
 
 try {
   await page.goto(appUrl, { waitUntil: "networkidle" });
-  const result = await page.evaluate(async ({ catalogBaseUrl }) => {
+  const result = await page.evaluate(async ({ catalogBaseUrl, gameVersion }) => {
     const module = await import("/src/lib/catalog-release.ts");
-    const loaded = await module.loadPublishedCatalog(catalogBaseUrl, "0.1.0");
+    const loaded = await module.loadPublishedCatalog(catalogBaseUrl, gameVersion);
     const defaultAsset = loaded.catalog.gameAssets.find((asset) => asset.variant === "default") ?? loaded.catalog.gameAssets[0];
     const assetBase = loaded.release.assetBaseUrl;
     let assetStatus = 0;
@@ -40,7 +41,7 @@ try {
       assetStatus,
       assetBase,
     };
-  }, { catalogBaseUrl });
+  }, { catalogBaseUrl, gameVersion });
   check(result.catalogVersion !== "live-development", "The browser must load an immutable release.");
   check(result.source === "network" || result.source === "cache", "The release source must be verified network/cache data.");
   check(result.elements > 0 && result.critters > 0 && result.assets > 0, "The assembled release must contain the live catalog.");
@@ -48,11 +49,11 @@ try {
   check(!String(result.assetBase).includes("supabase.co/storage/v1"), "Published release art must not use Supabase Storage.");
   check(errors.length === 0, `Online browser errors: ${errors.join(" | ")}`);
   await page.route(`${catalogBaseUrl}/**`, (route) => route.abort("internetdisconnected"));
-  const offline = await page.evaluate(async ({ catalogBaseUrl }) => {
+  const offline = await page.evaluate(async ({ catalogBaseUrl, gameVersion }) => {
     const module = await import("/src/lib/catalog-release.ts");
-    const loaded = await module.loadPublishedCatalog(catalogBaseUrl, "0.1.0");
+    const loaded = await module.loadPublishedCatalog(catalogBaseUrl, gameVersion);
     return { version: loaded.release.catalogVersion, source: loaded.release.source };
-  }, { catalogBaseUrl });
+  }, { catalogBaseUrl, gameVersion });
   check(offline.version === result.catalogVersion && offline.source === "cache", "The last verified compatible release must load offline without mixing data.");
   const unexpectedOfflineErrors = errors.filter((message) => !message.includes("ERR_INTERNET_DISCONNECTED"));
   check(unexpectedOfflineErrors.length === 0, `Offline browser errors: ${unexpectedOfflineErrors.join(" | ")}`);
@@ -65,15 +66,15 @@ try {
     const response = await route.fetch();
     await route.fulfill({ status: 200, contentType: "application/json", body: `${await response.text()} ` });
   });
-  const tamperError = await page.evaluate(async ({ catalogBaseUrl }) => {
+  const tamperError = await page.evaluate(async ({ catalogBaseUrl, gameVersion }) => {
     const module = await import("/src/lib/catalog-release.ts");
     try {
-      await module.loadPublishedCatalog(catalogBaseUrl, "0.1.0");
+      await module.loadPublishedCatalog(catalogBaseUrl, gameVersion);
       return null;
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
-  }, { catalogBaseUrl });
+  }, { catalogBaseUrl, gameVersion });
   check(tamperError?.includes("mismatch"), `A tampered successful network response must fail closed instead of using cached data; received ${tamperError ?? "no error"}.`);
 
   const renderPage = await browser.newPage({ viewport: { width: 900, height: 700 } });
@@ -111,11 +112,11 @@ try {
     try { Object.defineProperty(globalThis.crypto, "subtle", { configurable: true, value: undefined }); } catch { /* Browser may already omit it. */ }
   });
   await fallbackPage.goto(appUrl, { waitUntil: "networkidle" });
-  const fallback = await fallbackPage.evaluate(async ({ catalogBaseUrl }) => {
+  const fallback = await fallbackPage.evaluate(async ({ catalogBaseUrl, gameVersion }) => {
     const module = await import("/src/lib/catalog-release.ts");
-    const loaded = await module.loadPublishedCatalog(catalogBaseUrl, "0.1.0");
+    const loaded = await module.loadPublishedCatalog(catalogBaseUrl, gameVersion);
     return { catalogVersion: loaded.release.catalogVersion, subtleAvailable: Boolean(globalThis.crypto?.subtle) };
-  }, { catalogBaseUrl });
+  }, { catalogBaseUrl, gameVersion });
   check(!fallback.subtleAvailable, "The fallback scenario must run without Web Crypto subtle.digest.");
   check(fallback.catalogVersion === result.catalogVersion, "Portable SHA-256 must verify the same published release.");
   check(fallbackErrors.length === 0, `Portable SHA-256 browser errors: ${fallbackErrors.join(" | ")}`);

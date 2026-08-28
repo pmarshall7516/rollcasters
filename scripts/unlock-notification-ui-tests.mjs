@@ -87,7 +87,7 @@ const html = `<!doctype html>
       .fixture-card { min-height: 210px; padding: 18px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: linear-gradient(150deg, rgb(23 29 56 / 96%), rgb(11 15 34 / 96%)); }
       .fixture-card h2 { color: var(--text-primary); }
       .fixture-card p { color: var(--text-secondary); }
-      #click-through-target { position: fixed; z-index: 1; top: 12px; left: 12px; width: min(360px, calc(100vw - 24px)); height: 70px; opacity: 0; }
+      #click-through-target { position: fixed; z-index: 999; top: 12px; left: 12px; width: min(360px, calc(100vw - 24px)); height: 70px; opacity: 0; }
       @media (max-width: 650px) { .fixture-cards { grid-template-columns: 1fr; } .fixture-card:nth-child(n+2) { display: none; } }
     </style>
   </head>
