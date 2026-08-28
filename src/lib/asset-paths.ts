@@ -1,5 +1,21 @@
 import type { AppData, GameAsset } from "./types.js";
 
+export function preferredAssetPath(
+  data: AppData,
+  category: string,
+  ownerId: string | null | undefined,
+  directPath: string | null | undefined,
+  variants: readonly string[],
+): string | null {
+  if (ownerId) {
+    for (const variant of variants) {
+      const path = findAssetPath(data, category, ownerId, variant);
+      if (path) return path;
+    }
+  }
+  return catalogAssetPath(data, category, ownerId, directPath);
+}
+
 export function findAssetRecord(data: AppData, category: string, ownerId: string, variant: string): GameAsset | undefined {
   return data.catalog.gameAssets.find(
     (asset) =>

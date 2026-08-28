@@ -96,7 +96,6 @@ import {
   type CombatState,
   type RunEffectSnapshot,
 } from "./lib/game";
-import { effectMatchesSourceCritter, sourceElementIds } from "./lib/effects";
 import {
   advanceDungeonEvent,
   applyDungeonBattleResult,
@@ -183,7 +182,6 @@ import type {
   PromoCodeRedemption,
   PromoCodeReward,
   Relic,
-  ResolvedEffectRef,
   Rollcaster,
   RollcasterAbility,
   Skill,
@@ -217,10 +215,12 @@ import {
 import { focusedEnabledControl } from "./lib/keyboard-controls";
 import { routeFromLocation, viewUrl, type ShopTab } from "./app/routing";
 import { enqueueBannerNotification, type BannerNotification } from "./app/notifications";
-import { catalogAssetPath, findAssetPath } from "./lib/asset-paths";
+import { catalogAssetPath, findAssetPath, preferredAssetPath } from "./lib/asset-paths";
 import { Modal } from "./components/shared/Modal";
 import { AssetIcon, Sprite, SpriteFrame } from "./components/shared/Sprite";
 import { ProgressBar, StatGrid } from "./components/shared/Stats";
+import { CardName, CardSprite, CritterElementLogos } from "./components/shared/CollectibleVisuals";
+import { attachmentRows, attachmentText, EffectList } from "./components/shared/Effects";
 import {
   actionCostTone,
   buildXpAnimSegments,
@@ -2709,22 +2709,6 @@ function CollectibleSprite({ data, type, id, size = "sm", shard = false }: { dat
     : <SpriteFrame size={size}>{content}</SpriteFrame>;
 }
 
-function preferredAssetPath(
-  data: AppData,
-  category: string,
-  ownerId: string | null | undefined,
-  directPath: string | null | undefined,
-  variants: readonly string[],
-): string | null {
-  if (ownerId) {
-    for (const variant of variants) {
-      const path = findAssetPath(data, category, ownerId, variant);
-      if (path) return path;
-    }
-  }
-  return catalogAssetPath(data, category, ownerId, directPath);
-}
-
 function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData; slotIndex: number; owned?: UserCritter; onEquip: (target: EquipTarget) => void }) {
   if (!owned) {
     return (
@@ -2962,37 +2946,6 @@ function targetingDescription(skill: Skill): string {
     case "self_only": return "Targets only the acting Critter.";
     default: return "Targets one Enemy Critter.";
   }
-}
-
-function effectRequirementState(effect: ResolvedEffectRef, sourceCritter?: Critter): "none" | "unknown" | "active" | "inactive" {
-  if (!sourceElementIds(effect).length) return "none";
-  if (!sourceCritter) return "unknown";
-  return effectMatchesSourceCritter(effect, sourceCritter) ? "active" : "inactive";
-}
-
-function attachmentText(effects: ResolvedEffectRef[]): string {
-  return effects.filter((effect) => effect.execution !== "child").map((effect) => `${effect.name}: ${effect.description}`).join(" ");
-}
-
-function attachmentRows(effects: ResolvedEffectRef[], sourceCritter?: Critter): React.ReactNode {
-  return effects.filter((effect) => effect.execution !== "child").map((effect) => {
-    const state = effectRequirementState(effect, sourceCritter);
-    return <span className={`tooltip-description effect-conditional-row ${state === "inactive" ? "effect-condition-inactive" : ""} effect-classification-${effect.classification ?? "mixed"}`} key={effect.id}><span><strong>{effect.name}:</strong> {effect.description}</span></span>;
-  });
-}
-
-function EffectList({ effects, className = "", sourceCritter }: { effects: ResolvedEffectRef[]; className?: string; sourceCritter?: Critter }) {
-  const visibleEffects = effects.filter((effect) => effect.execution !== "child");
-  return (
-    <span className={`effect-list ${className}`.trim()}>
-      {visibleEffects.length
-        ? visibleEffects.map((effect) => {
-          const state = effectRequirementState(effect, sourceCritter);
-          return <span className={`effect-list-row effect-conditional-row ${state === "inactive" ? "effect-condition-inactive" : ""} effect-classification-${effect.classification ?? "mixed"}`} key={effect.id}><span><strong>{effect.name}:</strong> {effect.description}</span></span>;
-        })
-        : <span className="effect-list-row">No additional effect.</span>}
-    </span>
-  );
 }
 
 function unlockedAbilitySlotCount(data: AppData, owned?: UserRollcaster): number {
@@ -4825,41 +4778,6 @@ function PointCounter({ kind, points, inline = false }: { kind: "skill" | "abili
   return inline
     ? <span className="point-counter point-counter-inline"><strong>{points}</strong> {kind} point{points === 1 ? "" : "s"}</span>
     : <p className="point-counter"><strong>{points}</strong> {kind} point{points === 1 ? "" : "s"}</p>;
-}
-
-function CardSprite({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <span className={`card-sprite-frame ${className}`.trim()}>{children}</span>;
-}
-
-function CardName({ data, name, critter }: { data: AppData; name: string; critter?: Critter }) {
-  return (
-    <span className="card-name-row">
-      {critter && <CritterElementLogos data={data} critter={critter} />}
-      <strong>{name}</strong>
-    </span>
-  );
-}
-
-function CritterElementLogos({ data, critter }: { data: AppData; critter: Critter }) {
-  const elements = critterElementIds(critter).map((elementId) => ({
-    id: elementId,
-    record: byId(data.catalog.elements, elementId),
-  }));
-  const label = elements
-    .map(({ id, record }, index) => `Element ${index + 1}: ${record?.name ?? id}`)
-    .join("; ");
-  return (
-    <span className="critter-element-logos" aria-label={label}>
-      {elements.map(({ id, record }) => (
-        <AssetIcon
-          key={id}
-          path={catalogAssetPath(data, "element", id, record?.asset_path, "icon")}
-          alt=""
-          fallback={<Sparkles size={18} />}
-        />
-      ))}
-    </span>
-  );
 }
 
 function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { data: AppData; type: CollectibleType; id: string; unlocked: boolean; onRefresh: () => Promise<void> }) {
