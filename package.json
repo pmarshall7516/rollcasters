@@ -11,6 +11,7 @@
     "test:offline": "node scripts/offline-tests.mjs",
     "test:routing": "tsc scripts/routing-tests.ts src/app/routing.ts src/lib/types.ts --outDir /tmp/rollcasters-routing-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node /tmp/rollcasters-routing-tests/scripts/routing-tests.js",
     "test:notification-queue": "tsc scripts/notification-queue-tests.ts src/app/notifications.ts src/lib/types.ts --outDir /tmp/rollcasters-notification-queue-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node /tmp/rollcasters-notification-queue-tests/scripts/notification-queue-tests.js",
+    "test:asset-paths": "tsc scripts/asset-path-tests.ts src/lib/asset-paths.ts src/lib/types.ts --outDir /tmp/rollcasters-asset-path-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node /tmp/rollcasters-asset-path-tests/scripts/asset-path-tests.js",
     "test:stable-policy:db": "node scripts/stable-policy-db-tests.mjs",
     "dev": "node scripts/dev-local.mjs",
     "dev:catalog": "node scripts/dev-with-catalog.mjs",
