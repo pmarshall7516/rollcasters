@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = path.join(root, "output", "collection-interaction-ui");
 const css = await readFile(path.join(root, "src", "styles.css"), "utf8");
 const appSource = await readFile(path.join(root, "src", "App.tsx"), "utf8");
+const modalSource = await readFile(path.join(root, "src", "components", "shared", "Modal.tsx"), "utf8");
 const skill = (name, classes = "", disabled = false) => `<button class="skill-tile ${classes}" ${disabled ? "disabled" : ""}><span class="skill-title"><strong>${name}</strong></span><span class="skill-power">PWR 50</span><span class="skill-mana">3</span>${classes.includes("equipped") ? '<span class="selection-check">✓</span>' : ""}</button>`;
 
 const browser = await chromium.launch({ headless: true });
@@ -133,7 +134,7 @@ try {
   if (!result.challengeProgressRightAligned || !result.challengeActionBeforeProgress || !result.challengeActionsAligned) throw new Error(`Challenge progress alignment failed: ${JSON.stringify(result)}`);
   if (result.descriptionSection.title !== "Description" || !result.descriptionSection.text || !result.descriptionSection.visible || !result.descriptionSection.beforeBottomSpacer) throw new Error(`Collectible description section failed: ${JSON.stringify(result.descriptionSection)}`);
   if ((appSource.match(/<CollectibleDescriptionSection description=/g) ?? []).length !== 3) throw new Error("Critter, Relic, and Rollcaster detail popups must each render the shared description section.");
-  if (!appSource.includes("initial?.focus({ preventScroll: true });") || !appSource.includes("if (modal) modal.scrollTop = 0;")) throw new Error("Modal opening must focus without scrolling and reset the pane to the top.");
+  if (!modalSource.includes("initial?.focus({ preventScroll: true });") || !modalSource.includes("if (modal) modal.scrollTop = 0;")) throw new Error("Modal opening must focus without scrolling and reset the pane to the top.");
   const relicEquipSource = appSource.match(/} else if \(target\.type === "relic"\) \{[\s\S]*?} else if \(target\.type === "ability"\)/)?.[0] ?? "";
   if (!relicEquipSource.includes("return <GameTooltip key={relic.id} label={details}")) throw new Error("Equip Relic candidates must use the shared hover/focus tooltip.");
   if (relicEquipSource.includes("relic-candidate-effects") || !relicEquipSource.includes("attachmentRows(effects, sourceCritter)")) throw new Error("Equip Relic cards must keep effects out of the card and render them in the colored tooltip.");

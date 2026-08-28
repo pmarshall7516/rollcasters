@@ -39,7 +39,6 @@ import {
   desktopProfile,
   ensureUserGameState,
   getActiveDungeonRunWithTimeout,
-  getGameAssetUrl,
   getGameUpdateStatus,
   getSnapshotGameAssetUrl,
   getPromoCodeRedemptionHistory,
@@ -124,8 +123,8 @@ import {
   formatProbability,
   type EffectiveDungeon,
 } from "./lib/dungeons";
-import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot, type LoadoutStatKey, type StatBreakdown } from "./lib/loadout";
-import { applyDungeonXpRewards, relicSlotUnlocks, xpProgress, type XpProgress } from "./lib/progression";
+import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot } from "./lib/loadout";
+import { applyDungeonXpRewards, relicSlotUnlocks, xpProgress } from "./lib/progression";
 import { aggregateDungeonRewardEntries, combineDungeonRewards } from "./lib/dungeon-rewards";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
@@ -219,12 +218,13 @@ import { focusedEnabledControl } from "./lib/keyboard-controls";
 import { routeFromLocation, viewUrl, type ShopTab } from "./app/routing";
 import { enqueueBannerNotification, type BannerNotification } from "./app/notifications";
 import { catalogAssetPath, findAssetPath } from "./lib/asset-paths";
+import { Modal } from "./components/shared/Modal";
+import { AssetIcon, Sprite, SpriteFrame } from "./components/shared/Sprite";
+import { ProgressBar, StatGrid } from "./components/shared/Stats";
 import {
   actionCostTone,
-  breakdownText,
   buildXpAnimSegments,
   costBreakdownText,
-  modificationTone,
   orderedXpThresholds,
   signedAmount,
   visualForLevelUpHold,
@@ -2785,10 +2785,6 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
       </div>
     </article>
   );
-}
-
-function SpriteFrame({ children, size = "md", className = "", selected = false }: { children: React.ReactNode; size?: "xs" | "sm" | "md" | "lg" | "hero"; className?: string; selected?: boolean }) {
-  return <span className={`sprite-frame sprite-frame-${size} ${selected ? "selected" : ""} ${className}`.trim()}>{children}</span>;
 }
 
 function CritterName({ data, critter, unknown = false }: { data: AppData; critter: Critter; unknown?: boolean }) {
@@ -7505,224 +7501,8 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
   );
 }
 
-function Modal({
-  eyebrow = "Loadout & collection",
-  title,
-  description = "Item details",
-  children,
-  onClose,
-  className = "",
-  dismissible = true,
-}: {
-  eyebrow?: string;
-  title: string;
-  description?: string | null;
-  children: React.ReactNode;
-  onClose: () => void;
-  className?: string;
-  dismissible?: boolean;
-}) {
-  const modalRef = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  const titleId = `modal-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-  const descriptionId = description ? `${titleId}-description` : undefined;
-  useLayoutEffect(() => {
-    onCloseRef.current = onClose;
-  });
-  useLayoutEffect(() => {
-    if (modalRef.current) modalRef.current.scrollTop = 0;
-  }, [title]);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    const modal = modalRef.current;
-    const initial = modal?.querySelector<HTMLElement>("button[aria-label='Close']")
-      ?? modal?.querySelector<HTMLElement>("button, summary, [role='button'], [role='tab'], [role='option'], [tabindex='0']")
-      ?? modal?.querySelector<HTMLElement>("input, select, textarea, button, [href], [tabindex]:not([tabindex='-1'])");
-    initial?.focus({ preventScroll: true });
-    if (modal) modal.scrollTop = 0;
-    function keydown(event: KeyboardEvent) {
-      if (event.key === "Escape") onCloseRef.current();
-      if (event.key !== "Tab" || !modal) return;
-      const focusable = [...modal.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input, [tabindex]:not([tabindex='-1'])")];
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }
-    document.addEventListener("keydown", keydown);
-    return () => { document.removeEventListener("keydown", keydown); previous?.focus(); };
-  }, [title]);
-  return createPortal(
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => {
-        event.stopPropagation();
-        if (dismissible && event.target === event.currentTarget) onClose();
-      }}
-      onClick={(event) => event.stopPropagation()}
-    >
-      <div className={`modal ${className}`.trim()} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
-        <div className="modal-header">
-          <div><p className="eyebrow">{eyebrow}</p><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div>
-          {dismissible && <button className="icon-button" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>}
-        </div>
-        {children}
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-function Sprite({
-  name,
-  element,
-  assetPath,
-  size = "medium",
-  locked,
-  flipped,
-  fit = "contain",
-}: {
-  name: string;
-  element: string;
-  assetPath?: string | null;
-  size?: "small" | "medium" | "large" | "hero";
-  locked?: boolean;
-  flipped?: boolean;
-  fit?: "contain" | "portrait";
-}) {
-  const [failedAssetPath, setFailedAssetPath] = useState<string | null>(null);
-  const src = !locked && assetPath && failedAssetPath !== assetPath ? getGameAssetUrl(assetPath) : null;
-  const initials = name
-    .split(" ")
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-
-  useEffect(() => {
-    setFailedAssetPath(null);
-  }, [assetPath]);
-
-  return (
-    <span
-      className={`sprite sprite-${size} sprite-fit-${fit} element-${element} ${src ? "has-asset" : ""} ${locked ? "locked" : ""} ${
-        flipped ? "flipped" : ""
-      }`}
-      data-sprite-box
-    >
-      {src ? (
-        <img
-          src={src}
-          alt={name}
-          className={`sprite-box__image ${fit === "portrait" ? "portrait-sprite-image" : ""}`.trim()}
-          data-sprite-image
-          decoding="async"
-          loading={size === "hero" || size === "small" ? "eager" : "lazy"}
-          onError={() => setFailedAssetPath(assetPath ?? null)}
-        />
-      ) : locked ? "?" : initials}
-    </span>
-  );
-}
-
-function AssetIcon({
-  path,
-  alt,
-  loading = "lazy",
-  fallback,
-}: {
-  path?: string | null;
-  alt: string;
-  loading?: "lazy" | "eager";
-  fallback: React.ReactNode;
-}) {
-  const [failedAssetPath, setFailedAssetPath] = useState<string | null>(null);
-  const src = path && failedAssetPath !== path ? getGameAssetUrl(path) : null;
-
-  useEffect(() => {
-    setFailedAssetPath(null);
-  }, [path]);
-
-  if (!src && fallback === null) return null;
-  return (
-    <span className="asset-icon" data-sprite-box>
-      {src ? (
-        <img
-          className="asset-icon__image sprite-box__image"
-          src={src}
-          alt={alt}
-          data-sprite-image
-          decoding="async"
-          loading={loading}
-          onError={() => setFailedAssetPath(path ?? null)}
-        />
-      ) : fallback}
-    </span>
-  );
-}
-
 function CostBreakdownLine({ label, breakdown }: { label: string; breakdown: ActionCostBreakdown }) {
   return <span className="tooltip-cost-breakdown"><strong>{label}: </strong><span>{breakdown.base} (Base)</span>{breakdown.sources.map((source, index) => <strong className={source.amount < 0 ? "positive" : "negative"} key={`${source.sourceName}-${index}`}> {signedAmount(source.amount)} ({source.sourceName})</strong>)}</span>;
-}
-
-function StatBreakdownLine({ label, breakdown, cost = false }: { label?: string; breakdown: StatBreakdown; cost?: boolean }) {
-  const calculated = breakdown.base + breakdown.sources.reduce((sum, source) => sum + source.amount, 0);
-  const finalText = breakdown.final !== undefined && breakdown.final !== calculated ? ` = ${breakdown.final} (Capped)` : "";
-  return (
-    <span className="stat-breakdown-line">
-      {label && <strong>{label}: </strong>}
-      <span>{breakdown.base} (Base)</span>
-      {breakdown.sources.map((source, index) => <strong className={(cost ? source.amount < 0 : source.amount > 0) ? "positive" : "negative"} key={`${source.sourceName}-${index}`}> {signedAmount(source.amount)} ({source.sourceName})</strong>)}{finalText && <strong> {finalText}</strong>}
-    </span>
-  );
-}
-
-function StatCell({ label, value, className = "", breakdowns = [], cost = false }: { label: string; value: React.ReactNode; className?: string; breakdowns?: Array<{ label?: string; breakdown: StatBreakdown }>; cost?: boolean }) {
-  const modified = breakdowns.some((entry) => entry.breakdown.sources.length > 0);
-  const accessibleBreakdown = breakdowns.map((entry) => breakdownText(entry.label ?? label, entry.breakdown)).join(". ");
-  return (
-    <span className={`stat-cell ${className} ${modified ? "modified" : ""}`.trim()} tabIndex={modified ? 0 : undefined} aria-label={modified ? `${label} ${accessibleBreakdown}` : undefined}>
-      <span className="stat-label">{label}</span>{value}
-      {modified && <span className="game-tooltip stat-breakdown" role="tooltip">{breakdowns.map((entry, index) => <StatBreakdownLine key={`${entry.label ?? label}-${index}`} label={entry.label} breakdown={entry.breakdown} cost={cost} />)}</span>}
-    </span>
-  );
-}
-
-function StatGrid({ stats, compact, breakdowns = {} }: { stats: ReturnType<typeof critterStats>; compact?: boolean; breakdowns?: Partial<Record<LoadoutStatKey, StatBreakdown>> }) {
-  return (
-    <div className={`stat-grid ${compact ? "compact" : ""}`}>
-      <StatCell label="HP" value={<strong className={modificationTone(breakdowns.hp)}>{stats.hp}</strong>} breakdowns={breakdowns.hp ? [{ breakdown: breakdowns.hp }] : []} />
-      <StatCell label="ATK" value={<strong className={modificationTone(breakdowns.atk)}>{stats.atk}</strong>} breakdowns={breakdowns.atk ? [{ breakdown: breakdowns.atk }] : []} />
-      <StatCell label="DEF" value={<strong className={modificationTone(breakdowns.def)}>{stats.def}</strong>} breakdowns={breakdowns.def ? [{ breakdown: breakdowns.def }] : []} />
-      <StatCell label="SPD" value={<strong className={modificationTone(breakdowns.spd)}>{stats.spd}</strong>} breakdowns={breakdowns.spd ? [{ breakdown: breakdowns.spd }] : []} />
-      <StatCell
-        label="Mana"
-        className="mana-dice-stat"
-        value={<strong><span className={modificationTone(breakdowns.diceMin)}>{stats.diceMin}</span>–<span className={modificationTone(breakdowns.diceMax)}>{stats.diceMax}</span></strong>}
-        breakdowns={[
-          ...(breakdowns.diceMin ? [{ label: "Minimum", breakdown: breakdowns.diceMin }] : []),
-          ...(breakdowns.diceMax ? [{ label: "Maximum", breakdown: breakdowns.diceMax }] : []),
-        ]}
-      />
-      <StatCell label="Block" value={<strong className={modificationTone(breakdowns.blockCost, true)}>{stats.blockCost}</strong>} cost breakdowns={breakdowns.blockCost ? [{ breakdown: breakdowns.blockCost }] : []} />
-      <StatCell label="Swap" value={<strong className={modificationTone(breakdowns.swapCost, true)}>{stats.swapCost}</strong>} cost breakdowns={breakdowns.swapCost ? [{ breakdown: breakdowns.swapCost }] : []} />
-      <StatCell label="Relics" value={<strong>{stats.relicSlots}</strong>} />
-    </div>
-  );
-}
-
-function ProgressBar({ progress, inline = false, className = "" }: { progress: XpProgress; inline?: boolean; className?: string }) {
-  const pct = progress.isMaxLevel || progress.needed <= 0 ? 100 : Math.min(100, Math.round((progress.current / progress.needed) * 100));
-  const progressText = progress.isMaxLevel ? "Max level" : `${progress.current} / ${progress.needed} XP`;
-  return (
-    <div className={`xp-progress ${inline ? "xp-progress-inline" : ""} ${className}`.trim()}>
-      <div className="xp-bar" role="progressbar" aria-label="Experience progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-valuetext={progressText}><span style={{ width: `${pct}%` }} /></div>
-      <p>{progressText}</p>
-    </div>
-  );
 }
 
 declare global {
