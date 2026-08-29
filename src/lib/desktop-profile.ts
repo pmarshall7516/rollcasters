@@ -29,10 +29,13 @@ const CONTRACT = {
   badge: DesktopProfile["badge"];
 }>;
 
-function projectRef(url: string | undefined): string {
+function projectRef(url: string | undefined, profile: GameProfile): string {
   if (!url) return "not-configured";
   try {
     const parsed = new URL(url);
+    if (profile === "local" && parsed.protocol === "http:" && ["127.0.0.1", "localhost"].includes(parsed.hostname) && parsed.port === "54321") {
+      return "rollcasters-local-player";
+    }
     const [ref, ...suffix] = parsed.hostname.split(".");
     if (!ref || suffix.join(".") !== "supabase.co") throw new Error();
     return ref;
@@ -54,7 +57,7 @@ export function resolveDesktopProfile(env: ProfileEnvironment): DesktopProfile {
   if (channel !== expected.channel) {
     throw new Error(`${profile} profile requires ${expected.channel} update channel.`);
   }
-  const actualProjectRef = projectRef(typeof env.VITE_SUPABASE_URL === "string" ? env.VITE_SUPABASE_URL : undefined);
+  const actualProjectRef = projectRef(typeof env.VITE_SUPABASE_URL === "string" ? env.VITE_SUPABASE_URL : undefined, profile);
   const expectedProjectRef = String(env.VITE_EXPECTED_SUPABASE_PROJECT_REF ?? (profile === "local" ? actualProjectRef : "")).trim();
   if (!expectedProjectRef) {
     throw new Error(`${profile} profile requires VITE_EXPECTED_SUPABASE_PROJECT_REF.`);

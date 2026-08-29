@@ -19,6 +19,7 @@ public/desktop-catalog/
 src-tauri/tauri.*.signing.conf.json
 output/
 supabase/.temp/
+supabase/.branches/
 
 progress.md
 

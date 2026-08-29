@@ -18,11 +18,12 @@ const local = resolveDesktopProfile({
   VITE_GAME_PROFILE: "local",
   VITE_GAME_ENVIRONMENT: "production",
   VITE_GAME_UPDATE_CHANNEL: "none",
-  VITE_SUPABASE_URL: "https://production-project.supabase.co",
-  VITE_EXPECTED_SUPABASE_PROJECT_REF: "production-project",
+  VITE_SUPABASE_URL: "http://127.0.0.1:54321",
+  VITE_EXPECTED_SUPABASE_PROJECT_REF: "rollcasters-local-player",
 });
-check(local.environment === "production" && local.channel === "none", "Local tools must use the one Production database without an updater channel.");
+check(local.environment === "production" && local.channel === "none", "Local tools must use the local player backend without an updater channel.");
 check(local.appId === "com.rollcasters.local" && local.badge === "LOCAL", "Local identity changed.");
+check(local.projectRef === "rollcasters-local-player", "Local player backend identity changed.");
 
 const stable = resolveDesktopProfile({
   VITE_GAME_PROFILE: "stable",

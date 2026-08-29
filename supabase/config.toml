@@ -1,0 +1,55 @@
+# Local player backend only. This project is intentionally separate from the
+# local Catalog PostgreSQL service in rollcaster-dev.
+project_id = "rollcasters-local-player"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+health_timeout = "2m"
+major_version = 17
+
+[db.migrations]
+# Canonical migrations live in rollcaster-docs and are applied by the
+# history-aware Rollcasters runner, not by a second local migration tree.
+enabled = false
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[local_smtp]
+enabled = false
+
+[storage]
+enabled = true
+file_size_limit = "1MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:1420"
+additional_redirect_urls = ["http://127.0.0.1:1420"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+enable_anonymous_sign_ins = false
+minimum_password_length = 6
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+secure_password_change = false
+double_confirm_changes = true

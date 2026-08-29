@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { parseEnv } from './db-utils.mjs'
 
 const args = process.argv.slice(2)
 const value = (name) => {
@@ -43,11 +44,33 @@ function run(script, scriptArgs, env = process.env) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
+const configuredEnv = { ...parseEnv(), ...process.env }
+function discoverLocalSupabaseConfig() {
+  const status = spawnSync('supabase', ['status', '--workdir', process.cwd(), '-o', 'env'], { encoding: 'utf8' })
+  if (status.error || status.status !== 0) return {}
+  const values = {}
+  for (const line of status.stdout.split(/\r?\n/)) {
+    const match = line.match(/^([A-Z0-9_]+)=(.*)$/)
+    if (match) values[match[1]] = match[2].replace(/^"|"$/g, '')
+  }
+  return values
+}
+
+const localSupabaseStatus = discoverLocalSupabaseConfig()
+const localSupabaseUrl = configuredEnv.VITE_LOCAL_SUPABASE_URL ?? localSupabaseStatus.API_URL
+const localSupabaseKey = configuredEnv.VITE_LOCAL_SUPABASE_PUBLISHABLE_KEY ?? localSupabaseStatus.ANON_KEY
+if (!localSupabaseUrl || !localSupabaseKey) {
+  throw new Error('Local preview packaging requires a running local Supabase stack or VITE_LOCAL_SUPABASE_URL and VITE_LOCAL_SUPABASE_PUBLISHABLE_KEY.')
+}
+
 const staged = path.resolve('public', 'desktop-catalog')
 if (fs.existsSync(staged)) fs.rmSync(staged, { recursive: true, force: true })
 run('stage-desktop-catalog.mjs', ['--source', catalogDir])
 run('build-desktop.mjs', ['local'], {
-  ...process.env,
+  ...configuredEnv,
+  VITE_SUPABASE_URL: localSupabaseUrl,
+  VITE_SUPABASE_PUBLISHABLE_KEY: localSupabaseKey,
+  VITE_EXPECTED_SUPABASE_PROJECT_REF: 'rollcasters-local-player',
   ROLLCASTERS_GAME_VERSION: version,
   VITE_GAME_PLAYER_BOOTSTRAP_MODE: 'v1',
   VITE_GAME_LOCAL_CATALOG_PREVIEW: 'true',

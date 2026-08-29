@@ -7,7 +7,10 @@ import { resolveBuildProfile } from "./src/lib/desktop-profile";
 const DESKTOP_ASSET_SERVER = "http://127.0.0.1:1430";
 
 export default defineConfig(({ command, mode }) => {
-  const env = loadEnv(mode, process.cwd(), "");
+  // Explicit process environment values are the build-profile override. This
+  // lets the preview packager select the local player backend even when the
+  // developer's .env file contains the Production defaults used by Stable.
+  const env = { ...loadEnv(mode, process.cwd(), ""), ...process.env };
   const localCatalogDir = process.env.VITE_LOCAL_CATALOG_DIR ?? env.VITE_LOCAL_CATALOG_DIR;
   const buildProfile = command === "build" ? resolveBuildProfile(mode, env) : undefined;
   const desktopBuild = Boolean(process.env.TAURI_ENV_PLATFORM);
