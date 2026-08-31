@@ -14,6 +14,14 @@ function migrationMetadata(migration) {
   return { version: basename.slice(0, -4), legacyVersion: match[1], name: match[2] };
 }
 
+function withoutOuterTransaction(sql) {
+  // The runner owns the transaction so a failed migration can always roll
+  // back. Migration files retain BEGIN/COMMIT for manual SQL-editor use.
+  return sql
+    .replace(/(^|\n)\s*begin\s*;\s*/i, '$1')
+    .replace(/\s*commit\s*;\s*$/i, '');
+}
+
 if (args.help) {
   process.stdout.write(`Usage:
   npm run db:migrate
@@ -54,15 +62,18 @@ try {
 
   for (const migration of selected) {
     const { version, legacyVersion, name } = migrationMetadata(migration);
+    const pathVersion = migration.slice(0, -4);
     const alreadyApplied = appliedMigrations.some(
-      (row) => row.version === version || (row.version === legacyVersion && row.name === name),
+      (row) => row.version === pathVersion
+        || row.version === version
+        || (row.version === legacyVersion && row.name === name),
     );
     if (alreadyApplied) {
       process.stdout.write(`Skipping ${migration} (already applied).\n`);
       continue;
     }
 
-    const sql = fs.readFileSync(path.join(sharedMigrationsDir, migration), "utf8");
+    const sql = withoutOuterTransaction(fs.readFileSync(path.join(sharedMigrationsDir, migration), "utf8"));
     process.stdout.write(`Applying ${migration}...\n`);
     await client.query(sql);
     await client.query(

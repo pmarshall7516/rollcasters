@@ -182,12 +182,18 @@ try {
     order by challenge_type, id
   `, [releaseId, [...TRACKED_TYPES]])).rows;
   const critterRows = (await client.query("select id,element_1_id,element_2_id from public.release_critters($1)", [releaseId])).rows;
-  const tagRows = (await client.query("select critter_id,tag_id from public.critter_tag_assignments")).rows;
+  const tagRows = (await client.query(
+    `select tag_row->>'critter_id' as critter_id,tag_row->>'tag_id' as tag_id
+     from jsonb_array_elements(public.current_game_catalog_snapshot()->'critterTags') tag_row`,
+  )).rows;
   const tagsByCritter = new Map();
   for (const row of tagRows) tagsByCritter.set(row.critter_id, [...(tagsByCritter.get(row.critter_id) ?? []), row.tag_id]);
   const critters = critterRows.map((row) => ({ id: row.id, element_ids: [row.element_1_id, row.element_2_id].filter(Boolean), tag_ids: tagsByCritter.get(row.id) ?? [] }));
   const skillRows = (await client.query("select id,element_id,skill_type from public.release_skills($1)", [releaseId])).rows;
-  const skillTagRows = (await client.query("select skill_id,tag_id from public.skill_tag_assignments")).rows;
+  const skillTagRows = (await client.query(
+    `select tag_row->>'skill_id' as skill_id,tag_row->>'tag_id' as tag_id
+     from jsonb_array_elements(public.current_game_catalog_snapshot()->'skillTags') tag_row`,
+  )).rows;
   const tagsBySkill = new Map();
   for (const row of skillTagRows) tagsBySkill.set(row.skill_id, [...(tagsBySkill.get(row.skill_id) ?? []), row.tag_id]);
   const skills = skillRows.map((row) => ({ ...row, tag_ids: tagsBySkill.get(row.id) ?? [] }));

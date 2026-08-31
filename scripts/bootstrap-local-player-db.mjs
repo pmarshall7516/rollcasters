@@ -13,6 +13,7 @@ import {
 const args = parseArgs();
 const replace = Boolean(args.replace);
 const env = readEnv();
+const root = process.cwd();
 const localUrl = env.LOCAL_PLAYER_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const local = new pg.Client({ connectionString: localUrl, ssl: false });
 const source = createDbClient(env);
@@ -299,6 +300,8 @@ try {
       throw new Error(`Local migration ${file} failed: ${error.message}`, { cause: error });
     }
   }
+
+  await local.query(fs.readFileSync(path.join(root, "scripts/local-promo-code-bridge.sql"), "utf8"));
 
   const authStubs = await copyAuthStubs();
   let copiedRows = 0;

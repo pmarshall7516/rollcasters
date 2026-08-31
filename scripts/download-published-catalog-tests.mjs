@@ -53,4 +53,4 @@ assert.equal(fs.readFileSync(path.join(root, 'game-assets/ui/logo.test.webp'), '
 const latest = JSON.parse(fs.readFileSync(path.join(root, 'game-data/latest.json'), 'utf8'))
 assert.equal(latest.catalogVersion, candidate.catalogRelease.id)
 await assert.rejects(downloadPublishedCatalog(candidate, root, undefined, handoffRoot), /must be empty/i)
-console.log('Local Catalog handoff contract passed: protected CI verifies and copies the committed immutable bundle without R2.')
+console.log('Local Catalog handoff contract passed: protected CI verifies and copies the committed immutable bundle.')

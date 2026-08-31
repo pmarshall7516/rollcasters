@@ -42,8 +42,12 @@ try {
 
   const tagged = (await client.query(`
     select
-      (select critter_id from public.critter_tag_assignments where tag_id='first-stage' order by critter_id limit 1) as source_id,
-      (select critter_id from public.critter_tag_assignments where tag_id='final-stage' order by critter_id limit 1) as target_id
+      (select tag_row->>'critter_id'
+       from jsonb_array_elements(public.current_game_catalog_snapshot()->'critterTags') tag_row
+       where tag_row->>'tag_id'='first-stage' order by tag_row->>'critter_id' limit 1) as source_id,
+      (select tag_row->>'critter_id'
+       from jsonb_array_elements(public.current_game_catalog_snapshot()->'critterTags') tag_row
+       where tag_row->>'tag_id'='final-stage' order by tag_row->>'critter_id' limit 1) as target_id
   `)).rows[0];
   check(tagged.source_id && tagged.target_id, "Default stage tag assignments are required for the database matcher audit.");
   const taggedChallenge = (await client.query(`
@@ -55,7 +59,12 @@ try {
   `)).rows[0];
   check(taggedChallenge, "A published Critter-tagged Challenge is required for the database matcher audit.");
   const targetTag = taggedChallenge.parameters.target_critter_tag_ids[0];
-  const taggedTarget = (await client.query("select critter_id from public.critter_tag_assignments where tag_id=$1 order by critter_id limit 1", [targetTag])).rows[0].critter_id;
+  const taggedTarget = (await client.query(
+    `select tag_row->>'critter_id' as critter_id
+     from jsonb_array_elements(public.current_game_catalog_snapshot()->'critterTags') tag_row
+     where tag_row->>'tag_id'=$1 order by tag_row->>'critter_id' limit 1`,
+    [targetTag],
+  )).rows[0].critter_id;
   check(await increment(taggedChallenge,"critter_knocked_out",tagged.source_id,taggedTarget,null,1,{ target_critter_tag_ids: [targetTag] }) === 1, "The database matcher must accept a matching published target Critter Tag.");
   check(await increment(taggedChallenge,"critter_knocked_out",tagged.source_id,tagged.source_id,null,1,{ target_critter_tag_ids: [targetTag] }) === 0, "The database matcher must reject a reversed Critter Tag filter.");
 

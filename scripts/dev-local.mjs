@@ -40,6 +40,8 @@ const child = spawn(process.execPath, [viteCli, '--host', '127.0.0.1'], {
   env: {
     ...process.env,
     VITE_GAME_PROFILE: 'local',
+    VITE_PROMO_DEFINITION_SUPABASE_URL: process.env.VITE_PROMO_DEFINITION_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL,
+    VITE_PROMO_DEFINITION_SUPABASE_PUBLISHABLE_KEY: process.env.VITE_PROMO_DEFINITION_SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
     VITE_LOCAL_CATALOG_DIR: catalogRoot,
     VITE_GAME_CATALOG_MODE: 'release',
     VITE_GAME_CATALOG_RELEASE_ID: String(pointer.catalogVersion),

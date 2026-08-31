@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import pg from "pg";
 import { parseEnv } from "./db-utils.mjs";
 
@@ -28,3 +30,11 @@ const result = spawnSync(process.execPath, ["scripts/apply-migrations.mjs"], {
 
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
+
+const bridge = new pg.Client({ connectionString: localDbUrl, ssl: false });
+await bridge.connect();
+try {
+  await bridge.query(fs.readFileSync(path.join(root, "scripts/local-promo-code-bridge.sql"), "utf8"));
+} finally {
+  await bridge.end().catch(() => undefined);
+}

@@ -71,6 +71,9 @@ import {
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
   import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
+const promoDefinitionUrl = (import.meta.env.VITE_PROMO_DEFINITION_SUPABASE_URL ?? supabaseUrl) as string | undefined;
+const promoDefinitionKey = (import.meta.env.VITE_PROMO_DEFINITION_SUPABASE_PUBLISHABLE_KEY ??
+  import.meta.env.VITE_PROMO_DEFINITION_SUPABASE_ANON_KEY ?? supabaseKey) as string | undefined;
 const isSupabaseStorageUrl = (value: string | undefined) => Boolean(value && /supabase\.co\/storage\/v1/i.test(value));
 const configuredGameAssetBaseCandidate = (import.meta.env.VITE_GAME_ASSET_BASE_URL as string | undefined)?.replace(/\/+$/, "");
 const configuredGameAssetBaseUrl = isSupabaseStorageUrl(configuredGameAssetBaseCandidate) ? undefined : configuredGameAssetBaseCandidate;
@@ -138,6 +141,15 @@ export const supabase: SupabaseClient | null = hasSupabaseConfig
     })
   : null;
 
+// Promo definitions are deliberately read through a separate, public-only
+// Production client for Local builds. Claims and redemption history continue
+// to use the profile's primary client, which points at the local player DB.
+const promoDefinitionClient: SupabaseClient | null = promoDefinitionUrl && promoDefinitionKey
+  ? createClient(promoDefinitionUrl, promoDefinitionKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+  : null;
+
 function applyServerCompatibilityIdentity(identity: LocalServerCompatibilityIdentity): void {
   Object.assign(gameCompatibilityHeaders, {
     "x-rollcasters-version": identity.version,
@@ -165,6 +177,13 @@ function requireClient(): SupabaseClient {
     throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY.");
   }
   return supabase;
+}
+
+function requirePromoDefinitionClient(): SupabaseClient {
+  if (!promoDefinitionClient) {
+    throw new Error("Missing VITE_PROMO_DEFINITION_SUPABASE_URL or VITE_PROMO_DEFINITION_SUPABASE_PUBLISHABLE_KEY.");
+  }
+  return promoDefinitionClient;
 }
 
 function localChallengePreviewStorage(): Storage | null {
@@ -1653,9 +1672,27 @@ function normalizePromoCodeRedemption(value: unknown): PromoCodeRedemption {
 }
 
 export async function redeemPromoCode(code: string): Promise<PromoCodeRedemption> {
-  const { data, error } = await requireClient().rpc("redeem_promo_code", {
-    p_code: code.trim(),
-  });
+  const client = requireClient();
+  let data: unknown;
+  let error: { message: string } | null;
+  if (desktopProfile.profile === "local") {
+    const definition = await requirePromoDefinitionClient().rpc("get_promo_code_definition", {
+      p_code: code.trim(),
+    });
+    if (definition.error) throw definition.error;
+    if (!definition.data) throw new Error("PROMO_CODE_INVALID_OR_INACTIVE");
+    const localRedemption = await client.rpc("redeem_promo_code_from_definition", {
+      p_definition: definition.data,
+    });
+    data = localRedemption.data;
+    error = localRedemption.error;
+  } else {
+    const redemption = await client.rpc("redeem_promo_code", {
+      p_code: code.trim(),
+    });
+    data = redemption.data;
+    error = redemption.error;
+  }
   if (error) throw error;
   return normalizePromoCodeRedemption(data);
 }
