@@ -12,7 +12,7 @@ const snapshotTables = {
   relics: 'relics', statuses: 'statuses', critters: 'critters', critterLevels: 'critter_level_progression',
   critterUnlocks: 'critter_skill_unlocks', rollcasters: 'rollcasters', rollcasterLevels: 'rollcaster_level_progression',
   rollcasterUnlocks: 'rollcaster_ability_unlocks', collectRequirements: 'collectible_unlock_requirements',
-  unlockChallengeTemplates: 'unlock_challenge_templates', collectChallenges: 'collectible_unlock_challenges',
+  unlockChallengetemplates: 'unlock_challenge_templates', collectChallenges: 'collectible_unlock_challenges',
   shopProducts: 'shop_entries', lootboxes: 'lootboxes', lootboxPoolEntries: 'lootbox_pool_entries',
   dungeons: 'dungeons', dungeonOpponents: 'dungeon_opponents', dungeonEnemyRollcasters: 'dungeon_enemy_rollcasters',
   enemyRollcasterAbilities: 'dungeon_enemy_rollcaster_abilities', enemyRollcasterDialogue: 'dungeon_enemy_rollcaster_dialogue',

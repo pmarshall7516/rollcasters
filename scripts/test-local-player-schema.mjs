@@ -23,6 +23,23 @@ const requiredFunctions = [
   "acquire_gameplay_session",
   "release_gameplay_session",
 ];
+const forbiddenCatalogTables = [
+  "ability_effects", "collectible_unlock_challenges", "collectible_unlock_requirements",
+  "content_tags", "critter_level_progression", "critter_skill_unlocks",
+  "critter_tag_assignments", "critters", "currencies", "dungeon_boss_encounter_members",
+  "dungeon_boss_encounters", "dungeon_completion_drops", "dungeon_enemy_rollcaster_abilities",
+  "dungeon_enemy_rollcaster_currency_drops", "dungeon_enemy_rollcaster_dialogue",
+  "dungeon_enemy_rollcaster_item_drops", "dungeon_enemy_rollcasters",
+  "dungeon_opponent_currency_drops", "dungeon_opponent_item_drops", "dungeon_opponent_relics",
+  "dungeon_opponent_rewards", "dungeon_opponent_skills", "dungeon_opponent_stat_overrides",
+  "dungeon_opponents", "dungeon_regular_encounters", "dungeons", "effect_templates",
+  "element_chart_config", "element_effectiveness", "elements", "game_assets",
+  "lootbox_pool_entries", "lootboxes", "relic_effects", "relics",
+  "rollcaster_ability_families", "rollcaster_ability_unlocks", "rollcaster_abilities",
+  "rollcaster_level_progression", "rollcasters", "shop_entries", "skill_effects",
+  "skill_tag_assignments", "skills", "starter_options", "starter_rollcaster_options",
+  "status_effects", "statuses", "unlock_challenge_templates",
+];
 
 try {
   await client.connect();
@@ -32,6 +49,17 @@ try {
     [requiredTables],
   );
   assert.deepEqual(new Set(tables.rows.map((row) => row.table_name)), new Set(requiredTables));
+
+  const forbidden = await client.query(
+    `select table_name from information_schema.tables
+     where table_schema = 'public' and table_type = 'BASE TABLE' and table_name = any($1::text[])`,
+    [forbiddenCatalogTables],
+  );
+  assert.deepEqual(
+    forbidden.rows.map((row) => row.table_name),
+    [],
+    "Local Game-state DB must not contain copied Catalog authoring tables.",
+  );
 
   const functions = await client.query(
     `select p.proname from pg_proc p
@@ -61,4 +89,8 @@ try {
 const config = fs.readFileSync(path.join(process.cwd(), "supabase", "config.toml"), "utf8");
 assert.match(config, /project_id\s*=\s*["']rollcasters-local-player["']/);
 assert.match(config, /enabled\s*=\s*false/);
+const bootstrap = fs.readFileSync(new URL("./bootstrap-local-player-db.mjs", import.meta.url), "utf8");
+assert.doesNotMatch(bootstrap, /const catalogTables\s*=/, "Local Game bootstrap must not define a copied Catalog table list.");
+assert.match(bootstrap, /releaseInfrastructureTables/, "Local Game bootstrap must retain release infrastructure explicitly.");
+assert.doesNotMatch(bootstrap, /catalogRowsCopied/, "Local Game bootstrap output must not claim Catalog rows are copied.");
 console.log("Local player schema contract passed.");

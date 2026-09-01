@@ -41,6 +41,21 @@ const itemDrop = normalizeDungeonDrop({
 } satisfies RawDungeonItemDrop);
 check(JSON.stringify(itemDrop) === JSON.stringify({ id: "shard", kind: "shard", targetCategory: "critter", targetId: "ramber", minAmount: 1, maxAmount: 3, probability: 0.5, dupeCurrencyId: "coins", dupeCurrencyAmount: 10 }), "item drops should retain duplicate-conversion fields");
 
+const lootboxItemDrop = normalizeDungeonDrop({
+  id: "lootbox",
+  opponent_id: "opponent",
+  drop_type: "lootbox",
+  target_category: "lootbox",
+  target_id: "001",
+  min_amount: 1,
+  max_amount: 2,
+  probability: "0.25",
+  dupe_currency_id: null,
+  dupe_currency_amount: null,
+  sort_order: 3,
+} satisfies RawDungeonItemDrop);
+check(JSON.stringify(lootboxItemDrop) === JSON.stringify({ id: "lootbox", kind: "lootbox", targetCategory: "lootbox", targetId: "001", minAmount: 1, maxAmount: 2, probability: 0.25 }), "Lootbox item drops should normalize without duplicate-conversion fields");
+
 const completionDrop = normalizeCompletionDrop({
   id: "reward",
   dungeon_id: "dungeon",
@@ -53,7 +68,24 @@ const completionDrop = normalizeCompletionDrop({
   probability: "1",
   dupe_currency_id: null,
   dupe_currency_amount: null,
+  sort_order: 0,
 } satisfies RawDungeonCompletionDrop);
 check(completionDrop.id === "dungeon:reward" && completionDrop.phase === "regular" && completionDrop.targetCategory === undefined && completionDrop.dupeCurrencyId === undefined, "completion drops should preserve composite IDs and optional null fields");
+
+const lootboxCompletionDrop = normalizeCompletionDrop({
+  id: "lootbox-reward",
+  dungeon_id: "dungeon",
+  completion_phase: "first_time",
+  drop_type: "lootbox",
+  target_category: "lootbox",
+  target_id: "001",
+  min_amount: 1,
+  max_amount: 1,
+  probability: 1,
+  dupe_currency_id: null,
+  dupe_currency_amount: null,
+  sort_order: 0,
+} satisfies RawDungeonCompletionDrop);
+check(JSON.stringify(lootboxCompletionDrop) === JSON.stringify({ id: "dungeon:lootbox-reward", phase: "first_time", kind: "lootbox", targetCategory: "lootbox", targetId: "001", minAmount: 1, maxAmount: 1, probability: 1 }), "Lootbox completion drops should normalize as guaranteed Lootbox rewards");
 
 console.log("Catalog normalization tests passed.");

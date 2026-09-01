@@ -100,9 +100,9 @@ export function validateCatalog(catalog) {
   const currencyIds = ids(catalog.currencies);
   const dungeonIds = ids(catalog.dungeons);
   const critterTagIds = new Set((catalog.tags ?? []).filter((tag) => tag.tag_type === "critter").map((tag) => String(tag.id)));
-  const challengeTemplateIds = ids(catalog.unlockChallengeTemplates ?? []);
-  if (challengeTemplateIds.size !== 15) throw new Error(`Expected exactly 15 active Challenge Templates; found ${challengeTemplateIds.size}.`);
-  requireUnique(catalog.unlockChallengeTemplates ?? [], "Challenge Template");
+  const challengeTemplateIds = ids(catalog.unlockChallengetemplates ?? []);
+  if (challengeTemplateIds.size !== 15) throw new Error(`Expected exactly 15 active Challenge templates; found ${challengeTemplateIds.size}.`);
+  requireUnique(catalog.unlockChallengetemplates ?? [], "Challenge Template");
   requireUnique(catalog.collectibleUnlockChallenges, "Collectible Challenge");
   requireUnique(catalog.lootboxPoolEntries, "Lootbox Pool Entry");
   for (const entry of catalog.lootboxPoolEntries) {
@@ -228,7 +228,7 @@ export function createPacks(catalog, catalogVersion) {
       effectsByStatus: catalog.effectsByStatus,
     }),
     collectibles: envelope("collectibles", {
-      unlockChallengeTemplates: catalog.unlockChallengeTemplates ?? [],
+      unlockChallengetemplates: catalog.unlockChallengetemplates ?? [],
       collectibleUnlockRequirements: catalog.collectibleUnlockRequirements,
       collectibleUnlockChallenges: catalog.collectibleUnlockChallenges,
       shopEntries: catalog.shopEntries,

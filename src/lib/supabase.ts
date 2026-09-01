@@ -1,26 +1,16 @@
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
 import { assertServerCatalogCompatibility, loadPublishedCatalog } from "./catalog-release";
-import { groupCombatEffectRows } from "./effects";
 import type {
   AppData,
   Catalog,
   CatalogReleaseInfo,
-  ContentTag,
   CollectiblePlayerSnapshot,
-  CombatEffectRow,
   CombatProgressEvent,
-  DungeonBossEncounter,
   DungeonBattleResult,
-  DungeonEnemyRollcaster,
   ActiveDungeonRun,
   DungeonOpponent,
-  DungeonOpponentStatOverride,
-  DungeonRegularEncounter,
   DungeonRunHistoryEntry,
   DungeonRunSnapshot,
-  ElementDef,
-  ElementEffectiveness,
-  GameAsset,
   PlayerState,
   LootboxOpeningReceipt,
   PromoCodeRedemption,
@@ -31,7 +21,6 @@ import type {
   UserRelicSlot,
   UserSkillSlot,
 } from "./types";
-import { parseBattleFormat, sortDungeonsNaturally } from "./dungeons";
 import { createRequestId } from "./uuid";
 import { createPlayerMutationOutbox } from "./player-mutations";
 import {
@@ -60,10 +49,7 @@ import {
 import { isTrackableChallenge } from "./collectibles";
 import { recoverLootboxOpening } from "./lootbox";
 import {
-  normalizeCompletionDrop,
-  normalizeCritter,
   normalizeDungeonDrop,
-  type RawDungeonCompletionDrop,
   type RawDungeonCurrencyDrop,
   type RawDungeonItemDrop,
 } from "./catalog-normalization";
@@ -90,17 +76,14 @@ const localCatalogPreview = isLocalCatalogPreview(
   desktopProfile.profile,
   import.meta.env.VITE_GAME_LOCAL_CATALOG_PREVIEW === "true",
 );
-// A player build is release-backed unless development explicitly opts into the
-// live authoring catalog. This prevents an omitted env var from weakening the
-// immutable-release boundary.
-const gameCatalogMode = (import.meta.env.VITE_GAME_CATALOG_MODE as string | undefined) === "live" ? "live" : "release";
+// Every Game build is release-backed. Catalog authoring data is never a Game
+// runtime dependency, including local development and browser previews.
+const gameCatalogMode = "release";
 const playerBootstrapMode = (import.meta.env.VITE_GAME_PLAYER_BOOTSTRAP_MODE as string | undefined) === "v1" ? "v1" : "legacy";
 const allowLegacyPlayerBootstrap = import.meta.env.VITE_ALLOW_LEGACY_PLAYER_BOOTSTRAP === "true";
-// Both release-backed and explicitly local live-catalog development runs must
-// provide their own asset base. There is intentionally no mutable remote
-// fallback for artwork.
+// Release-backed builds must provide their own asset base. There is no mutable
+// remote fallback for artwork.
 let activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
-const liveAssetVersions = new Map<string, string>();
 const gameplaySessionId = createRequestId();
 let activeGameplaySessionId: string | null = null;
 let latestPlayerStateRevision: bigint | null = null;
@@ -259,97 +242,12 @@ export function syncLocalServerCompatibility(): Promise<GameUpdateStatus | null>
   return localServerCompatibilityPromise;
 }
 
-const LIVE_CATALOG_COLUMNS: Record<string, string> = {
-  elements: "id,name,description,asset_path,sort_order",
-  content_tags: "id,name,description,tag_type,sort_order,is_active,is_archived,version",
-  critter_tag_assignments: "critter_id,tag_id",
-  skill_tag_assignments: "skill_id,tag_id",
-  element_effectiveness: "attacking_element_id,defending_element_id,multiplier",
-  skills: "id,name,element_id,skill_type,power,mana_cost,targeting,description,sort_order,priority",
-  critters: "id,name,element_1_id,element_2_id,base_hp,base_atk,base_def,base_spd,base_dice_min,base_dice_max,base_block_cost,base_swap_cost,asset_path,description,sort_order,is_active,is_archived",
-  critter_level_progression: "critter_id,level,total_required_xp,grant_skill_points,hp_delta,atk_delta,def_delta,spd_delta,dice_min_delta,dice_max_delta,block_cost_delta,swap_cost_delta,total_unlocked_relic_slots",
-  critter_skill_unlocks: "critter_id,skill_id,unlock_level,unlock_cost,is_default,sort_order",
-  rollcasters: "id,name,asset_path,description,sort_order,is_active,is_archived",
-  rollcaster_level_progression: "rollcaster_id,level,total_required_xp,grant_ability_points,total_unlocked_ability_slots",
-  rollcaster_abilities: "id,name,description,sort_order",
-  rollcaster_ability_unlocks: "rollcaster_id,ability_id,unlock_level,unlock_cost,is_default,sort_order",
-  relics: "id,name,description,max_owned,asset_path,sort_order,is_active,is_archived",
-  dungeons: "id,name,description,dungeon_type,difficulty,battle_format,battle_count,player_active_count,opponent_active_count,encounter_count,next_dungeon_id,regular_logo_path,boss_logo_path,sort_order,is_active,is_archived,version",
-  dungeon_opponents: "id,dungeon_id,pool_type,sequence_index,probability,critter_id,critter_level,skill_ids,relic_ids,rollcaster_xp_reward,critter_xp_reward,currency_reward,drops",
-  dungeon_enemy_rollcasters: "id,dungeon_id,sequence_index,name,eclipse_order_type,asset_path,selection_weight,policy_key,policy_revision,policy_artifact_id",
-  dungeon_enemy_rollcaster_abilities: "enemy_rollcaster_id,rollcaster_ability_id,slot_index",
-  dungeon_enemy_rollcaster_dialogue: "id,enemy_rollcaster_id,moment,line_text,sequence_index",
-  dungeon_enemy_rollcaster_currency_drops: "id,enemy_rollcaster_id,currency_id,min_amount,max_amount,probability,sort_order",
-  dungeon_enemy_rollcaster_item_drops: "id,enemy_rollcaster_id,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
-  dungeon_regular_encounters: "id,dungeon_id,sequence_index,enemy_squad_size",
-  dungeon_boss_encounters: "id,dungeon_id,sequence_index,enemy_rollcaster_id",
-  dungeon_opponent_skills: "opponent_id,skill_id,slot_index",
-  dungeon_opponent_relics: "opponent_id,relic_id,slot_index",
-  dungeon_opponent_stat_overrides: "opponent_id,stat_key,value",
-  dungeon_opponent_currency_drops: "id,opponent_id,currency_id,min_amount,max_amount,probability,sort_order",
-  dungeon_opponent_item_drops: "id,opponent_id,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
-  dungeon_completion_drops: "id,dungeon_id,completion_phase,drop_type,target_category,target_id,min_amount,max_amount,probability,dupe_currency_id,dupe_currency_amount,sort_order",
-  starter_rollcaster_options: "rollcaster_id,sort_order,is_active",
-  starter_options: "critter_id,sort_order,is_active",
-  game_assets: "id,path,category,owner_table,owner_id,variant,display_name,alt_text,content_type,width,height,checksum,metadata,is_active,sort_order,updated_at",
-  statuses: "id,name,description,classification,asset_path,sort_order,is_active,is_archived,version",
-};
-
-async function selectAll<T>(table: string, order = "sort_order"): Promise<T[]> {
-  const client = requireClient();
-  const columns = LIVE_CATALOG_COLUMNS[table];
-  if (!columns) throw new Error(`No explicit public catalog projection is defined for ${table}.`);
-  const { data, error } = await client.from(table).select(columns).order(order, { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as T[];
-}
-
-async function selectAllOptional<T>(table: string, order = "sort_order"): Promise<T[]> {
-  try {
-    return await selectAll<T>(table, order);
-  } catch (error) {
-    const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
-    if (code === "42P01" || code === "PGRST205") return [];
-    throw error;
-  }
-}
-
 function emptyCollectibleSnapshot(): CollectiblePlayerSnapshot {
   return { currencies: [], shards: [], lootboxes: [], progress: [], tracked: [], unlock_events: [], unlocked_collectibles: [] };
 }
 
-type RawDungeonOpponentSkill = { opponent_id: string; skill_id: string; slot_index: number };
-type RawDungeonOpponentRelic = { opponent_id: string; relic_id: string; slot_index: number };
-type CollectibleShopCatalog = Pick<Catalog,
-  "currencies" | "collectibleUnlockRequirements" | "collectibleUnlockChallenges" | "shopEntries" | "lootboxes" | "lootboxPoolEntries" | "unlockChallengeTemplates"
->;
-
-async function loadCollectibleShopCatalog(): Promise<CollectibleShopCatalog> {
-  const { data, error } = await requireClient().rpc("get_collectible_shop_catalog");
-  if (error) throw error;
-  const payload = data as {
-    currencies?: Catalog["currencies"];
-    requirements?: Catalog["collectibleUnlockRequirements"];
-    challenges?: Catalog["collectibleUnlockChallenges"];
-    shop_entries?: Catalog["shopEntries"];
-    lootboxes?: Catalog["lootboxes"];
-    lootbox_pool_entries?: Catalog["lootboxPoolEntries"];
-    challenge_templates?: Catalog["unlockChallengeTemplates"];
-  } | null;
-  return {
-    currencies: payload?.currencies ?? [],
-    collectibleUnlockRequirements: payload?.requirements ?? [],
-    collectibleUnlockChallenges: payload?.challenges ?? [],
-    shopEntries: payload?.shop_entries ?? [],
-    lootboxes: (payload?.lootboxes ?? []).map((lootbox) => ({ ...lootbox, sell_value: String(lootbox.sell_value) })),
-    lootboxPoolEntries: (payload?.lootbox_pool_entries ?? []).map((entry) => ({
-      ...entry,
-      probability: Number(entry.probability),
-      dupe_currency_amount: entry.dupe_currency_amount == null ? null : String(entry.dupe_currency_amount),
-    })),
-    unlockChallengeTemplates: payload?.challenge_templates ?? [],
-  };
-}
+let catalogPromise: Promise<Catalog> | null = null;
+let currentCatalogRelease: CatalogReleaseInfo | undefined;
 
 async function getServerCollectiblePlayerSnapshot(): Promise<CollectiblePlayerSnapshot> {
   const client = requireClient();
@@ -377,18 +275,6 @@ export async function getCollectiblePlayerSnapshot(): Promise<CollectiblePlayerS
   return localCatalogPreview
     ? mergeLocalChallengeSnapshot(serverSnapshot, readLocalChallengeState())
     : serverSnapshot;
-}
-
-async function loadCombatEffects(): Promise<CombatEffectRow[]> {
-  const { data, error } = await requireClient()
-    .from("combat_effects_v1")
-    .select("owner_type,owner_id,id,name,description,sort_order,template_id,runtime_kind,runtime_version,parameters,classification,execution")
-    .order("owner_type", { ascending: true })
-    .order("owner_id", { ascending: true })
-    .order("sort_order", { ascending: true })
-    .order("id", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as unknown as CombatEffectRow[];
 }
 
 export async function getSession(): Promise<Session | null> {
@@ -548,13 +434,11 @@ export function getGameAssetUrl(assetPath: string | null | undefined): string | 
   const normalizedPath = objectPath.replace(/^\/+/, "");
   if (!activeGameAssetBaseUrl) return null;
   const publicUrl = `${activeGameAssetBaseUrl}/${normalizedPath.split("/").map(encodeURIComponent).join("/")}`;
-  const version = gameCatalogMode === "live" ? liveAssetVersions.get(normalizedPath) : undefined;
-  if (!query && !version) return publicUrl;
+  if (!query) return publicUrl;
   // Local exact-catalog previews use Vite's relative `/@fs/...` asset root.
   // `URL` needs an absolute base when a cache-busting query is present.
   const url = new URL(publicUrl, typeof window === "undefined" ? undefined : window.location.href);
   if (query) url.search = query;
-  if (version && !url.searchParams.has("v")) url.searchParams.set("v", version);
   return url.toString();
 }
 
@@ -566,266 +450,17 @@ export function getSnapshotGameAssetUrl(assetPath: string | null | undefined): s
   return getGameAssetUrl(assetPath);
 }
 
-function groupBy<T>(rows: readonly T[], keyFor: (row: T) => string): Map<string, T[]> {
-  const groups = new Map<string, T[]>();
-  for (const row of rows) {
-    const key = keyFor(row);
-    const group = groups.get(key);
-    if (group) group.push(row);
-    else groups.set(key, [row]);
-  }
-  return groups;
-}
-
-let catalogPromise: Promise<Catalog> | null = null;
-let currentCatalogRelease: CatalogReleaseInfo | undefined;
-
-async function fetchLiveCatalog(): Promise<Catalog> {
-  const [
-    collectibleShopCatalog,
-    elements,
-    tags,
-    critterTagAssignments,
-    skillTagAssignments,
-    elementEffectiveness,
-    skills,
-    rawCritters,
-    critterProgression,
-    critterSkillUnlocks,
-    rollcasters,
-    rollcasterProgression,
-    rollcasterAbilities,
-    rollcasterAbilityUnlocks,
-    relics,
-    dungeons,
-    rawDungeonOpponents,
-    rawEnemyRollcasters,
-    enemyRollcasterAbilities,
-    enemyRollcasterDialogue,
-    enemyRollcasterCurrencyDrops,
-    enemyRollcasterItemDrops,
-    dungeonRegularEncounters,
-    dungeonBossEncounters,
-    dungeonOpponentSkills,
-    dungeonOpponentRelics,
-    dungeonOpponentStatOverrides,
-    dungeonOpponentCurrencyDrops,
-    dungeonOpponentItemDrops,
-    rawDungeonCompletionDrops,
-    starterRollcasterOptions,
-    starterOptions,
-    gameAssets,
-    statuses,
-    combatEffects,
-  ] = await Promise.all([
-    loadCollectibleShopCatalog(),
-    selectAll("elements"),
-    selectAll<ContentTag>("content_tags"),
-    selectAll<{ critter_id: string; tag_id: string }>("critter_tag_assignments", "critter_id"),
-    selectAll<{ skill_id: string; tag_id: string }>("skill_tag_assignments", "skill_id"),
-    selectAll<ElementEffectiveness>("element_effectiveness", "attacking_element_id"),
-    selectAll("skills"),
-    selectAll<Record<string, unknown>>("critters"),
-    selectAll("critter_level_progression", "level"),
-    selectAll("critter_skill_unlocks"),
-    selectAll("rollcasters"),
-    selectAll("rollcaster_level_progression", "level"),
-    selectAll("rollcaster_abilities"),
-    selectAll("rollcaster_ability_unlocks"),
-    selectAll("relics"),
-    selectAll("dungeons"),
-    selectAll<DungeonOpponent>("dungeon_opponents", "sequence_index"),
-    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcasters", "sequence_index"),
-    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcaster_abilities", "slot_index"),
-    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcaster_dialogue", "sequence_index"),
-    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcaster_currency_drops", "sort_order"),
-    selectAllOptional<Record<string, unknown>>("dungeon_enemy_rollcaster_item_drops", "sort_order"),
-    selectAllOptional<DungeonRegularEncounter>("dungeon_regular_encounters", "sequence_index"),
-    selectAllOptional<DungeonBossEncounter>("dungeon_boss_encounters", "sequence_index"),
-    selectAll<RawDungeonOpponentSkill>("dungeon_opponent_skills", "slot_index"),
-    selectAll<RawDungeonOpponentRelic>("dungeon_opponent_relics", "slot_index"),
-    selectAllOptional<DungeonOpponentStatOverride>("dungeon_opponent_stat_overrides", "stat_key"),
-    selectAll<RawDungeonCurrencyDrop>("dungeon_opponent_currency_drops"),
-    selectAll<RawDungeonItemDrop>("dungeon_opponent_item_drops"),
-    selectAll<RawDungeonCompletionDrop>("dungeon_completion_drops"),
-    selectAll("starter_rollcaster_options"),
-    selectAll("starter_options"),
-    selectAllOptional("game_assets"),
-    selectAll("statuses"),
-    loadCombatEffects(),
-  ]);
-
-  liveAssetVersions.clear();
-  for (const asset of gameAssets as GameAsset[]) {
-    const updatedAt = asset.metadata?.sourceUpdatedAt?.trim() || asset.updated_at?.trim() || "";
-    const byteSize = asset.metadata?.byteSize;
-    const size = typeof byteSize === "number" && Number.isFinite(byteSize) ? String(byteSize) : "";
-    if (updatedAt || size) liveAssetVersions.set(asset.path.replace(/^\/+/, ""), `${updatedAt}:${size}`);
-  }
-
-  const groupedEffects = groupCombatEffectRows(combatEffects);
-  const critterTags = groupBy(critterTagAssignments, (row) => row.critter_id);
-  const skillTags = groupBy(skillTagAssignments, (row) => row.skill_id);
-  const critters = rawCritters.map((row) => ({ ...normalizeCritter(row), tag_ids: (critterTags.get(String(row.id)) ?? []).map((item) => String(item.tag_id)) }));
-  const normalizedSkills = (skills as Array<Record<string, unknown>>).map((skill) => ({ ...skill, priority: Number(skill.priority ?? 0), tag_ids: (skillTags.get(String(skill.id)) ?? []).map((item) => String(item.tag_id)) }));
-  const skillsByOpponent = groupBy(dungeonOpponentSkills, (row) => row.opponent_id);
-  const relicsByOpponent = groupBy(dungeonOpponentRelics, (row) => row.opponent_id);
-  const overridesByOpponent = groupBy(dungeonOpponentStatOverrides, (row) => row.opponent_id);
-  const currencyDropsByOpponent = groupBy(dungeonOpponentCurrencyDrops, (row) => row.opponent_id);
-  const itemDropsByOpponent = groupBy(dungeonOpponentItemDrops, (row) => row.opponent_id);
-  const abilitiesByEnemyRollcaster = groupBy(enemyRollcasterAbilities, (row) => String(row.enemy_rollcaster_id));
-  const dialogueByEnemyRollcaster = groupBy(enemyRollcasterDialogue, (row) => String(row.enemy_rollcaster_id));
-  const currencyByEnemyRollcaster = groupBy(enemyRollcasterCurrencyDrops, (row) => String(row.enemy_rollcaster_id));
-  const itemsByEnemyRollcaster = groupBy(enemyRollcasterItemDrops, (row) => String(row.enemy_rollcaster_id));
-  const dungeonEnemyRollcasters: DungeonEnemyRollcaster[] = rawEnemyRollcasters.map((row) => ({
-    id: String(row.id),
-    dungeon_id: String(row.dungeon_id),
-    sequence_index: Number(row.sequence_index),
-    name: String(row.name),
-    eclipse_order_type: String(row.eclipse_order_type) as DungeonEnemyRollcaster["eclipse_order_type"],
-    asset_path: String(row.asset_path),
-    selection_weight: Number(row.selection_weight),
-    policy_key: String(row.policy_key) as DungeonEnemyRollcaster["policy_key"],
-    policy_revision: Number(row.policy_revision ?? 1),
-    policy_artifact_id: row.policy_artifact_id ? String(row.policy_artifact_id) : null,
-    ability_ids: (abilitiesByEnemyRollcaster.get(String(row.id)) ?? []).sort((a, b) => Number(a.slot_index) - Number(b.slot_index)).map((item) => String(item.rollcaster_ability_id)),
-    dialogue_lines: (dialogueByEnemyRollcaster.get(String(row.id)) ?? []).sort((a, b) => Number(a.sequence_index) - Number(b.sequence_index)).map((item) => ({
-      id: String(item.id), enemy_rollcaster_id: String(item.enemy_rollcaster_id),
-      moment: String(item.moment) as DungeonEnemyRollcaster["dialogue_lines"][number]["moment"],
-      line_text: String(item.line_text), sequence_index: Number(item.sequence_index),
-    })),
-    currencyDrops: (currencyByEnemyRollcaster.get(String(row.id)) ?? []).map((item) => normalizeDungeonDrop(item as unknown as RawDungeonCurrencyDrop)),
-    itemDrops: (itemsByEnemyRollcaster.get(String(row.id)) ?? []).map((item) => normalizeDungeonDrop(item as unknown as RawDungeonItemDrop)),
-  }));
-  const dungeonOpponents = rawDungeonOpponents.map((opponent) => {
-    const skills = (skillsByOpponent.get(opponent.id) ?? [])
-      .sort((left, right) => left.slot_index - right.slot_index)
-      .map((row) => row.skill_id);
-    const relics = (relicsByOpponent.get(opponent.id) ?? [])
-      .sort((left, right) => left.slot_index - right.slot_index)
-      .map((row) => row.relic_id);
-    const overrideRows = overridesByOpponent.get(opponent.id) ?? [];
-    const overrides: DungeonOpponent["overrides"] = {};
-    for (const row of overrideRows) {
-      const key = {
-        hp: "hp",
-        atk: "atk",
-        def: "def",
-        spd: "spd",
-        dice_min: "diceMin",
-        dice_max: "diceMax",
-        block_cost: "block",
-        swap_cost: "swap",
-        relic_slots: "relicSlots",
-      }[row.stat_key] as keyof DungeonOpponent["overrides"];
-      overrides[key] = row.value;
-    }
-    return {
-      ...opponent,
-      probability: opponent.probability == null ? null : Number(opponent.probability),
-      skill_ids: skills.length ? skills : opponent.skill_ids,
-      relic_ids: relics.length ? relics : opponent.relic_ids,
-      currencyDrops: (currencyDropsByOpponent.get(opponent.id) ?? [])
-        .sort((left, right) => left.sort_order - right.sort_order)
-        .map(normalizeDungeonDrop),
-      itemDrops: (itemDropsByOpponent.get(opponent.id) ?? [])
-        .sort((left, right) => left.sort_order - right.sort_order)
-        .map(normalizeDungeonDrop),
-      overrides,
-    };
-  });
-  const normalizedDungeons = sortDungeonsNaturally((dungeons as Catalog["dungeons"]).map((dungeon) => {
-    const format = parseBattleFormat(dungeon.battle_format);
-    return {
-      ...dungeon,
-      description: dungeon.description ?? "",
-      battle_count: dungeon.battle_count ?? dungeon.encounter_count,
-      player_active_count: format.playerActiveCount,
-      opponent_active_count: format.opponentActiveCount,
-      regular_logo_path: dungeon.regular_logo_path ?? null,
-      boss_logo_path: dungeon.boss_logo_path ?? null,
-      is_active: dungeon.is_active !== false,
-      is_archived: dungeon.is_archived === true,
-      version: dungeon.version ?? 1,
-    };
-  }));
-  const elementIds = new Set((elements as ElementDef[]).map((element) => element.id));
-  const matrixPairs = new Set((elementEffectiveness as ElementEffectiveness[])
-    .map((row) => `${row.attacking_element_id}\u0000${row.defending_element_id}`));
-  for (const attackingElementId of elementIds) {
-    for (const defendingElementId of elementIds) {
-      if (!matrixPairs.has(`${attackingElementId}\u0000${defendingElementId}`)) {
-        throw new Error(`Element Chart is incomplete: ${attackingElementId} attacking ${defendingElementId}.`);
-      }
-    }
-  }
-  for (const critter of critters) {
-    for (const elementId of [critter.element_1_id, critter.element_2_id]) {
-      if (elementId && !elementIds.has(elementId)) {
-        throw new Error(`Unknown Critter Element: ${elementId} (${critter.id}).`);
-      }
-    }
-  }
-  return {
-    ...collectibleShopCatalog,
-    elements,
-    elementEffectiveness: (elementEffectiveness as ElementEffectiveness[]).map((row) => ({
-      ...row,
-      multiplier: Number(row.multiplier),
-    })),
-    tags,
-    skills: normalizedSkills,
-    critters,
-    critterProgression,
-    critterSkillUnlocks,
-    rollcasters,
-    rollcasterProgression,
-    rollcasterAbilities,
-    rollcasterAbilityUnlocks,
-    relics,
-    dungeons: normalizedDungeons,
-    dungeonOpponents,
-    dungeonEnemyRollcasters,
-    dungeonRegularEncounters,
-    dungeonBossEncounters,
-    dungeonCompletionDrops: rawDungeonCompletionDrops.map(normalizeCompletionDrop),
-    starterRollcasterOptions,
-    starterOptions,
-    gameAssets,
-    statuses,
-    effectsBySkill: groupedEffects.skill,
-    effectsByAbility: groupedEffects.ability,
-    effectsByRelic: groupedEffects.relic,
-    effectsByStatus: groupedEffects.status,
-    dungeonOpponentStatOverrides,
-  } as Catalog;
-}
-
 export function loadCatalog({ force = false }: { force?: boolean } = {}): Promise<Catalog> {
   if (force || !catalogPromise) {
     catalogPromise = (async () => {
-      if (gameCatalogMode === "release") {
-        if (!gameCatalogBaseUrl) {
-          throw new Error("VITE_GAME_CATALOG_BASE_URL is required when VITE_GAME_CATALOG_MODE=release.");
-        }
-        const published = await loadPublishedCatalog(gameCatalogBaseUrl, gameVersion);
-        currentCatalogRelease = published.release;
-        activeGameAssetBaseUrl = configuredGameAssetBaseUrl ?? published.release.assetBaseUrl ?? undefined;
-        return published.catalog;
+      if (gameCatalogMode !== "release") throw new Error("Unsupported mutable Catalog runtime mode.");
+      if (!gameCatalogBaseUrl) {
+        throw new Error("VITE_GAME_CATALOG_BASE_URL is required for every Game build.");
       }
-      // Live catalog rows contain source-master paths. This branch is reserved
-      // for an explicitly configured development build.
-      activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
-      const catalog = await fetchLiveCatalog();
-      currentCatalogRelease = {
-        schemaVersion: 0,
-        catalogVersion: "live-development",
-        publishedAt: new Date().toISOString(),
-        manifestUrl: "",
-        assetBaseUrl: activeGameAssetBaseUrl ?? null,
-        source: "live-development",
-      };
-      return catalog;
+      const published = await loadPublishedCatalog(gameCatalogBaseUrl, gameVersion);
+      currentCatalogRelease = published.release;
+      activeGameAssetBaseUrl = configuredGameAssetBaseUrl ?? published.release.assetBaseUrl ?? undefined;
+      return published.catalog;
     })().catch((error) => {
       catalogPromise = null;
       throw error;
@@ -837,7 +472,6 @@ export function loadCatalog({ force = false }: { force?: boolean } = {}): Promis
 export function clearCatalogCache(): void {
   catalogPromise = null;
   currentCatalogRelease = undefined;
-  liveAssetVersions.clear();
   activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
 }
 

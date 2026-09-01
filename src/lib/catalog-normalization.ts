@@ -14,13 +14,13 @@ export type RawDungeonItemDrop = {
   id: string;
   opponent_id: string;
   drop_type: "shard" | "relic" | "lootbox";
-  target_category: "critter" | "rollcaster" | "relic";
+  target_category: "critter" | "rollcaster" | "relic" | "lootbox";
   target_id: string;
   min_amount: number;
   max_amount: number;
   probability: number | string;
-  dupe_currency_id: string;
-  dupe_currency_amount: number;
+  dupe_currency_id: string | null;
+  dupe_currency_amount: number | null;
   sort_order: number;
 };
 
@@ -28,14 +28,15 @@ export type RawDungeonCompletionDrop = {
   id: string;
   dungeon_id: string;
   completion_phase: "first_time" | "regular";
-  drop_type: "currency" | "shard" | "relic";
-  target_category: "critter" | "rollcaster" | "relic" | null;
+  drop_type: "currency" | "shard" | "relic" | "lootbox";
+  target_category: "critter" | "rollcaster" | "relic" | "lootbox" | null;
   target_id: string;
   min_amount: number;
   max_amount: number;
   probability: number | string;
   dupe_currency_id: string | null;
   dupe_currency_amount: number | null;
+  sort_order: number;
 };
 
 export function normalizeCritter(row: Record<string, unknown>): Critter {
@@ -77,13 +78,13 @@ export function normalizeDungeonDrop(
   return {
     id: row.id,
     kind: row.drop_type,
-    targetCategory: row.target_category,
+    targetCategory: row.target_category ?? undefined,
     targetId: row.target_id,
     minAmount: row.min_amount,
     maxAmount: row.max_amount,
     probability: Number(row.probability),
-    dupeCurrencyId: row.dupe_currency_id,
-    dupeCurrencyAmount: row.dupe_currency_amount,
+    dupeCurrencyId: row.dupe_currency_id ?? undefined,
+    dupeCurrencyAmount: row.dupe_currency_amount ?? undefined,
   };
 }
 

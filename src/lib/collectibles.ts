@@ -14,6 +14,7 @@ const collectibleIdCollator = new Intl.Collator(undefined, { numeric: true, sens
 function isDerivedChallengeType(challenge: CollectibleUnlockChallenge | undefined): boolean {
   return challenge?.challenge_type === "collection_diversity"
     || challenge?.challenge_type === "level_up_critter"
+    || challenge?.challenge_type === "level_up_rollcaster"
     || challenge?.challenge_type === "shop_shards"
     || challenge?.challenge_type === "shop_relic"
     || challenge?.challenge_type === "own_collectible";
@@ -306,6 +307,16 @@ function challengeParameters(challenge: CollectibleUnlockChallenge): Record<stri
       required_level: challenge.required_level,
     };
   const normalized = { ...current };
+  if (challenge.challenge_type === "level_up_critter" || challenge.challenge_type === "level_up_rollcaster") {
+    const idsKey = challenge.challenge_type === "level_up_critter" ? "critter_ids" : "rollcaster_ids";
+    const singularKey = challenge.challenge_type === "level_up_critter" ? "critter_id" : "rollcaster_id";
+    const ids = stringParameters(current, idsKey);
+    const singular = typeof current[singularKey] === "string" ? String(current[singularKey]) : challenge.target_id ?? "";
+    normalized.level_target_mode = current.level_target_mode === "any" ? "any" : "specific";
+    normalized[idsKey] = normalized.level_target_mode === "any" ? [] : ids.length ? ids : singular ? [singular] : [];
+    normalized.required_level = current.required_level ?? challenge.required_level ?? 1;
+    normalized.required_amount = current.required_amount ?? challenge.required_amount ?? 1;
+  }
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(challenge.challenge_type)) {
     const legacyMode = String(current.target_mode ?? current.mode ?? (challenge.challenge_type === "use_skill" ? "skill" : "species"));
     const legacyIds = stringParameters(current, "target_ids");
@@ -334,7 +345,13 @@ export function challengeGoal(challenge: CollectibleUnlockChallenge): bigint {
     case "own_collectible":
       if (parameters.specific_collectible_mode === "all" && stringParameters(parameters, "collectible_ids").length > 0) return BigInt(new Set(stringParameters(parameters, "collectible_ids")).size);
       return safeUnknownBigInt(parameters.required_amount ?? challenge.required_amount);
-    case "level_up_critter": return safeUnknownBigInt(parameters.required_level ?? challenge.required_level);
+    case "level_up_critter":
+    case "level_up_rollcaster": {
+      const ids = stringParameters(parameters, challenge.challenge_type === "level_up_critter" ? "critter_ids" : "rollcaster_ids");
+      return parameters.level_target_mode === "any" || ids.length > 1
+        ? safeUnknownBigInt(parameters.level_target_mode === "any" ? parameters.required_amount : ids.length)
+        : safeUnknownBigInt(parameters.required_level ?? challenge.required_level);
+    }
     case "collection_diversity": return collectionDiversityGoal(parameters);
     case "squad_composition": return safeUnknownBigInt(parameters.required_completions);
     case "dungeon_clear": return safeUnknownBigInt(parameters.required_clears);
@@ -365,9 +382,19 @@ function derivedChallengeCurrent(data: AppData, challenge: CollectibleUnlockChal
       ? BigInt(relics.reduce((sum, row) => sum + row.quantity, 0))
       : BigInt(relics.length);
   }
-  if (challenge.challenge_type === "level_up_critter") {
-    const id = String(parameters.critter_id ?? challenge.target_id ?? "");
-    return BigInt(player.critters.find((row) => row.critter_id === id)?.level ?? 0);
+  if (challenge.challenge_type === "level_up_critter" || challenge.challenge_type === "level_up_rollcaster") {
+    const isCritter = challenge.challenge_type === "level_up_critter";
+    const ids = stringParameters(parameters, isCritter ? "critter_ids" : "rollcaster_ids");
+    const threshold = safeUnknownBigInt(parameters.required_level ?? challenge.required_level);
+    const levels = isCritter
+      ? ids.map((id) => player.critters.find((row) => row.critter_id === id)?.level ?? 0)
+      : ids.map((id) => player.rollcasters.find((row) => row.rollcaster_id === id)?.level ?? 0);
+    if (parameters.level_target_mode === "any") {
+      const rows = isCritter ? player.critters : player.rollcasters;
+      return BigInt(rows.filter((row) => Number(row.level) >= Number(threshold)).length);
+    }
+    if (ids.length > 1) return BigInt(levels.filter((level) => BigInt(level) >= threshold).length);
+    return BigInt(levels[0] ?? (isCritter ? player.critters.find((row) => row.critter_id === String(parameters.critter_id ?? challenge.target_id ?? ""))?.level : player.rollcasters.find((row) => row.rollcaster_id === String(parameters.rollcaster_id ?? challenge.target_id ?? ""))?.level) ?? 0);
   }
   if (challenge.challenge_type === "collection_diversity") {
     const candidates = player.critters.flatMap((owned) => {
@@ -500,9 +527,15 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
     const verb = challenge.challenge_type === "knock_out_critters" ? "Knock out" : "Deal damage to";
     return `${challenge.challenge_type === "deal_damage" ? `Deal ${damageMode}damage to` : verb} ${targetFilters.length ? targetFilters.join(" and ") : "any enemy Critter"}${sourceFilters.length ? ` using ${sourceFilters.join(" and ")}` : ""}.`;
   }
-  if (challenge.challenge_type === "level_up_critter") {
-    const id = String(challenge.target_id ?? p.critter_id ?? "");
-    return `Unlock level ${challenge.required_level ?? p.required_level ?? 0} for ${collectibleName(data, "critter", id)} (${id || "—"})`;
+  if (challenge.challenge_type === "level_up_critter" || challenge.challenge_type === "level_up_rollcaster") {
+    const isCritter = challenge.challenge_type === "level_up_critter";
+    const ids = stringParameters(p, isCritter ? "critter_ids" : "rollcaster_ids");
+    const names = namesFor(data, isCritter ? "critter" : "rollcaster", ids);
+    const label = isCritter ? "Critter" : "Rollcaster";
+    const level = p.required_level ?? challenge.required_level ?? 0;
+    const amount = p.required_amount ?? challenge.required_amount ?? 0;
+    if (p.level_target_mode === "any") return `Level up any ${amount} ${label}${Number(amount) === 1 ? "" : "s"} to level ${level}.`;
+    return `Level up ${names.length ? names.join(" and ") : label} to level ${level}.`;
   }
   if (challenge.challenge_type === "shop_shards") return `Unlock ${ownerName} shards`;
   if (challenge.challenge_type === "shop_relic") return `Own ${ownerName}`;

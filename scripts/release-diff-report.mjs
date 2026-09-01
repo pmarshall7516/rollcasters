@@ -9,7 +9,7 @@ const db = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false } 
 await db.connect();
 const result = await db.query(
   "select release_id,snapshot_hash,snapshot from public.content_release_snapshots where release_id = any($1::text[])",
-  [[fromId, toId]],
+  [[fromid-toid]],
 );
 await db.end();
 const snapshots = new Map(result.rows.map((row) => [row.release_id, row]));
@@ -48,7 +48,7 @@ const categories = [
   "lootboxPoolEntries", "combatEffects", "skillEffects", "abilityEffects", "relicEffects",
   "critterLevels", "critterUnlocks", "rollcasterLevels", "rollcasterUnlocks", "collectChallenges",
   "collectRequirements", "assets", "dungeons", "dungeonOpponents", "completionDrops",
-  "opponentItemDrops", "opponentCurrencyDrops", "effectTemplates", "unlockChallengeTemplates",
+  "opponentItemDrops", "opponentCurrencyDrops", "effecttemplates", "unlockChallengetemplates",
 ];
 
 console.log(`# Release diff ${fromId} → ${toId}`);

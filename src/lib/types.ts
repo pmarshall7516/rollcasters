@@ -4,6 +4,7 @@ export type CollectibleType = "critter" | "rollcaster" | "relic";
 export type CollectibleChallengeType =
   | "own_collectible"
   | "level_up_critter"
+  | "level_up_rollcaster"
   | "knock_out_critters"
   | "deal_damage"
   | "take_damage"

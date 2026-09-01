@@ -36,7 +36,7 @@ try {
 
   const sessions = await client.query(
     "select id,status,displaced_by_session_id from public.player_game_sessions where id = any($1::uuid[]) order by id",
-    [[firstSessionId, secondSessionId]],
+    [[firstsessionid-secondsessionid]],
   );
   const oldSession = sessions.rows.find((row) => row.id === firstSessionId);
   const newSession = sessions.rows.find((row) => row.id === secondSessionId);

@@ -22,30 +22,24 @@ try {
       [release],
     )
   ).rows[0]?.parameters;
-  const liveEffect = (
-    await client.query(
-      "select parameters from public.combat_effects_v1 where owner_type='relic' and owner_id='019' and runtime_kind='critter_xp_modifier'",
-    )
-  ).rows[0]?.parameters;
   const snapshotModifier = Number(snapshotEffect?.modifier_value);
   check(Number.isFinite(snapshotModifier), "The published Essence Canister snapshot must contain a numeric XP modifier.");
-  check(Number.isFinite(Number(liveEffect?.modifier_value)), "The live Essence Canister authoring row must contain a numeric XP modifier.");
-  const editedLiveModifier = snapshotModifier + 0.25;
-  await client.query(
-    `update public.relic_effects effect
-     set parameters=jsonb_set(effect.parameters,'{modifier_value}',to_jsonb($1::numeric),true)
-     from public.effect_templates template
-     where effect.template_id=template.id
-       and effect.relic_id='019'
-       and template.runtime_kind='critter_xp_modifier'`,
-    [editedLiveModifier],
-  );
-  const editedLiveEffect = (
+  const catalogBaseTables = (
+    await client.query(`
+      select count(*)::int as count
+      from information_schema.tables
+      where table_schema='public' and table_type='BASE TABLE'
+        and table_name=any($1::text[])
+    `, [[critters-currencies-dungeon-opponents-dungeons-effect-templates-relics-rollcasters-skills-shop-entries-lootboxes]])
+  ).rows[0].count;
+  check(catalogBaseTables === 0, "Game-state DB must not retain physical Catalog authoring tables.");
+  const dungeonRows = (
     await client.query(
-      "select parameters from public.combat_effects_v1 where owner_type='relic' and owner_id='019' and runtime_kind='critter_xp_modifier'",
+      "select public.release_dungeon_rows($1,'001') as rows",
+      [release],
     )
-  ).rows[0]?.parameters;
-  check(Number(editedLiveEffect?.modifier_value) === editedLiveModifier, "The lockdown fixture must create an authoring edit different from the published snapshot.");
+  ).rows[0]?.rows;
+  check(Array.isArray(dungeonRows) && dungeonRows.length === 1, "Dungeon definitions must come from the immutable release snapshot.");
 
   const run = (await client.query("select id from public.dungeon_runs order by started_at desc nulls last limit 1")).rows[0];
   check(run, "A Dungeon run is required for the rollback-safe XP regression.");
@@ -72,7 +66,7 @@ try {
       [run.id, [userCritterId]],
     )
   ).rows[0].result;
-  check(Number(result?.[userCritterId]) === 100 * (1 + snapshotModifier), "Dungeon XP must use the immutable published Essence Canister value, not the live authoring edit.");
+  check(Number(result?.[userCritterId]) === 100 * (1 + snapshotModifier), "Dungeon XP must use the immutable published Essence Canister value.");
 
   await client.query("rollback");
   began = false;

@@ -15,10 +15,10 @@
 
 ## Verification and blockers
 
-- Use [[../rollcaster-docs/02 Game/Game Verification|Game Verification]]. Live checks depend on configured Supabase/release access and must be reported with exact blockers.
+- Use [[../rollcaster-docs/02-game/game-verification|Game Verification]]. Live checks depend on configured Supabase/release access and must be reported with exact blockers.
 
 ## Knowledge links
 
-- [[../rollcaster-docs/02 Game/Player Game Overview|Player Game Overview]]
-- [[../rollcaster-docs/02 Game/Desktop Runtime|Desktop Runtime]]
-- [[../rollcaster-docs/01 Shared/Game Systems/Combat System|Combat System]]
+- [[../rollcaster-docs/02-game/player-game-overview|Player Game Overview]]
+- [[../rollcaster-docs/02-game/desktop-runtime|Desktop Runtime]]
+- [[../rollcaster-docs/01-shared/game-systems/combat-system|Combat System]]

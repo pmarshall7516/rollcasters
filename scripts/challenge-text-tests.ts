@@ -17,7 +17,10 @@ const data = {
       { id: "001", name: "Ramber" },
       { id: "002", name: "Cragram" },
     ],
-    rollcasters: [],
+    rollcasters: [
+      { id: "rc-1", name: "Mira" },
+      { id: "rc-2", name: "Tallow" },
+    ],
     relics: [
       { id: "004", name: "Polished Ivory" },
     ],
@@ -36,12 +39,12 @@ const data = {
   },
 } as unknown as AppData;
 
-function challenge(type: CollectibleUnlockChallenge["challenge_type"], parameters: Record<string, unknown>, display_text?: string): CollectibleUnlockChallenge {
+function challenge(type: CollectibleUnlockChallenge["challenge_type"] | "level_up_rollcaster", parameters: Record<string, unknown>, display_text?: string): CollectibleUnlockChallenge {
   return {
     id: crypto.randomUUID(),
     collectible_type: "critter",
     collectible_id: "002",
-    challenge_type: type,
+    challenge_type: type as CollectibleUnlockChallenge["challenge_type"],
     target_category: null,
     target_id: null,
     target_mode: null,
@@ -100,10 +103,66 @@ const completedLevelChallengeProgress = progressFor({
 check(completedLevelChallengeProgress.current === "12" && completedLevelChallengeProgress.completed,
   "A Critter level challenge must complete when the owned Critter reaches its required level.");
 
+const multiCritterChallenge = {
+  ...challenge("level_up_critter", { level_target_mode: "specific", critter_ids: ["001", "002"], required_level: 10 }),
+  id: "multi-critter-level-challenge",
+  collectible_id: "011",
+};
+const multiCritterData = {
+  ...data,
+  catalog: { ...data.catalog, collectibleUnlockChallenges: [multiCritterChallenge], collectibleUnlockRequirements: [] },
+  player: {
+    critters: [
+      { id: "owned-ramber", user_id: "user", critter_id: "001", level: 10, xp: 0, skill_points: 0 },
+      { id: "owned-cragram", user_id: "user", critter_id: "002", level: 9, xp: 0, skill_points: 0 },
+    ],
+    collectibleSnapshot: { progress: [], shards: [], lootboxes: [], tracked: [], unlocked_collectibles: [] },
+  },
+} as unknown as AppData;
+check(challengeGoal(multiCritterChallenge) === 2n, "A multi-Critter level challenge goal must be the number of selected Critters.");
+check(derivedChallengeProgress(multiCritterData, multiCritterChallenge) === 1n, "A multi-Critter level challenge must count selected Critters at or above the target level.");
+check(challengeDescription(multiCritterData, multiCritterChallenge) === "Level up Ramber and Cragram to level 10.", "A multi-Critter level challenge must name every selected Critter.");
+
+const anyCritterChallenge = {
+  ...challenge("level_up_critter", { level_target_mode: "any", critter_ids: [], required_level: 15, required_amount: 4 }),
+  id: "any-critter-level-challenge",
+  collectible_id: "011",
+};
+check(challengeGoal(anyCritterChallenge) === 4n, "An Any Critter level challenge goal must be the required amount.");
+check(challengeDescription(multiCritterData, anyCritterChallenge) === "Level up any 4 Critters to level 15.", "An Any Critter level challenge must describe its amount and level.");
+
+const multiRollcasterChallenge = {
+  ...challenge("level_up_rollcaster", { level_target_mode: "specific", rollcaster_ids: ["rc-1", "rc-2"], required_level: 10 }),
+  id: "multi-rollcaster-level-challenge",
+  collectible_type: "rollcaster" as const,
+  collectible_id: "rc-3",
+};
+const rollcasterData = {
+  ...data,
+  catalog: { ...data.catalog, collectibleUnlockChallenges: [multiRollcasterChallenge], collectibleUnlockRequirements: [] },
+  player: {
+    rollcasters: [
+      { id: "owned-mira", user_id: "user", rollcaster_id: "rc-1", level: 10, xp: 0, ability_points: 0 },
+      { id: "owned-tallow", user_id: "user", rollcaster_id: "rc-2", level: 9, xp: 0, ability_points: 0 },
+    ],
+    collectibleSnapshot: { progress: [], shards: [], lootboxes: [], tracked: [], unlocked_collectibles: [] },
+  },
+} as unknown as AppData;
+check(challengeGoal(multiRollcasterChallenge) === 2n, "A multi-Rollcaster level challenge goal must be the number of selected Rollcasters.");
+check(derivedChallengeProgress(rollcasterData, multiRollcasterChallenge) === 1n, "A multi-Rollcaster level challenge must count selected Rollcasters at or above the target level.");
+check(challengeDescription(rollcasterData, multiRollcasterChallenge) === "Level up Mira and Tallow to level 10.", "A multi-Rollcaster level challenge must name every selected Rollcaster.");
+const singleRollcasterChallenge = { ...challenge("level_up_rollcaster", { rollcaster_id: "rc-1", required_level: 10 }), id: "single-rollcaster-level-challenge", collectible_type: "rollcaster" as const, collectible_id: "rc-3" };
+check(challengeGoal(singleRollcasterChallenge) === 10n && derivedChallengeProgress(rollcasterData, singleRollcasterChallenge) === 10n, "A single Rollcaster level challenge must retain level-shaped progress.");
+const anyRollcasterChallenge = { ...challenge("level_up_rollcaster", { level_target_mode: "any", rollcaster_ids: [], required_level: 9, required_amount: 2 }), id: "any-rollcaster-level-challenge", collectible_type: "rollcaster" as const, collectible_id: "rc-3" };
+check(challengeGoal(anyRollcasterChallenge) === 2n && derivedChallengeProgress(rollcasterData, anyRollcasterChallenge) === 2n, "An Any Rollcaster level challenge must count owned Rollcasters at the target level.");
+
 const cases: Array<[CollectibleUnlockChallenge, string]> = [
   [challenge("own_collectible", { collectible_category: "critter", collectible_ids: ["001"], required_amount: 1, require_unique_collectibles: true }), "Own Ramber."],
   [challenge("own_collectible", { collectible_category: "critter", collectible_ids: [], critter_tag_ids: ["final-stage"], required_amount: 1, require_unique_collectibles: true }), "Own 1 different Critter tagged Final Stage."],
-  [challenge("level_up_critter", { critter_id: "001", required_level: 20 }), "Unlock level 20 for Ramber (001)"],
+  [challenge("level_up_critter", { critter_id: "001", required_level: 20 }), "Level up Ramber to level 20."],
+  [challenge("level_up_critter", { level_target_mode: "specific", critter_ids: ["001", "002"], required_level: 10 }), "Level up Ramber and Cragram to level 10."],
+  [challenge("level_up_critter", { level_target_mode: "any", critter_ids: [], required_level: 15, required_amount: 4 }), "Level up any 4 Critters to level 15."],
+  [challenge("level_up_rollcaster", { level_target_mode: "specific", rollcaster_ids: ["rc-1", "rc-2"], required_level: 10 }), "Level up Mira and Tallow to level 10."],
   [challenge("knock_out_critters", { source_critter_ids: ["001"], target_critter_ids: ["002"], required_amount: 10 }), "Knock out Cragram using Ramber."],
   [challenge("deal_damage", { source_critter_ids: ["001"], target_element_ids: ["vile"], damage_mode: "any", required_amount: 1250 }), "Deal damage to Vile Element Critters using Ramber."],
   [challenge("take_damage", { source_element_ids: ["vile"], target_critter_ids: ["002"], damage_mode: "any", required_amount: 3000 }), "Take damage as Cragram from Vile Element Critters."],

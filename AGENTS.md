@@ -13,7 +13,7 @@
 
 ## Required workflow
 
-Read [[../rollcaster-docs/02 Game/Player Game Overview|Player Game Overview]], [[../rollcaster-docs/02 Game/Desktop Runtime|Desktop Runtime]], and [[../rollcaster-docs/01 Shared/Operations/Vault Maintenance Standard|Vault Maintenance Standard]]. Preserve routes, catalog IDs, RPC contracts, serialized state, RNG order, numeric semantics, UI markup/CSS, and persistence timing unless the task explicitly changes them.
+Read [[../rollcaster-docs/02-game/player-game-overview|Player Game Overview]], [[../rollcaster-docs/02-game/desktop-runtime|Desktop Runtime]], and [[../rollcaster-docs/01-shared/operations/vault-maintenance-standard|Vault Maintenance Standard]]. Preserve routes, catalog IDs, RPC contracts, serialized state, RNG order, numeric semantics, UI markup/CSS, and persistence timing unless the task explicitly changes them.
 
 For combat/runtime changes:
 
@@ -30,4 +30,4 @@ Run focused Game tests and safe browser/database checks proportional to the chan
 
 ## Database
 
-Use the shared vault migrations and [[../rollcaster-docs/01 Shared/Database/Migration Workflow|Migration Workflow]]. The Game migration runner is the history-aware apply path. Verify live migration history and effects before documenting application.
+Use the shared vault migrations and [[../rollcaster-docs/01-shared/database/migration-workflow|Migration Workflow]]. The Game migration runner is the history-aware apply path. Verify live migration history and effects before documenting application.

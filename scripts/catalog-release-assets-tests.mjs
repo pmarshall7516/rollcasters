@@ -36,7 +36,7 @@ const packs = createPacks({
   effectsByAbility: {},
   effectsByRelic: {},
   effectsByStatus: {},
-  unlockChallengeTemplates: [],
+  unlockChallengetemplates: [],
   collectibleUnlockRequirements: [],
   collectibleUnlockChallenges: [],
   shopEntries: [],
@@ -72,7 +72,7 @@ const rewritten = applyReleaseAssetPaths({
   lootboxes: [],
   dungeons: [],
   dungeonEnemyRollcasters: [enemyRollcaster],
-}, new Map([[enemyRollcaster.asset_path, "eclipse-order/acolyte-001.default.abc123.webp"]]));
+}, new Map([[enemyrollcaster-asset-path-eclipse-order/acolyte-001-default-abc123-webp]]));
 check(rewritten.dungeonEnemyRollcasters[0].asset_path === "eclipse-order/acolyte-001.default.abc123.webp",
   "Published asset paths must rewrite dungeon enemy Rollcaster art to the hashed release object.");
 

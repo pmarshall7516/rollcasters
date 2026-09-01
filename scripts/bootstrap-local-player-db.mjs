@@ -18,24 +18,10 @@ const localUrl = env.LOCAL_PLAYER_DB_URL ?? "postgresql://postgres:postgres@127.
 const local = new pg.Client({ connectionString: localUrl, ssl: false });
 const source = createDbClient(env);
 
-const catalogTables = [
-  "ability_effects", "collectible_unlock_challenges", "collectible_unlock_requirements",
+const releaseInfrastructureTables = [
   "content_release_artifacts", "content_release_channels", "content_release_snapshots",
-  "content_releases", "content_tags", "critter_level_progression", "critter_skill_unlocks",
-  "critter_tag_assignments", "critters", "currencies", "dungeon_boss_encounter_members",
-  "dungeon_boss_encounters", "dungeon_completion_drops", "dungeon_enemy_rollcaster_abilities",
-  "dungeon_enemy_rollcaster_currency_drops", "dungeon_enemy_rollcaster_dialogue",
-  "dungeon_enemy_rollcaster_item_drops", "dungeon_enemy_rollcasters", "dungeon_opponent_currency_drops",
-  "dungeon_opponent_item_drops", "dungeon_opponent_relics", "dungeon_opponent_rewards",
-  "dungeon_opponent_skills", "dungeon_opponent_stat_overrides", "dungeon_opponents",
-  "dungeon_regular_encounters", "dungeons", "effect_templates", "element_chart_config",
-  "element_effectiveness", "elements", "game_assets", "lootbox_pool_entries", "lootboxes",
-  "relic_effects", "relics", "rollcaster_ability_families", "rollcaster_ability_unlocks",
-  "rollcaster_abilities", "rollcaster_level_progression", "rollcasters", "shop_entries",
-  "skill_effects", "skill_tag_assignments", "skills", "starter_options",
-  "starter_rollcaster_options", "status_effects", "statuses", "unlock_challenge_templates",
+  "content_releases", "game_updates", "game_update_policy", "content_change_log", "dev_tool_users",
 ];
-const releasePolicyTables = ["game_updates", "game_update_policy"];
 
 function resolveMigrationFile(row) {
   const files = migrationFiles();
@@ -307,16 +293,11 @@ try {
   let copiedRows = 0;
   await local.query("begin");
   try {
-    const presentCatalogTables = (await local.query(`
-      select table_name from information_schema.tables
-      where table_schema='public' and table_name = any($1::text[])
-    `, [catalogTables])).rows.map((row) => row.table_name);
-    if (presentCatalogTables.length) {
-      await local.query(`truncate ${presentCatalogTables.map((table) => `public.${quoteIdentifier(table)}`).join(",")} cascade`);
-    }
     await local.query("set local session_replication_role = replica");
-    for (const table of catalogTables) copiedRows += await copyTableData(table);
-    for (const table of releasePolicyTables) copiedRows += await copyTableData(table);
+    for (const table of [...releaseInfrastructureTables].reverse()) {
+      await local.query(`delete from public.${quoteIdentifier(table)}`);
+    }
+    for (const table of releaseInfrastructureTables) copiedRows += await copyTableData(table);
     await local.query("set local session_replication_role = origin");
     await local.query("commit");
   } catch (error) {
@@ -347,7 +328,7 @@ try {
     gameVersion: localUpdate.version,
     migrations: applied,
     authAdminStubs: authStubs,
-    catalogRowsCopied: copiedRows,
+    releaseInfrastructureRowsCopied: copiedRows,
     playerProfilesCopied: 0,
     replaced: replace,
   }, null, 2));

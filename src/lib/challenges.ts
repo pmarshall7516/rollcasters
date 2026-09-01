@@ -394,9 +394,20 @@ export function derivedChallengeProgress(data: AppData, challenge: CollectibleUn
   const p = parametersOf(challenge);
   const player = data.player;
   if (!player) return 0n;
-  if (challenge.challenge_type === "level_up_critter") {
-    const id = String(p.critter_id ?? challenge.target_id ?? "");
-    return BigInt(player.critters.find((owned) => owned.critter_id === id)?.level ?? 0);
+  if (challenge.challenge_type === "level_up_critter" || challenge.challenge_type === "level_up_rollcaster") {
+    const isCritter = challenge.challenge_type === "level_up_critter";
+    const idsKey = isCritter ? "critter_ids" : "rollcaster_ids";
+    const singularKey = isCritter ? "critter_id" : "rollcaster_id";
+    const ids = stringArray(p[idsKey]);
+    const threshold = Number(p.required_level ?? challenge.required_level ?? 0);
+    if (isCritter && p.level_target_mode === "any") return BigInt(player.critters.filter((owned) => Number(owned.level) >= threshold).length);
+    if (!isCritter && p.level_target_mode === "any") return BigInt(player.rollcasters.filter((owned) => Number(owned.level) >= threshold).length);
+    if (ids.length > 1 && isCritter) return BigInt(player.critters.filter((owned) => ids.includes(owned.critter_id) && Number(owned.level) >= threshold).length);
+    if (ids.length > 1 && !isCritter) return BigInt(player.rollcasters.filter((owned) => ids.includes(owned.rollcaster_id) && Number(owned.level) >= threshold).length);
+    const id = String(ids[0] ?? p[singularKey] ?? challenge.target_id ?? "");
+    return isCritter
+      ? BigInt(player.critters.find((owned) => owned.critter_id === id)?.level ?? 0)
+      : BigInt(player.rollcasters.find((owned) => owned.rollcaster_id === id)?.level ?? 0);
   }
   if (challenge.challenge_type === "own_collectible") {
     const category = String(p.collectible_category ?? challenge.target_category ?? "critter");
