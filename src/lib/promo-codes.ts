@@ -27,6 +27,7 @@ export function promoRewardTypeLabel(type: PromoCodeRewardType): string {
     case "critter": return "Critter";
     case "rollcaster": return "Rollcaster";
     case "relic": return "Relic";
+    case "lootbox": return "Lootbox";
   }
 }
 

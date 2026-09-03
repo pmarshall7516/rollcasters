@@ -1,6 +1,12 @@
 import { useSyncExternalStore } from "react";
 import { isTauriDesktop } from "./desktop-updater";
 import {
+  DEFAULT_WINDOW_PREFERENCES,
+  readWindowPreferencesFromSettings,
+  updateWindowPreferences,
+  type WindowPreferences,
+} from "./desktop-settings";
+import {
   DEFAULT_WINDOWED_SIZE,
   WINDOW_ASPECT_RATIO,
   limitsForWorkArea,
@@ -13,7 +19,8 @@ import {
 
 export type { ResizeCorner } from "./desktop-window-geometry";
 
-export type WindowMode = "fullscreen" | "windowed";
+export type { WindowMode } from "./desktop-settings";
+import type { WindowMode } from "./desktop-settings";
 export type PointerScreenPosition = { screenX: number; screenY: number };
 export type DesktopWindowSnapshot = {
   mode: WindowMode;
@@ -24,14 +31,16 @@ export type DesktopWindowSnapshot = {
 export const WINDOWED_PREFERENCE_KEY = `rollcasters:${import.meta.env?.VITE_GAME_PROFILE ?? "local"}:window-preferences:v1`;
 
 const listeners = new Set<() => void>();
-const savedPreferences = readWindowPreferences(availableStorage());
+const initialPreferences = isTauriDesktop() ? DEFAULT_WINDOW_PREFERENCES : readLegacyWindowPreferences(availableStorage()) ?? DEFAULT_WINDOW_PREFERENCES;
 let snapshot: DesktopWindowSnapshot = {
-  mode: savedPreferences.mode,
-  windowedSize: savedPreferences.windowedSize,
+  mode: initialPreferences.mode,
+  windowedSize: initialPreferences.windowedSize,
   ready: !isTauriDesktop(),
 };
 let initialization: Promise<void> | null = null;
 let nativeModeChangeInFlight = false;
+let localSettings: unknown = null;
+let settingsWriteQueue = Promise.resolve();
 
 function publish(next: Partial<DesktopWindowSnapshot>) {
   snapshot = { ...snapshot, ...next };
@@ -47,30 +56,58 @@ export function useDesktopWindow(): DesktopWindowSnapshot {
   return useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
 }
 
-export function readWindowPreferences(storage?: Storage | null): { mode: WindowMode; windowedSize: WindowedSize } {
-  const fallback = { mode: "fullscreen" as const, windowedSize: DEFAULT_WINDOWED_SIZE };
-  if (!storage) return fallback;
+function readLegacyWindowPreferences(storage?: Storage | null): WindowPreferences | null {
+  if (!storage) return null;
   try {
     const raw = storage.getItem(WINDOWED_PREFERENCE_KEY);
-    if (!raw) return fallback;
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as { mode?: unknown; width?: unknown; height?: unknown };
-    const mode = parsed.mode === "windowed" ? "windowed" : "fullscreen";
     const isPreviousDefault = parsed.width === 1280 && parsed.height === 720;
     const width = !isPreviousDefault && finitePositiveNumber(parsed.width) ? parsed.width : DEFAULT_WINDOWED_SIZE.width;
     const height = !isPreviousDefault && finitePositiveNumber(parsed.height) ? parsed.height : width / WINDOW_ASPECT_RATIO;
+    const mode = parsed.mode === "windowed" ? "windowed" : "fullscreen";
     return { mode, windowedSize: normalizeSize({ width, height }) };
   } catch {
-    return fallback;
+    return null;
   }
 }
 
-function persistPreferences(mode: WindowMode, windowedSize: WindowedSize) {
+function clearLegacyWindowPreferences(storage?: Storage | null) {
+  if (!storage) return;
+  try {
+    storage.removeItem(WINDOWED_PREFERENCE_KEY);
+  } catch {
+    // Local storage can be disabled in browser harnesses and privacy modes.
+  }
+}
+
+function persistBrowserPreferences(mode: WindowMode, windowedSize: WindowedSize) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(WINDOWED_PREFERENCE_KEY, JSON.stringify({ mode, width: windowedSize.width, height: windowedSize.height }));
   } catch {
     // Local storage can be disabled in browser harnesses and privacy modes.
   }
+}
+
+async function readLocalSettings(): Promise<unknown> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("read_local_settings");
+}
+
+function persistPreferences(mode: WindowMode, windowedSize: WindowedSize): Promise<void> {
+  if (!isTauriDesktop()) {
+    persistBrowserPreferences(mode, windowedSize);
+    return Promise.resolve();
+  }
+  localSettings = updateWindowPreferences(localSettings, mode, windowedSize);
+  const nextSettings = localSettings;
+  const write = settingsWriteQueue.then(async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("write_local_settings", { settings: nextSettings });
+  });
+  settingsWriteQueue = write.catch(() => undefined);
+  return write;
 }
 
 function availableStorage(): Storage | null {
@@ -147,11 +184,27 @@ export async function initializeDesktopWindow(): Promise<void> {
   initialization = (async () => {
     const appWindow = await nativeWindow();
     if (!appWindow) return;
-    const preferences = readWindowPreferences(availableStorage());
+    let settings: unknown = null;
+    try {
+      settings = await readLocalSettings();
+    } catch (error) {
+      console.error("Unable to read Rollcasters local settings.", error);
+    }
+    localSettings = settings;
+    const legacyPreferences = readLegacyWindowPreferences(availableStorage());
+    const migratedLegacyPreferences = settings === null && legacyPreferences !== null;
+    const preferences = settings === null
+      ? legacyPreferences ?? DEFAULT_WINDOW_PREFERENCES
+      : readWindowPreferencesFromSettings(settings);
     publish({ mode: preferences.mode, windowedSize: preferences.windowedSize });
     const appliedSize = await applyNativeWindowMode(appWindow, preferences.mode, preferences.windowedSize, true);
     publish({ windowedSize: appliedSize });
-    persistPreferences(preferences.mode, appliedSize);
+    try {
+      await persistPreferences(preferences.mode, appliedSize);
+      if (migratedLegacyPreferences) clearLegacyWindowPreferences(availableStorage());
+    } catch (error) {
+      console.error("Unable to save Rollcasters local settings.", error);
+    }
     const unlisten = await appWindow.onResized(async ({ payload }) => {
       if (nativeModeChangeInFlight) return;
       const fullscreen = await appWindow.isFullscreen();
@@ -162,7 +215,7 @@ export async function initializeDesktopWindow(): Promise<void> {
       const scale = await appWindow.scaleFactor();
       const size = normalizeSize({ width: payload.width / scale, height: payload.height / scale });
       publish({ mode: "windowed", windowedSize: size });
-      persistPreferences("windowed", size);
+      void persistPreferences("windowed", size).catch((error) => console.error("Unable to save Rollcasters local settings.", error));
     });
     void unlisten;
     let monitorAdjustmentInFlight = false;
@@ -199,7 +252,7 @@ export async function initializeDesktopWindow(): Promise<void> {
           await appWindow.setPosition(new LogicalPosition(x, y));
         }
         publish({ windowedSize: size });
-        persistPreferences("windowed", size);
+        void persistPreferences("windowed", size).catch((error) => console.error("Unable to save Rollcasters local settings.", error));
       } finally {
         monitorAdjustmentInFlight = false;
       }
@@ -273,18 +326,19 @@ async function applyNativeWindowMode(
 
 export async function setDesktopWindowMode(mode: WindowMode): Promise<void> {
   if (!isTauriDesktop()) {
-    persistPreferences(mode, snapshot.windowedSize);
+    persistBrowserPreferences(mode, snapshot.windowedSize);
     publish({ mode, ready: true });
     return;
   }
+  if (initialization) await initialization;
   const appWindow = await nativeWindow();
   if (!appWindow) return;
   const size = snapshot.windowedSize;
   nativeModeChangeInFlight = true;
   try {
     const appliedSize = await applyNativeWindowMode(appWindow, mode, size, true);
-    persistPreferences(mode, appliedSize);
     publish({ mode, windowedSize: appliedSize, ready: true });
+    await persistPreferences(mode, appliedSize);
     notifyViewportChanged();
   } finally {
     nativeModeChangeInFlight = false;
@@ -326,7 +380,7 @@ export async function startDesktopCornerResize(corner: ResizeCorner, event: Poin
         await appWindow.setPosition(new LogicalPosition(next.x, next.y));
       }
       publish({ windowedSize: { width: next.width, height: next.height } });
-      persistPreferences("windowed", { width: next.width, height: next.height });
+      void persistPreferences("windowed", { width: next.width, height: next.height }).catch((error) => console.error("Unable to save Rollcasters local settings.", error));
     } finally {
       writeInFlight = false;
       if (latest && !stopped) frame = window.requestAnimationFrame(() => void flush());

@@ -152,7 +152,7 @@ export type ShopPurchaseIntent = {
   quantity: number;
 };
 
-export type PromoCodeRewardType = "currency" | "shard" | "critter" | "rollcaster" | "relic";
+export type PromoCodeRewardType = "currency" | "shard" | "critter" | "rollcaster" | "relic" | "lootbox";
 
 export type Lootbox = {
   id: string;
@@ -209,7 +209,7 @@ export type LootboxOpeningReceipt = {
 
 export type PromoCodeReward = {
   type: PromoCodeRewardType;
-  targetCategory: CollectibleType | null;
+  targetCategory: CollectibleType | "lootbox" | null;
   targetId: string;
   name: string;
   assetPath: string | null;

@@ -104,10 +104,20 @@ type RelicSlotProgression = {
   total_unlocked_relic_slots: number;
 };
 
-export type RelicSlotUnlock = {
+type RollcasterAbilitySlotProgression = {
+  rollcaster_id: string;
+  level: number;
+  total_unlocked_ability_slots: number;
+};
+
+export const MAX_ROLLCASTER_ABILITY_SLOTS = 6;
+
+export type SlotUnlock = {
   slotIndex: number;
   unlockLevel: number | null;
 };
+
+export type RelicSlotUnlock = SlotUnlock;
 
 export function relicSlotUnlocks(
   progression: RelicSlotProgression[],
@@ -124,6 +134,27 @@ export function relicSlotUnlocks(
 
   for (const row of rows) {
     const total = Math.min(visibleSlots, Math.max(0, Math.floor(row.total_unlocked_relic_slots)));
+    for (let index = knownSlots; index < total; index += 1) unlockLevels[index] = row.level;
+    knownSlots = Math.max(knownSlots, total);
+  }
+
+  return unlockLevels.map((unlockLevel, index) => ({ slotIndex: index + 1, unlockLevel }));
+}
+
+export function rollcasterAbilitySlotUnlocks(
+  progression: RollcasterAbilitySlotProgression[],
+  rollcasterId: string,
+): SlotUnlock[] {
+  const unlockLevels: Array<number | null> = Array.from({ length: MAX_ROLLCASTER_ABILITY_SLOTS }, () => null);
+  unlockLevels[0] = 1;
+
+  let knownSlots = 1;
+  const rows = progression
+    .filter((row) => row.rollcaster_id === rollcasterId)
+    .sort((left, right) => left.level - right.level);
+
+  for (const row of rows) {
+    const total = Math.min(MAX_ROLLCASTER_ABILITY_SLOTS, Math.max(0, Math.floor(row.total_unlocked_ability_slots)));
     for (let index = knownSlots; index < total; index += 1) unlockLevels[index] = row.level;
     knownSlots = Math.max(knownSlots, total);
   }

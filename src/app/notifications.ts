@@ -31,12 +31,8 @@ export type BannerNotification =
     }
   | {
       id: string;
-      kind: "shop-error";
-      message: string;
-    }
-  | {
-      id: string;
-      kind: "lootbox-error";
+      kind: "error";
+      title: string;
       message: string;
     };
 

@@ -7,7 +7,7 @@ function check(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-check(appSource.includes('kind: "lootbox-error"'), "Lootbox failures must have a transient notification kind.");
+check(appSource.includes('kind: "error"') && appSource.includes('"Lootbox error"'), "Lootbox failures must use the generic transient error notification.");
 check(appSource.includes("createLootboxErrorNotification"), "Lootbox failures must be normalized before entering the notification queue.");
 check(appSource.includes("onOpenError={(openingFailure) => enqueueNotification(createLootboxErrorNotification(openingFailure))}"), "Lootbox opening failures must enter the notification queue.");
 const openBox = appSource.match(/async function openBox\(force = false\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";

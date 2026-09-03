@@ -75,8 +75,8 @@ begin
     end;
     if v_reward_id is null
       or v_reward_id = any(v_reward_ids)
-      or v_reward_type not in ('currency', 'shard', 'critter', 'rollcaster', 'relic')
-      or (v_target_category is not null and v_target_category not in ('critter', 'rollcaster', 'relic'))
+      or v_reward_type not in ('currency', 'shard', 'critter', 'rollcaster', 'relic', 'lootbox')
+      or (v_target_category is not null and v_target_category not in ('critter', 'rollcaster', 'relic', 'lootbox'))
       or v_target_id is null
       or v_quantity is null or v_quantity <= 0
       or v_reward_sort_order < 0

@@ -17,6 +17,9 @@ const skill = (name) => `<span class="tooltip-anchor"><button class="skill-tile"
 const lockedRelic = (level) => `<button class="loadout-relic-cell locked" disabled><svg></svg><span>Level ${level}</span></button>`;
 const nullRelics = Array.from({ length: 3 }, () => '<span class="loadout-relic-cell null"></span>').join("");
 const equippedRelic = `<span class="tooltip-anchor"><button class="loadout-relic-cell unlocked equipped"><span class="asset-icon"><svg class="asset-icon__image sprite-box__image" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="29" fill="#d88b28"/><circle cx="32" cy="32" r="22" fill="#6d3718" stroke="#ffd06c" stroke-width="4"/><path d="M20 34l8 8 17-20" stroke="#fff2bd" stroke-width="6"/></svg></span></button></span>`;
+const ability = (slot, name = slot === 1 ? "Fortify" : "") => `<span class="tooltip-anchor"><button class="ability-slot unlocked ${name ? "equipped" : "empty"}"><span>${name ? `<small>Slot ${slot}</small><strong>${name}</strong>` : `<svg class="empty-ability-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14"></path></svg><small>Slot ${slot}</small>`}</span></button></span>`;
+const lockedAbility = (slot, level) => `<button class="ability-slot locked" disabled aria-label="Ability slot ${slot} unlocks at level ${level}"><svg></svg><span>Level ${level}</span></button>`;
+const nullAbilities = [5, 6].map((slot) => `<span class="ability-slot null" aria-hidden="true" data-slot="${slot}"></span>`).join("");
 
 const html = `<!doctype html><html><head><style>${css}</style></head><body>
   <main class="app-shell">
@@ -28,7 +31,7 @@ const html = `<!doctype html><html><head><style>${css}</style></head><body>
           <h1>Shanks</h1>
           ${xp("rollcaster-xp-progress", 35)}
           <p class="rollcaster-level">Level 2</p>
-          <div class="ability-list"><button class="ability-slot"><span><small>Slot 1</small><strong>Fortify</strong></span></button></div>
+          <div class="ability-list" aria-label="Rollcaster ability slots">${ability(1)}${ability(2)}${lockedAbility(3, 5)}${lockedAbility(4, 5)}${nullAbilities}</div>
         </aside>
         <section class="challenge-tracking" aria-label="Challenge tracking">
           <div class="challenge-tracking-heading"><span>◎</span><strong>Challenge Tracking</strong></div>
@@ -152,6 +155,16 @@ try {
         rollcasterNumbers: rect(".rollcaster-xp-progress > p"),
         rollcasterLevel: rect(".rollcaster-level"),
         rollcasterPanel: rect(".rollcaster-panel"),
+        abilityList: rect(".ability-list"),
+        abilitySlotRects: [...document.querySelectorAll(".ability-list .ability-slot")].map((slot) => rectForElement(slot.getBoundingClientRect())),
+        abilityColumns: style(".ability-list").gridTemplateColumns.split(" ").length,
+        abilityRows: style(".ability-list").gridTemplateRows.split(" ").length,
+        abilityStateCounts: {
+          unlocked: document.querySelectorAll(".ability-list .ability-slot.unlocked").length,
+          locked: document.querySelectorAll(".ability-list .ability-slot.locked").length,
+          null: document.querySelectorAll(".ability-list .ability-slot.null").length,
+        },
+        emptyAbilityUsesPlus: Boolean(document.querySelector(".ability-slot.empty .empty-ability-plus")),
         rollcasterColumn: rect(".home-rollcaster-column"),
         challengeTracking: rect(".challenge-tracking"),
         mainActions: rect(".main-actions"),
@@ -286,6 +299,15 @@ try {
       && squadRows === (expectedSquadColumns === 2 ? 3 : 5)
       && lastSquadSlot
       && Math.abs((lastSquadSlot.left + lastSquadSlot.right) / 2 - (viewport.squad.left + viewport.squad.right) / 2) < .1;
+    const abilityGridLayout = viewport.abilityColumns === 1
+      && viewport.abilityRows === 6
+      && viewport.abilityStateCounts.unlocked === 2
+      && viewport.abilityStateCounts.locked === 2
+      && viewport.abilityStateCounts.null === 2
+      && viewport.emptyAbilityUsesPlus
+      && viewport.abilitySlotRects.every((slot) => slot.left >= viewport.rollcasterPanel.left && slot.right <= viewport.rollcasterPanel.right && slot.height >= 24)
+      && viewport.abilityList.left - viewport.rollcasterPanel.left <= 12
+      && viewport.rollcasterPanel.right - viewport.abilityList.right <= 12;
     const trackerIsSeparatePane = viewport.challengeTracking.top - viewport.rollcasterPanel.bottom >= 15
       && Math.abs(viewport.challengeTracking.left - viewport.rollcasterPanel.left) < .1
       && Math.abs(viewport.challengeTracking.width - viewport.rollcasterPanel.width) < .1
@@ -302,7 +324,7 @@ try {
           && Math.abs(anchor.width - expected.width) < .1
           && Math.abs(anchor.height - expected.height) < .1;
       }));
-    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && squadLayout && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
+    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && abilityGridLayout && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && squadLayout && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
   });
 
   const byLoadoutWidth = [...viewports].sort((a, b) => a.loadout.width - b.loadout.width);

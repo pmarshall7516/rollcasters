@@ -25,6 +25,11 @@ import type {
 import { createRequestId } from "./uuid";
 import { createPlayerMutationOutbox } from "./player-mutations";
 import {
+  advancePlayerStateRevision,
+  runVersionedPlayerMutation,
+  type PlayerStateRevision,
+} from "./player-mutation-sync";
+import {
   aggregateShopPurchaseReceipts,
   indexedShopPurchaseRequestId,
   isAmbiguousShopPurchaseError,
@@ -87,7 +92,7 @@ const allowLegacyPlayerBootstrap = import.meta.env.VITE_ALLOW_LEGACY_PLAYER_BOOT
 let activeGameAssetBaseUrl = configuredGameAssetBaseUrl;
 const gameplaySessionId = createRequestId();
 let activeGameplaySessionId: string | null = null;
-let latestPlayerStateRevision: bigint | null = null;
+let latestPlayerStateRevision: PlayerStateRevision = null;
 let localPreviewUserId: string | null = null;
 const playerMutationOutbox = createPlayerMutationOutbox<null>(null);
 
@@ -357,6 +362,7 @@ export function currentGameplaySessionId(): string | null {
 export async function releaseGameplaySession(): Promise<void> {
   const sessionId = activeGameplaySessionId;
   activeGameplaySessionId = null;
+  latestPlayerStateRevision = null;
   if (!sessionId) return;
   const { error } = await requireClient().rpc("release_gameplay_session", { p_session_id: sessionId });
   if (error) throw error;
@@ -373,7 +379,10 @@ export async function acquireGameplaySession(takeover = false): Promise<Gameplay
   });
   if (error) throw error;
   const result = data as GameplaySessionResult;
-  if (result.outcome === "ACQUIRED") activeGameplaySessionId = result.session_id ?? gameplaySessionId;
+  if (result.outcome === "ACQUIRED") {
+    activeGameplaySessionId = result.session_id ?? gameplaySessionId;
+    latestPlayerStateRevision = advancePlayerStateRevision(null, result.player_state_revision);
+  }
   return result;
 }
 
@@ -381,7 +390,9 @@ export async function heartbeatGameplaySession(): Promise<GameplaySessionResult>
   if (!activeGameplaySessionId) throw new Error("SESSION_DISPLACED");
   const { data, error } = await requireClient().rpc("heartbeat_gameplay_session", { p_session_id: activeGameplaySessionId });
   if (error) throw error;
-  return data as GameplaySessionResult;
+  const result = data as GameplaySessionResult;
+  latestPlayerStateRevision = advancePlayerStateRevision(latestPlayerStateRevision, result.player_state_revision);
+  return result;
 }
 
 export function flushPlayerMutations(): Promise<void> {
@@ -653,12 +664,12 @@ async function loadLegacyPlayerState(): Promise<PlayerState> {
 export async function loadPlayerState(): Promise<PlayerState> {
   if (playerBootstrapMode === "legacy") {
     const state = await loadLegacyPlayerState();
-    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    latestPlayerStateRevision = advancePlayerStateRevision(latestPlayerStateRevision, state.playerStateRevision);
     return state;
   }
   try {
     const state = await loadPlayerBootstrapV1();
-    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    latestPlayerStateRevision = advancePlayerStateRevision(latestPlayerStateRevision, state.playerStateRevision);
     return state;
   } catch (error) {
     const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
@@ -666,7 +677,7 @@ export async function loadPlayerState(): Promise<PlayerState> {
     if (!allowLegacyPlayerBootstrap || !missingRpc) throw error;
     console.warn("player_bootstrap_v1 is not installed; using the explicitly enabled legacy Supabase fallback.");
     const state = await loadLegacyPlayerState();
-    latestPlayerStateRevision = state.playerStateRevision == null ? null : BigInt(state.playerStateRevision);
+    latestPlayerStateRevision = advancePlayerStateRevision(latestPlayerStateRevision, state.playerStateRevision);
     return state;
   }
 }
@@ -695,17 +706,29 @@ async function callVersionedPlayerMutationRpc(
     throw new Error("SESSION_NOT_READY");
   }
   const sessionId = activeGameplaySessionId;
-  const expectedRevision = latestPlayerStateRevision;
   const requestId = createRequestId();
-  const { data, error } = await enqueuePlayerMutation(playerMutationResourceKey(name, args), async () => requireClient().rpc(name, {
-      ...args,
-      p_session_id: sessionId,
-      p_expected_revision: expectedRevision.toString(),
-      p_request_id: requestId,
-    }));
-  if (error) throw error;
-  const receipt = data as { resulting_revision?: string | number };
-  if (receipt?.resulting_revision != null) latestPlayerStateRevision = BigInt(receipt.resulting_revision);
+  await enqueuePlayerMutation(playerMutationResourceKey(name, args), async () => {
+    const receipt = await runVersionedPlayerMutation({
+      requestId,
+      getRevision: () => latestPlayerStateRevision,
+      refreshRevision: async () => {
+        await loadPlayerState();
+      },
+      send: async (expectedRevision, retryRequestId) => {
+        const { data, error } = await requireClient().rpc(name, {
+          ...args,
+          p_session_id: sessionId,
+          p_expected_revision: expectedRevision?.toString() ?? null,
+          p_request_id: retryRequestId,
+        });
+        if (error) throw error;
+        const typedReceipt = data as { resulting_revision?: string | number };
+        latestPlayerStateRevision = advancePlayerStateRevision(latestPlayerStateRevision, typedReceipt?.resulting_revision);
+        return { requestId: retryRequestId, ...(typedReceipt ?? {}) };
+      },
+    });
+    return { data: receipt, error: null };
+  });
 }
 
 const callVersionedLoadoutRpc = callVersionedPlayerMutationRpc;

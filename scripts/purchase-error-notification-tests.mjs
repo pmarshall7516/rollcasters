@@ -7,7 +7,7 @@ function check(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-check(appSource.includes('kind: "shop-error"'), "Purchase failures must have a transient notification kind.");
+check(appSource.includes('kind: "error"') && appSource.includes('"Purchase error"'), "Purchase failures must use the generic transient error notification.");
 check(appSource.includes("createShopErrorNotification"), "Purchase failures must be normalized before entering the banner queue.");
 check(appSource.includes("onNotify(createShopErrorNotification(error))"), "Shop purchase failures must enter the notification queue.");
 check(appSource.includes("onPurchaseError={(purchaseFailure) => onNotify(createShopErrorNotification(purchaseFailure))}"), "Lootbox purchase-sync failures must enter the notification queue.");

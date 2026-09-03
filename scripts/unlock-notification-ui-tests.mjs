@@ -29,12 +29,17 @@ check(
   "The production banner queue must expose a completion notification for tracked challenges.",
 );
 check(
-  appSource.includes('kind: "shop-error"')
+  appSource.includes('kind: "error"')
+    && !appSource.includes('kind: "shop-error"')
+    && !appSource.includes('kind: "lootbox-error"')
     && appSource.includes("error-notification")
-    && appSource.includes("Purchase error")
+    && appSource.includes("Error")
+    && !appSource.includes('className="notice error"')
+    && !appSource.includes('className="error-text"')
+    && !appSource.includes('className="grid-challenge-error"')
     && css.includes(".error-notification")
     && css.includes("var(--danger)"),
-  "Purchase failures must use the shared red transient notification style.",
+  "All failures must use the shared generic red transient notification style.",
 );
 
 const bannerMarkup = `
@@ -65,7 +70,7 @@ const bannerMarkup = `
       <p class="unlock-notification-detail">Ramber challenge completed</p>
     </div>
   </aside>
-  <aside class="unlock-notification error-notification" style="top:176px" role="status" aria-live="polite" aria-atomic="true">
+  <aside class="unlock-notification error-notification" style="top:176px" role="alert" aria-live="assertive" aria-atomic="true">
     <span class="notification-banner-icon" aria-hidden="true">!</span>
     <div class="unlock-notification-copy">
       <span class="unlock-notification-label">! Purchase error</span>
@@ -163,6 +168,7 @@ try {
     const errorBanner = page.locator(".error-notification");
     const errorBorderColor = await errorBanner.evaluate((node) => getComputedStyle(node).borderTopColor);
     check(errorBorderColor === "rgba(255, 110, 134, 0.62)", `${viewport.name}: purchase error banner must use the danger color, got ${errorBorderColor}.`);
+    check(await errorBanner.getAttribute("role") === "alert" && await errorBanner.getAttribute("aria-live") === "assertive", `${viewport.name}: error banner must announce as an assertive alert.`);
     check(browserErrors.length === 0, `${viewport.name}: browser errors detected: ${browserErrors.join(" | ")}`);
     results.push({ ...viewport, presentation, layoutUnchanged: true, clickedThrough, screenshot });
     await page.close();

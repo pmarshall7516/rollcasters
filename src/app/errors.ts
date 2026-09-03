@@ -32,7 +32,7 @@ export function loadoutErrorMessage(error: unknown, fallback: string): string {
     ABILITY_NOT_IN_PUBLISHED_RELEASE: "This Ability is not part of the current published release.",
     SKILL_NOT_ALLOWED_FOR_CRITTER: "This Skill is not available for this Critter.",
     ABILITY_NOT_ALLOWED_FOR_ROLLCASTER: "This Ability is not available for this Rollcaster.",
-    PLAYER_REVISION_CONFLICT: "Your loadout changed elsewhere. Reloading the latest state…",
+    PLAYER_REVISION_CONFLICT: "This loadout changed elsewhere. The latest state is loaded; please try again.",
     SESSION_DISPLACED: "This account moved to another session.",
   };
   const code = Object.keys(messages).find((candidate) => raw.includes(candidate));

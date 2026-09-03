@@ -1,7 +1,7 @@
 import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot } from "../src/lib/loadout.js";
 import { challengeDescription, collectibleIsUnlocked, completedTrackedChallengeIds, progressFor, trackedChallengesForDisplay, trackedSlotFor } from "../src/lib/collectibles.js";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion } from "../src/lib/notifications.js";
-import { relicSlotUnlocks, xpProgress } from "../src/lib/progression.js";
+import { relicSlotUnlocks, rollcasterAbilitySlotUnlocks, xpProgress } from "../src/lib/progression.js";
 import type { AppData, Catalog, CollectibleUnlockChallenge, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -27,6 +27,23 @@ const relicUnlocks = relicSlotUnlocks([
 check(relicUnlocks.length === 10, "The home loadout must expose a fixed 10-cell Relic matrix.");
 check(relicUnlocks.slice(0, 3).map((slot) => slot.unlockLevel).join(",") === "1,3,5", "Relic cells must retain the first level that unlocks each slot.");
 check(relicUnlocks.slice(3).length === 7 && relicUnlocks.slice(3).every((slot) => slot.unlockLevel === null), "Relic cells beyond the lifetime maximum must remain null slots.");
+
+const abilityUnlocks = rollcasterAbilitySlotUnlocks([
+  { rollcaster_id: "caster", level: 1, total_unlocked_ability_slots: 1 },
+  { rollcaster_id: "caster", level: 3, total_unlocked_ability_slots: 2 },
+  { rollcaster_id: "caster", level: 5, total_unlocked_ability_slots: 4 },
+  { rollcaster_id: "caster", level: 7, total_unlocked_ability_slots: 6 },
+  { rollcaster_id: "caster", level: 9, total_unlocked_ability_slots: 8 },
+  { rollcaster_id: "other", level: 2, total_unlocked_ability_slots: 6 },
+], "caster");
+check(abilityUnlocks.length === 6, "The Home Rollcaster pane must expose exactly six ability cells.");
+check(abilityUnlocks.map((slot) => slot.unlockLevel).join(",") === "1,3,5,5,7,7", "Ability cells must retain the first level that unlocks each slot and cap at six.");
+
+const cappedAbilityUnlocks = rollcasterAbilitySlotUnlocks([
+  { rollcaster_id: "caster", level: 1, total_unlocked_ability_slots: 1 },
+  { rollcaster_id: "caster", level: 3, total_unlocked_ability_slots: 2 },
+], "caster");
+check(cappedAbilityUnlocks.slice(2).every((slot) => slot.unlockLevel === null), "Ability cells beyond the authored lifetime maximum must remain null slots.");
 
 function effect(
   ownerType: "relic" | "ability",

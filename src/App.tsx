@@ -123,7 +123,7 @@ import {
   type EffectiveDungeon,
 } from "./lib/dungeons";
 import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot } from "./lib/loadout";
-import { applyDungeonXpRewards, relicSlotUnlocks, xpProgress } from "./lib/progression";
+import { applyDungeonXpRewards, relicSlotUnlocks, rollcasterAbilitySlotUnlocks, xpProgress } from "./lib/progression";
 import { aggregateDungeonRewardEntries, combineDungeonRewards } from "./lib/dungeon-rewards";
 import { createRequestId } from "./lib/uuid";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion, type NotificationStorage } from "./lib/notifications";
@@ -282,20 +282,23 @@ type PromoRenderState = {
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
 const DESKTOP_CLOSE_SAVE_TIMEOUT_MS = 4_000;
 
-function createShopErrorNotification(error: unknown): BannerNotification {
+type NotifyError = (error: unknown, fallback: string, title?: string) => void;
+
+function createErrorNotification(error: unknown, fallback: string, title = "Error"): BannerNotification {
   return {
-    id: `shop-error:${createRequestId()}`,
-    kind: "shop-error",
-    message: shopErrorMessage(error),
+    id: `error:${createRequestId()}`,
+    kind: "error",
+    title,
+    message: errorMessage(error, fallback),
   };
 }
 
+function createShopErrorNotification(error: unknown): BannerNotification {
+  return createErrorNotification(error, shopErrorMessage(error), "Purchase error");
+}
+
 function createLootboxErrorNotification(error: unknown): BannerNotification {
-  return {
-    id: `lootbox-error:${createRequestId()}`,
-    kind: "lootbox-error",
-    message: errorMessage(error, "Unable to open this Lootbox."),
-  };
+  return createErrorNotification(error, "Unable to open this Lootbox.", "Lootbox error");
 }
 
 function requiredStarterView(player: PlayerState | null | undefined): View | null {
@@ -321,7 +324,7 @@ export function App() {
   const [data, setData] = useState<AppData | null>(null);
   const shopPurchaseRevisionRef = useRef(0);
   const shopPurchaseRequestIdsRef = useRef(new Map<string, string>());
-  const [error, setError] = useState<string | null>(null);
+  const [, setErrorState] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("critters");
   const [bagTab, setBagTab] = useState<BagTab>("currency");
@@ -443,6 +446,7 @@ export function App() {
         if (!active) return;
         const decision = resolveDesktopUpdateGate(status, currentGameVersion, update);
         if (decision.kind === "maintenance" || decision.kind === "error") {
+          setError(decision.message);
           setDesktopGateError(decision.message);
           setDesktopGate("error");
           return;
@@ -453,7 +457,9 @@ export function App() {
       .catch((updateError) => {
         if (!active) return;
         console.error("Desktop startup update check failed.", updateError);
-        setDesktopGateError("Rollcasters could not securely verify the required Game Update. Check your connection and try again.");
+        const message = "Rollcasters could not securely verify the required Game Update. Check your connection and try again.";
+        setError(message);
+        setDesktopGateError(message);
         setDesktopGate("error");
       });
     return () => { active = false; };
@@ -477,6 +483,7 @@ export function App() {
         if (!active) return;
         const decision = resolveDesktopUpdateGate(status, currentGameVersion, update);
         if (decision.kind === "maintenance") {
+          setError(decision.message);
           setDesktopGateError(decision.message);
           setDesktopGate("error");
           return;
@@ -489,6 +496,7 @@ export function App() {
         // A failed periodic check does not invalidate a session that already
         // passed the fail-closed startup gate. Retry on the next interval.
         console.error("Desktop periodic update check failed.", updateError);
+        notifyError(updateError, "The secure Game Update check failed. We’ll retry automatically.", "Update check error");
       }
     };
     const timer = window.setInterval(() => void check(), 5 * 60 * 1000);
@@ -541,6 +549,7 @@ export function App() {
     }
     void refresh(undefined, { showLoading: false }).catch((refreshFailure) => {
       console.error("Shop purchase succeeded but refresh failed.", refreshFailure);
+      notifyError(refreshFailure, "The purchase succeeded, but the latest Shop state could not be loaded.", "Shop refresh error");
     });
     return receipt;
   }
@@ -548,6 +557,15 @@ export function App() {
   function enqueueNotification(notification: BannerNotification) {
     setNotificationQueue((current) => enqueueBannerNotification(current, notification));
   }
+
+  function setError(nextError: string | null) {
+    setErrorState(null);
+    if (nextError) enqueueNotification(createErrorNotification(nextError, nextError));
+  }
+
+  const notifyError: NotifyError = (error, fallback, title = "Error") => {
+    enqueueNotification(createErrorNotification(error, fallback, title));
+  };
 
   function localNotificationStorage(): NotificationStorage | null {
     try {
@@ -922,10 +940,7 @@ export function App() {
       }
     } catch (err) {
       console.error("Unable to load game data.", err);
-      // A background reconciliation must not cover an already-authoritative
-      // reward/outcome screen with a transient refresh failure. Interactive
-      // refreshes still surface the error normally.
-      if (showLoading) setError(errorMessage(err, "Unable to load game data."));
+      setError(errorMessage(err, "Unable to load game data."));
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -1132,7 +1147,7 @@ export function App() {
       if (session && await establishGameplaySession(false)) await refresh();
     };
     void initializeSession()
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(errorMessage(err, "Unable to initialize the game session.")))
       .finally(() => setSessionReady(true));
 
     const {
@@ -1425,12 +1440,16 @@ export function App() {
     window.advanceTime = () => undefined;
   }, [view, shopTab, bagTab, loading, isAuthed, data, combat, dungeonEntry, activeDungeonPrompt, activeDungeonPromptBusy, dungeonExitPrompt, dungeonExitPromptBusy, notificationQueue, promoState]);
 
-  if (desktopGate === "checking") return <Shell><Loading message="Checking for required Game Updates..." /></Shell>;
-  if (desktopGate === "error") return <Shell><DesktopUpdateScreen message={desktopGateError ?? "The secure update check failed."} /></Shell>;
-  if (desktopGate === "required" && desktopUpdate) return <Shell><DesktopUpdateScreen version={desktopUpdate.version} update={desktopUpdate} /></Shell>;
+  const notificationView = notificationQueue[0]
+    ? <BannerNotificationView key={notificationQueue[0].id} data={data} notification={notificationQueue[0]} />
+    : null;
+
+  if (desktopGate === "checking") return <Shell><Loading message="Checking for required Game Updates..." />{notificationView}</Shell>;
+  if (desktopGate === "error") return <Shell><DesktopUpdateScreen message={desktopGateError ?? "The secure update check failed."} onError={notifyError} onRetry={() => window.location.reload()} />{notificationView}</Shell>;
+  if (desktopGate === "required" && desktopUpdate) return <Shell><DesktopUpdateScreen version={desktopUpdate.version} update={desktopUpdate} onError={notifyError} />{notificationView}</Shell>;
   if (!hasSupabaseConfig) return <SetupScreen />;
-  if (!sessionReady) return <Shell><Loading message="Checking session..." /></Shell>;
-  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => void finishAuthentication()} onClose={closeRollcasters} error={error} setError={setError} /></Shell>;
+  if (!sessionReady) return <Shell><Loading message="Checking session..." />{notificationView}</Shell>;
+  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => void finishAuthentication()} onClose={closeRollcasters} onError={notifyError} />{notificationView}</Shell>;
   if (sessionConflict) return <Shell><GameplaySessionDialog
     kind="online"
     busy={sessionActionBusy}
@@ -1442,13 +1461,13 @@ export function App() {
       setSessionActionBusy(true);
       try { if (await establishGameplaySession(true)) await refresh(); } catch (sessionError) { setError(errorMessage(sessionError, "Unable to take over this account.")); } finally { setSessionActionBusy(false); }
     }}
-  /></Shell>;
+  />{notificationView}</Shell>;
   if (accountMoved) return <Shell><GameplaySessionDialog
     kind="moved"
     busy={sessionActionBusy}
     onOk={async () => { setSessionActionBusy(true); try { await endSession(); } finally { setSessionActionBusy(false); } }}
-  /></Shell>;
-  if (!data?.player) return <Shell><Loading message="Loading Rollcasters..." error={error} /></Shell>;
+  />{notificationView}</Shell>;
+  if (!data?.player) return <Shell><Loading message="Loading Rollcasters..." />{notificationView}</Shell>;
 
   return (
     <Shell className={
@@ -1471,9 +1490,9 @@ export function App() {
         }}
         onSignOut={endSession}
         onClose={closeRollcasters}
+        onError={notifyError}
       />
       <div ref={appKeyboardRootRef} className="app-keyboard-root" aria-keyshortcuts={Object.values(controlBindings).join(" ")}>
-        {error && <div className="notice error">{error}</div>}
         {view === "starter-rollcaster" && (
           <StarterRollcasterScreen
             data={data}
@@ -1515,6 +1534,7 @@ export function App() {
           onSettings={() => setSettingsOpen(true)}
           onPlay={() => void openPlay()}
           onRefresh={() => refresh("home")}
+          onError={notifyError}
         />
       )}
       {view === "collection" && (
@@ -1526,6 +1546,7 @@ export function App() {
           setDetail={setDetail}
           onRefresh={() => refresh("collection")}
           onBack={() => navigate("home")}
+          onError={notifyError}
         />
       )}
       {view === "bag" && (
@@ -1539,6 +1560,7 @@ export function App() {
           }}
           onPurchaseError={(purchaseFailure) => enqueueNotification(createShopErrorNotification(purchaseFailure))}
           onOpenError={(openingFailure) => enqueueNotification(createLootboxErrorNotification(openingFailure))}
+          onError={notifyError}
           onBack={() => navigate("home")}
         />
       )}
@@ -1552,6 +1574,7 @@ export function App() {
           onPurchase={purchaseShopItem}
           onPromoStateChange={setPromoState}
           onNotify={enqueueNotification}
+          onError={notifyError}
         />
       )}
       {view === "play" && (
@@ -1596,6 +1619,7 @@ export function App() {
           controlBindings={controlBindings}
           setCombat={setCombat}
           onCombatTurnResolved={(runId, turnNumber, events) => queueCombatProgressEvents(runId, turnNumber, events)}
+          onError={notifyError}
           onBattleResult={async (resolved, requestId) => {
             setLoading(true);
             setError(null);
@@ -1689,6 +1713,7 @@ export function App() {
           windowMode={desktopWindow.mode}
           onWindowModeChange={setDesktopWindowMode}
           onClose={() => setSettingsOpen(false)}
+          onError={notifyError}
         />
       )}
     </Shell>
@@ -1817,26 +1842,25 @@ function SettingsModal({
   windowMode,
   onWindowModeChange,
   onClose,
+  onError,
 }: {
   windowMode: WindowMode;
   onWindowModeChange: (mode: WindowMode) => Promise<void>;
   onClose: () => void;
+  onError: NotifyError;
 }) {
   const [tab, setTab] = useState<"controls" | "window">("controls");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const controlBindings = useControlBindings();
   const [selectedAction, setSelectedAction] = useState<ControlAction | null>(null);
-  const [controlError, setControlError] = useState<string | null>(null);
 
   async function changeWindowMode(mode: WindowMode) {
     if (busy || mode === windowMode) return;
     setBusy(true);
-    setError(null);
     try {
       await onWindowModeChange(mode);
     } catch (changeError) {
-      setError(errorMessage(changeError, "Unable to change the window mode."));
+      onError(changeError, "Unable to change the window mode.", "Settings error");
     } finally {
       setBusy(false);
     }
@@ -1844,7 +1868,6 @@ function SettingsModal({
 
   function selectControl(action: ControlAction) {
     setSelectedAction((current) => current === action ? null : action);
-    setControlError(null);
   }
 
   function bindSelectedControl(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -1852,23 +1875,22 @@ function SettingsModal({
     event.preventDefault();
     event.stopPropagation();
     if (!isBindableKeyboardEvent(event.nativeEvent)) {
-      setControlError("That key cannot be used for a control.");
+      onError("That key cannot be used for a control.", "That key cannot be used for a control.", "Controls error");
       return;
     }
     const conflict = CONTROL_ACTIONS.find(({ id }) => id !== selectedAction && controlBindings[id] === event.code);
     if (conflict) {
-      setControlError(`${controlLabel(event.code)} is already assigned to ${conflict.label}.`);
+      const message = `${controlLabel(event.code)} is already assigned to ${conflict.label}.`;
+      onError(message, message, "Controls error");
       return;
     }
     setControlBinding(selectedAction, event.code);
     setSelectedAction(null);
-    setControlError(null);
   }
 
   function restoreDefaultControls() {
     resetControlBindings();
     setSelectedAction(null);
-    setControlError(null);
   }
 
   return (
@@ -1887,7 +1909,6 @@ function SettingsModal({
             <section id="settings-panel-controls" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-controls">
               <div className="settings-section-heading"><div><p className="eyebrow">Saved on this device</p><h3>Controls</h3></div><span className="settings-status">{selectedAction ? "Press a key" : "Keyboard"}</span></div>
               <p className="settings-help">Select a control, then press the keyboard key you want to use. Mouse clicks always activate the same controls and cannot be remapped.</p>
-              {controlError && <p className="settings-error" role="alert">{controlError}</p>}
               <div className="control-list">
                 {CONTROL_ACTIONS.map(({ id, label }) => {
                   const selected = selectedAction === id;
@@ -1910,7 +1931,6 @@ function SettingsModal({
           ) : (
             <section id="settings-panel-window" className="settings-section" role="tabpanel" aria-labelledby="settings-tab-window">
               <div className="settings-section-heading"><div><p className="eyebrow">Display mode</p><h3>Window</h3></div>{busy && <span className="settings-status">Applying…</span>}</div>
-              {error && <p className="settings-error" role="alert">{error}</p>}
               <div className="window-mode-options">
                 <label className={`window-mode-option ${windowMode === "fullscreen" ? "selected" : ""}`}>
                   <input type="radio" name="window-mode" checked={windowMode === "fullscreen"} disabled={busy} onChange={() => void changeWindowMode("fullscreen")} />
@@ -1931,29 +1951,39 @@ function SettingsModal({
   );
 }
 
-function DesktopUpdateScreen({ version, update, message }: { version?: string; update?: DesktopUpdate; message?: string }) {
+function DesktopUpdateScreen({ version, update, message, onError, onRetry }: { version?: string; update?: DesktopUpdate; message?: string; onError: NotifyError; onRetry?: () => void | Promise<void> }) {
   const [installing, setInstalling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [installFailed, setInstallFailed] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   return (
     <section className="setup-panel loading-panel desktop-update-panel" role="alert">
       <RefreshCw size={42} aria-hidden="true" />
       <h1>{version ? `Rollcasters ${version} is required` : "Secure update check unavailable"}</h1>
       <p>{message ?? "Install this signed Game Update before entering Rollcasters. Your account and progress remain safely stored online."}</p>
-      {error && <div className="notice error">{error}</div>}
       {update && <button className="primary-button" type="button" disabled={installing} onClick={async () => {
         setInstalling(true);
-        setError(null);
+        setInstallFailed(false);
         try {
           await update.installAndRestart();
         } catch (installError) {
-          setError(installError instanceof Error ? installError.message : "The signed update could not be installed.");
+          setInstallFailed(true);
+          onError(installError, "The signed update could not be installed.", "Update error");
           setInstalling(false);
         }
       }}>{installing ? "Installing signed update..." : "Update and restart"}</button>}
+      {!update && onRetry && <button className="primary-button" type="button" disabled={retrying} onClick={async () => {
+        setRetrying(true);
+        try {
+          await onRetry();
+        } catch (retryError) {
+          onError(retryError, "The secure update check could not be retried.", "Update check error");
+          setRetrying(false);
+        }
+      }}>{retrying ? "Retrying secure check..." : "Retry secure check"}</button>}
       <button className="secondary-button" type="button" onClick={() => downloadDiagnosticReport(desktopProfile, import.meta.env.VITE_GAME_VERSION ?? "0.1.0", {
-        state: error ? "install-error" : version ? "update-required" : "update-check-error",
+        state: installFailed ? "install-error" : version ? "update-required" : "update-check-error",
         availableVersion: version,
-        errorClass: error ? "install-failed" : message ? "update-check-failed" : undefined,
+        errorClass: installFailed ? "install-failed" : message ? "update-check-failed" : undefined,
       })}>Export redacted diagnostics</button>
     </section>
   );
@@ -1973,12 +2003,11 @@ VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY`}</pre>
   );
 }
 
-function Loading({ message, error }: { message: string; error?: string | null }) {
+function Loading({ message }: { message: string }) {
   return (
     <section className="setup-panel loading-panel">
       <BrandLogo />
       <h1>{message}</h1>
-      {error && <p className="error-text">{error}</p>}
     </section>
   );
 }
@@ -2024,13 +2053,11 @@ function GameplaySessionDialog({
 function AuthScreen({
   onAuthed,
   onClose,
-  error,
-  setError,
+  onError,
 }: {
   onAuthed: () => void;
   onClose: () => Promise<void>;
-  error: string | null;
-  setError: (error: string | null) => void;
+  onError: NotifyError;
 }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
@@ -2042,7 +2069,6 @@ function AuthScreen({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
-    setError(null);
     try {
       if (mode === "signup") {
         const hasSession = await signUp(email, password, username || email.split("@")[0]);
@@ -2055,7 +2081,7 @@ function AuthScreen({
       }
       await onAuthed();
     } catch (err) {
-      setError(errorMessage(err, "Authentication failed."));
+      onError(err, "Authentication failed.", "Authentication error");
     } finally {
       setBusy(false);
     }
@@ -2063,7 +2089,7 @@ function AuthScreen({
 
   return (
     <section className="auth-layout">
-      <ExitControl className="auth-exit-control" onClose={onClose} />
+      <ExitControl className="auth-exit-control" onClose={onClose} onError={onError} />
       <header className="auth-brand"><BrandLogo /></header>
       <form className="auth-card" onSubmit={submit}>
         {confirmationEmail ? (
@@ -2098,7 +2124,6 @@ function AuthScreen({
             required
           />
         </label>
-        {error && <p className="error-text">{error}</p>}
         <button className="primary-button" disabled={busy}>
           {busy ? "Working..." : mode === "login" ? "Log in" : "Sign up"}
         </button>
@@ -2106,7 +2131,6 @@ function AuthScreen({
           type="button"
           className="link-button"
           onClick={() => {
-            setError(null);
             setMode(mode === "login" ? "signup" : "login");
           }}
         >
@@ -2127,12 +2151,14 @@ function TopBar({
   onHome,
   onSignOut,
   onClose,
+  onError,
 }: {
   data: AppData;
   player: PlayerState;
   onHome: () => void;
-  onSignOut: () => void;
+  onSignOut: () => void | Promise<void>;
   onClose: () => Promise<void>;
+  onError: NotifyError;
 }) {
   const currencies = orderedCurrencies(data);
   const topBarRef = useRef<HTMLElement>(null);
@@ -2226,7 +2252,7 @@ function TopBar({
                 role="menuitem"
                 onClick={() => {
                   setProfileMenuOpen(false);
-                  void onSignOut();
+                  void Promise.resolve(onSignOut()).catch((error) => onError(error, "Unable to sign out.", "Account error"));
                 }}
               >
                 <LogOut size={17} aria-hidden="true" />
@@ -2239,7 +2265,7 @@ function TopBar({
             </div>
           )}
         </div>
-        <ExitControl onClose={onClose} />
+        <ExitControl onClose={onClose} onError={onError} />
       </div>
       <span
         ref={currencyTooltipRef}
@@ -2250,7 +2276,7 @@ function TopBar({
   </>;
 }
 
-function ExitControl({ className = "", onClose }: { className?: string; onClose: () => Promise<void> }) {
+function ExitControl({ className = "", onClose, onError }: { className?: string; onClose: () => Promise<void>; onError: NotifyError }) {
   const [exitDialogOpen, setExitDialogOpen] = useState(false);
 
   return <>
@@ -2270,7 +2296,7 @@ function ExitControl({ className = "", onClose }: { className?: string; onClose:
             type="button"
             className="danger-button"
             onClick={() => {
-              void onClose().catch((error) => console.error("Unable to close Rollcasters.", error));
+              void onClose().catch((error) => onError(error, "Unable to close Rollcasters.", "Exit error"));
               setExitDialogOpen(false);
             }}
           >
@@ -2295,17 +2321,19 @@ type EquipTarget =
   | { type: "ability"; slotIndex: number; owned: UserRollcaster }
   | { type: "rollcaster"; slotIndex: number };
 
-function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onRefresh }: { data: AppData; onCollection: () => void; onBag: () => void; onShop: () => void; onSettings: () => void; onPlay: () => void; onRefresh: () => Promise<void> }) {
+function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onRefresh, onError }: { data: AppData; onCollection: () => void; onBag: () => void; onShop: () => void; onSettings: () => void; onPlay: () => void; onRefresh: () => Promise<void>; onError: NotifyError }) {
   const player = data.player!;
   const activeRollcaster = player.rollcasters.find((row) => row.id === player.profile.active_rollcaster_id) ?? player.rollcasters[0];
   const rollcaster = byId(data.catalog.rollcasters, activeRollcaster?.rollcaster_id);
   const squad = Array.from({ length: 5 }, (_, index) => player.squadSlots.find((slot) => slot.slot_index === index + 1) ?? ({ user_id: player.profile.user_id, slot_index: index + 1, user_critter_id: null }));
   const [equipTarget, setEquipTarget] = useState<EquipTarget | null>(null);
-  const [equipError, setEquipError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const squadPanelRef = useRef<HTMLElement>(null);
   const squadLayoutKey = squad.map((slot) => `${slot.slot_index}:${slot.user_critter_id ?? "empty"}`).join("|");
-  const abilityCount = unlockedAbilitySlotCount(data, activeRollcaster);
+  const abilitySlotStates = rollcasterAbilitySlotUnlocks(
+    data.catalog.rollcasterProgression,
+    activeRollcaster?.rollcaster_id ?? "",
+  );
   const rollcasterProgress = activeRollcaster && rollcaster
     ? xpProgress(
         data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id),
@@ -2350,13 +2378,19 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
 
   async function equip(operation: () => Promise<void>) {
     setSaving(true);
-    setEquipError(null);
     try {
       await operation();
       await onRefresh();
       setEquipTarget(null);
     } catch (err) {
-      setEquipError(loadoutErrorMessage(err, "Unable to update loadout."));
+      if (errorMessage(err, "").includes("PLAYER_REVISION_CONFLICT")) {
+        try {
+          await onRefresh();
+        } catch (refreshError) {
+          onError(refreshError, "The latest loadout state could not be loaded.", "Loadout refresh error");
+        }
+      }
+      onError(loadoutErrorMessage(err, "Unable to update loadout."), "Unable to update loadout.", "Loadout error");
     } finally {
       setSaving(false);
     }
@@ -2364,12 +2398,11 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
 
   async function unlockSkill(owned: UserCritter, skillId: string) {
     setSaving(true);
-    setEquipError(null);
     try {
       await unlockCritterSkill(owned.id, skillId);
       await onRefresh();
     } catch (err) {
-      setEquipError(errorMessage(err, "Unable to unlock this skill."));
+      onError(err, "Unable to unlock this skill.", "Skill error");
     } finally {
       setSaving(false);
     }
@@ -2377,12 +2410,11 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
 
   async function unlockAbility(owned: UserRollcaster, abilityId: string) {
     setSaving(true);
-    setEquipError(null);
     try {
       await unlockRollcasterAbility(owned.id, abilityId);
       await onRefresh();
     } catch (err) {
-      setEquipError(errorMessage(err, "Unable to unlock this ability."));
+      onError(err, "Unable to unlock this ability.", "Ability error");
     } finally {
       setSaving(false);
     }
@@ -2399,16 +2431,17 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
           <h1 className="collectible-name">{rollcaster?.name ?? "Unknown"}</h1>
           {rollcasterProgress && <ProgressBar progress={rollcasterProgress} inline className="rollcaster-xp-progress" />}
           <p className="rollcaster-level">Level {activeRollcaster?.level ?? 1}</p>
-          <div className="ability-list" aria-label="Rollcaster abilities">
-            {Array.from({ length: abilityCount }, (_, index) => {
-              const slotIndex = index + 1;
+          <div className="ability-list" aria-label="Rollcaster ability slots">
+            {abilitySlotStates.map(({ slotIndex, unlockLevel }) => {
+              if (unlockLevel === null) return <span key={slotIndex} className="ability-slot null" aria-hidden="true" />;
+              if (!activeRollcaster || activeRollcaster.level < unlockLevel) return <button key={slotIndex} type="button" className="ability-slot locked" disabled aria-label={`Ability slot ${slotIndex} unlocks at level ${unlockLevel}`}><Lock aria-hidden="true" /><span>Level {unlockLevel}</span></button>;
               const row = player.abilitySlots.find((slot) => slot.user_rollcaster_id === activeRollcaster?.id && slot.slot_index === slotIndex);
               const ability = byId(data.catalog.rollcasterAbilities, row?.ability_id);
               return <AbilitySlot key={slotIndex} data={data} ability={ability} slotIndex={slotIndex} onClick={() => activeRollcaster && setEquipTarget({ type: "ability", slotIndex, owned: activeRollcaster })} />;
             })}
           </div>
         </aside>
-        <ChallengeTracking data={data} onRefresh={onRefresh} />
+        <ChallengeTracking data={data} onRefresh={onRefresh} onError={onError} />
       </div>
 
       <nav className="main-actions" aria-label="Main menu">
@@ -2449,24 +2482,22 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
         })}
       </section>
     </section>
-    {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} error={equipError} onClose={() => setEquipTarget(null)} onEquip={equip} onUnlockSkill={unlockSkill} onUnlockAbility={unlockAbility} />}
+    {equipTarget && <EquipDialog data={data} target={equipTarget} saving={saving} onClose={() => setEquipTarget(null)} onEquip={equip} onUnlockSkill={unlockSkill} onUnlockAbility={unlockAbility} />}
     </>
   );
 }
 
-function ChallengeTracking({ data, onRefresh }: { data: AppData; onRefresh: () => Promise<void> }) {
+function ChallengeTracking({ data, onRefresh, onError }: { data: AppData; onRefresh: () => Promise<void>; onError: NotifyError }) {
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [trackingError, setTrackingError] = useState<string | null>(null);
   const tracked = trackedChallengesForDisplay(data);
 
   async function untrack(challengeId: string) {
     setBusyId(challengeId);
-    setTrackingError(null);
     try {
       await untrackCollectibleChallenge(challengeId);
       await onRefresh();
     } catch (error) {
-      setTrackingError(errorMessage(error, "Unable to untrack challenge."));
+      onError(error, "Unable to untrack challenge.", "Challenge error");
     } finally {
       setBusyId(null);
     }
@@ -2475,7 +2506,6 @@ function ChallengeTracking({ data, onRefresh }: { data: AppData; onRefresh: () =
   return (
     <section className="challenge-tracking" aria-label="Challenge tracking">
       <div className="challenge-tracking-heading"><Target size={17} /><strong>Challenge Tracking</strong></div>
-      {trackingError && <p className="tracking-error" role="alert">{trackingError}</p>}
       <TrackedChallengeSlots data={data} tracked={tracked} busyId={busyId} onUntrack={untrack} />
     </section>
   );
@@ -2801,13 +2831,13 @@ function LoadoutRelicSlot({ data, relic, sourceCritter, slotIndex, onClick }: { 
   </button></GameTooltip>;
 }
 
-function AbilitySlot({ data, ability, slotIndex, onClick }: { data: AppData; ability?: { id: string; name: string; description: string } | null; slotIndex: number; onClick: () => void }) {
+function AbilitySlot({ data, ability, slotIndex, onClick }: { data: AppData; ability?: RollcasterAbility | null; slotIndex: number; onClick: () => void }) {
   const attachments = ability ? data.catalog.effectsByAbility[ability.id] ?? [] : [];
   const effect = ability ? attachmentText(attachments) : "";
-  const details = ability ? `${ability.name}. ${ability.description} ${effect}` : "Choose an ability.";
-  const tooltip = ability ? <><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(attachments)}</> : <span className="tooltip-description">Choose an ability.</span>;
-  return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className="ability-slot" onClick={onClick} aria-label={`Equip ability · Slot ${slotIndex}`}>
-    <span><small>Slot {slotIndex}</small><strong>{ability?.name ?? "-----"}</strong></span>
+  const details = ability ? `${ability.name}. ${ability.description} ${effect}` : `Choose an ability for slot ${slotIndex}.`;
+  const tooltip = ability ? <><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(attachments)}</> : <span className="tooltip-description">Choose an ability for slot {slotIndex}.</span>;
+  return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className={`ability-slot unlocked ${ability ? "equipped" : "empty"}`} onClick={onClick} aria-label={`Equip ability · Slot ${slotIndex}`}>
+    <span>{ability ? <><small>Slot {slotIndex}</small><strong>{ability.name}</strong></> : <><Plus className="empty-ability-plus" aria-hidden="true" /><small>Slot {slotIndex}</small></>}</span>
   </button></GameTooltip>;
 }
 
@@ -2822,13 +2852,6 @@ function targetingDescription(skill: Skill): string {
     case "self_only": return "Targets only the acting Critter.";
     default: return "Targets one Enemy Critter.";
   }
-}
-
-function unlockedAbilitySlotCount(data: AppData, owned?: UserRollcaster): number {
-  if (!owned) return 0;
-  return data.catalog.rollcasterProgression
-    .filter((row) => row.rollcaster_id === owned.rollcaster_id && row.level <= owned.level)
-    .sort((a, b) => b.level - a.level)[0]?.total_unlocked_ability_slots ?? 1;
 }
 
 function useUnlockButtonFlash() {
@@ -2854,7 +2877,7 @@ function useUnlockButtonFlash() {
   return { flashingId, flash };
 }
 
-function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSkill, onUnlockAbility }: { data: AppData; target: EquipTarget; saving: boolean; error: string | null; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void>; onUnlockAbility: (owned: UserRollcaster, abilityId: string) => Promise<void> }) {
+function EquipDialog({ data, target, saving, onClose, onEquip, onUnlockSkill, onUnlockAbility }: { data: AppData; target: EquipTarget; saving: boolean; onClose: () => void; onEquip: (operation: () => Promise<void>) => void; onUnlockSkill: (owned: UserCritter, skillId: string) => Promise<void>; onUnlockAbility: (owned: UserRollcaster, abilityId: string) => Promise<void> }) {
   const player = data.player!;
   const title = target.type === "rollcaster" ? "Choose active Rollcaster" : `Equip ${target.type} · Slot ${target.slotIndex}`;
   const [query, setQuery] = useState("");
@@ -3115,7 +3138,6 @@ function EquipDialog({ data, target, saving, error, onClose, onEquip, onUnlockSk
         ? <div className="equip-ability-list">{content}</div>
         : content;
   return <Modal className={dialogClass} title={title} description={target.type === "skill" ? "Choose an unlocked skill or unlock one available at this Critter's level." : target.type === "ability" ? "Choose an unlocked ability or unlock one available at this Rollcaster's level." : "Choose an eligible item for this loadout slot."} onClose={onClose}>
-    {error && <p className="notice error" role="alert">{error}</p>}
     {target.type === "skill" && currentSkillOwner && <div className="equip-dialog-point-summary"><PointCounter kind="skill" points={currentSkillOwner.skill_points} inline /></div>}
     {target.type === "ability" && currentAbilityOwner && <div className="equip-dialog-point-summary"><PointCounter kind="ability" points={currentAbilityOwner.ability_points} inline /></div>}
     {(target.type === "skill" || target.type === "relic" || target.type === "ability") && <label className="equip-search"><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={target.type === "skill" ? "Search skills by name or Element…" : target.type === "ability" ? "Search abilities by name…" : "Search Relics by name…"} aria-label={target.type === "skill" ? "Search skills by name or element" : target.type === "ability" ? "Search abilities by name" : "Search relics by name"} /></label>}
@@ -3132,6 +3154,7 @@ function CollectionScreen({
   setDetail,
   onRefresh,
   onBack,
+  onError,
 }: {
   data: AppData;
   tab: CollectionTab;
@@ -3140,6 +3163,7 @@ function CollectionScreen({
   setDetail: (detail: CollectionDetail | null) => void;
   onRefresh: () => Promise<void>;
   onBack: () => void;
+  onError: NotifyError;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [elementId, setElementId] = useState<string | null>(null);
@@ -3209,18 +3233,18 @@ function CollectionScreen({
         </div>
       </div>
       <div className="collection-grid-content" style={collectionGridStyle}>
-        {tab === "rollcasters" && <RollcasterGrid data={data} rollcasters={rollcasters} setDetail={setDetail} onRefresh={onRefresh} />}
-        {tab === "critters" && <CritterGrid data={data} critters={critters} setDetail={setDetail} onRefresh={onRefresh} />}
-        {tab === "relics" && <RelicGrid data={data} relics={relics} setDetail={setDetail} onRefresh={onRefresh} />}
+        {tab === "rollcasters" && <RollcasterGrid data={data} rollcasters={rollcasters} setDetail={setDetail} onRefresh={onRefresh} onError={onError} />}
+        {tab === "critters" && <CritterGrid data={data} critters={critters} setDetail={setDetail} onRefresh={onRefresh} onError={onError} />}
+        {tab === "relics" && <RelicGrid data={data} relics={relics} setDetail={setDetail} onRefresh={onRefresh} onError={onError} />}
         {displayedCount === 0 && <p className="collection-empty">No {tab} match the current filters.</p>}
 
         <div ref={cardMeasurementRef} className="collection-grid collection-card-measurement" aria-hidden="true">
-          <RollcasterGrid measurement data={data} rollcasters={data.catalog.rollcasters} setDetail={setDetail} onRefresh={onRefresh} />
-          <CritterGrid measurement data={data} critters={data.catalog.critters} setDetail={setDetail} onRefresh={onRefresh} />
-          <RelicGrid measurement data={data} relics={data.catalog.relics} setDetail={setDetail} onRefresh={onRefresh} />
+          <RollcasterGrid measurement data={data} rollcasters={data.catalog.rollcasters} setDetail={setDetail} onRefresh={onRefresh} onError={onError} />
+          <CritterGrid measurement data={data} critters={data.catalog.critters} setDetail={setDetail} onRefresh={onRefresh} onError={onError} />
+          <RelicGrid measurement data={data} relics={data.catalog.relics} setDetail={setDetail} onRefresh={onRefresh} onError={onError} />
         </div>
       </div>
-      {detail && <DetailModal data={data} detail={detail} onRefresh={onRefresh} onClose={() => setDetail(null)} />}
+      {detail && <DetailModal data={data} detail={detail} onRefresh={onRefresh} onClose={() => setDetail(null)} onError={onError} />}
     </section>
   );
 }
@@ -3234,6 +3258,7 @@ function BagScreen({
   onBeforeOpenLootbox,
   onPurchaseError,
   onOpenError,
+  onError,
 }: {
   data: AppData;
   tab: BagTab;
@@ -3243,6 +3268,7 @@ function BagScreen({
   onBeforeOpenLootbox: () => Promise<void>;
   onPurchaseError: (error: unknown) => void;
   onOpenError: (error: unknown) => void;
+  onError: NotifyError;
 }) {
   const [selectedLootbox, setSelectedLootbox] = useState<string | null>(null);
   const currencies = orderedCurrencies(data).filter((currency) => currency.id === "coins" || currency.id === "prismite");
@@ -3335,7 +3361,7 @@ function BagScreen({
           {ownedLootboxes.length === 0 && <div className="shop-empty"><Gift /><h2>No Lootboxes yet</h2><p>Purchased and earned Lootboxes will appear here.</p></div>}
         </div>
       </div>}
-      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onBeforeOpen={onBeforeOpenLootbox} onPurchaseError={onPurchaseError} onOpenError={onOpenError} onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
+      {selectedLootbox && <LootboxModal data={data} lootboxId={selectedLootbox} mode="owned" onBeforeOpen={onBeforeOpenLootbox} onPurchaseError={onPurchaseError} onOpenError={onOpenError} onError={onError} onRefresh={onRefresh} onClose={() => setSelectedLootbox(null)} />}
     </section>
   );
 }
@@ -3365,6 +3391,7 @@ function ShopScreen({
   onPurchase,
   onPromoStateChange,
   onNotify,
+  onError,
 }: {
   data: AppData;
   tab: ShopTab;
@@ -3374,6 +3401,7 @@ function ShopScreen({
   onPurchase: (entry: ShopEntry, quantity: number) => Promise<ShopPurchaseReceipt>;
   onPromoStateChange: (state: PromoRenderState) => void;
   onNotify: (notification: BannerNotification) => void;
+  onError: NotifyError;
 }) {
   const [query, setQuery] = useState("");
   const [quantityByEntry, setQuantityByEntry] = useState<Record<string, number>>({});
@@ -3451,6 +3479,7 @@ function ShopScreen({
           onRefresh={onRefresh}
           onStateChange={onPromoStateChange}
           onNotify={onNotify}
+          onError={onError}
         />
       ) : tab === "lootbox" ? <div className="shop-grid-section shop-grid-headingless">
         <div className="shop-grid-heading-slot" aria-hidden="true" />
@@ -3518,7 +3547,10 @@ function ShopScreen({
                   // acquired row durable, then show the user the saved Bag
                   // item without leaving the shop so they can keep buying.
                   void onRefresh()
-                    .catch((refreshFailure) => console.error("Lootbox Bag refresh failed.", refreshFailure))
+                    .catch((refreshFailure) => {
+                      console.error("Lootbox Bag refresh failed.", refreshFailure);
+                      onError(refreshFailure, "The Lootbox was saved, but the latest Bag state could not be loaded.", "Bag refresh error");
+                    })
                 }}
               >Send to Bag</button>
             </> : <div className="shop-purchase-row">
@@ -3559,6 +3591,7 @@ function ShopScreen({
         onBeforeOpen={async () => undefined}
         onPurchaseError={(purchaseFailure) => onNotify(createShopErrorNotification(purchaseFailure))}
         onOpenError={(openingFailure) => onNotify(createLootboxErrorNotification(openingFailure))}
+        onError={onError}
         onRefresh={onRefresh}
         onPurchased={() => setPurchasedLootboxEntries((current) => new Set(current).add(selectedLootboxEntry.id))}
         onPurchaseFailed={() => setPurchasedLootboxEntries((current) => {
@@ -3672,7 +3705,7 @@ function LootboxRewardProgress({ data, progress, duplicateAmount, duplicateCurre
   </div>;
 }
 
-function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onBeforeOpen, onPurchaseError, onOpenError, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
+function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEntry, purchaseQuantity = 1, onPurchaseRequested, onBeforeOpen, onPurchaseError, onOpenError, onError, onRefresh, onPurchased, onPurchaseFailed, onOpened, onClose }: {
   data: AppData;
   lootboxId: string;
   mode: "purchase" | "owned";
@@ -3683,6 +3716,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
   onBeforeOpen?: () => Promise<void>;
   onPurchaseError?: (error: unknown) => void;
   onOpenError?: (error: unknown) => void;
+  onError?: NotifyError;
   onRefresh: () => Promise<void>;
   onPurchased?: () => void;
   onPurchaseFailed?: () => void;
@@ -3770,7 +3804,10 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
       // The RPC has already consumed the box and granted the reward atomically.
       // Refresh the view in the background so network latency never delays the
       // opening animation or creates a window where a second open is possible.
-      void onRefresh().catch((refreshFailure) => console.error("Lootbox opening succeeded but refresh failed.", refreshFailure));
+      void onRefresh().catch((refreshFailure) => {
+        console.error("Lootbox opening succeeded but refresh failed.", refreshFailure);
+        onError?.(refreshFailure, "The Lootbox opened, but the latest Bag state could not be loaded.", "Bag refresh error");
+      });
       timers.current.forEach((timer) => window.clearTimeout(timer));
       timers.current = [];
       setPhase("shaking");
@@ -3937,11 +3974,13 @@ function PromoCodesPanel({
   onRefresh,
   onStateChange,
   onNotify,
+  onError,
 }: {
   data: AppData;
   onRefresh: () => Promise<void>;
   onStateChange: (state: PromoRenderState) => void;
   onNotify: (notification: BannerNotification) => void;
+  onError: NotifyError;
 }) {
   const [code, setCode] = useState("");
   const [history, setHistory] = useState<PromoCodeRedemption[]>([]);
@@ -3960,7 +3999,9 @@ function PromoCodesPanel({
       setHistoryStatus("loaded");
     } catch (error) {
       console.error("Unable to load Promo Code history.", error);
-      setHistoryError("We couldn’t load your redeemed codes. Try again.");
+      const message = "We couldn’t load your redeemed codes. Try again.";
+      setHistoryError(message);
+      onError(message, message, "Promo code error");
       setHistoryStatus("error");
     }
   }
@@ -3977,7 +4018,9 @@ function PromoCodesPanel({
       .catch((error) => {
         if (!active) return;
         console.error("Unable to load Promo Code history.", error);
-        setHistoryError("We couldn’t load your redeemed codes. Try again.");
+        const message = "We couldn’t load your redeemed codes. Try again.";
+        setHistoryError(message);
+        onError(message, message, "Promo code error");
         setHistoryStatus("error");
       });
     return () => {
@@ -4042,7 +4085,9 @@ function PromoCodesPanel({
       } catch (historyLoadError) {
         console.error("Promo Code was claimed, but history could not be refreshed.", historyLoadError);
         setHistoryStatus("error");
-        setHistoryError("Your rewards were claimed, but redeemed-code history could not be refreshed.");
+        const message = "Your rewards were claimed, but redeemed-code history could not be refreshed.";
+        setHistoryError(message);
+        onError(message, message, "Promo code error");
       }
       await onRefresh();
     } catch (error) {
@@ -4063,7 +4108,9 @@ function PromoCodesPanel({
         revealClaim(recovered);
         await onRefresh();
       } else {
-        setClaimError(promoCodeErrorMessage(error));
+        const message = promoCodeErrorMessage(error);
+        setClaimError(message);
+        onError(message, message, "Promo code error");
       }
     } finally {
       setClaiming(false);
@@ -4100,7 +4147,6 @@ function PromoCodesPanel({
             </button>
           </div>
         </form>
-        {claimError && <p className="promo-message promo-error" role="alert">{claimError}</p>}
       </section>
 
       <section className="promo-history-section" aria-labelledby="redeemed-codes-heading">
@@ -4112,7 +4158,6 @@ function PromoCodesPanel({
           {historyStatus === "error" && <button className="secondary-button" onClick={() => void loadHistory()}>Retry</button>}
         </div>
         <div className="promo-history-pane">
-          {historyError && <p className="promo-message promo-history-error" role="alert">{historyError}</p>}
           {historyStatus === "loading" ? <PromoHistorySkeleton /> : history.length > 0 ? (
             <div className="promo-history-list">
               {history.map((redemption) => <PromoRedemptionCard key={redemption.redemptionId} data={data} redemption={redemption} />)}
@@ -4207,9 +4252,8 @@ function PromoRewardArt({ data, reward }: { data: AppData; reward: PromoCodeRewa
           ? <Dices aria-hidden="true" />
           : <Sparkles aria-hidden="true" />;
   const snapshotPath = getSnapshotGameAssetUrl(reward.assetPath);
-  const category = reward.type === "shard" ? reward.targetCategory : reward.type;
   const collectibleCategory: CollectibleType | null = reward.type === "shard"
-    ? reward.targetCategory
+    ? reward.targetCategory === "critter" || reward.targetCategory === "rollcaster" || reward.targetCategory === "relic" ? reward.targetCategory : null
     : reward.type === "critter" || reward.type === "rollcaster" || reward.type === "relic"
       ? reward.type
       : null;
@@ -4221,21 +4265,19 @@ function PromoRewardArt({ data, reward }: { data: AppData; reward: PromoCodeRewa
       collectibleAssetPath(data, collectibleCategory, reward.targetId),
       collectibleCategory === "relic" ? ["icon", "thumb", "card"] : ["thumb", "card"],
     )
-    : category
-      ? findAssetPath(data, category, reward.targetId, "icon")
+    : reward.type === "currency"
+      ? findAssetPath(data, "currency", reward.targetId, "icon")
       : null;
-  const art = <AssetIcon path={currentVariant ?? snapshotPath} alt="" fallback={fallback} />;
-  if (reward.type === "shard") {
-    return (
-      <span className="promo-shard-art" aria-hidden="true">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-          <polygon points="2,50 50,2 98,50 50,98" />
-        </svg>
-        <span>{art}</span>
-        <Gem className="promo-shard-overlay" />
-      </span>
-    );
+  if (reward.type === "shard" && collectibleCategory) {
+    return <CollectibleSprite data={data} type={collectibleCategory} id={reward.targetId} size="sm" shard />;
   }
+  if (reward.type === "lootbox") {
+    const lootbox = data.catalog.lootboxes.find((row) => row.id === reward.targetId);
+    return lootbox
+      ? <SpriteFrame size="sm" className="promo-reward-art promo-reward-art-lootbox"><LootboxSprite lootbox={lootbox} variant="closed" /></SpriteFrame>
+      : <SpriteFrame size="sm" className="promo-reward-art promo-reward-art-lootbox"><AssetIcon path={snapshotPath} alt="" fallback={<Gift aria-hidden="true" />} /></SpriteFrame>;
+  }
+  const art = <AssetIcon path={currentVariant ?? snapshotPath} alt="" fallback={fallback} />;
   return <SpriteFrame size="sm" className={`promo-reward-art promo-reward-art-${promoRewardTypeLabel(reward.type).toLocaleLowerCase()}`}>{art}</SpriteFrame>;
 }
 
@@ -4345,9 +4387,8 @@ function ElementIcon({ data, elementId }: { data: AppData; elementId: string }) 
   return <AssetIcon path={path} alt={`${element?.name ?? elementId} element`} fallback={<Sparkles size={16} />} />;
 }
 
-function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }: { data: AppData; type: CollectibleType; id: string; onRefresh: () => Promise<void>; compact?: boolean }) {
+function CollectibleChallengeRows({ data, type, id, onRefresh, onError, compact = true }: { data: AppData; type: CollectibleType; id: string; onRefresh: () => Promise<void>; onError: NotifyError; compact?: boolean }) {
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [trackingError, setTrackingError] = useState<string | null>(null);
   const [replacementChallenge, setReplacementChallenge] = useState<CollectibleUnlockChallenge | null>(null);
   const challenges = challengesFor(data, type, id);
   if (!challenges.length) return <p className="collection-status challenge-empty">Not currently unlockable</p>;
@@ -4355,7 +4396,6 @@ function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }:
   const firstBlockedChallengeId = challenges.find((challenge) => progressFor(data, challenge.id).eligible === false)?.id ?? null;
 
   async function changeTracking(challenge: CollectibleUnlockChallenge, currentlyTracked: boolean) {
-    setTrackingError(null);
     if (!currentlyTracked && tracked.length >= 3) {
       setReplacementChallenge(challenge);
       return;
@@ -4365,7 +4405,7 @@ function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }:
       if (!currentlyTracked) {
         const progress = progressFor(data, challenge.id);
         if (progress.eligible === false || progress.trackable === false) {
-          setTrackingError("Complete the required Gate Challenges before tracking this challenge.");
+          onError("Complete the required Gate Challenges before tracking this challenge.", "Complete the required Gate Challenges before tracking this challenge.", "Challenge error");
           return;
         }
       }
@@ -4391,11 +4431,10 @@ function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }:
           setReplacementChallenge(challenge);
         }
       } else {
-        setTrackingError(
-          raw.includes("CHALLENGE_GATED")
-            ? "Complete the required Gate Challenges before tracking this challenge."
-            : raw,
-        );
+        const message = raw.includes("CHALLENGE_GATED")
+          ? "Complete the required Gate Challenges before tracking this challenge."
+          : raw;
+        onError(message, "Unable to update challenge tracking.", "Challenge error");
       }
     } finally {
       setBusyId(null);
@@ -4405,13 +4444,12 @@ function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }:
   async function replaceTrackedChallenge(replacedChallengeId: string) {
     if (!replacementChallenge) return;
     setBusyId(replacementChallenge.id);
-    setTrackingError(null);
     try {
       await untrackCollectibleChallenge(replacedChallengeId);
       await trackCollectibleChallenge(replacementChallenge.id);
       await onRefresh();
     } catch (error) {
-      setTrackingError(errorMessage(error, "Unable to replace tracked challenge."));
+      onError(error, "Unable to replace tracked challenge.", "Challenge error");
       throw error;
     } finally {
       setBusyId(null);
@@ -4421,7 +4459,6 @@ function CollectibleChallengeRows({ data, type, id, onRefresh, compact = true }:
   return (
     <>
       <div className={`challenge-rows ${compact ? "compact" : ""}`.trim()} aria-label={`${collectibleName(data, type, id)} unlock challenges`}>
-        {trackingError && <p className="grid-challenge-error" role="alert">{trackingError}</p>}
         {challenges.map((challenge) => {
           const progress = progressFor(data, challenge.id);
           const blocked = progress.eligible === false;
@@ -4464,12 +4501,14 @@ function RollcasterGrid({
   rollcasters,
   setDetail,
   onRefresh,
+  onError,
   measurement = false,
 }: {
   data: AppData;
   rollcasters: AppData["catalog"]["rollcasters"];
   setDetail: (detail: { type: "rollcaster"; id: string }) => void;
   onRefresh: () => Promise<void>;
+  onError: NotifyError;
   measurement?: boolean;
 }) {
   return (
@@ -4492,7 +4531,7 @@ function RollcasterGrid({
             <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["card"])} size="hero" fit="portrait" /></CardSprite>
             <CardName data={data} name={rollcaster.name} />
             <CollectionCardState>
-              {unlocked ? <div className="collection-progression"><p>Level {owned?.level ?? 1}</p><ProgressBar progress={progress} /></div> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} onRefresh={onRefresh} />}
+              {unlocked ? <div className="collection-progression"><p>Level {owned?.level ?? 1}</p><ProgressBar progress={progress} /></div> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} onRefresh={onRefresh} onError={onError} />}
               {rollcaster.description?.trim() && <p className="collection-rollcaster-description">{rollcaster.description.trim()}</p>}
             </CollectionCardState>
             <PointCounter kind="ability" points={owned?.ability_points ?? 0} />
@@ -4508,12 +4547,14 @@ function CritterGrid({
   critters,
   setDetail,
   onRefresh,
+  onError,
   measurement = false,
 }: {
   data: AppData;
   critters: Critter[];
   setDetail: (detail: { type: "critter"; id: string }) => void;
   onRefresh: () => Promise<void>;
+  onError: NotifyError;
   measurement?: boolean;
 }) {
   return (
@@ -4541,7 +4582,7 @@ function CritterGrid({
             /></CardSprite>
             <CardName data={data} name={critter.name} critter={critter} />
             <CollectionCardState>
-              {unlocked && owned ? <div className="collection-progression critter-progression"><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} onRefresh={onRefresh} />}
+              {unlocked && owned ? <div className="collection-progression critter-progression"><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} onRefresh={onRefresh} onError={onError} />}
             </CollectionCardState>
             <StatGrid stats={stats} compact />
             <PointCounter kind="skill" points={owned?.skill_points ?? 0} />
@@ -4552,18 +4593,18 @@ function CritterGrid({
   );
 }
 
-function RelicGrid({ data, relics, setDetail, onRefresh, measurement = false }: { data: AppData; relics: Relic[]; setDetail: (detail: { type: "relic"; id: string }) => void; onRefresh: () => Promise<void>; measurement?: boolean }) {
+function RelicGrid({ data, relics, setDetail, onRefresh, onError, measurement = false }: { data: AppData; relics: Relic[]; setDetail: (detail: { type: "relic"; id: string }) => void; onRefresh: () => Promise<void>; onError: NotifyError; measurement?: boolean }) {
   return (
     <div className={`collection-grid ${measurement ? "collection-grid-measurement" : ""}`.trim()}>
       {relics.map((relic) => {
         const inventory = data.player!.relicInventory.find((row) => row.relic_id === relic.id);
-        return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} unlocked={collectibleIsUnlocked(data, "relic", relic.id)} onClick={() => setDetail({ type: "relic", id: relic.id })} onRefresh={onRefresh} />;
+        return <RelicCard key={relic.id} data={data} relic={relic} quantity={inventory?.quantity ?? 0} unlocked={collectibleIsUnlocked(data, "relic", relic.id)} onClick={() => setDetail({ type: "relic", id: relic.id })} onRefresh={onRefresh} onError={onError} />;
       })}
     </div>
   );
 }
 
-function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh }: { data: AppData; relic: Relic; quantity: number; unlocked: boolean; onClick: () => void; onRefresh: () => Promise<void> }) {
+function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh, onError }: { data: AppData; relic: Relic; quantity: number; unlocked: boolean; onClick: () => void; onRefresh: () => Promise<void>; onError: NotifyError }) {
   const effects = data.catalog.effectsByRelic[relic.id] ?? [];
   return (
     <article className={`catalog-card relic-card ${!unlocked ? "locked" : ""}`} onClick={(event) => {
@@ -4575,7 +4616,7 @@ function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh }: { da
       <CardSprite><Sprite name={relic.name} element="metal" assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} size="large" /></CardSprite>
       <CardName data={data} name={relic.name} />
       <CollectionCardState>
-        {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} onRefresh={onRefresh} />}
+        {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} onRefresh={onRefresh} onError={onError} />}
         <EffectList effects={effects} className="relic-card-effects" />
       </CollectionCardState>
     </article>
@@ -4588,9 +4629,8 @@ function PointCounter({ kind, points, inline = false }: { kind: "skill" | "abili
     : <p className="point-counter"><strong>{points}</strong> {kind} point{points === 1 ? "" : "s"}</p>;
 }
 
-function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { data: AppData; type: CollectibleType; id: string; unlocked: boolean; onRefresh: () => Promise<void> }) {
+function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh, onError }: { data: AppData; type: CollectibleType; id: string; unlocked: boolean; onRefresh: () => Promise<void>; onError: NotifyError }) {
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [panelError, setPanelError] = useState<string | null>(null);
   const [replacementChallenge, setReplacementChallenge] = useState<CollectibleUnlockChallenge | null>(null);
   const challenges = challengesFor(data, type, id);
   if (!challenges.length) return <section className="collectible-challenge-panel"><h3>Collect</h3><p className="challenge-empty">Not currently unlockable through challenges.</p></section>;
@@ -4600,7 +4640,6 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
   const firstBlockedChallengeId = challenges.find((challenge) => progressFor(data, challenge.id).eligible === false)?.id ?? null;
 
   async function changeTracking(challenge: CollectibleUnlockChallenge, currentlyTracked: boolean) {
-    setPanelError(null);
     if (!currentlyTracked && tracked.length >= 3) {
       setReplacementChallenge(challenge);
       return;
@@ -4610,7 +4649,7 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
       if (!currentlyTracked) {
         const progress = progressFor(data, challenge.id);
         if (progress.eligible === false || progress.trackable === false) {
-          setPanelError("Complete the required Gate Challenges before tracking this challenge.");
+          onError("Complete the required Gate Challenges before tracking this challenge.", "Complete the required Gate Challenges before tracking this challenge.", "Challenge error");
           return;
         }
       }
@@ -4633,11 +4672,10 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
           setReplacementChallenge(challenge);
         }
       } else {
-        setPanelError(
-          raw.includes("CHALLENGE_GATED")
-            ? "Complete the required Gate Challenges before tracking this challenge."
-            : raw,
-        );
+        const message = raw.includes("CHALLENGE_GATED")
+          ? "Complete the required Gate Challenges before tracking this challenge."
+          : raw;
+        onError(message, "Unable to update challenge tracking.", "Challenge error");
       }
     } finally {
       setBusyId(null);
@@ -4646,14 +4684,14 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
 
   async function replaceTrackedChallenge(replacedChallengeId: string) {
     if (!replacementChallenge) return;
-    setBusyId(replacementChallenge.id); setPanelError(null);
+    setBusyId(replacementChallenge.id);
     try {
       await untrackCollectibleChallenge(replacedChallengeId);
       await trackCollectibleChallenge(replacementChallenge.id);
       await onRefresh();
       setReplacementChallenge(null);
     } catch (error) {
-      setPanelError(errorMessage(error, "Unable to replace tracked challenge."));
+      onError(error, "Unable to replace tracked challenge.", "Challenge error");
     } finally {
       setBusyId(null);
     }
@@ -4666,7 +4704,6 @@ function CollectibleChallengePanel({ data, type, id, unlocked, onRefresh }: { da
         <strong>{complete} complete</strong>
       </div>
       {required === 0 && <p className="challenge-note">Automatic challenge unlocking is disabled for this collectible.</p>}
-      {panelError && <p className="notice error" role="alert">{panelError}</p>}
       <div className="challenge-detail-rows">
         {challenges.map((challenge) => {
           const progress = progressFor(data, challenge.id);
@@ -4705,29 +4742,29 @@ function DetailModal({
   detail,
   onRefresh,
   onClose,
+  onError,
 }: {
   data: AppData;
   detail: CollectionDetail;
   onRefresh: () => Promise<void>;
   onClose: () => void;
+  onError: NotifyError;
 }) {
-  const [detailError, setDetailError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const { flashingId, flash } = useUnlockButtonFlash();
 
   async function purchaseSkill(owned: UserCritter, skillId: string, cost: number) {
     if (owned.skill_points < cost) {
       flash(skillId);
-      setDetailError(`Not enough skill points. This skill costs ${cost}.`);
+      onError(`Not enough skill points. This skill costs ${cost}.`, `Not enough skill points. This skill costs ${cost}.`, "Skill error");
       return;
     }
     setSaving(true);
-    setDetailError(null);
     try {
       await unlockCritterSkill(owned.id, skillId);
       await onRefresh();
     } catch (error) {
-      setDetailError(errorMessage(error, "Unable to unlock this skill."));
+      onError(error, "Unable to unlock this skill.", "Skill error");
     } finally {
       setSaving(false);
     }
@@ -4735,16 +4772,15 @@ function DetailModal({
 
   async function purchaseAbility(owned: UserRollcaster, abilityId: string, cost: number) {
     if (owned.ability_points < cost) {
-      setDetailError(`Not enough ability points. This ability costs ${cost}.`);
+      onError(`Not enough ability points. This ability costs ${cost}.`, `Not enough ability points. This ability costs ${cost}.`, "Ability error");
       return;
     }
     setSaving(true);
-    setDetailError(null);
     try {
       await unlockRollcasterAbility(owned.id, abilityId);
       await onRefresh();
     } catch (error) {
-      setDetailError(errorMessage(error, "Unable to unlock this ability."));
+      onError(error, "Unable to unlock this ability.", "Ability error");
     } finally {
       setSaving(false);
     }
@@ -4759,10 +4795,9 @@ function DetailModal({
     const progression = owned ? xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp) : null;
     return (
       <Modal title={critter.name} onClose={onClose}>
-        {detailError && <p className="notice error" role="alert">{detailError}</p>}
         <CollectibleDetailHero data={data} id={critter.id} name={critter.name} critter={critter} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["portrait", "battle", "card"])} assetElement={critter.element_1_id} />
         <p className="detail-level">{collectibleUnlocked && owned ? `Level ${owned.level}` : "Locked"}</p>
-        <CollectibleChallengePanel data={data} type="critter" id={critter.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} />
+        <CollectibleChallengePanel data={data} type="critter" id={critter.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} onError={onError} />
         {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
         <StatGrid stats={stats} />
         <h3 className="detail-section-heading">Skills <PointCounter kind="skill" points={owned?.skill_points ?? 0} inline /></h3>
@@ -4799,7 +4834,7 @@ function DetailModal({
       <Modal title={relic.name} onClose={onClose}>
         <CollectibleDetailHero data={data} id={relic.id} name={relic.name} assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} assetElement="metal" />
         <p><strong>Owned:</strong> {quantity} / {relic.max_owned}</p>
-        <CollectibleChallengePanel data={data} type="relic" id={relic.id} unlocked={collectibleIsUnlocked(data, "relic", relic.id)} onRefresh={onRefresh} />
+        <CollectibleChallengePanel data={data} type="relic" id={relic.id} unlocked={collectibleIsUnlocked(data, "relic", relic.id)} onRefresh={onRefresh} onError={onError} />
         <EffectList effects={data.catalog.effectsByRelic[relic.id] ?? []} className="effect-summary" />
         <CollectibleDescriptionSection description={relic.description} />
       </Modal>
@@ -4813,10 +4848,9 @@ function DetailModal({
   const progression = owned ? xpProgress(data.catalog.rollcasterProgression.filter((row) => row.rollcaster_id === rollcaster.id), owned.level, owned.xp) : null;
   return (
     <Modal title={rollcaster.name} onClose={onClose}>
-      {detailError && <p className="notice error" role="alert">{detailError}</p>}
       <CollectibleDetailHero data={data} id={rollcaster.id} name={rollcaster.name} assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["portrait", "battle", "card"])} assetElement="basic" />
       <p className="detail-level">{collectibleUnlocked && owned ? `Level ${owned.level}` : "Locked"}</p>
-      <CollectibleChallengePanel data={data} type="rollcaster" id={rollcaster.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} />
+      <CollectibleChallengePanel data={data} type="rollcaster" id={rollcaster.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} onError={onError} />
       {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
       <h3 className="detail-section-heading">Abilities <PointCounter kind="ability" points={owned?.ability_points ?? 0} inline /></h3>
       <div className="mini-grid">
@@ -5173,6 +5207,7 @@ function CombatScreen({
   controlBindings,
   setCombat,
   onCombatTurnResolved,
+  onError,
   onBattleResult,
   onBack,
   onHome,
@@ -5184,6 +5219,7 @@ function CombatScreen({
   controlBindings: ControlBindings;
   setCombat: Dispatch<SetStateAction<DungeonRunState | null>>;
   onCombatTurnResolved: (runId: string, turnNumber: number, events: DungeonRunState["battle"]["turnEvents"]) => void;
+  onError: NotifyError;
   onBattleResult: (state: DungeonRunState, requestId: string) => Promise<void>;
   onBack: () => void;
   onHome: () => void;
@@ -5572,7 +5608,8 @@ function CombatScreen({
     void onBattleResult(combat, requestId)
       .catch((error) => {
         console.warn("Unable to save the encounter result; retry remains available.", error);
-        setResultError("We couldn’t save this encounter result yet. Your completed battle is still here; retry saving to continue.");
+        onError(error, "We couldn’t save this encounter result yet. Retry saving to continue.", "Encounter save error");
+        setResultError("retry");
       })
       .finally(() => setRecordingResult(false));
   }, [combat.phase, combat.run.battleIndex, resultAttempt]);
@@ -7113,15 +7150,11 @@ function DungeonResultSaveDialog({ busy, onRetry }: { busy: boolean; onRetry: ()
     <Modal
       eyebrow="Encounter complete"
       title="Encounter result needs a retry"
-      description="Your completed battle is still open on this screen. Keep the game open and retry the save so your rewards and Dungeon progress can be recorded."
+      description="Keep this screen open while the encounter result is saved."
       onClose={() => undefined}
       className="dungeon-result-save-modal"
       dismissible={false}
     >
-      <div className="dungeon-result-save-warning" role="alert">
-        <AlertTriangle size={24} aria-hidden="true" />
-        <p>We’re having trouble reaching the save service. We’ll keep your battle here until it saves successfully.</p>
-      </div>
       <div className="dialog-actions dungeon-result-save-actions">
         <button type="button" className="primary-button" disabled={busy} onClick={onRetry}>
           {busy ? "Saving…" : <><RefreshCw size={17} /> Retry Save</>}
@@ -7149,7 +7182,19 @@ function StatusIconRow({ data, statuses }: { data: AppData; statuses: CombatStat
   })}</span>;
 }
 
-function BannerNotificationView({ data, notification }: { data: AppData; notification: BannerNotification }) {
+function BannerNotificationView({ data, notification }: { data: AppData | null; notification: BannerNotification }) {
+  if (notification.kind === "error") {
+    return (
+      <aside className="unlock-notification error-notification" role="alert" aria-live="assertive" aria-atomic="true">
+        <span className="notification-banner-icon" aria-hidden="true"><AlertTriangle size={25} /></span>
+        <div className="unlock-notification-copy">
+          <span className="unlock-notification-label"><AlertTriangle size={14} aria-hidden="true" /> {notification.title}</span>
+          <h2>{notification.message}</h2>
+        </div>
+      </aside>
+    );
+  }
+  if (!data) return null;
   if (notification.kind === "collectible-unlock") {
     const event = notification.event;
     const name = collectibleName(data, event.collectible_type, event.collectible_id);
@@ -7195,18 +7240,6 @@ function BannerNotificationView({ data, notification }: { data: AppData; notific
           {notification.discarded !== "0" && (
             <p className="unlock-notification-detail">×{formatAmount(notification.discarded)} overflow discarded</p>
           )}
-        </div>
-      </aside>
-    );
-  }
-
-  if (notification.kind === "shop-error" || notification.kind === "lootbox-error") {
-    return (
-      <aside className="unlock-notification error-notification" role="status" aria-live="polite" aria-atomic="true">
-        <span className="notification-banner-icon" aria-hidden="true"><AlertTriangle size={25} /></span>
-        <div className="unlock-notification-copy">
-          <span className="unlock-notification-label"><AlertTriangle size={14} aria-hidden="true" /> {notification.kind === "shop-error" ? "Purchase error" : "Lootbox error"}</span>
-          <h2>{notification.message}</h2>
         </div>
       </aside>
     );

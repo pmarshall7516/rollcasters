@@ -4,6 +4,7 @@ import fs from "node:fs";
 const app = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const windowSource = fs.readFileSync(new URL("../src/lib/desktop-window.ts", import.meta.url), "utf8");
 const geometry = fs.readFileSync(new URL("../src/lib/desktop-window-geometry.ts", import.meta.url), "utf8");
+const native = fs.readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
 const updater = fs.readFileSync(new URL("../src/lib/desktop-updater.ts", import.meta.url), "utf8");
 const styles = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
@@ -11,7 +12,10 @@ assert.match(windowSource, /setSizeConstraints\(null\)[\s\S]*setFullscreen\(true
 assert.match(windowSource, /currentMonitor/, "Windowed limits must be derived from the active monitor.");
 assert.match(windowSource, /onMoved/, "Moving a window between monitors must trigger a bounds check.");
 assert.match(windowSource, /startDesktopCornerResize/, "Windowed resizing must be owned by the corner-resize path.");
-assert.match(windowSource, /localStorage/, "Window mode and size must persist locally.");
+assert.match(windowSource, /read_local_settings/, "Desktop startup must load the native local settings file.");
+assert.match(windowSource, /write_local_settings/, "Window changes must save through the native local settings file.");
+assert.match(native, /app_config_dir\(\)/, "Local settings must live in Tauri's per-user app config directory.");
+assert.match(native, /settings\.json/, "Desktop settings must use a stable local JSON file.");
 assert.match(updater, /isWindowsDesktop/, "Desktop chrome must be scoped to the Windows desktop build.");
 assert.match(app, /DesktopWindowChrome/, "Windowed Windows builds must render the desktop drag bar.");
 assert.match(app, /data-tauri-drag-region="deep"/, "The desktop drag bar must be a deep Tauri drag region.");
