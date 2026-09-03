@@ -84,6 +84,8 @@ function createFakeManager() {
 
 const { manager, credentialStore, client } = createFakeManager();
 await manager.initialize();
+const initialSnapshot = manager.snapshot();
+if (manager.snapshot() !== initialSnapshot) throw new Error("External-store snapshots must be referentially stable between updates.");
 await manager.addAccount(account("alice"), "alice-refresh");
 const restored = await manager.restoreAccount("alice");
 assertEqual(restored.user.id, "alice", "Restore must return the selected user.");

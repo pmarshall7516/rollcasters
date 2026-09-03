@@ -109,11 +109,10 @@ export class AccountCenterManager {
   constructor(private readonly options: AccountCenterManagerOptions) {}
 
   snapshot(): AccountCenterSnapshot {
-    return {
-      ...this.snapshotState,
-      accounts: [...this.snapshotState.accounts],
-      accountErrors: { ...this.snapshotState.accountErrors },
-    };
+    // This is also the useSyncExternalStore snapshot. Return the cached
+    // reference until publish() replaces it; constructing a new object here
+    // causes React to render forever even when the store has not changed.
+    return this.snapshotState;
   }
 
   subscribe(listener: () => void): () => void {
