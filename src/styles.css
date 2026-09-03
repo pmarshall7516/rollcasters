@@ -1133,6 +1133,32 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 3
 .auth-version-pill { justify-self: center; min-width: 76px; padding: 7px 14px; border: 1px solid var(--border-bright); border-radius: 999px; background: rgb(16 21 42 / 86%); color: var(--accent-cyan); box-shadow: 0 8px 24px rgb(0 0 0 / 22%); font-size: 13px; font-weight: 900; letter-spacing: .08em; text-align: center; }
 .confirmation-message p, .screen-heading p, .rollcaster-panel p, .catalog-card p, .loadout-slot p, .dungeon-card p, .battle-unit p, .modal-header p { color: var(--text-secondary); }
 
+.account-center-layout { position: relative; display: grid; justify-items: center; gap: 22px; width: min(560px, calc(100vw - 32px)); margin: clamp(3vh, 7vh, 80px) auto 0; }
+.account-center-close { position: fixed; top: 24px; right: clamp(16px, 3vw, 48px); z-index: 10; display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--bg-raised); color: var(--danger); }
+.account-center-close:hover { border-color: var(--danger); color: #ffb0bd; }
+.account-center-brand { display: flex; align-items: center; gap: 10px; color: var(--accent-cyan); font-size: 18px; font-weight: 950; letter-spacing: .12em; }
+.account-center-card { display: grid; gap: 16px; width: 100%; padding: 34px; border: 1px solid var(--border-bright); border-radius: var(--radius-lg); background: linear-gradient(155deg, rgb(23 29 56 / 94%), rgb(12 16 37 / 96%)); box-shadow: 0 0 0 1px rgb(167 121 255 / 12%) inset, 0 24px 70px rgb(0 0 0 / 45%), 0 0 34px rgb(112 72 191 / 16%); }
+.account-center-card h1, .account-center-card p { margin: 0; }
+.account-center-card h1 { font-family: Georgia, "Times New Roman", serif; color: var(--text-primary); font-size: 32px; }
+.account-center-help { color: var(--text-secondary); line-height: 1.5; }
+.account-center-list { display: grid; gap: 10px; }
+.account-center-account { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; border: 1px solid var(--border-soft); border-radius: 14px; background: rgb(8 10 24 / 58%); overflow: hidden; }
+.account-center-account.has-error { border-color: rgb(255 110 134 / 70%); }
+.account-center-account-main { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; min-width: 0; padding: 13px; border: 0; background: transparent; color: var(--text-primary); text-align: left; }
+.account-center-account-main:hover:not(:disabled) { background: rgb(52 61 104 / 30%); }
+.account-center-account-main:disabled { cursor: wait; opacity: .7; }
+.account-center-avatar { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--border-bright); border-radius: 50%; background: rgb(123 78 227 / 22%); color: var(--accent-cyan); }
+.account-center-account-copy { display: grid; gap: 3px; min-width: 0; }
+.account-center-account-copy strong, .account-center-account-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-center-account-copy span { color: var(--text-muted); font-size: 13px; }
+.account-center-account-copy small { color: #ffb0bd; line-height: 1.3; white-space: normal; }
+.account-center-continue { color: var(--accent-cyan); font-size: 13px; font-weight: 850; white-space: nowrap; }
+.account-center-remove { display: grid; place-items: center; width: 44px; border: 0; border-left: 1px solid var(--border-soft); background: transparent; color: var(--text-muted); }
+.account-center-remove:hover:not(:disabled) { background: rgb(255 110 134 / 12%); color: #ffb0bd; }
+.account-center-add { width: 100%; }
+.account-center-capacity, .account-center-privacy { color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+.account-center-capacity { color: var(--accent-gold); }
+
 .primary-button { min-height: 46px; border: 1px solid rgb(181 160 255 / 65%); border-radius: 12px; background: linear-gradient(135deg, #7b4ee3, #4e9fc7); box-shadow: 0 8px 24px rgb(79 73 190 / 30%), inset 0 1px rgb(255 255 255 / 25%); }
 .primary-button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 12px 32px rgb(79 228 225 / 22%); }
 .secondary-button, .link-button { min-height: 44px; border: 1px solid var(--border-soft); border-radius: 12px; background: rgb(23 29 56 / 86%); color: var(--text-primary); }

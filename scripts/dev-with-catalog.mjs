@@ -45,6 +45,8 @@ const child = spawn(process.execPath, [viteCli, '--host', '127.0.0.1'], {
   stdio: 'inherit',
   env: {
     ...process.env,
+    VITE_GAME_PROFILE: 'local',
+    VITE_ALLOW_INSECURE_ACCOUNT_CENTER_STORAGE: 'true',
     VITE_LOCAL_CATALOG_DIR: catalogRoot,
     VITE_GAME_CATALOG_MODE: 'release',
     VITE_GAME_CATALOG_RELEASE_ID: String(pointer.catalogVersion),

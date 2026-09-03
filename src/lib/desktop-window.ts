@@ -4,9 +4,9 @@ import {
   DEFAULT_WINDOW_PREFERENCES,
   readWindowPreferencesFromSettings,
   resolveNativeResizeMode,
-  updateWindowPreferences,
   type WindowPreferences,
 } from "./desktop-settings";
+import { loadLocalSettings, saveLocalSettings } from "./local-settings";
 import {
   DEFAULT_WINDOWED_SIZE,
   WINDOW_ASPECT_RATIO,
@@ -40,8 +40,6 @@ let snapshot: DesktopWindowSnapshot = {
 };
 let initialization: Promise<void> | null = null;
 let nativeModeChangeInFlight = false;
-let localSettings: unknown = null;
-let settingsWriteQueue = Promise.resolve();
 
 function publish(next: Partial<DesktopWindowSnapshot>) {
   snapshot = { ...snapshot, ...next };
@@ -91,24 +89,15 @@ function persistBrowserPreferences(mode: WindowMode, windowedSize: WindowedSize)
   }
 }
 
-async function readLocalSettings(): Promise<unknown> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke("read_local_settings");
-}
-
 function persistPreferences(mode: WindowMode, windowedSize: WindowedSize): Promise<void> {
   if (!isTauriDesktop()) {
     persistBrowserPreferences(mode, windowedSize);
     return Promise.resolve();
   }
-  localSettings = updateWindowPreferences(localSettings, mode, windowedSize);
-  const nextSettings = localSettings;
-  const write = settingsWriteQueue.then(async () => {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("write_local_settings", { settings: nextSettings });
-  });
-  settingsWriteQueue = write.catch(() => undefined);
-  return write;
+  return saveLocalSettings((current) => ({
+    ...current,
+    window: { mode, width: windowedSize.width, height: windowedSize.height },
+  }));
 }
 
 function availableStorage(): Storage | null {
@@ -187,11 +176,10 @@ export async function initializeDesktopWindow(): Promise<void> {
     if (!appWindow) return;
     let settings: unknown = null;
     try {
-      settings = await readLocalSettings();
+      settings = await loadLocalSettings();
     } catch (error) {
       console.error("Unable to read Rollcasters local settings.", error);
     }
-    localSettings = settings;
     const legacyPreferences = readLegacyWindowPreferences(availableStorage());
     const migratedLegacyPreferences = settings === null && legacyPreferences !== null;
     const preferences = settings === null

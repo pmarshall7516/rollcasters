@@ -79,6 +79,11 @@ try {
   const createdUser = created.data.users.find((user) => user.email === email);
   assert.ok(createdUser, "The local sign-up flow must create an Auth user.");
   userIds.push(createdUser.id);
+  await signupPage.locator(".user-menu-trigger").click();
+  await signupPage.getByRole("menuitem", { name: "Account Center" }).click();
+  await assert.doesNotReject(async () => signupPage.getByRole("heading", { name: "Account Center" }).waitFor());
+  await signupPage.getByRole("button", { name: "Continue" }).click();
+  await waitForStarterOnPage(signupPage);
   await signupPage.close();
 
   const signinPage = await browser.newPage();
@@ -91,4 +96,11 @@ try {
     await admin.auth.admin.deleteUser(user.id).catch(() => undefined);
   }
   await browser.close();
+}
+
+async function waitForStarterOnPage(page) {
+  await page.waitForFunction(() => {
+    const text = window.render_game_to_text?.();
+    return text && JSON.parse(text).view === "starter-rollcaster";
+  });
 }

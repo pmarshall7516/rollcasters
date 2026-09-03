@@ -32,7 +32,7 @@ assertEqual(
   "Invalid window settings must use safe fullscreen defaults.",
 );
 assertEqual(
-  readWindowPreferencesFromSettings({ version: 2, window: { mode: "windowed", width: 1440, height: 810 } }),
+  readWindowPreferencesFromSettings({ version: 3, window: { mode: "windowed", width: 1440, height: 810 } }),
   DEFAULT_WINDOW_PREFERENCES,
   "Unsupported settings versions must use safe fullscreen defaults.",
 );
@@ -45,7 +45,7 @@ const updated = updateWindowPreferences(
 assertEqual(
   updated,
   {
-    version: 1,
+    version: 2,
     controls: { interact: "Enter" },
     audio: { volume: 0.7 },
     window: { mode: "windowed", width: 1600, height: 900 },
