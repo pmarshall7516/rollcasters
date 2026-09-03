@@ -54,5 +54,10 @@ export function catalogAssetPath(
 }
 
 export function findAssetPath(data: AppData, category: string, ownerId: string, variant = "icon"): string | null {
-  return versionedAssetPath(data, findAssetRecord(data, category, ownerId, variant)?.path ?? null);
+  const categories = category === "mana" ? ["mana", "ui"] : [category];
+  for (const candidateCategory of categories) {
+    const path = findAssetRecord(data, candidateCategory, ownerId, variant)?.path;
+    if (path) return versionedAssetPath(data, path);
+  }
+  return null;
 }

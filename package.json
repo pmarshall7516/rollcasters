@@ -22,6 +22,7 @@
     "test:shop-presentation": "tsc scripts/shop-presentation-tests.ts src/features/shop/shop-presentation.ts src/lib/collectibles.ts src/lib/challenges.ts src/lib/types.ts --outDir /tmp/rollcasters-shop-presentation-tests --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM --skipLibCheck && node /tmp/rollcasters-shop-presentation-tests/scripts/shop-presentation-tests.js",
     "test:stable-policy:db": "node scripts/stable-policy-db-tests.mjs",
     "test:promo-code-definition-db": "node scripts/promo-code-definition-db-tests.mjs",
+    "test:promo-code-definition-gate": "node scripts/promo-code-definition-gate-tests.mjs",
     "test:local-promo-code-bridge": "node scripts/local-promo-code-bridge-tests.mjs",
     "test:promo-code-routing": "node scripts/promo-code-routing-tests.mjs",
     "dev": "node scripts/dev-local.mjs",

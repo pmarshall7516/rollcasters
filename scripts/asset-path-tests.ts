@@ -63,6 +63,24 @@ const data = { catalog: { gameAssets: assets } } as AppData;
 check(findAssetRecord(data, "critter", "ramber", "icon")?.id === "active-icon", "active asset records should be found");
 check(findAssetRecord(data, "critter", "ramber", "card") === undefined, "inactive asset records should be ignored");
 check(findAssetPath(data, "critter", "ramber") === "critters/ramber/icon.png?v=checksum-1", "asset lookup should use the default icon variant and checksum version");
+const currentManaReleaseData = {
+  catalog: {
+    gameAssets: [{
+      ...assets[0],
+      id: "current-mana-icon",
+      path: "ui/mana.icon.checksum-mana.webp",
+      category: "ui",
+      owner_table: "global",
+      owner_id: "mana",
+      variant: "icon",
+      checksum: "checksum-mana",
+    }],
+  },
+} as AppData;
+check(
+  findAssetPath(currentManaReleaseData, "mana", "mana") === "ui/mana.icon.checksum-mana.webp?v=checksum-mana",
+  "Mana lookup must resolve the current release record even when its global asset category is ui",
+);
 check(catalogAssetPath(data, "ui", "updated", undefined) === "ui/updated.png?v=2026-02-01T00%3A00%3A00Z", "catalog lookup should use updated_at when no checksum exists");
 check(catalogAssetPath(data, "critter", "ramber", "https://cdn.example.test/ramber.png") === "https://cdn.example.test/ramber.png", "direct external paths should remain unchanged");
 check(versionedAssetPath(data, "critters/ramber/icon.png?size=small") === "critters/ramber/icon.png?size=small&v=checksum-1", "existing query parameters should be preserved");
