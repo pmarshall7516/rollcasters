@@ -17,6 +17,7 @@ pub fn run() {
                 })
                 .build(),
         )
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![exit_app])

@@ -72,7 +72,7 @@ try {
   const release = await client.query(
     "select current_release_id from public.content_release_channels where channel='production'",
   );
-  assert.equal(release.rows[0]?.current_release_id, "2026.08.26.2");
+  assert.match(release.rows[0]?.current_release_id ?? "", /^\d{4}\.\d{2}\.\d{2}\.\d+$/);
   const update = await client.query(`
     select version,catalog_release_id from public.game_updates
     where id=(select active_update_id from public.game_update_policy where singleton)
@@ -93,4 +93,7 @@ const bootstrap = fs.readFileSync(new URL("./bootstrap-local-player-db.mjs", imp
 assert.doesNotMatch(bootstrap, /const catalogTables\s*=/, "Local Game bootstrap must not define a copied Catalog table list.");
 assert.match(bootstrap, /releaseInfrastructureTables/, "Local Game bootstrap must retain release infrastructure explicitly.");
 assert.doesNotMatch(bootstrap, /catalogRowsCopied/, "Local Game bootstrap output must not claim Catalog rows are copied.");
+const migrationRunner = fs.readFileSync(new URL("./apply-local-player-migrations.mjs", import.meta.url), "utf8");
+assert.match(migrationRunner, /latestAppliedVersion/, "Local migrations must advance from the cloned production ledger.");
+assert.match(migrationRunner, /pendingFiles/, "Local migrations must not replay historical migrations against release-backed views.");
 console.log("Local player schema contract passed.");

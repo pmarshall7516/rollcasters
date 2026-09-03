@@ -1,4 +1,5 @@
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { fetch as tauriHttpFetch } from "@tauri-apps/plugin-http";
 import { assertServerCatalogCompatibility, loadPublishedCatalog } from "./catalog-release";
 import type {
   AppData,
@@ -90,6 +91,14 @@ let latestPlayerStateRevision: bigint | null = null;
 let localPreviewUserId: string | null = null;
 const playerMutationOutbox = createPlayerMutationOutbox<null>(null);
 
+// WKWebView does not reliably complete cross-origin requests from Tauri's
+// custom origin to a loopback Supabase stack. Use Tauri's native HTTP client
+// only for the Local desktop profile; published builds keep the browser Fetch
+// path and can only target the production Supabase project.
+const networkFetch: typeof fetch = desktopRuntime && desktopProfile.profile === "local"
+  ? tauriHttpFetch
+  : globalThis.fetch;
+
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 const gameCompatibilityHeaders: Record<string, string> = {
   "x-rollcasters-version": gameVersion,
@@ -106,7 +115,7 @@ const compatibilityFetch: typeof fetch = (input, init) => {
   for (const [name, value] of Object.entries(gameCompatibilityHeaders)) {
     headers.set(name, value);
   }
-  return globalThis.fetch(input, { ...init, headers });
+  return networkFetch(input, { ...init, headers });
 };
 
 export const supabase: SupabaseClient | null = hasSupabaseConfig

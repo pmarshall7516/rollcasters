@@ -2,6 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { parseEnv } from './db-utils.mjs'
+import {
+  assertLoopbackConnection,
+  buildPreviewCompatibilityError,
+} from './local-player-release-sync.mjs'
 
 const args = process.argv.slice(2)
 const value = (name) => {
@@ -62,6 +66,47 @@ const localSupabaseKey = configuredEnv.VITE_LOCAL_SUPABASE_PUBLISHABLE_KEY ?? lo
 if (!localSupabaseUrl || !localSupabaseKey) {
   throw new Error('Local preview packaging requires a running local Supabase stack or VITE_LOCAL_SUPABASE_URL and VITE_LOCAL_SUPABASE_PUBLISHABLE_KEY.')
 }
+assertLoopbackConnection(localSupabaseUrl)
+
+async function verifyLocalPlayerBackend() {
+  const healthController = new AbortController()
+  const healthTimeout = setTimeout(() => healthController.abort(), 5000)
+  try {
+    const health = await fetch(`${localSupabaseUrl.replace(/\/$/, '')}/auth/v1/health`, {
+      signal: healthController.signal,
+    })
+    if (!health.ok) throw new Error(`Auth health returned HTTP ${health.status}.`)
+  } catch (error) {
+    throw new Error(`Local Supabase is not reachable at ${localSupabaseUrl}; run npm run local:player:start first. ${error.message}`)
+  } finally {
+    clearTimeout(healthTimeout)
+  }
+
+  const status = await fetch(`${localSupabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/get_game_update_status`, {
+    method: 'POST',
+    headers: {
+      apikey: localSupabaseKey,
+      Authorization: `Bearer ${localSupabaseKey}`,
+      'content-type': 'application/json',
+    },
+    body: '{}',
+  })
+  if (!status.ok) throw new Error(`Local player compatibility status returned HTTP ${status.status}.`)
+  const payload = await status.json()
+  const active = Array.isArray(payload) ? payload[0] : payload?.active
+  if (!active) throw new Error('Local player database has no active Game Update; run npm run local:player:bootstrap first.')
+  const activeReleaseId = active.catalogReleaseId ?? active.catalog_release_id
+  if (active.version !== version || activeReleaseId !== pointer.catalogVersion) {
+    throw new Error(buildPreviewCompatibilityError({
+      version,
+      releaseId: pointer.catalogVersion,
+      activeVersion: active.version,
+      activeReleaseId,
+    }))
+  }
+}
+
+await verifyLocalPlayerBackend()
 
 const staged = path.resolve('public', 'desktop-catalog')
 if (fs.existsSync(staged)) fs.rmSync(staged, { recursive: true, force: true })

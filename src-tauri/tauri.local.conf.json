@@ -2,10 +2,16 @@
   "productName": "Rollcasters Local",
   "identifier": "com.rollcasters.local",
   "build": { "beforeBuildCommand": "npm run build:local" },
-  "app": { "windows": [{
-    "label": "main", "title": "Rollcasters Local", "width": 1280, "height": 720,
-    "minWidth": 1280, "minHeight": 720, "resizable": false, "fullscreen": true,
-    "decorations": false, "visible": false, "maximized": false, "center": true
-  }] },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' http://127.0.0.1:1430 asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:1430 http://127.0.0.1:54321 ws://127.0.0.1:54321 https://*.supabase.co wss://*.supabase.co"
+    },
+    "windows": [{
+      "label": "main", "title": "Rollcasters Local", "width": 1280, "height": 720,
+      "minWidth": 1280, "minHeight": 720, "resizable": false, "fullscreen": true,
+      "decorations": false, "visible": false, "maximized": false, "center": true
+    }]
+  },
+  "bundle": { "createUpdaterArtifacts": false },
   "plugins": { "updater": { "active": false } }
 }
