@@ -7,6 +7,12 @@ export function preferredAssetPath(
   directPath: string | null | undefined,
   variants: readonly string[],
 ): string | null {
+  // The catalog row's direct path is the authoritative association. The
+  // owner-indexed asset registry is only a fallback for legacy rows without
+  // a direct path, since numeric IDs can be reordered independently of the
+  // source asset filename.
+  if (directPath) return catalogAssetPath(data, category, ownerId, directPath);
+
   if (ownerId) {
     for (const variant of variants) {
       const path = findAssetPath(data, category, ownerId, variant);

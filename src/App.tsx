@@ -4208,9 +4208,22 @@ function PromoRewardArt({ data, reward }: { data: AppData; reward: PromoCodeRewa
           : <Sparkles aria-hidden="true" />;
   const snapshotPath = getSnapshotGameAssetUrl(reward.assetPath);
   const category = reward.type === "shard" ? reward.targetCategory : reward.type;
-  const currentVariant = category
-    ? findAssetPath(data, category, reward.targetId, category === "currency" || category === "relic" ? "icon" : "thumb")
-    : null;
+  const collectibleCategory: CollectibleType | null = reward.type === "shard"
+    ? reward.targetCategory
+    : reward.type === "critter" || reward.type === "rollcaster" || reward.type === "relic"
+      ? reward.type
+      : null;
+  const currentVariant = collectibleCategory
+    ? preferredAssetPath(
+      data,
+      collectibleCategory,
+      reward.targetId,
+      collectibleAssetPath(data, collectibleCategory, reward.targetId),
+      collectibleCategory === "relic" ? ["icon", "thumb", "card"] : ["thumb", "card"],
+    )
+    : category
+      ? findAssetPath(data, category, reward.targetId, "icon")
+      : null;
   const art = <AssetIcon path={currentVariant ?? snapshotPath} alt="" fallback={fallback} />;
   if (reward.type === "shard") {
     return (
@@ -4476,7 +4489,7 @@ function RollcasterGrid({
           }}>
             <button type="button" className="catalog-card-details" aria-label={`View ${rollcaster.name} details`} onClick={() => setDetail({ type: "rollcaster", id: rollcaster.id })}><Search size={14} aria-hidden="true" /></button>
             <span className="collectible-id">{rollcaster.id}</span>
-            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={findAssetPath(data, "rollcaster", rollcaster.id, "card") ?? catalogAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path)} size="hero" fit="portrait" /></CardSprite>
+            <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["card"])} size="hero" fit="portrait" /></CardSprite>
             <CardName data={data} name={rollcaster.name} />
             <CollectionCardState>
               {unlocked ? <div className="collection-progression"><p>Level {owned?.level ?? 1}</p><ProgressBar progress={progress} /></div> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} onRefresh={onRefresh} />}
@@ -4523,7 +4536,7 @@ function CritterGrid({
             <CardSprite><Sprite
               name={critter.name}
               element={critter.element_1_id}
-              assetPath={findAssetPath(data, "critter", critter.id, "card") ?? catalogAssetPath(data, "critter", critter.id, critter.asset_path)}
+              assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["card"])}
               size="large"
             /></CardSprite>
             <CardName data={data} name={critter.name} critter={critter} />
@@ -4559,7 +4572,7 @@ function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh }: { da
     }}>
       <button type="button" className="catalog-card-details" aria-label={`View ${relic.name} details`} onClick={onClick}><Search size={14} aria-hidden="true" /></button>
       <span className="collectible-id">{relic.id}</span>
-      <CardSprite><Sprite name={relic.name} element="metal" assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} size="large" /></CardSprite>
+      <CardSprite><Sprite name={relic.name} element="metal" assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} size="large" /></CardSprite>
       <CardName data={data} name={relic.name} />
       <CollectionCardState>
         {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} onRefresh={onRefresh} />}
@@ -4784,7 +4797,7 @@ function DetailModal({
     const quantity = data.player!.relicInventory.find((row) => row.relic_id === relic.id)?.quantity ?? 0;
     return (
       <Modal title={relic.name} onClose={onClose}>
-        <CollectibleDetailHero data={data} id={relic.id} name={relic.name} assetPath={findAssetPath(data, "relic", relic.id, "card") ?? catalogAssetPath(data, "relic", relic.id, relic.asset_path)} assetElement="metal" />
+        <CollectibleDetailHero data={data} id={relic.id} name={relic.name} assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} assetElement="metal" />
         <p><strong>Owned:</strong> {quantity} / {relic.max_owned}</p>
         <CollectibleChallengePanel data={data} type="relic" id={relic.id} unlocked={collectibleIsUnlocked(data, "relic", relic.id)} onRefresh={onRefresh} />
         <EffectList effects={data.catalog.effectsByRelic[relic.id] ?? []} className="effect-summary" />

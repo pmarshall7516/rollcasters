@@ -1,4 +1,4 @@
-import { catalogAssetPath, findAssetPath, findAssetRecord, versionedAssetPath } from "../src/lib/asset-paths.js";
+import { catalogAssetPath, findAssetPath, findAssetRecord, preferredAssetPath, versionedAssetPath } from "../src/lib/asset-paths.js";
 import type { AppData, GameAsset } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -67,5 +67,37 @@ check(catalogAssetPath(data, "ui", "updated", undefined) === "ui/updated.png?v=2
 check(catalogAssetPath(data, "critter", "ramber", "https://cdn.example.test/ramber.png") === "https://cdn.example.test/ramber.png", "direct external paths should remain unchanged");
 check(versionedAssetPath(data, "critters/ramber/icon.png?size=small") === "critters/ramber/icon.png?size=small&v=checksum-1", "existing query parameters should be preserved");
 check(versionedAssetPath(data, "missing.png") === "missing.png", "unregistered paths should remain unchanged");
+
+const reorderedRelicData = {
+  catalog: {
+    gameAssets: [
+      {
+        ...assets[0],
+        id: "stale-relic-owner",
+        path: "relics/016-weighted-die.png",
+        category: "relic",
+        owner_table: "relics",
+        owner_id: "016",
+        variant: "card",
+        checksum: "stale-relic-checksum",
+      },
+      {
+        ...assets[0],
+        id: "current-relic-path",
+        path: "relics/017-tiny-blade.png",
+        category: "relic",
+        owner_table: "relics",
+        owner_id: "017",
+        variant: "card",
+        checksum: "current-relic-checksum",
+      },
+    ],
+  },
+} as AppData;
+check(
+  preferredAssetPath(reorderedRelicData, "relic", "016", "relics/017-tiny-blade.png", ["card", "thumb"]) ===
+    "relics/017-tiny-blade.png?v=current-relic-checksum",
+  "the catalog row asset path should win over a stale owner-id asset mapping",
+);
 
 console.log("Asset path tests passed.");
