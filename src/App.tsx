@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type SetStateAction } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -15,7 +15,6 @@ import {
   Gift,
   Info,
   Lock,
-  LogOut,
   Maximize2,
   Minimize2,
   Play,
@@ -35,6 +34,7 @@ import {
 } from "lucide-react";
 import {
   acknowledgeCollectibleUnlockEvent,
+  assertGameAccount,
   acquireGameplaySession,
   desktopProfile,
   ensureUserGameState,
@@ -42,12 +42,13 @@ import {
   getGameUpdateStatus,
   getSnapshotGameAssetUrl,
   getPromoCodeRedemptionHistory,
-  getSession,
+  clearLegacySessionStorage,
   flushPlayerMutations,
   flushPlayerMutationsWithTimeout,
   heartbeatGameplaySession,
   hasSupabaseConfig,
   currentGameVersion,
+  createAccountSupabaseClient,
   loadAppData,
   openLootbox,
   purchaseShopEntry,
@@ -63,13 +64,11 @@ import {
   selectStarterCritter,
   selectStarterRollcaster,
   saveDungeonRunStateWithTimeout,
-  signIn,
-  signOut,
-  signUp,
+  setActiveSupabaseClient,
   snapshotDungeonRunEffectsWithRecovery,
   startDungeonRunWithRecovery,
   submitCollectibleCombatEvents,
-  supabase,
+  readLegacySession,
   syncLocalServerCompatibility,
   trackCollectibleChallenge,
   untrackCollectibleChallenge,
@@ -77,6 +76,10 @@ import {
   unlockRollcasterAbility,
   type GameplaySessionResult,
 } from "./lib/supabase";
+import { createAccountCenterManager, type AuthSession } from "./lib/account-center";
+import { createSecureCredentialStore } from "./lib/account-center-storage";
+import { loadLocalSettings, saveLocalSettings } from "./lib/local-settings";
+import { AccountCenter } from "./features/account/AccountCenter";
 import {
   byId,
   calculateActionCostBreakdown,
@@ -282,6 +285,22 @@ type PromoRenderState = {
 const BANNER_NOTIFICATION_DURATION_MS = 5_000;
 const DESKTOP_CLOSE_SAVE_TIMEOUT_MS = 4_000;
 
+const accountCenterManager = createAccountCenterManager({
+  credentialStore: createSecureCredentialStore(
+    desktopProfile,
+    Boolean(import.meta.env.DEV && import.meta.env.VITE_ALLOW_INSECURE_ACCOUNT_CENTER_STORAGE === "true"),
+  ),
+  clientFactory: () => createAccountSupabaseClient(),
+  loadSettings: loadLocalSettings,
+  saveSettings: saveLocalSettings,
+  validateSession: (client, _session) => assertGameAccount(client as never),
+  setActiveClient: (client, userId) => setActiveSupabaseClient(client as never, userId),
+});
+
+const subscribeToAccountCenter = (listener: () => void) => accountCenterManager.subscribe(listener);
+const getAccountCenterSnapshot = () => accountCenterManager.snapshot();
+let accountCenterStartupPromise: Promise<void> | null = null;
+
 type NotifyError = (error: unknown, fallback: string, title?: string) => void;
 
 function createErrorNotification(error: unknown, fallback: string, title = "Error"): BannerNotification {
@@ -310,6 +329,7 @@ function requiredStarterView(player: PlayerState | null | undefined): View | nul
 export function App() {
   const desktopWindow = useDesktopWindow();
   const controlBindings = useControlBindings();
+  const accountCenter = useSyncExternalStore(subscribeToAccountCenter, getAccountCenterSnapshot, getAccountCenterSnapshot);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [desktopGate, setDesktopGate] = useState<"checking" | "ready" | "required" | "error">(() => isTauriDesktop() ? "checking" : "ready");
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
@@ -317,9 +337,11 @@ export function App() {
   const [lootboxOperationActive, setLootboxOperationActive] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
+  const [authEntry, setAuthEntry] = useState<"center" | "form">("form");
   const [sessionConflict, setSessionConflict] = useState<GameplaySessionResult | null>(null);
   const [accountMoved, setAccountMoved] = useState(false);
   const [sessionActionBusy, setSessionActionBusy] = useState(false);
+  const [accountActionId, setAccountActionId] = useState<string | null>(null);
   const [view, setView] = useState<View>("auth");
   const [data, setData] = useState<AppData | null>(null);
   const shopPurchaseRevisionRef = useRef(0);
@@ -1133,39 +1155,90 @@ export function App() {
     if (await establishGameplaySession(false)) await refresh();
   }
 
+  async function authenticateWithPassword(email: string, password: string): Promise<void> {
+    await accountCenterManager.signInWithPassword(email, password);
+    await finishAuthentication();
+  }
+
+  async function registerAccount(email: string, password: string, username: string): Promise<boolean> {
+    const session = await accountCenterManager.signUp(email, password, username);
+    if (!session) return false;
+    await finishAuthentication();
+    return true;
+  }
+
+  async function selectRememberedAccount(userId: string): Promise<void> {
+    if (accountCenter.accountErrors[userId]) {
+      setAuthEntry("form");
+      return;
+    }
+    setAccountActionId(userId);
+    setSessionActionBusy(true);
+    try {
+      await accountCenterManager.restoreAccount(userId);
+      await finishAuthentication();
+    } catch (error) {
+      notifyError(error, "Unable to restore this account.", "Account error");
+    } finally {
+      setAccountActionId(null);
+      setSessionActionBusy(false);
+    }
+  }
+
+  async function returnToAccountCenter(): Promise<void> {
+    sessionStoppingRef.current = true;
+    await releaseGameplaySession().catch(() => undefined);
+    await flushPlayerMutations().catch(() => undefined);
+    await accountCenterManager.returnToAccountCenter();
+    setIsAuthed(false);
+    setData(null);
+    setCombat(null);
+    setDungeonEntry(null);
+    dungeonEntryRequestRef.current = null;
+    setActiveDungeonPrompt(null);
+    setSessionConflict(null);
+    setAccountMoved(false);
+    setAuthEntry("center");
+    setView("auth");
+  }
+
+  async function removeRememberedAccount(userId: string): Promise<void> {
+    setAccountActionId(userId);
+    setSessionActionBusy(true);
+    try {
+      await accountCenterManager.removeAccount(userId);
+    } catch (error) {
+      notifyError(error, "Unable to remove this account from the device.", "Account error");
+    } finally {
+      setAccountActionId(null);
+      setSessionActionBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (desktopGate !== "ready") return;
-    if (!hasSupabaseConfig || !supabase) {
+    if (!hasSupabaseConfig) {
       setSessionReady(true);
       return;
     }
 
     const initializeSession = async () => {
       await syncLocalServerCompatibility();
-      const session = await getSession();
-      setIsAuthed(Boolean(session));
-      if (session && await establishGameplaySession(false)) await refresh();
+      const remembered = await accountCenterManager.initialize();
+      const legacy = await readLegacySession();
+      if (legacy) {
+        await accountCenterManager.importSession(legacy as AuthSession);
+        await clearLegacySessionStorage();
+        if (await establishGameplaySession(false)) await refresh();
+        return;
+      }
+      setIsAuthed(false);
+      setAuthEntry(remembered.accounts.length > 0 ? "center" : "form");
     };
-    void initializeSession()
+    accountCenterStartupPromise ??= initializeSession();
+    void accountCenterStartupPromise
       .catch((err) => setError(errorMessage(err, "Unable to initialize the game session.")))
       .finally(() => setSessionReady(true));
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsAuthed(Boolean(session));
-      if (!session) {
-        setData(null);
-        setSessionConflict(null);
-        setAccountMoved(false);
-        setDungeonEntry(null);
-        dungeonEntryRequestRef.current = null;
-        clearedLegacyShopLedgerUserRef.current = null;
-        setView("auth");
-      }
-    });
-
-    return () => subscription.unsubscribe();
   }, [desktopGate]);
 
   useEffect(() => {
@@ -1185,16 +1258,7 @@ export function App() {
   }, [accountMoved, isAuthed, sessionConflict]);
 
   async function endSession(): Promise<void> {
-    sessionStoppingRef.current = true;
-    try {
-      await signOut();
-      setIsAuthed(false);
-      setSessionConflict(null);
-      setAccountMoved(false);
-    } catch (error) {
-      sessionStoppingRef.current = false;
-      throw error;
-    }
+    await returnToAccountCenter();
   }
 
   useEffect(() => {
@@ -1449,7 +1513,18 @@ export function App() {
   if (desktopGate === "required" && desktopUpdate) return <Shell><DesktopUpdateScreen version={desktopUpdate.version} update={desktopUpdate} onError={notifyError} />{notificationView}</Shell>;
   if (!hasSupabaseConfig) return <SetupScreen />;
   if (!sessionReady) return <Shell><Loading message="Checking session..." />{notificationView}</Shell>;
-  if (!isAuthed) return <Shell><AuthScreen onAuthed={() => void finishAuthentication()} onClose={closeRollcasters} onError={notifyError} />{notificationView}</Shell>;
+  if (!isAuthed && authEntry === "center" && accountCenter.accounts.length > 0) {
+    return <Shell><AccountCenter
+      accounts={accountCenter.accounts}
+      accountErrors={accountCenter.accountErrors}
+      busyAccountId={accountActionId}
+      onSelect={(userId) => void selectRememberedAccount(userId)}
+      onAdd={() => setAuthEntry("form")}
+      onRemove={(userId) => void removeRememberedAccount(userId)}
+      onClose={closeRollcasters}
+    />{notificationView}</Shell>;
+  }
+  if (!isAuthed) return <Shell><AuthScreen onSignIn={authenticateWithPassword} onSignUp={registerAccount} onClose={closeRollcasters} onError={notifyError} />{notificationView}</Shell>;
   if (sessionConflict) return <Shell><GameplaySessionDialog
     kind="online"
     busy={sessionActionBusy}
@@ -2051,11 +2126,13 @@ function GameplaySessionDialog({
 }
 
 function AuthScreen({
-  onAuthed,
+  onSignIn,
+  onSignUp,
   onClose,
   onError,
 }: {
-  onAuthed: () => void;
+  onSignIn: (email: string, password: string) => Promise<void>;
+  onSignUp: (email: string, password: string, username: string) => Promise<boolean>;
   onClose: () => Promise<void>;
   onError: NotifyError;
 }) {
@@ -2071,15 +2148,14 @@ function AuthScreen({
     setBusy(true);
     try {
       if (mode === "signup") {
-        const hasSession = await signUp(email, password, username || email.split("@")[0]);
+        const hasSession = await onSignUp(email, password, username || email.split("@")[0]);
         if (!hasSession) {
           setConfirmationEmail(email);
           return;
         }
       } else {
-        await signIn(email, password);
+        await onSignIn(email, password);
       }
-      await onAuthed();
     } catch (err) {
       onError(err, "Authentication failed.", "Authentication error");
     } finally {
@@ -2255,8 +2331,8 @@ function TopBar({
                   void Promise.resolve(onSignOut()).catch((error) => onError(error, "Unable to sign out.", "Account error"));
                 }}
               >
-                <LogOut size={17} aria-hidden="true" />
-                Log Out
+                <UserRound size={17} aria-hidden="true" />
+                Account Center
               </button>
               <div className="user-menu-version" aria-label={`Game version ${currentGameVersion}`}>
                 <span>Game version</span>

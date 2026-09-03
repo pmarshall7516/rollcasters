@@ -10,6 +10,7 @@ export type DesktopProfile = {
   appId: "com.rollcasters.local" | "com.rollcasters.game";
   badge: "LOCAL" | "";
   storageNamespace: string;
+  credentialNamespace: string;
   dataNamespace: string;
   logNamespace: string;
   updaterNamespace: string;
@@ -73,6 +74,7 @@ export function resolveDesktopProfile(env: ProfileEnvironment): DesktopProfile {
     appId: expected.appId,
     badge: expected.badge,
     storageNamespace: `${expected.appId}.auth`,
+    credentialNamespace: `${expected.appId}.accounts.v1:${actualProjectRef}`,
     dataNamespace: `${expected.appId}.data`,
     logNamespace: `${expected.appId}.logs`,
     updaterNamespace: `${expected.appId}.updates`,

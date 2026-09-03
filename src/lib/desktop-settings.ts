@@ -4,7 +4,7 @@ import {
   type WindowedSize,
 } from "./desktop-window-geometry.js";
 
-export const LOCAL_SETTINGS_VERSION = 1;
+export const LOCAL_SETTINGS_VERSION = 2;
 
 export type WindowMode = "fullscreen" | "windowed";
 export type WindowPreferences = { mode: WindowMode; windowedSize: WindowedSize };
@@ -29,7 +29,7 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
 };
 
 export function readWindowPreferencesFromSettings(settings: unknown): WindowPreferences {
-  if (!isRecord(settings) || settings.version !== LOCAL_SETTINGS_VERSION || !isRecord(settings.window)) return DEFAULT_WINDOW_PREFERENCES;
+  if (!isRecord(settings) || (settings.version !== 1 && settings.version !== LOCAL_SETTINGS_VERSION) || !isRecord(settings.window)) return DEFAULT_WINDOW_PREFERENCES;
   const storedWindow = settings.window;
   if (storedWindow.mode !== "fullscreen" && storedWindow.mode !== "windowed") {
     return DEFAULT_WINDOW_PREFERENCES;

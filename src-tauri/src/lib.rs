@@ -1,9 +1,51 @@
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 use tauri::Manager;
 
 const LOCAL_SETTINGS_FILE: &str = "settings.json";
+static CREDENTIAL_STORE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+fn credential_service(app: &tauri::AppHandle) -> String {
+    format!("{}.accounts.v1", app.config().identifier)
+}
+
+fn credential_entry(app: &tauri::AppHandle, user_id: &str) -> Result<keyring::Entry, String> {
+    if user_id.is_empty() || user_id.chars().any(|character| character.is_control() || matches!(character, '/' | '\\')) {
+        return Err("Invalid account identifier.".to_string());
+    }
+    keyring::Entry::new(&credential_service(app), user_id).map_err(|_| "Unable to access the secure credential store.".to_string())
+}
+
+#[tauri::command]
+fn secure_credential_get(app: tauri::AppHandle, user_id: String) -> Result<Option<String>, String> {
+    let _lock = CREDENTIAL_STORE_LOCK.lock().map_err(|_| "Secure credential store is unavailable.".to_string())?;
+    let entry = credential_entry(&app, &user_id)?;
+    match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err("Unable to access the secure credential store.".to_string()),
+    }
+}
+
+#[tauri::command]
+fn secure_credential_set(app: tauri::AppHandle, user_id: String, refresh_token: String) -> Result<(), String> {
+    if refresh_token.is_empty() || refresh_token.chars().any(char::is_control) {
+        return Err("Invalid secure credential.".to_string());
+    }
+    let _lock = CREDENTIAL_STORE_LOCK.lock().map_err(|_| "Secure credential store is unavailable.".to_string())?;
+    credential_entry(&app, &user_id)?.set_password(&refresh_token).map_err(|_| "Unable to save the secure credential.".to_string())
+}
+
+#[tauri::command]
+fn secure_credential_delete(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
+    let _lock = CREDENTIAL_STORE_LOCK.lock().map_err(|_| "Secure credential store is unavailable.".to_string())?;
+    match credential_entry(&app, &user_id)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err("Unable to remove the secure credential.".to_string()),
+    }
+}
 
 fn local_settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -77,7 +119,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![exit_app, read_local_settings, write_local_settings])
+        .invoke_handler(tauri::generate_handler![exit_app, read_local_settings, write_local_settings, secure_credential_get, secure_credential_set, secure_credential_delete])
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 window.app_handle().exit(0);

@@ -123,20 +123,51 @@ const compatibilityFetch: typeof fetch = (input, init) => {
   return networkFetch(input, { ...init, headers });
 };
 
-export const supabase: SupabaseClient | null = hasSupabaseConfig
-  ? createClient(supabaseUrl!, supabaseKey!, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: !desktopRuntime,
-        storageKey: desktopProfile.storageNamespace,
-      },
-      global: {
-        headers: gameCompatibilityHeaders,
-        fetch: compatibilityFetch,
-      },
-    })
-  : null;
+function createGameClient(persistSession: boolean, storageKey?: string): SupabaseClient | null {
+  if (!hasSupabaseConfig) return null;
+  return createClient(supabaseUrl!, supabaseKey!, {
+    auth: {
+      persistSession,
+      autoRefreshToken: true,
+      detectSessionInUrl: !desktopRuntime,
+      ...(storageKey ? { storageKey } : {}),
+    },
+    global: {
+      headers: gameCompatibilityHeaders,
+      fetch: compatibilityFetch,
+    },
+  });
+}
+
+const legacySupabase = createGameClient(true, desktopProfile.storageNamespace);
+export let supabase: SupabaseClient | null = null;
+
+export function createAccountSupabaseClient(): SupabaseClient {
+  const client = createGameClient(false);
+  if (!client) throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY.");
+  return client;
+}
+
+export function setActiveSupabaseClient(client: SupabaseClient | null, userId: string | null = null): void {
+  supabase = client;
+  localPreviewUserId = userId;
+}
+
+export async function readLegacySession(): Promise<Session | null> {
+  if (!legacySupabase) return null;
+  const { data, error } = await legacySupabase.auth.getSession();
+  if (error) throw error;
+  return data.session;
+}
+
+export async function clearLegacySessionStorage(): Promise<void> {
+  try {
+    if (typeof window !== "undefined") window.localStorage.removeItem(desktopProfile.storageNamespace);
+  } catch {
+    // Browser storage can be disabled; the legacy client is disposed below.
+  }
+  legacySupabase?.auth.dispose?.();
+}
 
 // Promo definitions are deliberately read through a separate, public-only
 // Production client for Local builds. Claims and redemption history continue
@@ -157,7 +188,7 @@ function applyServerCompatibilityIdentity(identity: LocalServerCompatibilityIden
   // Supabase creates independent Auth and PostgREST header collections. Keep
   // those already-created clients aligned for the first request after the
   // local preview reads the active server policy.
-  const client = supabase as unknown as {
+  const client = (supabase ?? legacySupabase) as unknown as {
     headers?: Record<string, string>;
     auth?: { headers?: Record<string, string> };
     rest?: { headers?: Headers };
@@ -170,10 +201,11 @@ function applyServerCompatibilityIdentity(identity: LocalServerCompatibilityIden
 }
 
 function requireClient(): SupabaseClient {
-  if (!supabase) {
+  const client = supabase ?? legacySupabase;
+  if (!client) {
     throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY.");
   }
-  return supabase;
+  return client;
 }
 
 function requirePromoDefinitionClient(): SupabaseClient {
@@ -231,7 +263,7 @@ let localServerCompatibilityPromise: Promise<GameUpdateStatus | null> | null = n
  * used by every Supabase request. Stable desktop builds never enter this path.
  */
 export function syncLocalServerCompatibility(): Promise<GameUpdateStatus | null> {
-  if (!supabase || !shouldSyncLocalServerCompatibility(desktopProfile.profile)) return Promise.resolve(null);
+  if (!(supabase ?? legacySupabase) || !shouldSyncLocalServerCompatibility(desktopProfile.profile)) return Promise.resolve(null);
   if (!localServerCompatibilityPromise) {
     localServerCompatibilityPromise = (async () => {
       const status = await getGameUpdateStatus();
@@ -314,6 +346,13 @@ export async function signIn(email: string, password: string): Promise<void> {
     throw new Error("This is a dev-tool account. Sign in with a dedicated Rollcasters game account.");
   }
   localPreviewUserId = data.user?.id ?? data.session?.user.id ?? null;
+}
+
+export async function assertGameAccount(client: SupabaseClient): Promise<void> {
+  if (await isGameAccount(client)) return;
+  await client.auth.signOut({ scope: "local" });
+  localPreviewUserId = null;
+  throw new Error("This is a dev-tool account. Sign in with a dedicated Rollcasters game account.");
 }
 
 async function isGameAccount(client: SupabaseClient): Promise<boolean> {
