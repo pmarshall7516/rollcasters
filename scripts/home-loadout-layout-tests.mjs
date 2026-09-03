@@ -17,7 +17,7 @@ const skill = (name) => `<span class="tooltip-anchor"><button class="skill-tile"
 const lockedRelic = (level) => `<button class="loadout-relic-cell locked" disabled><svg></svg><span>Level ${level}</span></button>`;
 const nullRelics = Array.from({ length: 3 }, () => '<span class="loadout-relic-cell null"></span>').join("");
 const equippedRelic = `<span class="tooltip-anchor"><button class="loadout-relic-cell unlocked equipped"><span class="asset-icon"><svg class="asset-icon__image sprite-box__image" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="29" fill="#d88b28"/><circle cx="32" cy="32" r="22" fill="#6d3718" stroke="#ffd06c" stroke-width="4"/><path d="M20 34l8 8 17-20" stroke="#fff2bd" stroke-width="6"/></svg></span></button></span>`;
-const ability = (slot, name = slot === 1 ? "Fortify" : "") => `<span class="tooltip-anchor"><button class="ability-slot unlocked ${name ? "equipped" : "empty"}"><span>${name ? `<small>Slot ${slot}</small><strong>${name}</strong>` : `<svg class="empty-ability-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14"></path></svg><small>Slot ${slot}</small>`}</span></button></span>`;
+const ability = (slot, name = slot === 1 ? "Fortify" : "") => `<span class="tooltip-anchor"><button class="ability-slot unlocked ${name ? "equipped" : "empty"}"><span>${name ? `<strong>${name}</strong>` : `<svg class="empty-ability-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14"></path></svg>`}</span></button></span>`;
 const lockedAbility = (slot, level) => `<button class="ability-slot locked" disabled aria-label="Ability slot ${slot} unlocks at level ${level}"><svg></svg><span>Level ${level}</span></button>`;
 const nullAbilities = [5, 6].map((slot) => `<span class="ability-slot null" aria-hidden="true" data-slot="${slot}"></span>`).join("");
 
@@ -28,7 +28,7 @@ const html = `<!doctype html><html><head><style>${css}</style></head><body>
         <aside class="rollcaster-panel">
           <p class="eyebrow">Active Rollcaster</p>
           <button class="portrait-button"><span class="card-sprite-frame rollcaster-sprite-frame"><span class="sprite sprite-fit-portrait"></span></span></button>
-          <h1>Shanks</h1>
+          <h1 class="collectible-name">Shanks</h1>
           ${xp("rollcaster-xp-progress", 35)}
           <p class="rollcaster-level">Level 2</p>
           <div class="ability-list" aria-label="Rollcaster ability slots">${ability(1)}${ability(2)}${lockedAbility(3, 5)}${lockedAbility(4, 5)}${nullAbilities}</div>
@@ -59,6 +59,7 @@ const html = `<!doctype html><html><head><style>${css}</style></head><body>
         </article>
         <button class="loadout-slot empty"><svg class="empty-relic-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14"></path></svg><h3>Squad slot 2</h3><p>Choose a critter</p></button>
       </section>
+      <div class="ability-candidates" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;visibility:hidden"><button class="ability-candidate"><span><strong>Fortify</strong><small>Increase defense.</small></span></button></div>
     </section>
   </main>
 </body></html>`;
@@ -165,6 +166,24 @@ try {
           null: document.querySelectorAll(".ability-list .ability-slot.null").length,
         },
         emptyAbilityUsesPlus: Boolean(document.querySelector(".ability-slot.empty .empty-ability-plus")),
+        abilityName: document.querySelector(".ability-slot.equipped strong")?.textContent ?? "",
+        abilityVisibleText: document.querySelector(".ability-slot.equipped")?.textContent.trim() ?? "",
+        abilityNameCentered: (() => {
+          const slot = document.querySelector(".ability-slot.equipped").getBoundingClientRect();
+          const name = document.querySelector(".ability-slot.equipped strong").getBoundingClientRect();
+          return Math.abs((slot.left + slot.right) / 2 - (name.left + name.right) / 2) < .5;
+        })(),
+        abilityNameFont: style(".ability-slot.equipped strong").fontFamily,
+        abilityCandidateNameFont: style(".ability-candidate > span > strong").fontFamily,
+        rollcasterNameFont: style(".rollcaster-panel h1.collectible-name").fontFamily,
+        critterLevelFont: style(".loadout-critter-level").fontFamily,
+        rollcasterLevelFont: style(".rollcaster-level").fontFamily,
+        skillNameFont: style(".skill-title strong").fontFamily,
+        statFont: style(".stat-cell").fontFamily,
+        menuFont: style(".menu-button").fontFamily,
+        abilitySlotHeight: document.querySelector(".ability-slot").getBoundingClientRect().height,
+        abilitySlotBackgroundImage: style(".ability-slot.equipped").backgroundImage,
+        abilitySlotBackgroundColor: style(".ability-slot.equipped").backgroundColor,
         rollcasterColumn: rect(".home-rollcaster-column"),
         challengeTracking: rect(".challenge-tracking"),
         mainActions: rect(".main-actions"),
@@ -306,8 +325,15 @@ try {
       && viewport.abilityStateCounts.null === 2
       && viewport.emptyAbilityUsesPlus
       && viewport.abilitySlotRects.every((slot) => slot.left >= viewport.rollcasterPanel.left && slot.right <= viewport.rollcasterPanel.right && slot.height >= 24)
+      && viewport.abilitySlotHeight >= 33
+      && viewport.abilityName === "Fortify"
+      && !viewport.abilityVisibleText.includes("Slot")
+      && viewport.abilityNameCentered
+      && viewport.abilitySlotBackgroundImage === "none"
+      && viewport.abilitySlotBackgroundColor !== "rgba(0, 0, 0, 0)"
       && viewport.abilityList.left - viewport.rollcasterPanel.left <= 12
       && viewport.rollcasterPanel.right - viewport.abilityList.right <= 12;
+    const sharedDisplayFont = [viewport.abilityNameFont, viewport.abilityCandidateNameFont, viewport.rollcasterNameFont, viewport.critterLevelFont, viewport.rollcasterLevelFont, viewport.skillNameFont, viewport.statFont, viewport.menuFont].every((font) => font === viewport.rollcasterNameFont);
     const trackerIsSeparatePane = viewport.challengeTracking.top - viewport.rollcasterPanel.bottom >= 15
       && Math.abs(viewport.challengeTracking.left - viewport.rollcasterPanel.left) < .1
       && Math.abs(viewport.challengeTracking.width - viewport.rollcasterPanel.width) < .1
@@ -324,7 +350,7 @@ try {
           && Math.abs(anchor.width - expected.width) < .1
           && Math.abs(anchor.height - expected.height) < .1;
       }));
-    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && abilityGridLayout && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && squadLayout && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
+    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && abilityGridLayout && sharedDisplayFont && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && squadLayout && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
   });
 
   const byLoadoutWidth = [...viewports].sort((a, b) => a.loadout.width - b.loadout.width);

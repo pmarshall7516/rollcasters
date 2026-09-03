@@ -3,6 +3,7 @@ import { isTauriDesktop } from "./desktop-updater";
 import {
   DEFAULT_WINDOW_PREFERENCES,
   readWindowPreferencesFromSettings,
+  resolveNativeResizeMode,
   updateWindowPreferences,
   type WindowPreferences,
 } from "./desktop-settings";
@@ -208,10 +209,8 @@ export async function initializeDesktopWindow(): Promise<void> {
     const unlisten = await appWindow.onResized(async ({ payload }) => {
       if (nativeModeChangeInFlight) return;
       const fullscreen = await appWindow.isFullscreen();
-      if (fullscreen) {
-        if (snapshot.mode !== "fullscreen") publish({ mode: "fullscreen" });
-        return;
-      }
+      const mode = resolveNativeResizeMode(snapshot.mode, fullscreen);
+      if (mode !== "windowed") return;
       const scale = await appWindow.scaleFactor();
       const size = normalizeSize({ width: payload.width / scale, height: payload.height / scale });
       publish({ mode: "windowed", windowedSize: size });

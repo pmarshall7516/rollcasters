@@ -2,6 +2,7 @@ import {
   DEFAULT_LOCAL_SETTINGS,
   DEFAULT_WINDOW_PREFERENCES,
   readWindowPreferencesFromSettings,
+  resolveNativeResizeMode,
   updateWindowPreferences,
 } from "../src/lib/desktop-settings.js";
 import { DEFAULT_WINDOWED_SIZE } from "../src/lib/desktop-window-geometry.js";
@@ -55,6 +56,21 @@ assertEqual(
   updateWindowPreferences(null, DEFAULT_LOCAL_SETTINGS.window.mode, DEFAULT_WINDOWED_SIZE),
   DEFAULT_LOCAL_SETTINGS,
   "Saving defaults must create the versioned local settings shape.",
+);
+assertEqual(
+  resolveNativeResizeMode("fullscreen", false),
+  null,
+  "A transient non-fullscreen resize must not overwrite a fullscreen preference.",
+);
+assertEqual(
+  resolveNativeResizeMode("windowed", false),
+  "windowed",
+  "A non-fullscreen resize must remain a real windowed resize when windowed mode is active.",
+);
+assertEqual(
+  resolveNativeResizeMode("windowed", true),
+  null,
+  "A transient fullscreen resize must not overwrite a windowed preference.",
 );
 
 console.log("Desktop local settings contract passed.");

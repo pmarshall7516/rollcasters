@@ -41,6 +41,11 @@ export function readWindowPreferencesFromSettings(settings: unknown): WindowPref
   };
 }
 
+export function resolveNativeResizeMode(preferredMode: WindowMode, fullscreen: boolean): WindowMode | null {
+  const nativeMode: WindowMode = fullscreen ? "fullscreen" : "windowed";
+  return nativeMode === preferredMode ? nativeMode : null;
+}
+
 export function updateWindowPreferences(
   settings: unknown,
   mode: WindowMode,

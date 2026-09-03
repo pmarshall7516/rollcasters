@@ -2552,9 +2552,11 @@ function TrackedChallengeSlots({
             <div className="tracked-challenge-copy">
               <strong className="collectible-name">{collectibleName(data, challenge.collectible_type, challenge.collectible_id)}</strong>
               <span>{challengeDescription(data, challenge)}</span>
-              <span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span>
+              <div className="tracked-challenge-progress-row">
+                <span className="challenge-progress">{formatAmount(progress.current)} / {formatAmount(progress.goal)}</span>
+                {onUntrack && <button type="button" className="link-button tracked-untrack" disabled={busyId === challenge.id} onClick={(event) => { event.stopPropagation(); onUntrack(challenge.id); }}>Untrack</button>}
+              </div>
             </div>
-            {onUntrack && <button type="button" className="link-button tracked-untrack" disabled={busyId === challenge.id} onClick={(event) => { event.stopPropagation(); onUntrack(challenge.id); }}>Untrack</button>}
           </article>
         );
       })}
@@ -2837,7 +2839,7 @@ function AbilitySlot({ data, ability, slotIndex, onClick }: { data: AppData; abi
   const details = ability ? `${ability.name}. ${ability.description} ${effect}` : `Choose an ability for slot ${slotIndex}.`;
   const tooltip = ability ? <><span className="tooltip-heading"><strong>{ability.name}</strong></span><span className="tooltip-description">{ability.description}</span>{attachmentRows(attachments)}</> : <span className="tooltip-description">Choose an ability for slot {slotIndex}.</span>;
   return <GameTooltip label={details.trim()} content={tooltip}><button type="button" className={`ability-slot unlocked ${ability ? "equipped" : "empty"}`} onClick={onClick} aria-label={`Equip ability · Slot ${slotIndex}`}>
-    <span>{ability ? <><small>Slot {slotIndex}</small><strong>{ability.name}</strong></> : <><Plus className="empty-ability-plus" aria-hidden="true" /><small>Slot {slotIndex}</small></>}</span>
+    <span>{ability ? <strong>{ability.name}</strong> : <Plus className="empty-ability-plus" aria-hidden="true" />}</span>
   </button></GameTooltip>;
 }
 
