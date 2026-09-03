@@ -25,6 +25,7 @@ assert.match(styles, /app-shell\[data-window-mode="windowed"\]\[data-desktop-pla
 assert.match(styles, /\.desktop-window-chrome/, "The Windows windowed drag bar must have a dedicated compact style.");
 assert.match(windowSource, /nativeModeChangeInFlight/, "Native resize events must be ignored while changing display mode.");
 assert.match(windowSource, /monitor\.size/, "Fullscreen placement must use the full monitor size rather than its work area.");
+assert.match(windowSource, /if \(isWindowsDesktop\(\)\) \{[\s\S]*if \(screenBounds\)/, "Fullscreen bounds reapplication must be limited to Windows; macOS must let native fullscreen own the transition.");
 assert.match(windowSource, /window\.dispatchEvent\(new Event\("resize"\)\)/, "Display mode changes must refresh the web viewport layout.");
 assert.match(geometry, /WINDOW_ASPECT_RATIO = 16 \/ 9/, "Window geometry must use the shared 16:9 ratio.");
 assert.match(geometry, /DEFAULT_WINDOWED_SIZE: WindowedSize = \{ width: 1600, height: 900 \}/, "Windowed mode must start from the larger 1600x900 frame.");

@@ -1,4 +1,4 @@
-import { LogIn, Plus, Trash2, UserRound, X } from "lucide-react";
+import { LogIn, LogOut, Plus, UserRound, X } from "lucide-react";
 import type { RememberedAccount } from "../../lib/account-center.js";
 
 export type AccountCenterProps = {
@@ -38,8 +38,8 @@ export function AccountCenter({ accounts, accountErrors, busyAccountId, onSelect
                   </span>
                   <span className="account-center-continue">{busy ? "Connecting…" : error ? "Sign in again" : "Continue"}</span>
                 </button>
-                <button type="button" className="account-center-remove" disabled={busy} onClick={() => onRemove(account.userId)} aria-label={`Remove from this device: ${account.username}`} title="Remove from this device">
-                  <Trash2 size={16} aria-hidden="true" />
+                <button type="button" className="account-center-logout" disabled={busy} onClick={() => onRemove(account.userId)} aria-label={`Log out: ${account.username}`} title="Log out">
+                  <LogOut size={16} aria-hidden="true" />
                 </button>
               </article>
             );
@@ -49,7 +49,7 @@ export function AccountCenter({ accounts, accountErrors, busyAccountId, onSelect
           {atCapacity ? <LogIn size={17} aria-hidden="true" /> : <Plus size={17} aria-hidden="true" />}
           {atCapacity ? "Account limit reached" : "Add account"}
         </button>
-        {atCapacity && <p className="account-center-capacity">Remove an account to add another. Up to 3 accounts can be saved here.</p>}
+        {atCapacity && <p className="account-center-capacity">Log out of an account to add another. Up to 3 accounts can be saved here.</p>}
         <p className="account-center-privacy">Account details are stored locally. Sign-in credentials are protected by your operating system.</p>
       </main>
     </section>

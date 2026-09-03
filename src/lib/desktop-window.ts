@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { isTauriDesktop } from "./desktop-updater";
+import { isTauriDesktop, isWindowsDesktop } from "./desktop-updater";
 import {
   DEFAULT_WINDOW_PREFERENCES,
   readWindowPreferencesFromSettings,
@@ -262,11 +262,6 @@ async function applyNativeWindowMode(
 ): Promise<WindowedSize> {
   const { LogicalPosition, LogicalSize } = await import("@tauri-apps/api/dpi");
   if (mode === "fullscreen") {
-    const [{ currentMonitor }] = await Promise.all([
-      import("@tauri-apps/api/window"),
-    ]);
-    const monitor = await currentMonitor();
-    const screenBounds = monitor ? logicalMonitorScreenBounds(monitor) : null;
     await appWindow.setSizeConstraints(null);
     await appWindow.setDecorations(false);
     await appWindow.setResizable(false);
@@ -275,9 +270,16 @@ async function applyNativeWindowMode(
     // Reapply the physical monitor's logical bounds after entering fullscreen
     // so a prior windowed work-area size cannot leave a strip of the desktop
     // visible at the edge of the display.
-    if (screenBounds) {
-      await appWindow.setPosition(new LogicalPosition(screenBounds.x, screenBounds.y));
-      await appWindow.setSize(new LogicalSize(screenBounds.width, screenBounds.height));
+    if (isWindowsDesktop()) {
+      const [{ currentMonitor }] = await Promise.all([
+        import("@tauri-apps/api/window"),
+      ]);
+      const monitor = await currentMonitor();
+      const screenBounds = monitor ? logicalMonitorScreenBounds(monitor) : null;
+      if (screenBounds) {
+        await appWindow.setPosition(new LogicalPosition(screenBounds.x, screenBounds.y));
+        await appWindow.setSize(new LogicalSize(screenBounds.width, screenBounds.height));
+      }
     }
     await appWindow.show();
     return requestedSize;

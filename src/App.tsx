@@ -1202,13 +1202,13 @@ export function App() {
     setView("auth");
   }
 
-  async function removeRememberedAccount(userId: string): Promise<void> {
+  async function logoutRememberedAccount(userId: string): Promise<void> {
     setAccountActionId(userId);
     setSessionActionBusy(true);
     try {
       await accountCenterManager.removeAccount(userId);
     } catch (error) {
-      notifyError(error, "Unable to remove this account from the device.", "Account error");
+      notifyError(error, "Unable to log out of this account.", "Account error");
     } finally {
       setAccountActionId(null);
       setSessionActionBusy(false);
@@ -1224,16 +1224,15 @@ export function App() {
 
     const initializeSession = async () => {
       await syncLocalServerCompatibility();
-      const remembered = await accountCenterManager.initialize();
+      await accountCenterManager.initialize();
       const legacy = await readLegacySession();
       if (legacy) {
         await accountCenterManager.importSession(legacy as AuthSession);
         await clearLegacySessionStorage();
-        if (await establishGameplaySession(false)) await refresh();
-        return;
+        await accountCenterManager.returnToAccountCenter();
       }
       setIsAuthed(false);
-      setAuthEntry(remembered.accounts.length > 0 ? "center" : "form");
+      setAuthEntry(accountCenterManager.snapshot().accounts.length > 0 ? "center" : "form");
     };
     accountCenterStartupPromise ??= initializeSession();
     void accountCenterStartupPromise
@@ -1520,7 +1519,7 @@ export function App() {
       busyAccountId={accountActionId}
       onSelect={(userId) => void selectRememberedAccount(userId)}
       onAdd={() => setAuthEntry("form")}
-      onRemove={(userId) => void removeRememberedAccount(userId)}
+      onRemove={(userId) => void logoutRememberedAccount(userId)}
       onClose={closeRollcasters}
     />{notificationView}</Shell>;
   }
