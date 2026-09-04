@@ -7,6 +7,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = path.join(root, "output", "home-loadout-layout");
 const css = await readFile(path.join(root, "src", "styles.css"), "utf8");
 
+if (css.includes("grid-template-rows: repeat(6, minmax(34px, auto))")) throw new Error("Home Rollcaster ability rows must be capped at three.");
+
 const xp = (className, width = 42) => `<div class="xp-progress xp-progress-inline ${className}">
   <div class="xp-bar"><span style="width:${width}%"></span></div><p>42 / 100 XP</p>
 </div>`;
@@ -19,7 +21,6 @@ const nullRelics = Array.from({ length: 3 }, () => '<span class="loadout-relic-c
 const equippedRelic = `<span class="tooltip-anchor"><button class="loadout-relic-cell unlocked equipped"><span class="asset-icon"><svg class="asset-icon__image sprite-box__image" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="29" fill="#d88b28"/><circle cx="32" cy="32" r="22" fill="#6d3718" stroke="#ffd06c" stroke-width="4"/><path d="M20 34l8 8 17-20" stroke="#fff2bd" stroke-width="6"/></svg></span></button></span>`;
 const ability = (slot, name = slot === 1 ? "Fortify" : "") => `<span class="tooltip-anchor"><button class="ability-slot unlocked ${name ? "equipped" : "empty"}"><span>${name ? `<strong>${name}</strong>` : `<svg class="empty-ability-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14"></path></svg>`}</span></button></span>`;
 const lockedAbility = (slot, level) => `<button class="ability-slot locked" disabled aria-label="Ability slot ${slot} unlocks at level ${level}"><svg></svg><span>Level ${level}</span></button>`;
-const nullAbilities = [5, 6].map((slot) => `<span class="ability-slot null" aria-hidden="true" data-slot="${slot}"></span>`).join("");
 
 const html = `<!doctype html><html><head><style>${css}</style></head><body>
   <main class="app-shell">
@@ -31,7 +32,7 @@ const html = `<!doctype html><html><head><style>${css}</style></head><body>
           <h1 class="collectible-name">Shanks</h1>
           ${xp("rollcaster-xp-progress", 35)}
           <p class="rollcaster-level">Level 2</p>
-          <div class="ability-list" aria-label="Rollcaster ability slots">${ability(1)}${ability(2)}${lockedAbility(3, 5)}${lockedAbility(4, 5)}${nullAbilities}</div>
+          <div class="ability-list" aria-label="Rollcaster ability slots">${ability(1)}${ability(2)}${lockedAbility(3, 5)}</div>
         </aside>
         <section class="challenge-tracking" aria-label="Challenge tracking">
           <div class="challenge-tracking-heading"><span>◎</span><strong>Challenge Tracking</strong></div>
@@ -192,6 +193,10 @@ try {
         critterNameTextHeight: rect(".loadout-critter-identity .critter-name strong").height,
         critterLevelSize: Number.parseFloat(style(".loadout-critter-level").fontSize),
         statFontSize: Number.parseFloat(style(".loadout-critter-summary .stat-cell").fontSize),
+        statLabelWeight: Number.parseInt(style(".loadout-critter-summary .stat-label").fontWeight, 10),
+        statValueSizes: [...document.querySelectorAll(".loadout-critter-summary > .stat-grid .stat-cell > strong")].map((entry) => Number.parseFloat(getComputedStyle(entry).fontSize)),
+        statValueLineHeights: [...document.querySelectorAll(".loadout-critter-summary > .stat-grid .stat-cell > strong")].map((entry) => getComputedStyle(entry).lineHeight),
+        statValueFontVariants: [...document.querySelectorAll(".loadout-critter-summary > .stat-grid .stat-cell > strong")].map((entry) => getComputedStyle(entry).fontVariantNumeric),
         skillTitleSize: Number.parseFloat(style(".loadout-slot .skill-title strong").fontSize),
         skillMetaSize: Number.parseFloat(style(".loadout-slot .skill-power").fontSize),
         skillCompact: document.querySelector(".loadout-slot .skill-tile-grid").classList.contains("compact"),
@@ -223,12 +228,14 @@ try {
           const cell = entry.getBoundingClientRect();
           const label = entry.querySelector(".stat-label").getBoundingClientRect();
           const value = entry.querySelector("strong").getBoundingClientRect();
-          return {
-            justifyContent: getComputedStyle(entry).justifyContent,
-            labelOffset: label.left - cell.left,
-            valueOffset: cell.right - value.right,
-            fits: entry.scrollWidth <= entry.clientWidth,
-          };
+            return {
+              justifyContent: getComputedStyle(entry).justifyContent,
+              labelOffset: label.left - cell.left,
+              valueOffset: cell.right - value.right,
+              scrollWidth: entry.scrollWidth,
+              clientWidth: entry.clientWidth,
+              fits: entry.scrollWidth <= entry.clientWidth,
+            };
         }),
         levelToXpGap: rect(".loadout-critter-xp-progress").left - rect(".loadout-critter-level").right,
         noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
@@ -273,13 +280,21 @@ try {
       && entry.labelOffset <= 11
       && entry.valueOffset >= 5
       && entry.valueOffset <= 11
-      && Math.abs(entry.labelOffset - entry.valueOffset) < .1
+      && Math.abs(entry.labelOffset - entry.valueOffset) < .5
       && entry.fits);
+    const statValueSizesMatch = viewport.statValueSizes.every((size) => Math.abs(size - viewport.statValueSizes[0]) < .1);
+    const statValueLineHeightsMatch = viewport.statValueLineHeights.every((lineHeight) => lineHeight !== "normal"
+      && Math.abs(Number.parseFloat(lineHeight) - Number.parseFloat(viewport.statValueLineHeights[0])) < .1);
+    const statValuesUseTabularNumerals = viewport.statValueFontVariants.every((fontVariant) => fontVariant.includes("tabular-nums"));
     const compactStats = responsiveStatMatrix
       && statWidthsMatch
       && viewport.statWidths[0] > 70
       && viewport.firstStat.height >= 29
       && viewport.statFontSize >= 14
+      && viewport.statLabelWeight >= 700
+      && statValueSizesMatch
+      && statValueLineHeightsMatch
+      && statValuesUseTabularNumerals
       && statContentsAlign
       && Math.abs(viewport.statGrid.width - viewport.summary.width) < .1
       && Math.abs(viewport.statGrid.left - viewport.summary.left) < .1
@@ -319,10 +334,10 @@ try {
       && lastSquadSlot
       && Math.abs((lastSquadSlot.left + lastSquadSlot.right) / 2 - (viewport.squad.left + viewport.squad.right) / 2) < .1;
     const abilityGridLayout = viewport.abilityColumns === 1
-      && viewport.abilityRows === 6
+      && viewport.abilityRows === 3
       && viewport.abilityStateCounts.unlocked === 2
-      && viewport.abilityStateCounts.locked === 2
-      && viewport.abilityStateCounts.null === 2
+      && viewport.abilityStateCounts.locked === 1
+      && viewport.abilityStateCounts.null === 0
       && viewport.emptyAbilityUsesPlus
       && viewport.abilitySlotRects.every((slot) => slot.left >= viewport.rollcasterPanel.left && slot.right <= viewport.rollcasterPanel.right && slot.height >= 24)
       && viewport.abilitySlotHeight >= 33

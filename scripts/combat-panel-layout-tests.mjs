@@ -13,6 +13,11 @@ function check(condition, message) {
 }
 
 check(!app.includes("combat-phase-badge"), "Combat must not render the removed phase badge.");
+check(/<span className="combat-die-value">\s*<AssetIcon[\s\S]*?<strong>/.test(app), "Dicebox mana icons must render before the roll value.");
+check(!app.includes('<small className="collectible-name">{opponent ? "Enemy " : ""}{unit.name}</small>'), "Enemy Diceboxes must show the critter name without the Enemy prefix.");
+check(!app.includes("Array.from({ length: 5 }, (_, index) => enemyAbilities[index])"), "Enemy Rollcaster combat abilities must expose no more than three slots.");
+check(!app.includes("const activeAbilitySlots = Array.from({ length: 5 }"), "User Rollcaster combat abilities must expose no more than three slots.");
+check(!styles.includes("grid-template-rows: repeat(5, var(--combat-ability-row-height))"), "Combat ability rows must be capped at three.");
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
@@ -38,7 +43,7 @@ try {
                 <h3>Rollcaster</h3>
                 <div class="combat-mana-total-wrap"><strong class="combat-mana-total">5</strong></div>
                 <div class="combat-ability-list" aria-label="User Rollcaster abilities">
-                  ${["Fortify", "Arcane Ward", "Quick Step", "Mend", "Focus"].map((name) => `<span class="tooltip-anchor"><span class="combat-ability-slot">${name}</span></span>`).join("")}
+                  ${["Fortify", "Arcane Ward", "Quick Step"].map((name) => `<span class="tooltip-anchor"><span class="combat-ability-slot">${name}</span></span>`).join("")}
                 </div>
                 <div class="combat-squad-grid player" aria-label="User Critter squad">
                   ${Array.from({ length: 5 }, (_, index) => `<span class="combat-squad-slot ${index === 0 ? "active" : "reserve"}"><span class="fixture-sprite"></span></span>`).join("")}
@@ -51,7 +56,7 @@ try {
                 <h3>Enemy</h3>
                 <div class="combat-mana-total-wrap"><strong class="combat-mana-total">4</strong></div>
                 <div class="combat-ability-list" aria-label="Enemy Rollcaster abilities">
-                  ${["Hex", "Ward", "Rush", "Mend", "Focus"].map((name) => `<span class="tooltip-anchor"><span class="combat-ability-slot enemy">${name}</span></span>`).join("")}
+                  ${["Hex", "Ward", "Rush"].map((name) => `<span class="tooltip-anchor"><span class="combat-ability-slot enemy">${name}</span></span>`).join("")}
                 </div>
                 <div class="combat-squad-grid opponent" aria-label="Enemy Critter squad">
                   ${Array.from({ length: 5 }, (_, index) => `<span class="combat-squad-slot ${index === 0 ? "active" : "reserve"}"><span class="fixture-sprite"></span></span>`).join("")}
@@ -60,9 +65,41 @@ try {
             </div>
           </div>
         </section>
+        <div class="combat-presentation-fixture" aria-hidden="true" style="position:absolute;left:-10000px;top:0;width:320px;">
+          <span class="combat-ability-slot">Combat ability</span>
+          <div class="combat-action-space"><button type="button">Combat action</button></div>
+          <strong class="combat-mana-total">5</strong>
+          <span class="combat-die-value"><span class="asset-icon"></span><strong>4</strong></span>
+        </div>
       </body>
     </html>
   `);
+
+  const presentation = await page.evaluate(() => {
+    const playerAbility = document.querySelector(".rollcaster-mana-panel .combat-ability-slot");
+    const enemyAbility = document.querySelector(".enemy-mana-panel .combat-ability-slot");
+    const action = document.querySelector(".combat-presentation-fixture .combat-action-space button");
+    const mana = document.querySelector(".combat-presentation-fixture .combat-mana-total");
+    const dieValue = document.querySelector(".combat-presentation-fixture .combat-die-value");
+    const icon = dieValue?.querySelector(".asset-icon");
+    const roll = dieValue?.querySelector("strong");
+    return {
+      playerAbilityFont: playerAbility ? getComputedStyle(playerAbility).fontFamily : "",
+      enemyAbilityFont: enemyAbility ? getComputedStyle(enemyAbility).fontFamily : "",
+      actionFont: action ? getComputedStyle(action).fontFamily : "",
+      manaColor: mana ? getComputedStyle(mana).color : "",
+      iconColor: icon ? getComputedStyle(icon).color : "",
+      iconHeight: icon?.getBoundingClientRect().height ?? 0,
+      rollFontSize: roll ? Number.parseFloat(getComputedStyle(roll).fontSize) : 0,
+      iconFirst: dieValue?.firstElementChild?.classList.contains("asset-icon") ?? false,
+    };
+  });
+
+  check(presentation.playerAbilityFont.includes("Georgia") && presentation.enemyAbilityFont.includes("Georgia"), `Combat ability names must use the shared display font on both sides: ${JSON.stringify(presentation)}`);
+  check(presentation.actionFont.includes("Georgia"), `Combat action buttons must use the shared display font: ${JSON.stringify(presentation)}`);
+  check(presentation.iconColor === presentation.manaColor, `Dicebox mana icons must match the total mana color: ${JSON.stringify(presentation)}`);
+  check(Math.abs(presentation.iconHeight - presentation.rollFontSize) <= 0.5, `Dicebox mana icons must match the roll text height: ${JSON.stringify(presentation)}`);
+  check(presentation.iconFirst, `Dicebox mana icons must appear before the roll value: ${JSON.stringify(presentation)}`);
 
   const viewports = [
     { name: "ultra-wide-desktop", width: 2560, height: 1440, expectedSquadRows: 3 },

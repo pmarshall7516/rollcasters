@@ -1,4 +1,6 @@
 import type { CritterProgression, DungeonRewardSummary, PlayerState, RollcasterProgression } from "./types.js";
+import { MAX_ROLLCASTER_ABILITY_SLOTS } from "./game.js";
+export { MAX_ROLLCASTER_ABILITY_SLOTS } from "./game.js";
 
 export type XpProgress = {
   current: number;
@@ -109,8 +111,6 @@ type RollcasterAbilitySlotProgression = {
   level: number;
   total_unlocked_ability_slots: number;
 };
-
-export const MAX_ROLLCASTER_ABILITY_SLOTS = 6;
 
 export type SlotUnlock = {
   slotIndex: number;

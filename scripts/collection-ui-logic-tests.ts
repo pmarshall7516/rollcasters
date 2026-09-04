@@ -1,7 +1,8 @@
 import { calculateLoadoutStats, equippedRelicIdsForCritter, nextOpenSquadSlot } from "../src/lib/loadout.js";
 import { challengeDescription, collectibleIsUnlocked, completedTrackedChallengeIds, progressFor, trackedChallengesForDisplay, trackedSlotFor } from "../src/lib/collectibles.js";
 import { loadSeenChallengeCompletions, rememberSeenChallengeCompletion } from "../src/lib/notifications.js";
-import { relicSlotUnlocks, rollcasterAbilitySlotUnlocks, xpProgress } from "../src/lib/progression.js";
+import { limitRollcasterAbilityIds, limitRollcasterAbilitySlots } from "../src/lib/game.js";
+import { MAX_ROLLCASTER_ABILITY_SLOTS, relicSlotUnlocks, rollcasterAbilitySlotUnlocks, xpProgress } from "../src/lib/progression.js";
 import type { AppData, Catalog, CollectibleUnlockChallenge, PlayerState, ResolvedEffectRef } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -36,14 +37,22 @@ const abilityUnlocks = rollcasterAbilitySlotUnlocks([
   { rollcaster_id: "caster", level: 9, total_unlocked_ability_slots: 8 },
   { rollcaster_id: "other", level: 2, total_unlocked_ability_slots: 6 },
 ], "caster");
-check(abilityUnlocks.length === 6, "The Home Rollcaster pane must expose exactly six ability cells.");
-check(abilityUnlocks.map((slot) => slot.unlockLevel).join(",") === "1,3,5,5,7,7", "Ability cells must retain the first level that unlocks each slot and cap at six.");
+check(MAX_ROLLCASTER_ABILITY_SLOTS === 3, "Rollcasters must have a maximum of three ability slots.");
+check(abilityUnlocks.length === 3, "The Home Rollcaster pane must expose exactly three ability cells.");
+check(abilityUnlocks.map((slot) => slot.unlockLevel).join(",") === "1,3,5", "Ability cells must retain the first level that unlocks each slot and cap at three.");
 
 const cappedAbilityUnlocks = rollcasterAbilitySlotUnlocks([
   { rollcaster_id: "caster", level: 1, total_unlocked_ability_slots: 1 },
   { rollcaster_id: "caster", level: 3, total_unlocked_ability_slots: 2 },
 ], "caster");
-check(cappedAbilityUnlocks.slice(2).every((slot) => slot.unlockLevel === null), "Ability cells beyond the authored lifetime maximum must remain null slots.");
+check(cappedAbilityUnlocks[2]?.unlockLevel === null, "Ability cells beyond the authored lifetime maximum must remain null slots.");
+check(limitRollcasterAbilityIds(["one", "two", "three", "four"]).join(",") === "one,two,three", "Enemy Rollcaster abilities must ignore abilities beyond the third slot.");
+check(limitRollcasterAbilitySlots([
+  { slot_index: 4, ability_id: "four" },
+  { slot_index: 2, ability_id: "two" },
+  { slot_index: 1, ability_id: "one" },
+  { slot_index: 3, ability_id: "three" },
+]).map((slot) => slot.slot_index).join(",") === "1,2,3", "User Rollcaster abilities must ignore stored slots beyond the third slot.");
 
 function effect(
   ownerType: "relic" | "ability",

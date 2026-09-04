@@ -18,7 +18,7 @@ function source(width, height, label, color, shape = "rect") {
 const cases = [
   { name: "Tall Rollcaster", src: source(568, 954, "TALL", "#a779ff"), box: "sprite-frame-hero", sprite: "sprite-hero sprite-fit-portrait element-basic" },
   { name: "Near-square Critter", src: source(460, 500, "CRITTER", "#61dda0"), box: "sprite-frame-md", sprite: "sprite-medium element-bloom" },
-  { name: "Square Relic", src: source(400, 400, "RELIC", "#ffd980"), box: "sprite-frame-sm", sprite: "sprite-small element-metal" },
+  { name: "Square Relic", src: source(400, 400, "RELIC", "#ffd980"), box: "card-sprite-frame relic-sprite-frame", sprite: "sprite-large element-metal", relicCard: true },
   { name: "Oval Coin", src: source(340, 430, "COIN", "#f5b942", "ellipse"), box: "sprite-frame-sm", sprite: "sprite-small element-basic" },
   { name: "Wide pose", src: source(900, 320, "WIDE", "#4fe4e1"), box: "sprite-frame-lg", sprite: "sprite-large element-aqua" },
 ];
@@ -74,6 +74,7 @@ try {
       const imageStyle = getComputedStyle(image);
       const boxStyle = getComputedStyle(box);
       const epsilon = 0.01;
+      const relicCard = box.parentElement?.classList.contains("relic-sprite-frame") || box.classList.contains("relic-sprite-frame");
       return {
         alt: image.alt,
         box: [boxRect.width, boxRect.height],
@@ -85,6 +86,8 @@ try {
         boxPosition: boxStyle.position,
         boxOverflow: boxStyle.overflow,
         padding: Number.parseFloat(imageStyle.paddingLeft),
+        relicCard,
+        relicImageFillsFrame: relicCard && Math.abs(imageRect.width - boxRect.width) <= epsilon && Math.abs(imageRect.height - boxRect.height) <= epsilon,
         squareBox: Math.abs(boxRect.width - boxRect.height) <= epsilon,
         intrinsicAspectPreserved: Math.abs(
           imageRect.width / imageRect.height - image.naturalWidth / image.naturalHeight,
@@ -113,10 +116,10 @@ try {
     result.imagePosition !== "absolute" ||
     result.boxPosition !== "relative" ||
     result.boxOverflow !== "hidden" ||
-    result.padding !== 0 ||
+    (result.relicCard ? !result.relicImageFillsFrame || result.padding !== 5 : result.padding !== 0) ||
     !result.squareBox ||
-    !result.intrinsicAspectPreserved ||
-    !result.bottomInset ||
+    (!result.relicCard && !result.intrinsicAspectPreserved) ||
+    (result.relicCard ? Math.abs(result.image[1] - result.box[1]) > 0.01 : !result.bottomInset) ||
     !result.contained
   );
 

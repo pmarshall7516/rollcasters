@@ -1,4 +1,4 @@
-import { actionCostModifierApplies, applyActionCostModifiers, byId, critterElementIds, critterStats, normalizeManaDiceBounds, roundHalfUp, type ActionCostBreakdown, type ActionCostModifier, type StatBlock } from "./game.js";
+import { actionCostModifierApplies, applyActionCostModifiers, byId, critterElementIds, critterStats, limitRollcasterAbilitySlots, normalizeManaDiceBounds, roundHalfUp, type ActionCostBreakdown, type ActionCostModifier, type StatBlock } from "./game.js";
 import type { AppData, ResolvedEffectRef, UserCritter, UserRelicSlot } from "./types.js";
 
 export type LoadoutStatKey = keyof StatBlock;
@@ -109,9 +109,8 @@ function passiveSources(data: AppData): PassiveSource[] {
 
   const activeRollcaster = player.rollcasters.find((owned) => owned.id === player.profile.active_rollcaster_id);
   if (activeRollcaster) {
-    for (const slot of player.abilitySlots
-      .filter((candidate) => candidate.user_rollcaster_id === activeRollcaster.id && candidate.ability_id)
-      .sort((left, right) => left.slot_index - right.slot_index)) {
+    for (const slot of limitRollcasterAbilitySlots(player.abilitySlots
+      .filter((candidate) => candidate.user_rollcaster_id === activeRollcaster.id && candidate.ability_id))) {
       const ability = byId(data.catalog.rollcasterAbilities, slot.ability_id);
       if (!ability) continue;
       sources.push({

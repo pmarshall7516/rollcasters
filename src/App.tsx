@@ -89,6 +89,9 @@ import {
   isActorRecharging,
   isSingleTarget,
   healthyFriendlySwapTargets,
+  limitRollcasterAbilityIds,
+  limitRollcasterAbilitySlots,
+  MAX_ROLLCASTER_ABILITY_SLOTS,
   matchesSelectedElements,
   orderedActiveCombatUnits,
   skillAvailability,
@@ -3110,7 +3113,7 @@ function EquipDialog({ data, target, saving, onClose, onEquip, onUnlockSkill, on
   } else if (target.type === "ability") {
     const abilityOwner = currentAbilityOwner!;
     const ids = new Set(player.unlockedAbilityIdsByRollcaster[abilityOwner.id] ?? []);
-    const rows = player.abilitySlots.filter((row) => row.user_rollcaster_id === abilityOwner.id);
+    const rows = limitRollcasterAbilitySlots(player.abilitySlots.filter((row) => row.user_rollcaster_id === abilityOwner.id));
     const current = rows.find((row) => row.slot_index === target.slotIndex)?.ability_id;
     const equippedElsewhere = new Set(rows.filter((row) => row.slot_index !== target.slotIndex && row.ability_id).map((row) => row.ability_id));
     const equippedCount = rows.filter((row) => row.ability_id).length;
@@ -3198,7 +3201,7 @@ function EquipDialog({ data, target, saving, onClose, onEquip, onUnlockSkill, on
   }
 
   const currentRelic = target.type === "relic" ? player.relicSlots.find((row) => row.user_critter_id === target.owned.id && row.slot_index === target.slotIndex)?.relic_id : null;
-  const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && player.abilitySlots.filter((row) => row.user_rollcaster_id === target.owned.id && row.ability_id).length > 1);
+  const canUnequip = (target.type === "relic" && Boolean(currentRelic)) || (target.type === "critter" && player.squadSlots.filter((row) => row.user_critter_id).length > 1) || (target.type === "skill" && player.skillSlots.filter((row) => row.user_critter_id === target.owned.id && row.skill_id).length > 1) || (target.type === "ability" && limitRollcasterAbilitySlots(player.abilitySlots.filter((row) => row.user_rollcaster_id === target.owned.id && row.ability_id)).length > 1);
   const clear = target.type === "critter" ? () => setSquadSlot(target.slotIndex, null) : target.type === "skill" ? () => setCritterSkillSlot(target.owned.id, target.slotIndex, null) : target.type === "relic" ? () => setCritterRelicSlot(target.owned.id, target.slotIndex, null) : target.type === "ability" ? () => setRollcasterAbilitySlot(target.owned.id, target.slotIndex, null) : null;
   const dialogClass = target.type === "skill"
     ? "equip-dialog equip-dialog-skill"
@@ -4690,7 +4693,7 @@ function RelicCard({ data, relic, quantity, unlocked, onClick, onRefresh, onErro
     }}>
       <button type="button" className="catalog-card-details" aria-label={`View ${relic.name} details`} onClick={onClick}><Search size={14} aria-hidden="true" /></button>
       <span className="collectible-id">{relic.id}</span>
-      <CardSprite><Sprite name={relic.name} element="metal" assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} size="large" /></CardSprite>
+      <CardSprite className="relic-sprite-frame"><Sprite name={relic.name} element="metal" assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} size="large" /></CardSprite>
       <CardName data={data} name={relic.name} />
       <CollectionCardState>
         {unlocked ? <p>Owned {quantity} / {relic.max_owned}</p> : <CollectibleChallengeRows data={data} type="relic" id={relic.id} onRefresh={onRefresh} onError={onError} />}
@@ -5354,7 +5357,7 @@ function CombatScreen({
   const enemyRollcasterAssetPath = enemyRollcaster
     ? data.catalog.dungeonEnemyRollcasters?.find((candidate) => candidate.id === enemyRollcaster.id)?.asset_path ?? enemyRollcaster.asset_path
     : null;
-  const enemyAbilities = (enemyRollcaster?.ability_ids ?? []).map((id) => byId(data.catalog.rollcasterAbilities, id)).filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
+  const enemyAbilities = limitRollcasterAbilityIds(enemyRollcaster?.ability_ids ?? []).map((id) => byId(data.catalog.rollcasterAbilities, id)).filter((ability): ability is NonNullable<typeof ability> => Boolean(ability));
   const dialogue = currentDungeonDialogue(combat);
   const activePlayer = orderedActiveCombatUnits(battle.playerUnits);
   const totalCost = Object.values(actions).reduce((sum, action) => sum + action.cost, 0);
@@ -5364,7 +5367,7 @@ function CombatScreen({
   const manaAssetPath = findAssetPath(data, "mana", "mana");
   const activeOwnedRollcaster = data.player!.rollcasters.find((row) => row.id === data.player!.profile.active_rollcaster_id) ?? data.player!.rollcasters[0];
   const activeRollcaster = byId(data.catalog.rollcasters, activeOwnedRollcaster?.rollcaster_id);
-  const activeAbilitySlots = Array.from({ length: 5 }, (_, index) => {
+  const activeAbilitySlots = Array.from({ length: MAX_ROLLCASTER_ABILITY_SLOTS }, (_, index) => {
     const slot = data.player!.abilitySlots.find((candidate) => (
       candidate.user_rollcaster_id === activeOwnedRollcaster?.id
       && candidate.slot_index === index + 1
@@ -6220,7 +6223,7 @@ function CombatScreen({
             mana={battle.opponentMana}
             manaAssetPath={manaAssetPath}
             manaRefund={opponentManaRefund?.amount}
-            abilities={Array.from({ length: 5 }, (_, index) => enemyAbilities[index])}
+            abilities={Array.from({ length: MAX_ROLLCASTER_ABILITY_SLOTS }, (_, index) => enemyAbilities[index])}
             units={battle.opponentUnits}
             opponent
             revealedOpponentKeys={revealedOpponentKeys}
@@ -6850,8 +6853,8 @@ function CombatDiceRow({
 function CombatDie({ data, unit, rolling, manaAssetPath, opponent = false }: { data: AppData; unit: CombatState["playerUnits"][number]; rolling: boolean; manaAssetPath: string | null; opponent?: boolean }) {
   return (
     <span className={`combat-die ${rolling ? "rolling" : "landed"}`}>
-      <span className="combat-die-value"><strong>{rolling ? "?" : unit.manaRoll || "–"}</strong><AssetIcon path={manaAssetPath} alt="Mana" fallback={<Gem />} /></span>
-      <span className="combat-die-label"><CritterElementLogos data={data} critter={unit.critter} /><small className="collectible-name">{opponent ? "Enemy " : ""}{unit.name}</small></span>
+      <span className="combat-die-value"><AssetIcon path={manaAssetPath} alt="Mana" fallback={<Gem />} /><strong>{rolling ? "?" : unit.manaRoll || "–"}</strong></span>
+      <span className="combat-die-label"><CritterElementLogos data={data} critter={unit.critter} /><small className="collectible-name" aria-label={opponent ? `Enemy ${unit.name}` : unit.name}>{unit.name}</small></span>
     </span>
   );
 }

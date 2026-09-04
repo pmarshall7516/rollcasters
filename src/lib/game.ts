@@ -53,6 +53,18 @@ export {
   squadCritters,
 } from "./critter-calculations.js";
 
+export const MAX_ROLLCASTER_ABILITY_SLOTS = 3;
+
+export function limitRollcasterAbilitySlots<T extends { slot_index: number }>(slots: readonly T[]): T[] {
+  return slots
+    .filter((slot) => slot.slot_index >= 1 && slot.slot_index <= MAX_ROLLCASTER_ABILITY_SLOTS)
+    .sort((left, right) => left.slot_index - right.slot_index);
+}
+
+export function limitRollcasterAbilityIds<T>(abilityIds: readonly T[]): T[] {
+  return abilityIds.slice(0, MAX_ROLLCASTER_ABILITY_SLOTS);
+}
+
 export type StatBlock = {
   hp: number;
   atk: number;
@@ -505,14 +517,14 @@ export function createInitialCombatState(
       setupSources.push({ ownerType: "relic", ownerId: relicId, side: "opponent", sourceKey: `o${index + 1}`, effects: runEffects.relic[relicId] ?? [], sourceOrder: 10_000 + index * 100 + slotIndex });
     });
   });
+  const playerAbilitySlots = limitRollcasterAbilitySlots(player.abilitySlots);
   if (activeRollcaster) {
-    for (const slot of player.abilitySlots
-      .filter((candidate) => candidate.user_rollcaster_id === activeRollcaster.id && candidate.ability_id)
-      .sort((a, b) => a.slot_index - b.slot_index)) {
+    for (const slot of playerAbilitySlots
+      .filter((candidate) => candidate.user_rollcaster_id === activeRollcaster.id && candidate.ability_id)) {
       setupSources.push({ ownerType: "ability", ownerId: slot.ability_id!, side: "player", effects: runEffects.ability[slot.ability_id!] ?? [], sourceOrder: slot.slot_index });
     }
   }
-  for (const [slotIndex, abilityId] of (enemyRollcaster?.ability_ids ?? []).entries()) {
+  for (const [slotIndex, abilityId] of limitRollcasterAbilityIds(enemyRollcaster?.ability_ids ?? []).entries()) {
     setupSources.push({ ownerType: "ability", ownerId: abilityId, side: "opponent", effects: runEffects.ability[abilityId] ?? [], sourceOrder: 20_000 + slotIndex });
   }
   setupSources.sort((a, b) => (a.ownerType === b.ownerType ? a.sourceOrder - b.sourceOrder : a.ownerType === "relic" ? -1 : 1));
@@ -580,7 +592,7 @@ export function createInitialCombatState(
         .map((row) => ({ opponentId: row.opponent_id, statKey: row.stat_key, value: row.value })),
       loadouts: {
         playerSkillSlots: structuredClone(player.skillSlots),
-        playerAbilitySlots: structuredClone(player.abilitySlots),
+        playerAbilitySlots: structuredClone(playerAbilitySlots),
         playerRelicSlots: structuredClone(player.relicSlots),
         opponents: opponentRows.map((opponent) => ({ opponentId: opponent.id, skillIds: [...opponent.skill_ids], relicIds: [...opponent.relic_ids] })),
       },
