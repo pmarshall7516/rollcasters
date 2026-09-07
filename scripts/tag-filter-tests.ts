@@ -1,4 +1,4 @@
-import { challengeEventIncrement, type ChallengeEvent } from "../src/lib/challenges.js";
+import { applySkillArsenalEvent, challengeEventIncrement, type ChallengeEvent } from "../src/lib/challenges.js";
 import { assertEffectContract } from "../src/lib/effects.js";
 import type { CollectibleUnlockChallenge, ResolvedEffectRef } from "../src/lib/types.js";
 
@@ -72,6 +72,26 @@ check(challengeEventIncrement(specificPulseChallenge, { ...useSkillEvent, skillI
 const attackOnlyChallenge = challenge("use_skill", { required_amount: 1, skill_type: "attack" });
 check(challengeEventIncrement(attackOnlyChallenge, useSkillEvent) === 1, "Use Skill must match the selected Attack Skill Type.");
 check(challengeEventIncrement(attackOnlyChallenge, { ...useSkillEvent, skillType: "support", payload: { ...useSkillEvent.payload, skill_type: "support" } }) === 0, "Use Skill must reject the opposite Skill Type.");
+
+const arsenalChallenge = challenge("skill_arsenal" as CollectibleUnlockChallenge["challenge_type"], {
+  required_distinct_skills: 2,
+  minimum_uses_per_skill: 2,
+  required_completions: 1,
+  tracking_scope: "single_encounter",
+  skill_type: "attack",
+  skill_tag_ids: ["pulse"],
+});
+const arsenalAfterFirstPulse = applySkillArsenalEvent(arsenalChallenge, useSkillEvent, {});
+check(Object.keys(arsenalAfterFirstPulse.skillUseCounts).length === 1 && arsenalAfterFirstPulse.qualifiedSkillIds.length === 0, "Skill Arsenal must count a matching Skill without qualifying it before the per-Skill minimum.");
+const arsenalAfterSecondPulse = applySkillArsenalEvent(arsenalChallenge, { ...useSkillEvent, eventId: "skill-2" }, arsenalAfterFirstPulse);
+check(arsenalAfterSecondPulse.qualifiedSkillIds.join(",") === "pulse-skill", "Skill Arsenal must qualify a Skill after its minimum uses.");
+const arsenalAfterSecondSkill = applySkillArsenalEvent(arsenalChallenge, { ...useSkillEvent, eventId: "skill-3", skillId: "second-pulse-skill" }, arsenalAfterSecondPulse);
+check(arsenalAfterSecondSkill.qualifiedSkillIds.length === 1, "Skill Arsenal must not qualify a second Skill before its minimum uses.");
+const arsenalComplete = applySkillArsenalEvent(arsenalChallenge, { ...useSkillEvent, eventId: "skill-4", skillId: "second-pulse-skill" }, arsenalAfterSecondSkill);
+check(arsenalComplete.qualifiedSkillIds.length === 2, "Skill Arsenal must count distinct matching Skills within one scope.");
+check(arsenalComplete.skillUseCounts["second-pulse-skill"] === 2, "Skill Arsenal must retain per-Skill use counts.");
+check(applySkillArsenalEvent(arsenalChallenge, { ...useSkillEvent, eventId: "skill-support", skillType: "support", payload: { ...useSkillEvent.payload, skill_type: "support" } }, arsenalComplete).qualifiedSkillIds.length === 2, "Skill Arsenal must reject Skills with the wrong type.");
+check(applySkillArsenalEvent(arsenalChallenge, { ...useSkillEvent, eventId: "skill-untagged", skillTagIds: ["other-tag"] }, arsenalComplete).qualifiedSkillIds.length === 2, "Skill Arsenal must reject Skills without a selected Skill Tag.");
 
 const healEvent: ChallengeEvent = {
   eventId: "heal-1",

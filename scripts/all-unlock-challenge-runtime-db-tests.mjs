@@ -1,10 +1,11 @@
 import { createDbClient } from "./db-utils.mjs";
 
 const TRACKED_TYPES = new Set([
-  "knock_out_critters", "deal_damage", "take_damage", "use_skill",
+  "knock_out_critters", "deal_damage", "take_damage", "use_skill", "skill_arsenal",
   "squad_composition", "dungeon_clear", "resource_spending", "swap_action",
   "block_action", "dice_roll", "heal_hp", "defeat_rollcaster_type",
-  "afflict_status", "stun_activation", "shields_shattered",
+  "afflict_status", "stun_activation", "shields_shattered", "effectiveness_strike",
+  "closing_move",
 ]);
 
 function check(condition, message) {
@@ -99,6 +100,11 @@ function eventFor(row, critters, skills, dungeons) {
     return { eventType: "skill_resolved", sourceId: source.id, targetId: target.id, skillId: skill.id, amount: 1, payload: { ...basePayload, skill_type: skill.skill_type, skill_element_id: skill.element_id, skill_tag_ids: skill.tag_ids } };
   }
 
+  if (row.challenge_type === "skill_arsenal") {
+    const skill = chooseSkill(skills, p.skill_ids, p.element_ids, p.skill_tag_ids, p.skill_type, `${row.id} Skill`);
+    return { eventType: "skill_resolved", sourceId: source.id, targetId: target.id, skillId: skill.id, amount: 1, payload: { ...basePayload, skill_type: skill.skill_type, skill_element_id: skill.element_id, skill_tag_ids: skill.tag_ids } };
+  }
+
   if (row.challenge_type === "heal_hp") {
     return { eventType: "hp_healed", sourceId: source.id, targetId: target.id, skillId: null, amount: 1, payload: { ...basePayload, source_side: "player", recipient_side: p.recipient_side === "enemy" ? "enemy" : "friendly" } };
   }
@@ -118,6 +124,67 @@ function eventFor(row, critters, skills, dungeons) {
 
   if (row.challenge_type === "shields_shattered") {
     return { eventType: "shield_shattered", sourceId: source.id, targetId: target.id, skillId: null, amount: 1, payload: { ...basePayload, target_side: p.shield_side === "enemies" ? "opponent" : p.shield_side === "friendlies" ? "player" : "player", shield_shattered: true } };
+  }
+
+  if (row.challenge_type === "effectiveness_strike") {
+    const skill = chooseSkill(skills, p.skill_ids, p.skill_element_ids, p.skill_tag_ids, undefined, `${row.id} Skill`);
+    const amount = 1;
+    const hpDamage = p.damage_mode === "shield" ? 0 : amount;
+    const shieldDamage = p.damage_mode === "hp" ? 0 : amount;
+    const hit = {
+      target_critter_id: target.id,
+      target_element_ids: targetElements,
+      target_critter_tag_ids: target.tag_ids,
+      hp_damage: hpDamage,
+      shield_damage: shieldDamage,
+      total_damage: amount,
+      effectiveness_class: firstOr(p.effectiveness_classes, "effective"),
+      knocked_out: p.tracking_metric === "knockouts" || p.must_knock_out === true,
+    };
+    const payload = {
+      ...basePayload,
+      source_side: "player",
+      target_side: "opponent",
+      skill_tag_ids: skill.tag_ids,
+      skill_type: skill.skill_type,
+      skill_element_id: skill.element_id,
+      effectiveness_hits: [hit],
+      effectiveness_class: hit.effectiveness_class,
+      hp_damage: hpDamage,
+      shield_damage: shieldDamage,
+      total_damage: amount,
+      knocked_out: hit.knocked_out,
+    };
+    return p.tracking_metric === "skills_hit"
+      ? { eventType: "effectiveness_skill_resolved", sourceId: source.id, targetId: target.id, skillId: skill.id, amount: 1, payload }
+      : { eventType: "effectiveness_strike", sourceId: source.id, targetId: target.id, skillId: skill.id, amount, payload };
+  }
+
+  if (row.challenge_type === "closing_move") {
+    const finisherType = p.finisher_type ?? "skill";
+    const skill = finisherType === "skill"
+      ? chooseSkill(skills, p.skill_ids, [], p.skill_tag_ids, undefined, `${row.id} finishing Skill`)
+      : null;
+    return {
+      eventType: "final_knockout_attribution",
+      sourceId: source.id,
+      targetId: target.id,
+      skillId: skill?.id ?? null,
+      amount: 1,
+      payload: {
+        ...basePayload,
+        source_side: "player",
+        target_side: "opponent",
+        battle_won: true,
+        finisher_type: finisherType,
+        source_owner_type: skill ? "skill" : "direct_effect",
+        source_owner_id: skill?.id ?? "fixture-effect",
+        remaining_enemy_count: 0,
+        remaining_active_enemy_count: 0,
+        is_last_enemy_in_dungeon_battle: true,
+        skill_tag_ids: skill?.tag_ids ?? [],
+      },
+    };
   }
 
   if (row.challenge_type === "resource_spending") {

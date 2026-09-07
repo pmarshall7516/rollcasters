@@ -137,7 +137,7 @@ function makeCatalog(): Catalog {
     starterOptions: [],
     gameAssets: [],
     statuses: [
-      { id: "finite", name: "Finite", description: "Finite.", asset_path: "status/finite.png", sort_order: 0, version: 1 },
+      { id: "finite", name: "Finite", description: "Finite.", asset_path: "status/finite.png", sort_order: 0, version: 1, classification: "negative" },
       { id: "aura", name: "Aura", description: "Aura.", asset_path: null, sort_order: 1, version: 1 },
       { id: "stun", name: "Stun", description: "Stun.", asset_path: null, sort_order: 2, version: 1 },
     ],
@@ -230,6 +230,89 @@ eventCatalog.effectsBySkill.mark = [effect(
   "apply_status",
   { status_id: "finite", chance: 1, target: "targets", indefinite: true },
 )];
+eventCatalog.skills.push({ id: "natural-cure", name: "Natural Cure", element_id: "bloom", skill_type: "support", power: 0, mana_cost: 0, targeting: "single_any", description: "Natural Cure.", sort_order: 4, tag_ids: ["burst"] });
+eventCatalog.effectsBySkill["natural-cure"] = [effect(
+  "skill",
+  "natural-cure",
+  "cleanse",
+  "effect_removal",
+  { removal_category: "statuses", maximum_effects_removed_mode: "all", target: "targets" },
+)];
+eventCatalog.skills.push(
+  { id: "weaken", name: "Weaken", element_id: "basic", skill_type: "support", power: 0, mana_cost: 0, targeting: "single_any", description: "Weaken.", sort_order: 5, tag_ids: [] },
+  { id: "clear-debuff", name: "Clear Debuff", element_id: "bloom", skill_type: "support", power: 0, mana_cost: 0, targeting: "single_any", description: "Clear Debuff.", sort_order: 6, tag_ids: [] },
+);
+eventCatalog.effectsBySkill.weaken = [effect(
+  "skill",
+  "weaken",
+  "weaken-atk",
+  "stat_modifier",
+  { stat: "atk", value_mode: "flat", amount: -2, chance: 1, target: "targets" },
+)];
+eventCatalog.effectsBySkill["clear-debuff"] = [effect(
+  "skill",
+  "clear-debuff",
+  "clear-negative-stat",
+  "effect_removal",
+  { removal_category: "stat_modifiers", maximum_effects_removed_mode: "all", target: "targets" },
+)];
+const removalStatusSlot = { user_critter_id: "up1", slot_index: 5, skill_id: "natural-cure" };
+const weakenSlot = { user_critter_id: "up1", slot_index: 6, skill_id: "weaken" };
+const clearDebuffSlot = { user_critter_id: "up1", slot_index: 7, skill_id: "clear-debuff" };
+const removalPlayer = makePlayer();
+removalPlayer.skillSlots.push(removalStatusSlot, weakenSlot, clearDebuffSlot);
+const afflicted = takeTurn(
+  { ...battle(eventCatalog, removalPlayer, "status-removal-runtime"), opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p1", cost: 0 }],
+);
+const removed = resolveCombatActions(
+  { ...startTurn(afflicted), phase: "selecting", playerMana: 50, opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "natural-cure", targetKey: "p1", cost: 0 }],
+  [],
+);
+check(removed.turnEvents.some((event) => event.event_type === "effect_removed" && event.payload?.removal_kind === "status" && event.payload?.status_id === "finite" && event.payload?.removal_reason === "skill" && event.payload?.source_owner_id === "natural-cure"), "Natural Cure must emit a Status removal progress event with its Skill source.");
+const weakened = resolveCombatActions(
+  { ...startTurn(removed), phase: "selecting", playerMana: 50, opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "weaken", targetKey: "p1", cost: 0 }],
+  [],
+);
+const cleared = resolveCombatActions(
+  { ...startTurn(weakened), phase: "selecting", playerMana: 50, opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "clear-debuff", targetKey: "p1", cost: 0 }],
+  [],
+);
+check(cleared.turnEvents.some((event) => event.event_type === "effect_removed" && event.payload?.removal_kind === "negative_stat_modifier" && event.payload?.modifier_polarity === "negative" && event.payload?.source_owner_id === "clear-debuff"), "Removing a negative stat modifier must emit a negative stat-modifier removal progress event with its Skill source.");
+eventCatalog.effectsBySkill.ritual = [effect(
+  "skill",
+  "ritual",
+  "finite-status",
+  "apply_status",
+  { status_id: "finite", chance: 1, target: "self", indefinite: false, turns: 1 },
+)];
+const expired = takeTurn(
+  { ...battle(eventCatalog, removalPlayer, "status-expiration-runtime"), opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }],
+);
+check(expired.turnEvents.some((event) => event.event_type === "effect_removed" && event.payload?.removal_kind === "status" && event.payload?.removal_reason === "expiration" && event.payload?.status_id === "finite"), "Natural Status expiration must emit an expiration removal progress event.");
+const terminalBase = simApplyStatus(
+  { ...battle(eventCatalog, removalPlayer, "status-battle-end-runtime"), opponentMana: 0 },
+  "finite",
+  "o1",
+  null,
+);
+const terminal = resolveCombatActions(
+  {
+    ...startTurn(terminalBase),
+    phase: "selecting",
+    playerMana: 50,
+    opponentMana: 0,
+    opponentUnits: terminalBase.opponentUnits.map((unit) => ({ ...unit, hp: 0 })),
+  },
+  [],
+  [],
+);
+check(terminal.turnEvents.some((event) => event.event_type === "effect_removed" && event.payload?.removal_kind === "status" && event.payload?.removal_reason === "battle_end" && event.payload?.status_id === "finite"), "Battle end cleanup must emit a battle_end Status removal progress event.");
+check(new Set(cleared.turnEvents.map((event) => event.event_key)).size === cleared.turnEvents.length, "Status Removal events must preserve unique event keys when one action removes multiple effect kinds.");
 check(critterElementIds(eventCatalog.critters[0]).join(",") === "basic", "A one-type Critter must expose only Element 1.");
 check(critterElementIds(eventCatalog.critters[1]).join(",") === "bloom,aqua", "A two-type Critter must preserve Element 1 then Element 2.");
 check(critterHasElement(eventCatalog.critters[1], "bloom") && critterHasElement(eventCatalog.critters[1], "aqua"), "Element membership must match either Critter slot.");
@@ -242,6 +325,17 @@ const eventResult = takeTurn(eventBattle, [{ actorKey: eventBattle.playerUnits[0
 check(eventResult.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "strike" && event.source_critter_id === "p1"), "A successful player skill must emit one normalized skill_resolved progress event.");
 check(eventResult.turnEvents.some((event) => event.event_type === "resource_spent" && event.amount === 5 && event.payload?.spending_context === "combat" && event.payload?.resource_type === "mana" && event.source_critter_id === "p1"), "A successful player action must emit its actual Mana spend for Resource Spending challenges.");
 check(eventResult.turnEvents.some((event) => event.event_type === "hp_damage_dealt" && event.target_critter_id === eventTarget.critter.id && event.amount > 0 && event.payload?.hp_damage === event.amount && event.payload?.shield_damage === 0), "Unshielded player damage must emit HP-only normalized damage components.");
+const effectivenessEvent = eventResult.turnEvents.find((event) => event.event_type === "effectiveness_strike" && event.target_critter_id === eventTarget.critter.id);
+check(effectivenessEvent?.payload?.effectiveness_class === "neutral"
+  && effectivenessEvent.payload?.source_side === "player"
+  && effectivenessEvent.payload?.target_side === "opponent"
+  && effectivenessEvent.payload?.total_damage === effectivenessEvent.amount,
+"Direct player attack damage must emit its Element effectiveness classification and authoritative sides.");
+const effectivenessSkillEvent = eventResult.turnEvents.find((event) => event.event_type === "effectiveness_skill_resolved" && event.skill_id === "strike");
+check(Array.isArray(effectivenessSkillEvent?.payload?.effectiveness_hits)
+  && effectivenessSkillEvent.payload.effectiveness_hits.length === 1
+  && effectivenessSkillEvent.payload.effectiveness_hits[0]?.target_critter_id === eventTarget.critter.id,
+"An attack Skill must emit one effectiveness hit summary for Skills-hit Challenges.");
 check(!eventResult.turnEvents.some((event) => ["use_skill", "deal_damage"].includes(event.event_type)), "A skill resolution must not emit legacy aliases that would double-count the same challenge event.");
 check(new Set(eventResult.turnEvents.map((event) => event.event_key)).size === eventResult.turnEvents.length, "Combat progress event keys must be unique within a turn.");
 check(eventResult.turnEvents.every((event) => event.payload?.dungeon_id === "d" && event.payload?.battle_id === "progress-events" && event.payload?.rollcaster_id === "rc"), "Combat progress events must carry the active Dungeon, battle, and Rollcaster context.");
@@ -1316,6 +1410,24 @@ check(
     && firstClearDungeon.difficulty === 12
     && !firstClearDungeon.encounterPoolRevealed,
   "An uncleared Boss Dungeon must derive its lineup, count, logo, and maximum difficulty from ordered Boss rows while hiding its encounter identities.",
+);
+const multiBossDungeon = { ...bossDungeon, battle_format: "1v2" as const, opponent_active_count: 2 };
+const multiBossOpponents: DungeonOpponent[] = Array.from({ length: 6 }, (_, index) => ({
+  ...opponentBase,
+  id: `multi-boss-${index + 1}`,
+  dungeon_id: multiBossDungeon.id,
+  pool_type: "boss_order" as const,
+  sequence_index: index,
+  probability: null,
+  boss_encounter_id: `encounter-${Math.floor(index / 2) + 1}`,
+  squad_slot: index % 2 + 1,
+}));
+const multiBossEffective = effectiveDungeon(multiBossDungeon, multiBossOpponents, bossProgress, makePlayer());
+check(
+  multiBossEffective.mode === "boss"
+    && multiBossEffective.battleCount === 3
+    && multiBossEffective.pool.map((row) => row.sequence_index).join(",") === "0,1,2,3,4,5",
+  "An uncleared Boss Dungeon must use every ordered Boss Encounter squad in sequence.",
 );
 const repeatDungeon = effectiveDungeon(
   bossDungeon,
@@ -2535,6 +2647,15 @@ check(
     && !terminalSkillMessages.some((message) => message === "Your Player Two used Ritual!")
     && !terminalSkillMessages.some((message) => message === "The enemy Opponent One used Strike!"),
   `A final Critter knockout must resolve the lethal Skill's effects, then skip later actions in the turn. Received: ${JSON.stringify(terminalSkillMessages)}`,
+);
+const terminalFinalKnockout = terminalResolved.turnEvents.find((event) => event.event_type === "final_knockout_attribution");
+check(
+  terminalFinalKnockout?.payload?.battle_won === true
+    && terminalFinalKnockout.payload.finisher_type === "skill"
+    && terminalFinalKnockout.payload.remaining_enemy_count === 0
+    && terminalFinalKnockout.payload.is_last_enemy_in_dungeon_battle === true
+    && terminalFinalKnockout.skill_id === "strike",
+  "A player-winning final knockout must emit one attributed Skill finisher event with zero remaining enemies.",
 );
 
 const playerTerminalCatalog = structuredClone(terminalTurnCatalog);

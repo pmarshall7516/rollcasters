@@ -7,6 +7,7 @@ import type {
   CollectibleUnlockChallenge,
   Critter,
   PlayerState,
+  EffectivenessClass,
 } from "./types.js";
 
 export type ChallengeEventType =
@@ -23,8 +24,12 @@ export type ChallengeEventType =
   | "hp_healed"
   | "status_afflicted"
   | "status_turn_completed"
+  | "effect_removed"
   | "stun_activated"
   | "shield_shattered"
+  | "effectiveness_strike"
+  | "effectiveness_skill_resolved"
+  | "final_knockout_attribution"
   | "skill_resolved";
 
 export type ChallengeEvent = {
@@ -103,14 +108,49 @@ function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: Chal
   if (!matchesAnyFilter(p.target_critter_ids, targetCritterIds)) return false;
   if (!matchesAnyFilter(p.target_element_ids, targetElements)) return false;
   if (!matchesAnyFilter(p.target_critter_tag_ids, targetTags)) return false;
-  if (challenge.challenge_type === "use_skill") {
+  if (challenge.challenge_type === "use_skill" || challenge.challenge_type === "effectiveness_strike" || challenge.challenge_type === "closing_move") {
     const selectedSkillType = String(p.skill_type ?? "any");
     if (selectedSkillType !== "any" && selectedSkillType !== skillType) return false;
     if (!matchesAnyFilter(p.skill_tag_ids, skillTags)) return false;
     if (!matchesAnyFilter(p.skill_ids, event.skillId)) return false;
-    if (!matchesAnyFilter(p.element_ids, [String(event.payload?.skill_element_id ?? "")])) return false;
+    if (challenge.challenge_type === "effectiveness_strike"
+      && !matchesAnyFilter(p.skill_element_ids, String(payload.skill_element_id ?? ""))) return false;
+    if (challenge.challenge_type === "use_skill" && !matchesAnyFilter(p.element_ids, [String(event.payload?.skill_element_id ?? "")])) return false;
   }
   return true;
+}
+
+export type SkillArsenalScopeState = {
+  skillUseCounts: Record<string, number>;
+  qualifiedSkillIds: string[];
+};
+
+export function matchesSkillArsenalEvent(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): boolean {
+  if (challenge.challenge_type !== "skill_arsenal" || event.type !== "skill_resolved" || !event.skillId) return false;
+  const p = parametersOf(challenge);
+  const payload = event.payload ?? {};
+  const skillType = event.skillType ?? (typeof payload.skill_type === "string" ? payload.skill_type : undefined);
+  const skillTags = eventArray(event, "skillTagIds", "skill_tag_ids");
+  const skillElement = typeof payload.skill_element_id === "string" ? payload.skill_element_id : undefined;
+  const selectedType = String(p.skill_type ?? "any");
+  if (selectedType !== "any" && selectedType !== skillType) return false;
+  if (!matchesAnyFilter(p.skill_ids, event.skillId)) return false;
+  if (!matchesAnyFilter(p.skill_tag_ids, skillTags)) return false;
+  if (!matchesAnyFilter(p.element_ids, skillElement)) return false;
+  return true;
+}
+
+export function applySkillArsenalEvent(
+  challenge: CollectibleUnlockChallenge,
+  event: ChallengeEvent,
+  state: Partial<SkillArsenalScopeState>,
+): SkillArsenalScopeState {
+  if (!matchesSkillArsenalEvent(challenge, event) || !event.skillId) return { skillUseCounts: state.skillUseCounts ?? {}, qualifiedSkillIds: state.qualifiedSkillIds ?? [] };
+  const currentCounts = state.skillUseCounts ?? {};
+  const nextCounts = { ...currentCounts, [event.skillId]: (currentCounts[event.skillId] ?? 0) + 1 };
+  const minimumUses = Math.max(1, Math.floor(Number(parametersOf(challenge).minimum_uses_per_skill ?? 1)));
+  const qualifiedSkillIds = Object.keys(nextCounts).filter((skillId) => nextCounts[skillId] >= minimumUses);
+  return { skillUseCounts: nextCounts, qualifiedSkillIds };
 }
 
 function eventTypeFor(challengeType: string): ChallengeEventType | null {
@@ -127,9 +167,64 @@ function eventTypeFor(challengeType: string): ChallengeEventType | null {
     dice_roll: "dice_resolved",
     heal_hp: "hp_healed",
     afflict_status: "status_afflicted",
+    status_removal: "effect_removed",
     stun_activation: "stun_activated",
     shields_shattered: "shield_shattered",
+    effectiveness_strike: "effectiveness_strike",
+    closing_move: "final_knockout_attribution",
   }[challengeType] as ChallengeEventType | undefined ?? null;
+}
+
+function effectivenessDamageAmount(parameters: Record<string, unknown>, hit: Record<string, unknown>): number {
+  const hp = Math.max(0, Math.floor(Number(hit.hp_damage ?? 0)));
+  const shield = Math.max(0, Math.floor(Number(hit.shield_damage ?? 0)));
+  const total = Math.max(0, Math.floor(Number(hit.total_damage ?? hit.amount ?? hp + shield)));
+  const mode = String(parameters.damage_mode ?? "total");
+  if (mode === "hp" || mode === "hp_only") return hp;
+  if (mode === "shield" || mode === "shield_only") return shield;
+  return total;
+}
+
+function effectivenessClassFor(hit: Record<string, unknown>): EffectivenessClass | undefined {
+  const value = hit.effectiveness_class;
+  return typeof value === "string" ? value as EffectivenessClass : undefined;
+}
+
+function effectivenessHitMatches(
+  challenge: CollectibleUnlockChallenge,
+  event: ChallengeEvent,
+  hit: Record<string, unknown>,
+): boolean {
+  const targetId = typeof hit.target_critter_id === "string" ? hit.target_critter_id : event.targetCritterId;
+  const targetElements = stringArray(hit.target_element_ids ?? event.targetElementIds ?? event.payload?.target_element_ids);
+  const targetTags = stringArray(hit.target_critter_tag_ids ?? event.targetCritterTagIds ?? event.payload?.target_critter_tag_ids);
+  return matchesCombatFilters(challenge, {
+    ...event,
+    targetCritterId: targetId,
+    targetElementIds: targetElements,
+    targetCritterTagIds: targetTags,
+    payload: {
+      ...(event.payload ?? {}),
+      ...hit,
+      target_critter_id: targetId,
+      target_critter_ids: targetId ? [targetId] : [],
+      target_element_ids: targetElements,
+      target_critter_tag_ids: targetTags,
+    },
+  });
+}
+
+function effectivenessHitIncrement(challenge: CollectibleUnlockChallenge, event: ChallengeEvent, hit: Record<string, unknown>): number {
+  const p = parametersOf(challenge);
+  const selectedClasses = stringArray(p.effectiveness_classes);
+  const classification = effectivenessClassFor(hit);
+  if (!classification || !selectedClasses.includes(classification)) return 0;
+  if (!effectivenessHitMatches(challenge, event, hit)) return 0;
+  const amount = effectivenessDamageAmount(p, hit);
+  const knockedOut = hit.knocked_out === true;
+  if (p.must_knock_out === true && !knockedOut) return 0;
+  if (p.tracking_metric === "knockouts" && !knockedOut) return 0;
+  return p.tracking_metric === "damage" ? amount : 1;
 }
 
 function matchesLegacyTarget(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): boolean {
@@ -186,6 +281,7 @@ export function challengeEventIncrement(
     ? String(p.completion_event ?? "battle_win") === "dungeon_clear" ? "dungeon_completed" : "battle_completed"
     : type === "defeat_rollcaster_type" ? "battle_completed"
     : type === "afflict_status" && String(p.affliction_mode ?? "fresh_afflictions") === "afflicted_turns" ? "status_turn_completed"
+    : type === "effectiveness_strike" && String(p.tracking_metric ?? "damage") === "skills_hit" ? "effectiveness_skill_resolved"
     : eventTypeFor(type);
   if (!expectedType || event.type !== expectedType) return 0;
 
@@ -193,6 +289,33 @@ export function challengeEventIncrement(
     const payload = event.payload ?? {};
     if (payload.won !== true) return 0;
     return stringArray(p.rollcaster_types).includes(String(payload.enemy_rollcaster_type ?? "")) ? 1 : 0;
+  }
+
+  if (type === "skill_arsenal") return matchesSkillArsenalEvent(challenge, event) ? 1 : 0;
+
+  if (type === "effectiveness_strike") {
+    if (event.type === "effectiveness_strike") return effectivenessHitIncrement(challenge, event, event.payload ?? {});
+    if (event.type === "effectiveness_skill_resolved" && p.tracking_metric === "skills_hit") {
+      return Array.isArray(event.payload?.effectiveness_hits)
+        && event.payload.effectiveness_hits.some((hit): hit is Record<string, unknown> => Boolean(hit && typeof hit === "object" && !Array.isArray(hit)) && effectivenessHitIncrement(challenge, event, hit) > 0)
+        ? 1
+        : 0;
+    }
+    return 0;
+  }
+
+  if (type === "closing_move") {
+    const payload = event.payload ?? {};
+    if (event.type !== "final_knockout_attribution" || event.amount !== 1 || payload.battle_won !== true) return 0;
+    if (String(p.failure_policy ?? "no_increment") !== "no_increment") return 0;
+    const finisherType = String(payload.finisher_type ?? "");
+    const configuredFinisher = String(p.finisher_type ?? "any");
+    if (configuredFinisher !== "any" && configuredFinisher !== finisherType) return 0;
+    const scope = String(p.final_knockout_scope ?? "last_enemy");
+    if (scope === "last_enemy" && Number(payload.remaining_enemy_count ?? 1) !== 0) return 0;
+    if (scope === "last_active_enemy" && Number(payload.remaining_active_enemy_count ?? 1) !== 0) return 0;
+    if (scope === "last_enemy_in_dungeon_battle" && payload.is_last_enemy_in_dungeon_battle !== true) return 0;
+    return matchesCombatFilters(challenge, event) ? 1 : 0;
   }
 
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(type)) {
@@ -229,6 +352,42 @@ export function challengeEventIncrement(
     const eventStatuses = stringArray(payload.status_ids).concat(typeof payload.status_id === "string" ? [payload.status_id] : []);
     if (selectedStatuses.length && !selectedStatuses.some((statusId) => eventStatuses.includes(statusId))) return 0;
     if (mode === "fresh_afflictions" && payload.fresh !== true) return 0;
+    return 1;
+  }
+
+  if (String(type) === "status_removal") {
+    const payload = event.payload ?? {};
+    const removalKind = String(p.removal_kind ?? "statuses");
+    const eventKind = String(payload.removal_kind ?? "status");
+    if (removalKind === "statuses" && eventKind !== "status") return 0;
+    if (removalKind === "negative_stat_modifiers" && eventKind !== "negative_stat_modifier") return 0;
+    if (removalKind === "either" && !["status", "negative_stat_modifier"].includes(eventKind)) return 0;
+
+    const targetSide = String(p.target_side ?? "any");
+    const eventTargetSide = String(payload.target_side ?? "");
+    if (targetSide === "enemies" && eventTargetSide !== "opponent") return 0;
+    if (targetSide === "friendlies" && eventTargetSide !== "player") return 0;
+
+    if (eventKind === "status") {
+      const selectedStatuses = stringArray(p.status_ids);
+      if (selectedStatuses.length && !selectedStatuses.includes(String(payload.status_id ?? ""))) return 0;
+      const classification = String(payload.status_classification ?? "mixed");
+      const selectedClassification = String(p.status_classification ?? "any");
+      if (selectedClassification !== "any" && classification !== selectedClassification) return 0;
+    } else if (String(payload.modifier_polarity ?? "") !== "negative") {
+      return 0;
+    }
+
+    const reason = String(p.removal_reason ?? "any");
+    if (reason !== "any" && reason !== String(payload.removal_reason ?? "")) return 0;
+    if (!matchesAnyFilter(p.source_critter_ids, event.sourceCritterId)) return 0;
+    const sourceOwnerType = String(payload.source_owner_type ?? "");
+    const sourceOwnerId = String(payload.source_owner_id ?? "");
+    const skillId = event.skillId ?? (sourceOwnerType === "skill" ? sourceOwnerId : undefined);
+    if (!matchesAnyFilter(p.skill_ids, skillId)) return 0;
+    if (!matchesAnyFilter(p.skill_tag_ids, eventArray(event, "skillTagIds", "skill_tag_ids"))) return 0;
+    if (!matchesAnyFilter(p.ability_ids, sourceOwnerType === "ability" ? sourceOwnerId : undefined)) return 0;
+    if (!matchesAnyFilter(p.relic_ids, sourceOwnerType === "relic" ? sourceOwnerId : undefined)) return 0;
     return 1;
   }
 

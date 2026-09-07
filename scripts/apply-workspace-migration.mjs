@@ -1,11 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import pg from "pg";
-import { readEnv } from "./db-utils.mjs";
+import { readEnv, sharedMigrationsDir } from "./db-utils.mjs";
 
-const migrationPath = process.argv[2];
-if (!migrationPath || !migrationPath.startsWith("supabase/migrations/") || !migrationPath.endsWith(".sql")) {
-  throw new Error("Pass one migration path under supabase/migrations/.");
+const requestedPath = process.argv[2];
+const migrationPath = String(requestedPath ?? "")
+  .replace(/^.*(?:rollcaster-docs[\\/])?migrations[\\/]/, "")
+  .replaceAll("\\", "/")
+  .replace(/^\/+/, "");
+if (!migrationPath || !migrationPath.endsWith(".sql") || migrationPath.split("/").includes("..")) {
+  throw new Error("Pass one migration path relative to rollcaster-docs/migrations/, such as general/20260903150000_add_promo_lootbox_rewards.sql.");
+}
+
+const absoluteMigrationPath = path.resolve(sharedMigrationsDir, migrationPath);
+if (!absoluteMigrationPath.startsWith(`${path.resolve(sharedMigrationsDir)}${path.sep}`)) {
+  throw new Error("Migration path must remain under rollcaster-docs/migrations/.");
 }
 
 const basename = path.basename(migrationPath, ".sql");
@@ -19,7 +28,7 @@ const client = new pg.Client({
   connectionString: poolerUrl.toString(),
   ssl: { ca: fs.readFileSync(env.SUPABASE_DB_CA_CERT_PATH, "utf8") },
 });
-const sql = fs.readFileSync(migrationPath, "utf8");
+const sql = fs.readFileSync(absoluteMigrationPath, "utf8");
 
 try {
   await client.connect();

@@ -1419,10 +1419,18 @@ export async function submitCollectibleCombatEvents(
       loadCatalog(),
       getServerCollectiblePlayerSnapshot(),
     ]);
+    const previewEvents = events.map((event) => ({
+      ...event,
+      payload: {
+        ...(event.payload ?? {}),
+        battle_id: event.payload?.battle_id ?? runId,
+        turn_number: turnNumber,
+      },
+    }));
     const nextState = applyLocalChallengeEvents(
       readLocalChallengeState(),
       catalog.collectibleUnlockChallenges,
-      events,
+      previewEvents,
       catalog.dungeons,
     );
     writeLocalChallengeState(nextState);

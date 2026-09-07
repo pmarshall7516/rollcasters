@@ -1,4 +1,4 @@
-import { challengeEventIncrement, type ChallengeEvent } from "./challenges.js";
+import { applySkillArsenalEvent, challengeEventIncrement, type ChallengeEvent, type SkillArsenalScopeState } from "./challenges.js";
 import { challengeGoal, safeBigInt } from "./collectibles.js";
 import type {
   CollectiblePlayerSnapshot,
@@ -14,10 +14,11 @@ export type LocalChallengePreviewState = {
   tracked: UserTrackedCollectibleChallenge[];
   untrackedChallengeIds: string[];
   processedEventKeys: string[];
+  skillArsenalScopes: Record<string, SkillArsenalScopeState & { awarded: boolean }>;
 };
 
 export function emptyLocalChallengePreviewState(): LocalChallengePreviewState {
-  return { progress: [], tracked: [], untrackedChallengeIds: [], processedEventKeys: [] };
+  return { progress: [], tracked: [], untrackedChallengeIds: [], processedEventKeys: [], skillArsenalScopes: {} };
 }
 
 function progressRow(
@@ -81,15 +82,37 @@ function normalizedEventType(eventType: CombatProgressEvent["event_type"]): stri
 }
 
 function challengeEventFor(event: CombatProgressEvent): ChallengeEvent {
+  const payload = event.payload ?? {};
   return {
     eventId: event.event_key,
     type: normalizedEventType(event.event_type) as ChallengeEvent["type"],
     sourceCritterId: event.source_critter_id ?? undefined,
     targetCritterId: event.target_critter_id ?? undefined,
     skillId: event.skill_id ?? undefined,
+    skillTagIds: event.skill_tag_ids ?? undefined,
+    skillType: typeof payload.skill_type === "string" ? payload.skill_type as ChallengeEvent["skillType"] : undefined,
+    battleId: typeof payload.battle_id === "string" ? payload.battle_id : undefined,
+    dungeonRunId: typeof payload.dungeon_run_id === "string" ? payload.dungeon_run_id : undefined,
+    turn: typeof payload.turn_number === "number" ? payload.turn_number : undefined,
     amount: event.amount,
-    payload: event.payload,
+    payload,
   };
+}
+
+function skillArsenalScopeId(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): string | null {
+  const parameters = challenge.parameters ?? {};
+  const battleId = event.battleId ?? (typeof event.payload?.battle_id === "string" ? event.payload.battle_id : undefined);
+  if (!battleId) return null;
+  const scope = String(parameters.tracking_scope ?? "single_encounter");
+  if (scope === "single_turn") {
+    const turn = event.turn ?? (typeof event.payload?.turn_number === "number" ? event.payload.turn_number : undefined);
+    return turn == null ? null : `${battleId}:turn:${turn}`;
+  }
+  if (scope === "single_dungeon") {
+    if (event.dungeonRunId) return event.dungeonRunId;
+    return battleId.replace(/:[^:]+$/, "");
+  }
+  return battleId;
 }
 
 export function applyLocalChallengeEvents(
@@ -103,6 +126,7 @@ export function applyLocalChallengeEvents(
   const trackedIds = new Set(state.tracked.map((row) => row.challenge_id));
   const processed = new Set(state.processedEventKeys);
   const progressById = new Map(state.progress.map((row) => [row.challenge_id, row]));
+  const arsenalScopes = { ...state.skillArsenalScopes };
 
   for (const event of events) {
     if (processed.has(event.event_key)) continue;
@@ -111,6 +135,21 @@ export function applyLocalChallengeEvents(
     for (const challengeId of trackedIds) {
       const challenge = challengesById.get(challengeId);
       if (!challenge) continue;
+      if (challenge.challenge_type === "skill_arsenal") {
+        const scopeId = skillArsenalScopeId(challenge, normalized);
+        if (!scopeId) continue;
+        const scopeKey = `${challengeId}:${scopeId}`;
+        const previousScope = arsenalScopes[scopeKey] ?? { skillUseCounts: {}, qualifiedSkillIds: [], awarded: false };
+        const nextScope = applySkillArsenalEvent(challenge, normalized, previousScope);
+        const required = Math.max(1, Math.floor(Number(challenge.parameters?.required_distinct_skills ?? 1)));
+        const qualifies = nextScope.qualifiedSkillIds.length >= required;
+        arsenalScopes[scopeKey] = { ...nextScope, awarded: previousScope.awarded || qualifies };
+        if (!previousScope.awarded && qualifies) {
+          const previous = progressById.get(challengeId) ?? progressRow(challenge, 0n);
+          progressById.set(challengeId, progressRow(challenge, safeBigInt(previous.current) + 1n, previous.completed));
+        }
+        continue;
+      }
       const increment = BigInt(Math.max(0, Math.floor(challengeEventIncrement(challenge, normalized, dungeonOrders))));
       if (increment <= 0n) continue;
       const previous = progressById.get(challengeId) ?? progressRow(challenge, 0n);
@@ -125,6 +164,7 @@ export function applyLocalChallengeEvents(
   return {
     ...state,
     progress: [...progressById.values()],
+    skillArsenalScopes: Object.fromEntries(Object.entries(arsenalScopes).slice(-256)),
     processedEventKeys: [...processed].slice(-512),
   };
 }
@@ -183,6 +223,9 @@ export function readLocalChallengePreviewState(storage: Storage | null, key: str
       processedEventKeys: Array.isArray(parsed.processedEventKeys)
         ? parsed.processedEventKeys.filter((id): id is string => typeof id === "string").slice(-512)
         : [],
+      skillArsenalScopes: isRecord(parsed.skillArsenalScopes)
+        ? Object.fromEntries(Object.entries(parsed.skillArsenalScopes).filter(([, value]) => isRecord(value))) as LocalChallengePreviewState["skillArsenalScopes"]
+        : {},
     };
   } catch {
     return emptyLocalChallengePreviewState();

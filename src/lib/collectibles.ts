@@ -32,6 +32,7 @@ export const TRACKED_CHALLENGE_TYPES = new Set([
   "deal_damage",
   "take_damage",
   "use_skill",
+  "skill_arsenal",
   "squad_composition",
   "dungeon_clear",
   "resource_spending",
@@ -43,6 +44,8 @@ export const TRACKED_CHALLENGE_TYPES = new Set([
   "afflict_status",
   "stun_activation",
   "shields_shattered",
+  "effectiveness_strike",
+  "status_removal",
 ]);
 
 export function safeBigInt(value: string | number | bigint | null | undefined): bigint {
@@ -355,6 +358,7 @@ export function challengeGoal(challenge: CollectibleUnlockChallenge): bigint {
     case "collection_diversity": return collectionDiversityGoal(parameters);
     case "squad_composition": return safeUnknownBigInt(parameters.required_completions);
     case "dungeon_clear": return safeUnknownBigInt(parameters.required_clears);
+    case "skill_arsenal": return safeUnknownBigInt(parameters.required_completions);
     case "dice_roll": return safeUnknownBigInt(parameters.required_occurrences);
     case "heal_hp": return safeUnknownBigInt(parameters.required_amount);
     default: return safeUnknownBigInt(parameters.required_amount ?? challenge.required_amount);
@@ -443,6 +447,33 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
     return `${p.completion_event === "battle_win" ? "Win" : "Clear"} ${p.required_completions} ${p.completion_event === "battle_win" ? "battle" : "Dungeon"}${Number(p.required_completions) === 1 ? "" : "s"}${unique}${composition}.`;
   }
   if (challenge.challenge_type === "dungeon_clear") return `Clear ${p.dungeon_selection === "any_dungeon" ? "any Dungeon" : p.dungeon_selection === "specific_dungeon" ? namesFor(data, "dungeon", stringParameters(p, "dungeon_ids"))[0] ?? "the selected Dungeon" : `Dungeons ${stringParameters(p, "minimum_dungeon_ids")[0] ?? "—"}–${stringParameters(p, "maximum_dungeon_ids")[0] ?? "—"}`} ${p.required_clears} time${Number(p.required_clears) === 1 ? "" : "s"}.`;
+  if (challenge.challenge_type === "skill_arsenal") {
+    const skills = namesFor(data, "skill", stringParameters(p, "skill_ids"));
+    const tags = stringParameters(p, "skill_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    const elements = namesFor(data, "element", stringParameters(p, "element_ids"));
+    const skillType = p.skill_type === "any" ? "" : `${String(p.skill_type)} `;
+    const pool = [
+      skills.length ? skills.join(" or ") : "",
+      tags.length ? `${tags.join(" or ")}-tagged` : "",
+      elements.length ? `${elements.join(" or ")} Element` : "",
+    ].filter(Boolean).join(" and ");
+    const poolLabel = pool ? `${pool} ` : "";
+    const scope = p.tracking_scope === "single_turn" ? "a single turn" : p.tracking_scope === "single_dungeon" ? "one Dungeon run" : "one encounter";
+    const uses = Number(p.minimum_uses_per_skill ?? 1);
+    const completions = Number(p.required_completions ?? 1);
+    const usesLabel = uses === 1 ? "once" : uses === 2 ? "twice" : `${uses} times`;
+    return `Use ${p.required_distinct_skills} different ${poolLabel}${skillType}Skills at least ${usesLabel} each in ${scope}${completions > 1 ? `, ${completions} times` : ""}.`;
+  }
+  if (challenge.challenge_type === "closing_move") {
+    const goal = Number(p.required_completions ?? 1);
+    const skills = namesFor(data, "skill", stringParameters(p, "skill_ids"));
+    const skillTags = stringParameters(p, "skill_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    const finisher = p.finisher_type === "skill"
+      ? skills.length ? skills.join(" or ") : skillTags.length ? `${skillTags.join(" or ")}-tagged Skill` : "a Skill"
+      : p.finisher_type === "any" ? "any qualifying finisher" : humanize(String(p.finisher_type));
+    const scope = p.final_knockout_scope === "last_enemy_in_dungeon_battle" ? "Dungeon encounter" : "battle";
+    return `Finish ${goal} ${scope}${goal === 1 ? "" : "s"} with ${finisher}.`;
+  }
   if (challenge.challenge_type === "resource_spending") return `Spend ${p.required_amount} ${humanize(String(p.resource_type))} ${p.tracking_scope === "lifetime" ? "in total" : humanize(String(p.tracking_scope))}.`;
   if (challenge.challenge_type === "swap_action") return `${humanize(String(p.tracked_action))} ${p.required_amount} time${Number(p.required_amount) === 1 ? "" : "s"}.`;
   if (challenge.challenge_type === "block_action") return `${humanize(String(p.tracked_action))}: ${p.required_amount}.`;
@@ -473,6 +504,22 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
     if (p.affliction_mode === "afflicted_turns") return `Keep ${statusLabel} on ${target} for ${goal} afflicted turn${goal === 1 ? "" : "s"}.`;
     return `Afflict ${statusLabel} on ${target} ${goal} time${goal === 1 ? "" : "s"} from a fresh Status.`;
   }
+  if (challenge.challenge_type === "status_removal") {
+    const removalKind = String(p.removal_kind ?? "statuses");
+    const kindLabel = removalKind === "negative_stat_modifiers"
+      ? "negative stat modifiers"
+      : removalKind === "either"
+        ? "Statuses or negative stat modifiers"
+        : "Statuses";
+    const statuses = namesFor(data, "status", stringParameters(p, "status_ids"));
+    const statusFilter = statuses.length ? statuses.join(" or ") : kindLabel;
+    const target = p.target_side === "enemies" ? "enemy Critters" : p.target_side === "friendlies" ? "friendly Critters" : "Critters";
+    const goal = Number(p.required_amount ?? challenge.required_amount ?? 0);
+    const reason = p.removal_reason && p.removal_reason !== "any" ? ` with ${humanize(String(p.removal_reason))}` : "";
+    const skills = namesFor(data, "skill", stringParameters(p, "skill_ids"));
+    const source = skills.length ? ` using ${skills.join(" or ")}` : "";
+    return `Remove ${goal} ${statusFilter} from ${target}${source}${reason}.`;
+  }
   if (challenge.challenge_type === "stun_activation") {
     const target = p.target_side === "enemies" ? "enemy Critters" : p.target_side === "friendlies" ? "friendly Critters" : "any Critters";
     const goal = Number(p.required_amount ?? challenge.required_amount ?? 0);
@@ -482,6 +529,23 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
     const side = p.shield_side === "enemies" ? "Enemy Shields" : p.shield_side === "friendlies" ? "Friendly Shields" : "Shields";
     const goal = Number(p.required_amount ?? challenge.required_amount ?? 0);
     return `Shatter ${goal} ${side}.`;
+  }
+  if (challenge.challenge_type === "effectiveness_strike") {
+    const classes = stringParameters(p, "effectiveness_classes").map(humanize);
+    const classLabel = classes.length ? classes.join(" or ") : "selected effectiveness";
+    const metric = String(p.tracking_metric ?? "damage");
+    const goal = Number(p.required_amount ?? challenge.required_amount ?? 0);
+    const mode = String(p.damage_mode ?? "total");
+    const skillElements = namesFor(data, "element", stringParameters(p, "skill_element_ids"));
+    const skillQualifier = skillElements.length ? ` ${skillElements.join(" or ")} Element` : "";
+    if (metric === "skills_hit") return `Use ${classLabel}${skillQualifier} Skills ${goal} time${goal === 1 ? "" : "s"}.`;
+    const amountLabel = metric === "damage"
+      ? `${mode === "hp" ? "HP " : mode === "shield" ? "Shield " : ""}damage`
+      : metric === "knockouts" ? "knockouts"
+        : metric === "skills_hit" ? "Skills"
+          : "hits";
+    const verb = metric === "damage" ? "Deal" : metric === "knockouts" ? "Knock out" : "Land";
+    return `${verb} ${goal} ${classLabel}${skillQualifier ? `${skillQualifier} ` : " "}${amountLabel}.`;
   }
   if (["knock_out_critters", "deal_damage", "take_damage", "use_skill"].includes(challenge.challenge_type)) {
     const sourceCritters = namesFor(data, "critter", stringParameters(p, "source_critter_ids"));

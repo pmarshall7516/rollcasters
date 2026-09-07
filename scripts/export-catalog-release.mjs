@@ -87,7 +87,7 @@ async function readCatalog(client) {
     itemDrops: (itemDrops.get(String(row.id)) ?? []).map((item) => ({ id: item.id, kind: item.drop_type, targetCategory: item.target_category, targetId: item.target_id, minAmount: item.min_amount, maxAmount: item.max_amount, probability: Number(item.probability), dupeCurrencyId: item.dupe_currency_id, dupeCurrencyAmount: item.dupe_currency_amount })),
     overrides: Object.fromEntries((overrides.get(String(row.id)) ?? []).map((item) => [overrideKeys[item.stat_key], item.value])),
   }));
-  const rawEnemyRollcasters = await q(`select id,dungeon_id,sequence_index,name,eclipse_order_type,asset_path,selection_weight,policy_key,policy_revision,policy_artifact_id from public.dungeon_enemy_rollcasters order by dungeon_id,sequence_index,id`);
+  const rawEnemyRollcasters = await q(`select id,dungeon_id,sequence_index,name,eclipse_order_type,asset_path,selection_weight,selection_scope,policy_key,policy_revision,policy_artifact_id from public.dungeon_enemy_rollcasters order by dungeon_id,sequence_index,id`);
   const enemyRollcasterAbilities = groupRows(await q(`select enemy_rollcaster_id,rollcaster_ability_id,slot_index from public.dungeon_enemy_rollcaster_abilities order by enemy_rollcaster_id,slot_index`), "enemy_rollcaster_id");
   const enemyRollcasterDialogue = groupRows(await q(`select id,enemy_rollcaster_id,moment,line_text,sequence_index from public.dungeon_enemy_rollcaster_dialogue order by enemy_rollcaster_id,moment,sequence_index,id`), "enemy_rollcaster_id");
   const enemyRollcasterCurrencyDrops = groupRows(await q(`select id,enemy_rollcaster_id,currency_id,min_amount,max_amount,probability,sort_order from public.dungeon_enemy_rollcaster_currency_drops order by enemy_rollcaster_id,sort_order,id`), "enemy_rollcaster_id");
@@ -99,7 +99,8 @@ async function readCatalog(client) {
     name: String(row.name),
     eclipse_order_type: row.eclipse_order_type,
     asset_path: String(row.asset_path),
-    selection_weight: Number(row.selection_weight),
+    selection_scope: row.selection_scope ?? "regular_pool",
+    selection_weight: row.selection_scope === "boss_order" ? 1 : Number(row.selection_weight),
     policy_key: String(row.policy_key),
     policy_revision: Number(row.policy_revision ?? 1),
     policy_artifact_id: row.policy_artifact_id ? String(row.policy_artifact_id) : null,

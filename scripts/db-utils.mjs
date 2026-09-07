@@ -86,13 +86,14 @@ export function parseArgs(argv = process.argv.slice(2)) {
   return args;
 }
 
-export function migrationFiles() {
+export function migrationFiles({ includeCatalog = false } = {}) {
   const files = [];
 
   function visit(directory, relativeDirectory = "") {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const relativePath = path.posix.join(relativeDirectory, entry.name);
       if (relativePath.split("/").includes("archive")) continue;
+      if (!includeCatalog && relativePath.split("/").includes("catalog")) continue;
 
       const fullPath = path.join(directory, entry.name);
       if (entry.isDirectory()) {

@@ -7,7 +7,9 @@ import type {
   DungeonEnemyRollcaster,
   DungeonOpponent,
   EclipseOrderType,
+  EffectivenessClass,
   EffectOwnerType,
+  FinalKnockoutFinisherType,
   PlayerState,
   ResolvedEffectRef,
   Skill,
@@ -27,6 +29,7 @@ import {
   matchesSelectedElements,
   squadCritters,
 } from "./critter-calculations.js";
+export type { EffectivenessClass } from "./types.js";
 export {
   calculateSkillDamage,
   classifyEffectiveness,
@@ -398,13 +401,6 @@ export type SkillAvailability = {
   remainingUses?: number;
   scope?: "encounter" | "dungeon";
 };
-
-export type EffectivenessClass =
-  | "extra-effective"
-  | "effective"
-  | "neutral"
-  | "resisted"
-  | "extra-resisted";
 
 export type SkillDamage = {
   damage: number;
@@ -892,6 +888,8 @@ function advanceDelayedEffects(state: CombatState, event: DelayedAdvanceEvent): 
     next = resolveChildEffects(next, parent, {
       sourceOwnerType: instance.sourceOwnerType,
       sourceOwnerId: instance.sourceOwnerId,
+      damageSource: event.delayType === "blocks_performed" ? "block_reaction" : "direct_damage",
+      sourceEffectId: instance.sourceEffectId,
       sourceSide: instance.sourceSide,
       sourceCritterKey: instance.sourceCritterKey,
       skillTargetKeys: targetKeys,
@@ -1534,7 +1532,15 @@ export function resolveCombatActions(
   if (!playerAlive || !opponentsAlive) {
     const outcome = orderedOutcome ?? (playerAlive ? "won" : "lost");
     const playerWon = outcome === "won";
-    const completed = playerWon ? appendProgressEvent(next, {
+    let terminalState = next;
+    for (const status of next.statuses) {
+      terminalState = appendEffectRemovedProgressEvent(terminalState, status, "status", {
+        removalReason: "battle_end",
+        sourceOwnerType: "system",
+        sourceOwnerId: "",
+      });
+    }
+    const completed = playerWon ? appendProgressEvent(appendFinalKnockoutAttribution(terminalState), {
       event_type: "battle_completed",
       source_critter_id: null,
       target_critter_id: null,
@@ -1546,7 +1552,7 @@ export function resolveCombatActions(
         squad: next.playerUnits.map((unit) => ({ critter_id: unit.critter.id, element_ids: critterElementIds(unit.critter), survived: unit.hp > 0 })),
         survivors_complete: next.playerUnits.filter((unit) => unit.active).every((unit) => unit.hp > 0),
       },
-    }) : next;
+    }) : terminalState;
     return { ...completed, phase: outcome, log: [playerWon ? "Dungeon cleared." : "Defeat.", ...completed.log] };
   }
 
@@ -1859,7 +1865,7 @@ function conditionStatKeys(parameters: Record<string, unknown>): string[] {
 }
 
 function statModifierCategory(stat: string): string | undefined {
-  if (["atk", "def", "spd"].includes(stat)) return stat;
+  if (["hp", "atk", "def", "spd"].includes(stat)) return stat;
   if (["mana_dice", "mana_dice_min", "mana_dice_max"].includes(stat)) return "mana_dice";
   if (["block_cost", "swap_cost", "skill_cost"].includes(stat)) return stat;
   return undefined;
@@ -1871,6 +1877,11 @@ function modifierPolarity(stat: string, amount: number): "positive" | "negative"
   const cost = ["block_cost", "swap_cost", "skill_cost"].includes(stat);
   const improves = cost ? amount < 0 : amount > 0;
   return improves ? "positive" : "negative";
+}
+
+function isNegativeStatModifier(effect: ResolvedEffectRef): boolean {
+  if (effect.runtimeKind !== "stat_modifier" && effect.runtimeKind !== "stat_modifier_v2") return false;
+  return effectHasStatPolarity(effect, new Set(["any"]), "negative");
 }
 
 function effectHasStatPolarity(effect: ResolvedEffectRef, selected: Set<string>, desired: string): boolean {
@@ -2259,6 +2270,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       });
     }
     let damageDone = 0;
+    const effectivenessHits: Array<Record<string, unknown>> = [];
     let next = targets.reduce((current, originalTarget) => {
       const currentActor = findUnit(current, actor.key) ?? actor;
       const target = findUnit(current, originalTarget.key);
@@ -2315,7 +2327,24 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
             },
           );
         }
-        let progress = appendDamageProgressEvents(withPresentation, currentActor, target, damage.hpDamage, damage.shieldDamage, afterHp <= 0, skill);
+        if (actor.side === "player") {
+          effectivenessHits.push({
+            target_critter_id: target.critter.id,
+            target_element_ids: critterElementIds(target.critter),
+            target_critter_tag_ids: critterTagIds(target.critter),
+            hp_damage: Math.max(0, damage.hpDamage),
+            shield_damage: Math.max(0, damage.shieldDamage),
+            total_damage: Math.max(0, damage.hpDamage) + Math.max(0, damage.shieldDamage),
+            effectiveness: resolvedDamage.effectiveness,
+            effectiveness_class: resolvedDamage.classification,
+            knocked_out: afterHp <= 0,
+          });
+        }
+        let progress = appendDamageProgressEvents(withPresentation, currentActor, target, damage.hpDamage, damage.shieldDamage, afterHp <= 0, skill, resolvedDamage.classification, resolvedDamage.effectiveness, {
+          finisherType: "skill",
+          sourceOwnerType: "skill",
+          sourceOwnerId: skill.id,
+        });
         if (damage.blockPrevented > 0 && target.side === "player") {
           progress = annotateBlockAction(progress, target, actor);
           progress = appendProgressEvent(progress, {
@@ -2346,6 +2375,28 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       }
       return { ...current, log: [`${combatantName(actor)} used ${skill.name} on ${combatantName(target, false)}.`, ...current.log] };
     }, preDamageState);
+    if (actor.side === "player" && skill.skill_type === "attack" && effectivenessHits.length > 0) {
+      next = appendProgressEvent(next, {
+        event_type: "effectiveness_skill_resolved",
+        source_critter_id: actor.critter.id,
+        target_critter_id: targets[0]?.critter.id ?? null,
+        skill_id: skill.id,
+        amount: 1,
+        payload: {
+          source_side: actor.side,
+          target_side: "opponent",
+          effectiveness_hits: effectivenessHits,
+          source_element_ids: critterElementIds(actor.critter),
+          target_critter_ids: targets.map((target) => target.critter.id),
+          target_element_ids: [...new Set(targets.flatMap((target) => critterElementIds(target.critter)))],
+          source_critter_tag_ids: critterTagIds(actor.critter),
+          target_critter_tag_ids: [...new Set(targets.flatMap((target) => critterTagIds(target.critter)))],
+          skill_tag_ids: skill.tag_ids,
+          skill_element_id: skill.element_id,
+          skill_type: skill.skill_type,
+        },
+      });
+    }
     if (actor.side === "player") {
       next = appendProgressEvent(next, {
         event_type: "skill_resolved",
@@ -2634,6 +2685,7 @@ type RuntimeContext = {
   shieldDamage?: number;
   eventType?: string;
   parentInstanceId?: string;
+  sourceEffectId?: string;
   resolutionDepth?: number;
   activationAlreadyRolled?: boolean;
   allowInactiveSource?: boolean;
@@ -2645,12 +2697,19 @@ type RuntimeContext = {
     beforeSkillTarget: boolean;
     afterSkillTarget: boolean;
   };
-  damageSource?: "attack" | "skill" | "status" | "retaliation" | "direct_damage";
+  damageSource?: "attack" | "skill" | "status" | "retaliation" | "block_reaction" | "direct_damage";
   conditionalParentInstanceId?: string;
   swapTargetKey?: string;
   failOnDuplicateStatus?: boolean;
   stunAggregation?: StunAggregationContext;
   stunChanceMultiplier?: number;
+};
+
+type KnockoutAttribution = {
+  finisherType: FinalKnockoutFinisherType;
+  sourceOwnerType?: EffectOwnerType;
+  sourceOwnerId?: string;
+  sourceEffectId?: string;
 };
 
 type StunChanceContribution = {
@@ -3316,6 +3375,29 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       if (change.before > 0 && change.after <= 0 && context.sourceCritterKey) {
         const source = findUnit(current, context.sourceCritterKey);
         if (source && source.side !== change.target.side) {
+          current = appendDamageProgressEvents(
+            current,
+            source,
+            findUnit(current, change.target.key) ?? change.target,
+            Math.max(0, change.before - change.after),
+            0,
+            true,
+            context.sourceOwnerType === "skill"
+              ? current.catalog.skills.find((candidate) => candidate.id === context.sourceOwnerId)
+              : undefined,
+            undefined,
+            undefined,
+            {
+              finisherType: context.damageSource === "retaliation"
+                ? "retaliation"
+                : context.damageSource === "block_reaction"
+                  ? "block_reaction"
+                  : "direct_effect",
+              sourceOwnerType: context.sourceOwnerType,
+              sourceOwnerId: context.sourceOwnerId,
+              sourceEffectId: effect.id,
+            },
+          );
           current = resolveReactiveEffects(
             current,
             "owner_defeats_enemy",
@@ -3477,7 +3559,7 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
     const matchesCategory = (candidate: { id: string; runtimeKind: string; classification?: string }) => {
       if (candidate.id === effect.id || (specificEffectId && candidate.id !== specificEffectId)) return false;
       if (category === "all_removable") return true;
-      if (category === "stat_modifiers") return candidate.runtimeKind === "stat_modifier";
+      if (category === "stat_modifiers") return ["stat_modifier", "stat_modifier_v2"].includes(candidate.runtimeKind);
       if (category === "statuses") return candidate.runtimeKind === "apply_status";
       if (category === "shields") return candidate.runtimeKind === "shield_modifier";
       if (category === "delayed") return ["delayed_effect", "repeating_effect"].includes(candidate.runtimeKind);
@@ -3564,6 +3646,36 @@ function resolveEffect(state: CombatState, effect: ResolvedEffectRef, context: R
       )),
     };
     removedState = recomputeCombatStats(removedState);
+    const removalSource = context.sourceCritterKey ? findUnit(next, context.sourceCritterKey) : undefined;
+    const removalSourceSide = removalSource?.side ?? context.sourceSide;
+    if (removalSourceSide === "player") {
+      const removalReason: RemovalProgressContext["removalReason"] = context.sourceOwnerType === "skill"
+        ? "skill"
+        : context.sourceOwnerType === "ability"
+          ? "ability_effect"
+          : context.sourceOwnerType === "relic"
+            ? "relic_effect"
+            : "status_effect";
+      for (const removed of next.statuses.filter((instance) => removedStatusIds.has(instance.instanceId))) {
+        removedState = appendEffectRemovedProgressEvent(removedState, removed, "status", {
+          removalReason,
+          sourceOwnerType: context.sourceOwnerType,
+          sourceOwnerId: context.sourceOwnerId,
+          sourceCritterKey: context.sourceCritterKey,
+          sourceSide: removalSourceSide,
+        });
+      }
+      const remainingModifierIds = new Set(removedState.modifiers.map((modifier) => modifier.instanceId));
+      for (const removed of next.modifiers.filter((modifier) => !remainingModifierIds.has(modifier.instanceId) && isNegativeStatModifier(modifier.effect))) {
+        removedState = appendEffectRemovedProgressEvent(removedState, removed, "negative_stat_modifier", {
+          removalReason,
+          sourceOwnerType: context.sourceOwnerType,
+          sourceOwnerId: context.sourceOwnerId,
+          sourceCritterKey: context.sourceCritterKey,
+          sourceSide: removalSourceSide,
+        });
+      }
+    }
     for (const removed of next.statuses.filter((instance) => removedStatusIds.has(instance.instanceId))) {
       const holder = findUnit(removedState, removed.holderKey);
       const status = removedState.statusRegistry[removed.statusId];
@@ -3771,6 +3883,8 @@ function resolveReactiveEffects(
         next = resolveChildEffects(next, parent, {
           sourceOwnerType: instance.sourceOwnerType,
           sourceOwnerId: instance.sourceOwnerId,
+          damageSource: instance.runtimeKind === "retaliation" ? "retaliation" : "direct_damage",
+          sourceEffectId: instance.sourceEffectId,
           sourceSide: instance.sourceSide,
           sourceCritterKey: instance.sourceCritterKey,
           skillTargetKeys: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys : [defender.key],
@@ -3793,6 +3907,8 @@ function resolveReactiveEffects(
           next = resolveChildEffects(next, parent, {
             sourceOwnerType: instance.sourceOwnerType,
             sourceOwnerId: instance.sourceOwnerId,
+            damageSource: instance.runtimeKind === "retaliation" ? "retaliation" : "direct_damage",
+            sourceEffectId: instance.sourceEffectId,
             sourceSide: instance.sourceSide,
             sourceCritterKey: instance.sourceCritterKey,
             skillTargetKeys: isSkillUseEvent && eventTargetKeys?.length ? eventTargetKeys : [defender.key],
@@ -3834,6 +3950,8 @@ function resolveReactiveEffects(
       next = resolveEffect(next, parent, {
         sourceOwnerType: instance.sourceOwnerType,
         sourceOwnerId: instance.sourceOwnerId,
+        damageSource: instance.runtimeKind === "retaliation" ? "retaliation" : "direct_damage",
+        sourceEffectId: instance.sourceEffectId,
         sourceSide: instance.sourceSide,
         sourceCritterKey: instance.sourceCritterKey,
         skillTargetKeys: p.target === "attacker_and_targets" ? [defender.key] : [attacker.key],
@@ -3855,6 +3973,8 @@ function resolveReactiveEffects(
     next = resolveChildEffects(next, parent, {
       sourceOwnerType: instance.sourceOwnerType,
       sourceOwnerId: instance.sourceOwnerId,
+      damageSource: instance.runtimeKind === "retaliation" ? "retaliation" : "direct_damage",
+      sourceEffectId: instance.sourceEffectId,
       sourceSide: instance.sourceSide,
       sourceCritterKey: instance.sourceCritterKey,
       skillTargetKeys: targetKeys,
@@ -4171,7 +4291,12 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
           },
         );
         const source = instance.sourceCritterKey ? findUnit(next, instance.sourceCritterKey) : undefined;
-        if (source) next = appendDamageProgressEvents(next, source, target, actualDamage, 0, target.hp - actualDamage <= 0);
+        if (source) next = appendDamageProgressEvents(next, source, target, actualDamage, 0, target.hp - actualDamage <= 0, undefined, undefined, undefined, {
+          finisherType: "status_tick",
+          sourceOwnerType: "status",
+          sourceOwnerId: instance.statusId,
+          sourceEffectId: effect.id,
+        });
       }
     }
     const turnsElapsed = Number(instance.turnsElapsed ?? 0);
@@ -4271,11 +4396,8 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
     };
   }
   if (timing === "end_of_turn") {
-    const expiredStatusIds = new Set(
-      next.statuses
-        .filter((item) => item.duration !== null && Number(item.duration) <= 1)
-        .map((item) => item.instanceId),
-    );
+    const expiredStatuses = next.statuses.filter((item) => item.duration !== null && Number(item.duration) <= 1);
+    const expiredStatusIds = new Set(expiredStatuses.map((item) => item.instanceId));
     next = {
       ...next,
       statuses: next.statuses
@@ -4290,6 +4412,13 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
           : [];
       }),
     };
+    for (const expired of expiredStatuses) {
+      next = appendEffectRemovedProgressEvent(next, expired, "status", {
+        removalReason: "expiration",
+        sourceOwnerType: "system",
+        sourceOwnerId: "",
+      });
+    }
   }
   const conditionalTiming: ConditionalRefreshTiming = timing === "start_of_turn" ? "turn_start" : "turn_end";
   return recomputeCombatStats(refreshConditionalSetupEffects(next, {}, conditionalTiming));
@@ -4441,11 +4570,59 @@ function appendPresentationEvent(
   };
 }
 
+type RemovalProgressContext = {
+  removalReason: "skill" | "ability_effect" | "relic_effect" | "status_effect" | "expiration" | "battle_end";
+  sourceOwnerType?: string;
+  sourceOwnerId?: string;
+  sourceCritterKey?: string;
+  sourceSide?: CombatUnit["side"];
+};
+
+function appendEffectRemovedProgressEvent(
+  state: CombatState,
+  removed: CombatStatus | CombatModifier,
+  kind: "status" | "negative_stat_modifier",
+  context: RemovalProgressContext,
+): CombatState {
+  const isStatus = kind === "status";
+  const holderKey = isStatus ? (removed as CombatStatus).holderKey : (removed as CombatModifier).holderKey;
+  const target = findUnit(state, holderKey);
+  const source = context.sourceCritterKey ? findUnit(state, context.sourceCritterKey) : undefined;
+  const sourceOwnerType = context.sourceOwnerType ?? "system";
+  const sourceOwnerId = context.sourceOwnerId ?? "";
+  const status = isStatus ? state.statusRegistry[(removed as CombatStatus).statusId] : undefined;
+  const modifier = isStatus ? undefined : (removed as CombatModifier);
+  const skill = sourceOwnerType === "skill" ? state.catalog.skills.find((candidate) => candidate.id === sourceOwnerId) : undefined;
+  return appendProgressEvent(state, {
+    event_type: "effect_removed",
+    source_critter_id: source?.critter.id ?? null,
+    target_critter_id: target?.critter.id ?? null,
+    skill_id: sourceOwnerType === "skill" ? sourceOwnerId : null,
+    amount: 1,
+    payload: {
+      removal_kind: kind,
+      removal_reason: context.removalReason,
+      source_owner_type: sourceOwnerType,
+      source_owner_id: sourceOwnerId,
+      source_side: source?.side ?? context.sourceSide ?? null,
+      target_side: target?.side ?? null,
+      status_id: status?.id ?? (isStatus ? (removed as CombatStatus).statusId : null),
+      status_classification: status ? statusClassification(status, (removed as CombatStatus).effects) : null,
+      modifier_stat: modifier ? String(modifier.effect.parameters.stat ?? "") : null,
+      modifier_polarity: modifier ? "negative" : null,
+      source_critter_tag_ids: source ? critterTagIds(source.critter) : [],
+      target_critter_tag_ids: target ? critterTagIds(target.critter) : [],
+      skill_tag_ids: skill?.tag_ids ?? [],
+    },
+  });
+}
+
 function appendProgressEvent(state: CombatState, event: Omit<CombatProgressEvent, "event_key">): CombatState {
   const sequence = state.turnEvents.length + 1;
   const payload = {
     dungeon_id: state.dungeon.id,
     battle_id: state.runId ?? null,
+    dungeon_run_id: state.runId ?? null,
     rollcaster_id: state.playerRollcasterId ?? null,
     ability_ids: [...new Set(state.setupSources
       .filter((source) => source.ownerType === "ability" && source.side === "player")
@@ -4460,6 +4637,38 @@ function appendProgressEvent(state: CombatState, event: Omit<CombatProgressEvent
       event_key: `${state.runId ?? "combat"}:turn:${state.turn}:${sequence}:${event.event_type}`,
     }],
   };
+}
+
+function appendFinalKnockoutAttribution(state: CombatState): CombatState {
+  const knockout = [...state.turnEvents].reverse().find((event) =>
+    event.event_type === "critter_knocked_out"
+      && event.payload?.source_side === "player"
+      && event.payload?.target_side === "opponent",
+  );
+  if (!knockout) return state;
+  const remainingEnemyCount = state.opponentUnits.filter((unit) => unit.hp > 0).length;
+  const remainingActiveEnemyCount = state.opponentUnits.filter((unit) => unit.active && unit.hp > 0).length;
+  const isLastEnemy = remainingEnemyCount === 0;
+  const isLastActiveEnemy = remainingActiveEnemyCount === 0;
+  const isDungeonBattle = Boolean(state.runId);
+  return appendProgressEvent(state, {
+    event_type: "final_knockout_attribution",
+    source_critter_id: knockout.source_critter_id,
+    target_critter_id: knockout.target_critter_id,
+    skill_id: knockout.skill_id,
+    amount: 1,
+    payload: {
+      ...(knockout.payload ?? {}),
+      battle_won: true,
+      is_dungeon_battle: isDungeonBattle,
+      is_last_enemy: isLastEnemy,
+      is_last_active_enemy: isLastActiveEnemy,
+      is_last_enemy_in_dungeon_battle: isDungeonBattle && isLastEnemy,
+      remaining_enemy_count: remainingEnemyCount,
+      remaining_active_enemy_count: remainingActiveEnemyCount,
+      final_knockout_event_key: knockout.event_key,
+    },
+  });
 }
 
 function addSwapDamageAvoided(state: CombatState, incomingCritterId: string, amount: number): CombatState {
@@ -4530,10 +4739,39 @@ function appendDamageProgressEvents(
   shieldDamage: number,
   knockedOut: boolean,
   skill?: Skill,
+  effectivenessClass?: EffectivenessClass,
+  effectiveness?: number,
+  attribution?: KnockoutAttribution,
 ): CombatState {
   const actualDamage = Math.max(0, hpDamage) + Math.max(0, shieldDamage);
-  if (actualDamage <= 0 || source.side === target.side) return state;
   let next = state;
+  if (effectivenessClass && source.side === "player" && target.side === "opponent") {
+    next = appendProgressEvent(next, {
+      event_type: "effectiveness_strike",
+      source_critter_id: source.critter.id,
+      target_critter_id: target.critter.id,
+      skill_id: skill?.id ?? null,
+      amount: actualDamage,
+      payload: {
+        source_side: source.side,
+        target_side: target.side,
+        effectiveness_class: effectivenessClass,
+        effectiveness,
+        hp_damage: Math.max(0, hpDamage),
+        shield_damage: Math.max(0, shieldDamage),
+        total_damage: actualDamage,
+        knocked_out: knockedOut,
+        source_element_ids: critterElementIds(source.critter),
+        target_element_ids: critterElementIds(target.critter),
+        source_critter_tag_ids: critterTagIds(source.critter),
+        target_critter_tag_ids: critterTagIds(target.critter),
+        skill_tag_ids: skill?.tag_ids ?? [],
+        skill_type: skill?.skill_type,
+        skill_element_id: skill?.element_id,
+      },
+    });
+  }
+  if (actualDamage <= 0 || source.side === target.side) return next;
   if (source.side === "opponent" && target.side === "player"
     && state.swapRedirects?.[target.key]?.turn === state.turn) {
     next = addSwapDamageAvoided(next, target.critter.id, actualDamage);
@@ -4573,7 +4811,19 @@ function appendDamageProgressEvents(
         target_critter_id: target.critter.id,
         skill_id: skill?.id ?? null,
         amount: 1,
-        payload: { source_element_ids: critterElementIds(source.critter), source_critter_tag_ids: critterTagIds(source.critter), target_element_ids: critterElementIds(target.critter), target_critter_tag_ids: critterTagIds(target.critter), skill_tag_ids: skill?.tag_ids ?? [] },
+        payload: {
+          source_side: source.side,
+          target_side: target.side,
+          finisher_type: attribution?.finisherType ?? (skill ? "skill" : "direct_effect"),
+          source_owner_type: attribution?.sourceOwnerType ?? (skill ? "skill" : null),
+          source_owner_id: attribution?.sourceOwnerId ?? skill?.id ?? null,
+          source_effect_id: attribution?.sourceEffectId ?? null,
+          source_element_ids: critterElementIds(source.critter),
+          source_critter_tag_ids: critterTagIds(source.critter),
+          target_element_ids: critterElementIds(target.critter),
+          target_critter_tag_ids: critterTagIds(target.critter),
+          skill_tag_ids: skill?.tag_ids ?? [],
+        },
       });
     }
   } else if (source.side === "opponent" && target.side === "player") {

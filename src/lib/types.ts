@@ -9,6 +9,7 @@ export type CollectibleChallengeType =
   | "deal_damage"
   | "take_damage"
   | "use_skill"
+  | "skill_arsenal"
   | "collection_diversity"
   | "squad_composition"
   | "dungeon_clear"
@@ -20,12 +21,28 @@ export type CollectibleChallengeType =
   | "afflict_status"
   | "stun_activation"
   | "shields_shattered"
+  | "effectiveness_strike"
   | "defeat_rollcaster_type"
+  | "status_removal"
+  | "closing_move"
   | "shop_shards"
   | "shop_relic";
 
 export type ChallengeCategory = "global" | "tracked" | "shop";
 export type ChallengeProgressMode = "derived" | "tracked_event" | "shop";
+
+export type FinalKnockoutFinisherType =
+  | "skill"
+  | "block_reaction"
+  | "status_tick"
+  | "retaliation"
+  | "direct_effect"
+  | "any";
+
+export type FinalKnockoutScope =
+  | "last_enemy"
+  | "last_active_enemy"
+  | "last_enemy_in_dungeon_battle";
 
 export type UnlockChallengeTemplate = {
   id: CollectibleChallengeType;
@@ -77,6 +94,13 @@ export type CollectibleUnlockChallenge = {
   parameters?: Record<string, unknown>;
   display_text?: string | null;
 };
+
+export type EffectivenessClass =
+  | "extra-effective"
+  | "effective"
+  | "neutral"
+  | "resisted"
+  | "extra-resisted";
 
 type ShopEntryBase = {
   id: string;
@@ -250,7 +274,11 @@ export type CombatProgressEvent = {
     | "status_afflicted"
     | "status_turn_completed"
     | "stun_activated"
-    | "shield_shattered";
+    | "shield_shattered"
+    | "effectiveness_strike"
+    | "effectiveness_skill_resolved"
+    | "effect_removed"
+    | "final_knockout_attribution";
   source_critter_id: string | null;
   target_critter_id: string | null;
   skill_id: string | null;
