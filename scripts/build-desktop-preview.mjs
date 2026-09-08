@@ -110,7 +110,10 @@ await verifyLocalPlayerBackend()
 
 const staged = path.resolve('public', 'desktop-catalog')
 if (fs.existsSync(staged)) fs.rmSync(staged, { recursive: true, force: true })
-run('stage-desktop-catalog.mjs', ['--source', catalogDir])
+run('stage-desktop-catalog.mjs', ['--source', catalogDir], {
+  ...process.env,
+  ROLLCASTERS_LOCAL_PREVIEW: 'true',
+})
 run('build-desktop.mjs', ['local'], {
   ...configuredEnv,
   VITE_SUPABASE_URL: localSupabaseUrl,

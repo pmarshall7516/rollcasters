@@ -83,8 +83,8 @@ function eventFor(row, critters, skills, dungeons) {
   };
 
   if (["deal_damage", "take_damage"].includes(row.challenge_type)) {
-    const skill = (arrayOf(p.source_skill_tag_ids).length > 0)
-      ? chooseSkill(skills, [], [], p.source_skill_tag_ids, undefined, `${row.id} source Skill`)
+    const skill = (arrayOf(p.skill_ids).length > 0 || arrayOf(p.source_skill_tag_ids).length > 0)
+      ? chooseSkill(skills, p.skill_ids, [], arrayOf(p.skill_ids).length > 0 ? [] : p.source_skill_tag_ids, undefined, `${row.id} source Skill`)
       : null;
     const mode = p.damage_mode ?? "any";
     const payload = { ...basePayload, hp_damage: mode === "shield_only" ? 0 : 1, shield_damage: mode === "hp_only" ? 0 : 1 };
@@ -92,7 +92,10 @@ function eventFor(row, critters, skills, dungeons) {
   }
 
   if (row.challenge_type === "knock_out_critters") {
-    return { eventType: "critter_knocked_out", sourceId: source.id, targetId: target.id, skillId: null, amount: 1, payload: basePayload };
+    const skill = (arrayOf(p.skill_ids).length > 0 || arrayOf(p.source_skill_tag_ids).length > 0)
+      ? chooseSkill(skills, p.skill_ids, [], arrayOf(p.skill_ids).length > 0 ? [] : p.source_skill_tag_ids, undefined, `${row.id} finishing Skill`)
+      : null;
+    return { eventType: "critter_knocked_out", sourceId: source.id, targetId: target.id, skillId: skill?.id ?? null, amount: 1, payload: { ...basePayload, skill_tag_ids: skill?.tag_ids ?? [] } };
   }
 
   if (row.challenge_type === "use_skill") {
@@ -181,7 +184,8 @@ function eventFor(row, critters, skills, dungeons) {
         source_owner_id: skill?.id ?? "fixture-effect",
         remaining_enemy_count: 0,
         remaining_active_enemy_count: 0,
-        is_last_enemy_in_dungeon_battle: true,
+        is_end_of_encounter: true,
+        is_end_of_dungeon: true,
         skill_tag_ids: skill?.tag_ids ?? [],
       },
     };

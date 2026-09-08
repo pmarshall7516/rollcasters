@@ -1,5 +1,22 @@
 import type { Catalog, Critter, Skill } from "./types.js";
-import type { CombatUnit, EffectivenessClass, SkillDamage } from "./game.js";
+import type { BaseEffectivenessClass, CombatUnit, EffectivenessClass, SkillDamage } from "./game.js";
+
+export type EffectivenessResolution = {
+  baseMultiplier: number;
+  baseClassification: BaseEffectivenessClass;
+  totalMultiplier: number;
+  classification: EffectivenessClass;
+  suffix: string;
+};
+
+export type EffectivenessInputs = {
+  /** Replacement cells keyed by the defending Element ID. */
+  cellMultipliers?: Readonly<Record<string, number>>;
+  /** Matchup multipliers from external Skill Effectiveness Effects. */
+  matchupMultipliers?: readonly number[];
+  /** Percent-delta factors selected from the legacy base tier. */
+  tierPercentDeltas?: readonly number[];
+};
 
 export function roundHalfUp(value: number): number {
   if (!Number.isFinite(value) || value === 0) return 0;
@@ -21,8 +38,11 @@ export function elementEffectiveness(
   catalog: Pick<Catalog, "elementEffectiveness">,
   attackingElementId: string,
   defender: Pick<Critter, "element_1_id" | "element_2_id">,
+  cellMultipliers: Readonly<Record<string, number>> = {},
 ): number {
   const multiplierFor = (defendingElementId: string) => {
+    const replacement = cellMultipliers[defendingElementId];
+    if (replacement !== undefined) return replacement;
     const cell = catalog.elementEffectiveness.find(
       (row) => row.attacking_element_id === attackingElementId
         && row.defending_element_id === defendingElementId,
@@ -36,33 +56,66 @@ export function elementEffectiveness(
     * (defender.element_2_id ? multiplierFor(defender.element_2_id) : 1);
 }
 
-export function classifyEffectiveness(multiplier: number): {
-  classification: EffectivenessClass;
-  suffix: string;
-} {
-  if (Math.abs(multiplier - 1) <= 1e-6) return { classification: "neutral", suffix: "" };
-  if (multiplier >= 2) {
-    return {
-      classification: "extra-effective",
-      suffix: "It was an extra effective skill!",
-    };
+export function classifyBaseEffectiveness(multiplier: number): BaseEffectivenessClass {
+  if (Math.abs(multiplier - 1) <= 1e-6) return "neutral";
+  if (multiplier >= 2) return "extra-effective";
+  if (multiplier > 1) return "effective";
+  if (multiplier > 0.5) return "resisted";
+  return "extra-resisted";
+}
+
+function effectivenessSuffix(classification: EffectivenessClass): string {
+  switch (classification) {
+    case "immune": return "It was immune!";
+    case "mega-resisted": return "It was a mega resisted skill.";
+    case "extra-resisted": return "It was an extra resisted skill.";
+    case "resisted": return "It was a resisted skill.";
+    case "neutral": return "";
+    case "effective": return "It was an effective skill!";
+    case "extra-effective": return "It was an extra effective skill!";
+    case "mega-effective": return "It was a mega effective skill!";
   }
-  if (multiplier > 1) {
-    return {
-      classification: "effective",
-      suffix: "It was an effective skill!",
-    };
-  }
-  if (multiplier > 0.5) {
-    return {
-      classification: "resisted",
-      suffix: "It was a resisted skill.",
-    };
-  }
-  return {
-    classification: "extra-resisted",
-    suffix: "It was an extra resisted skill.",
-  };
+}
+
+export function classifyTotalEffectiveness(multiplier: number): { classification: EffectivenessClass; suffix: string } {
+  const safe = Number.isFinite(multiplier) ? Math.max(0, multiplier) : 0;
+  let classification: EffectivenessClass;
+  if (safe === 0) classification = "immune";
+  else if (safe < 0.1) classification = "mega-resisted";
+  else if (safe <= 0.5) classification = "extra-resisted";
+  else if (safe < 1) classification = "resisted";
+  else if (Math.abs(safe - 1) <= 1e-6) classification = "neutral";
+  else if (safe < 1.5) classification = "effective";
+  else if (safe <= 2.5) classification = "extra-effective";
+  else classification = "mega-effective";
+  return { classification, suffix: effectivenessSuffix(classification) };
+}
+
+export function classifyEffectiveness(multiplier: number): { classification: EffectivenessClass; suffix: string } {
+  return classifyTotalEffectiveness(multiplier);
+}
+
+export function applyPercentDeltaFactors(baseMultiplier: number, deltas: readonly number[] = []): number {
+  return Math.max(0, deltas.reduce((value, delta) => {
+    const numeric = Number(delta);
+    return Number.isFinite(numeric) ? value * Math.max(0, 1 + numeric) : value;
+  }, baseMultiplier));
+}
+
+export function resolveEffectiveness(
+  catalog: Pick<Catalog, "elementEffectiveness">,
+  attackingElementId: string,
+  defender: Pick<Critter, "element_1_id" | "element_2_id">,
+  inputs: EffectivenessInputs = {},
+): EffectivenessResolution {
+  const baseMultiplier = applyPercentDeltaFactors(
+    elementEffectiveness(catalog, attackingElementId, defender, inputs.cellMultipliers),
+    inputs.matchupMultipliers?.map((multiplier) => Number(multiplier) - 1),
+  );
+  const baseClassification = classifyBaseEffectiveness(baseMultiplier);
+  const totalMultiplier = applyPercentDeltaFactors(baseMultiplier, inputs.tierPercentDeltas);
+  const final = classifyTotalEffectiveness(totalMultiplier);
+  return { baseMultiplier, baseClassification, totalMultiplier, ...final };
 }
 
 export function calculateSkillDamage(
@@ -72,6 +125,7 @@ export function calculateSkillDamage(
   skill: Skill,
   random: () => number = () => 1,
   targetCount = 1,
+  effectivenessInputs: EffectivenessInputs = {},
 ): SkillDamage {
   if (skill.skill_type !== "attack" || skill.power <= 0) {
     return {
@@ -81,6 +135,8 @@ export function calculateSkillDamage(
       targetCount: 1,
       spreadMultiplier: 1,
       effectiveness: 1,
+      baseEffectiveness: 1,
+      baseClassification: "neutral",
       classification: "neutral",
       suffix: "",
       stab: false,
@@ -88,7 +144,8 @@ export function calculateSkillDamage(
   }
   const stab = attacker.critter.element_1_id === skill.element_id || attacker.critter.element_2_id === skill.element_id;
   const effectivePower = skill.power * (stab ? 1.5 : 1);
-  const effectiveness = elementEffectiveness(catalog, skill.element_id, defender.critter);
+  const effectivenessResolution = resolveEffectiveness(catalog, skill.element_id, defender.critter, effectivenessInputs);
+  const effectiveness = effectivenessResolution.totalMultiplier;
   const resolvedTargetCount = Math.max(1, Math.floor(Number(targetCount) || 1));
   const spreadMultiplier = resolvedTargetCount > 1 ? MULTI_TARGET_DAMAGE_MULTIPLIER : 1;
   const rawDamage = (((((2 * attacker.level) / 5 + 2) * effectivePower * attacker.stats.atk) / defender.stats.def) / 50 + 2)
@@ -106,9 +163,12 @@ export function calculateSkillDamage(
     damageRollPercent,
     targetCount: resolvedTargetCount,
     spreadMultiplier,
-    effectiveness,
-    ...classifyEffectiveness(effectiveness),
-    stab,
+      effectiveness,
+      baseEffectiveness: effectivenessResolution.baseMultiplier,
+      baseClassification: effectivenessResolution.baseClassification,
+      classification: effectivenessResolution.classification,
+      suffix: effectivenessResolution.suffix,
+      stab,
   };
 }
 

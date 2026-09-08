@@ -241,6 +241,7 @@ eventCatalog.effectsBySkill["natural-cure"] = [effect(
 eventCatalog.skills.push(
   { id: "weaken", name: "Weaken", element_id: "basic", skill_type: "support", power: 0, mana_cost: 0, targeting: "single_any", description: "Weaken.", sort_order: 5, tag_ids: [] },
   { id: "clear-debuff", name: "Clear Debuff", element_id: "bloom", skill_type: "support", power: 0, mana_cost: 0, targeting: "single_any", description: "Clear Debuff.", sort_order: 6, tag_ids: [] },
+  { id: "multi-mark", name: "Multi Mark", element_id: "basic", skill_type: "support", power: 0, mana_cost: 0, targeting: "single_any", description: "Multi Mark.", sort_order: 7, tag_ids: [] },
 );
 eventCatalog.effectsBySkill.weaken = [effect(
   "skill",
@@ -256,11 +257,17 @@ eventCatalog.effectsBySkill["clear-debuff"] = [effect(
   "effect_removal",
   { removal_category: "stat_modifiers", maximum_effects_removed_mode: "all", target: "targets" },
 )];
+eventCatalog.effectsBySkill["multi-mark"] = [
+  effect("skill", "multi-mark", "multi-mark-finite", "apply_status", { status_id: "finite", chance: 1, target: "targets", indefinite: true }),
+  effect("skill", "multi-mark", "multi-mark-aura", "apply_status", { status_id: "aura", chance: 1, target: "targets", indefinite: true }),
+  effect("skill", "multi-mark", "multi-mark-stun", "apply_status", { status_id: "stun", chance: 1, target: "targets", indefinite: true }),
+];
 const removalStatusSlot = { user_critter_id: "up1", slot_index: 5, skill_id: "natural-cure" };
 const weakenSlot = { user_critter_id: "up1", slot_index: 6, skill_id: "weaken" };
 const clearDebuffSlot = { user_critter_id: "up1", slot_index: 7, skill_id: "clear-debuff" };
+const multiMarkSlot = { user_critter_id: "up1", slot_index: 8, skill_id: "multi-mark" };
 const removalPlayer = makePlayer();
-removalPlayer.skillSlots.push(removalStatusSlot, weakenSlot, clearDebuffSlot);
+removalPlayer.skillSlots.push(removalStatusSlot, weakenSlot, clearDebuffSlot, multiMarkSlot);
 const afflicted = takeTurn(
   { ...battle(eventCatalog, removalPlayer, "status-removal-runtime"), opponentMana: 0 },
   [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p1", cost: 0 }],
@@ -271,6 +278,16 @@ const removed = resolveCombatActions(
   [],
 );
 check(removed.turnEvents.some((event) => event.event_type === "effect_removed" && event.payload?.removal_kind === "status" && event.payload?.status_id === "finite" && event.payload?.removal_reason === "skill" && event.payload?.source_owner_id === "natural-cure"), "Natural Cure must emit a Status removal progress event with its Skill source.");
+const multiAfflicted = takeTurn(
+  { ...battle(eventCatalog, removalPlayer, "multi-status-removal-runtime"), opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "multi-mark", targetKey: "p1", cost: 0 }],
+);
+const multiRemoved = resolveCombatActions(
+  { ...startTurn(multiAfflicted), phase: "selecting", playerMana: 50, opponentMana: 0 },
+  [{ actorKey: "p1", type: "skill", skillId: "natural-cure", targetKey: "p1", cost: 0 }],
+  [],
+);
+check(multiRemoved.turnEvents.filter((event) => event.event_type === "effect_removed" && event.payload?.removal_kind === "status" && event.payload?.removal_reason === "skill" && event.payload?.source_owner_id === "natural-cure").length === 3, "One cleanse must emit one Status removal event per removed Status on the same target.");
 const weakened = resolveCombatActions(
   { ...startTurn(removed), phase: "selecting", playerMana: 50, opponentMana: 0 },
   [{ actorKey: "p1", type: "skill", skillId: "weaken", targetKey: "p1", cost: 0 }],
@@ -1493,12 +1510,13 @@ check(
   "Dual-type resistance must multiply into the final effectiveness value.",
 );
 check(
-  classifyEffectiveness(2).classification === "extra-effective"
-    && classifyEffectiveness(1.999).classification === "effective"
+  classifyEffectiveness(2.5).classification === "extra-effective"
+    && classifyEffectiveness(1.5).classification === "extra-effective"
+    && classifyEffectiveness(1.499).classification === "effective"
     && classifyEffectiveness(1).classification === "neutral"
     && classifyEffectiveness(0.999).classification === "resisted"
     && classifyEffectiveness(0.5).classification === "extra-resisted",
-  "Effectiveness narration must honor the exact 2×, 1×, and 0.5× boundaries.",
+  "Effectiveness narration must honor the final 1.5×, 1×, and 0.5× boundaries.",
 );
 const damageState = battle(eventCatalog, makePlayer(), "damage-formula");
 const matchingSkill = { ...eventCatalog.skills[0], element_id: "bloom", power: 50 };
@@ -3010,6 +3028,60 @@ check(stimulated.turnEvents.some((event) => event.event_type === "hp_healed" && 
 const unamplified = takeTurn({ ...stimulated, runtimeEffects: [], playerUnits: stimulated.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 30 } : unit) }, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
 check(unamplified.playerUnits[0].hp === 35, "Base 10% healing from 48 max HP must round to 5 before any amplifier is applied.");
 
+const healingOverTimeCatalog = makeCatalog();
+healingOverTimeCatalog.effectsByStatus.aura = [effect("status", "aura", "regrowth", "healing_over_time", {
+  timing: "start_of_turn",
+  value_mode: "percent_max_hp",
+  amount: 0.2,
+  chance: 1,
+  target: "status_holder",
+})];
+let healingOverTime = simApplyStatus(battle(healingOverTimeCatalog, makePlayer(), "healing-over-time"), "aura", "p1", null);
+healingOverTime = {
+  ...healingOverTime,
+  playerUnits: healingOverTime.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 50 } : unit),
+};
+const healingOverTimeStarted = startTurn(healingOverTime);
+check(healingOverTimeStarted.playerUnits[0].hp === 70, "Healing Over Time must heal its target at the configured turn timing using maximum-HP percentage values.");
+check(healingOverTimeStarted.presentationEvents.some((event) => event.kind === "heal" && event.targetKeys.includes("p1") && event.message.includes("regrowth")), "Healing Over Time must publish a visible healing presentation event.");
+check(healingOverTimeStarted.turnEvents.some((event) => event.event_type === "hp_healed" && event.target_critter_id === "p1" && event.amount === 20), "Healing Over Time must publish the actual restored HP for healing progress.");
+
+const healingModifierCatalog = makeCatalog();
+healingModifierCatalog.effectsByStatus.aura = [effect("status", "aura", "healing-nullifier", "healing_modifier", {
+  modifier_value: -1,
+  target: "status_holder",
+})];
+healingModifierCatalog.effectsBySkill.ritual = [effect("skill", "ritual", "blocked-heal", "restore_hp", { value_mode: "flat", amount: 10, chance: 1, target: "self" })];
+let healingModifierBattle = simApplyStatus(battle(healingModifierCatalog, makePlayer(), "healing-modifier-nullifier"), "aura", "p1", null);
+healingModifierBattle = {
+  ...healingModifierBattle,
+  playerUnits: healingModifierBattle.playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 50 } : unit),
+};
+const blockedHealing = takeTurn(healingModifierBattle, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(blockedHealing.playerUnits[0].hp === 50, "A -1.00 Healing Modifier must stop normal Skill healing.");
+
+healingModifierCatalog.effectsByStatus.aura = [effect("status", "aura", "healing-booster", "healing_modifier", {
+  modifier_value: 1,
+  target: "status_holder",
+})];
+const doubledHealingBattle = simApplyStatus({
+  ...battle(healingModifierCatalog, makePlayer(), "healing-modifier-double"),
+  playerUnits: battle(healingModifierCatalog, makePlayer(), "healing-modifier-double-base").playerUnits.map((unit) => unit.key === "p1" ? { ...unit, hp: 50 } : unit),
+}, "aura", "p1", null);
+const doubledHealing = takeTurn(doubledHealingBattle, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
+check(doubledHealing.playerUnits[0].hp === 70, "A 1.00 Healing Modifier must double normal Skill healing.");
+
+const revivalModifierCatalog = makeCatalog();
+revivalModifierCatalog.effectsByStatus.aura = [effect("status", "aura", "revival-modifier", "healing_modifier", { modifier_value: -1, target: "status_holder" })];
+revivalModifierCatalog.effectsBySkill.mark = [effect("skill", "mark", "revival", "critter_revival", { target: "target_friendlies", value_mode: "percent_max_hp", amount: 0.5, chance: 1 })];
+let revivalModifierBattle = simApplyStatus(battle(revivalModifierCatalog, makePlayer(), "healing-modifier-revival"), "aura", "p2", null);
+revivalModifierBattle = {
+  ...revivalModifierBattle,
+  playerUnits: revivalModifierBattle.playerUnits.map((unit) => unit.key === "p2" ? { ...unit, hp: 0 } : unit),
+};
+const revivalWithModifier = takeTurn(revivalModifierBattle, [{ actorKey: "p1", type: "skill", skillId: "mark", targetKey: "p2", cost: 0 }]);
+check(revivalWithModifier.playerUnits.find((unit) => unit.key === "p2")?.hp === 40, "Healing Modifiers must not change Revival healing.");
+
 const medicCatalog = makeCatalog();
 medicCatalog.rollcasterAbilities.push({ id: "battle-medic", name: "Battle Medic I", description: "Heal after an enemy knockout.", sort_order: 10 });
 medicCatalog.effectsByAbility["battle-medic"] = [
@@ -3774,5 +3846,110 @@ check(!(childRestrictionMiss.stunnedSkillKeys ?? []).includes("o1"), "Child Effe
 const childRestrictionTurnTwo = startTurn({ ...childRestrictionMiss, phase: "ready" });
 const childRestrictionHit = takeTurn(childRestrictionTurnTwo, [{ actorKey: "p1", type: "skill", skillId: "ritual", targetKey: "p1", cost: 0 }], 10);
 check((childRestrictionHit.stunnedSkillKeys ?? []).includes("o1"), "Child Effect Trigger mode must resolve its child Effect inside the active-turn window while the Skill still resolves.");
+
+const multiHitCatalog = makeCatalog();
+const barrage = { ...multiHitCatalog.skills[0], id: "barrage", name: "Barrage", power: 10, mana_cost: 0 };
+multiHitCatalog.skills = [...multiHitCatalog.skills, barrage];
+multiHitCatalog.effectsBySkill.barrage = [effect("skill", "barrage", "barrage-multi", "multi_hit", { minimum_hits: 2, maximum_hits: 2 })];
+const barrageResult = takeTurn(
+  battle(multiHitCatalog, makePlayer(), "multi-hit-fixed"),
+  [{ actorKey: "p1", type: "skill", skillId: "barrage", targetKey: "o1", cost: 0 }],
+  0,
+);
+check(
+  barrageResult.presentationEvents.filter((event) => event.kind === "damage" && event.skillId === "barrage").length === 2,
+  "A fixed Multi-Hit Skill must resolve exactly two damage hits.",
+);
+check(
+  barrageResult.turnEvents.filter((event) => event.event_type === "skill_resolved" && event.skill_id === "barrage").length === 1,
+  "A Multi-Hit Skill must emit one action-level skill_resolved event.",
+);
+
+const zeroHitCatalog = structuredClone(multiHitCatalog);
+zeroHitCatalog.skills = [...zeroHitCatalog.skills, { ...zeroHitCatalog.skills[1], id: "zero-hit", name: "Zero Hit", skill_type: "support" as const, targeting: "single_any" as const }];
+zeroHitCatalog.effectsBySkill["zero-hit"] = [
+  effect("skill", "zero-hit", "zero-multi", "multi_hit", { minimum_hits: 0, maximum_hits: 0 }),
+  effect("skill", "zero-hit", "zero-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: -5, chance: 1, target: "targets" }),
+];
+const zeroHitResult = takeTurn(
+  battle(zeroHitCatalog, makePlayer(), "multi-hit-zero"),
+  [{ actorKey: "p1", type: "skill", skillId: "zero-hit", targetKey: "o1", cost: 0 }],
+  0,
+);
+check(zeroHitResult.opponentUnits.find((unit) => unit.key === "o1")?.stats.atk === 24, "A zero-hit Skill must not apply its hit-triggered support Effect.");
+check(zeroHitResult.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "zero-hit"), "A zero-hit Skill still resolves as one action.");
+
+const supportMultiHitCatalog = makeCatalog();
+const supportMultiHit = { ...supportMultiHitCatalog.skills[1], id: "support-multi", name: "Support Multi", targeting: "single_any" as const };
+supportMultiHitCatalog.skills = [...supportMultiHitCatalog.skills, supportMultiHit];
+supportMultiHitCatalog.rollcasterAbilities.push({ id: "support-trigger", name: "Support Trigger", description: "Support Trigger.", sort_order: 10 });
+supportMultiHitCatalog.effectsBySkill["support-multi"] = [
+  effect("skill", "support-multi", "support-multi-count", "multi_hit", { minimum_hits: 2, maximum_hits: 2 }),
+  effect("skill", "support-multi", "support-multi-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: -1, chance: 1, target: "targets" }),
+];
+supportMultiHitCatalog.effectsByAbility["support-trigger"] = [
+  effect("ability", "support-trigger", "support-reactive", "reactive_trigger", {
+    target: "all_friendlies",
+    trigger_event: "owner_uses_support_skill",
+    trigger_source: "self",
+    activation_chance: 1,
+    activation_limit: null,
+    activation_limit_scope: "battle",
+    cooldown_turns: 0,
+    requires_hp_damage: false,
+    requires_shield_damage: false,
+    minimum_damage: null,
+    child_effect_ids: ["support-reactive-stat"],
+  }),
+  { ...effect("ability", "support-trigger", "support-reactive-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: 1, target: "attacker" }, 1), execution: "child" },
+];
+const supportPlayer = makePlayer();
+supportPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "support-trigger" }];
+const supportResult = takeTurn(
+  battle(supportMultiHitCatalog, supportPlayer, "multi-hit-support"),
+  [{ actorKey: "p1", type: "skill", skillId: "support-multi", targetKey: "o1", cost: 0 }],
+  0,
+);
+check(supportResult.opponentUnits.find((unit) => unit.key === "o1")?.stats.atk === 22, "A two-hit support Skill must apply its direct Skill Effect twice.");
+check(supportResult.playerUnits.find((unit) => unit.key === "p1")?.stats.atk === 27, "A support Skill reactive Effect must trigger once per actual hit.");
+
+const noDeclarationCatalog = makeCatalog();
+noDeclarationCatalog.rollcasterAbilities.push({ id: "loaded-dice", name: "Loaded Dice", description: "Loaded Dice.", sort_order: 11 });
+noDeclarationCatalog.effectsByAbility["loaded-dice"] = [
+  effect("ability", "loaded-dice", "loaded-dice-effect", "multi_hit_modifier", {
+    target: "all_friendlies",
+    modifier_mode: "higher",
+    additional_rolls: 1,
+    affected_skill_category: "attack",
+    affected_skill_element_ids: [],
+    affected_skill_tag_ids: [],
+    target_element_ids: [],
+    target_critter_tag_ids: [],
+    duration_type: "end_of_battle",
+    duration_clock: "owner_turn",
+  }),
+];
+const noDeclarationPlayer = makePlayer();
+noDeclarationPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "loaded-dice" }];
+const noDeclarationResult = takeTurn(
+  battle(noDeclarationCatalog, noDeclarationPlayer, "multi-hit-no-declaration"),
+  [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 }],
+  0,
+);
+check(noDeclarationResult.presentationEvents.filter((event) => event.kind === "damage" && event.skillId === "strike").length === 1, "A hit-count modifier must not create extra hits for a Skill without Multi-Hit.");
+
+const duplicateStatusCatalog = makeCatalog();
+duplicateStatusCatalog.skills = [...duplicateStatusCatalog.skills, { ...duplicateStatusCatalog.skills[1], id: "duplicate-status", name: "Duplicate Status", targeting: "single_any" as const }];
+duplicateStatusCatalog.effectsBySkill["duplicate-status"] = [
+  effect("skill", "duplicate-status", "duplicate-status-multi", "multi_hit", { minimum_hits: 2, maximum_hits: 2 }),
+  effect("skill", "duplicate-status", "duplicate-status-apply", "apply_status", { status_id: "finite", chance: 1, target: "targets", indefinite: true }),
+];
+const duplicateStatusResult = takeTurn(
+  battle(duplicateStatusCatalog, makePlayer(), "multi-hit-duplicate-status"),
+  [{ actorKey: "p1", type: "skill", skillId: "duplicate-status", targetKey: "o1", cost: 0 }],
+  0,
+);
+check(duplicateStatusResult.statuses.filter((status) => status.holderKey === "o1" && status.statusId === "finite").length === 1, "Repeated Status Effects must not stack on later Multi-Hit activations.");
+check(duplicateStatusResult.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "duplicate-status"), "A later duplicate Status must not roll back the Skill action.");
 
 console.log("Inline effect combat runtime tests passed.");

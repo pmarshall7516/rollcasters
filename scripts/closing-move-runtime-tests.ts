@@ -33,16 +33,27 @@ const player = {
 } as unknown as PlayerState;
 
 const dungeon = catalog.dungeons[0];
-const initial = createInitialCombatState(catalog, player, dungeon, "dungeon-run");
-const state = resolveCombatActions(
-  { ...initial, phase: "selecting", playerMana: 10, opponentMana: 0 },
-  [{ actorKey: "p1", type: "skill", skillId: "punch", targetKey: "o1", cost: 0 }],
-  [],
-);
+const resolveOneEncounter = (battleCount: number) => {
+  const initial = createInitialCombatState(catalog, player, dungeon, "dungeon-run");
+  return resolveCombatActions(
+    { ...initial, phase: "selecting", playerMana: 10, opponentMana: 0, battleIndex: 0, battleCount },
+    [{ actorKey: "p1", type: "skill", skillId: "punch", targetKey: "o1", cost: 0 }],
+    [],
+  );
+};
+
+const state = resolveOneEncounter(1);
+const nonFinalDungeonState = resolveOneEncounter(2);
 const finalEvent = state.turnEvents.find((event) => event.event_type === "final_knockout_attribution");
+const nonFinalDungeonEvent = nonFinalDungeonState.turnEvents.find((event) => event.event_type === "final_knockout_attribution");
 check(state.phase === "won", "The fixture must produce a player win.");
 check(finalEvent?.payload?.battle_won === true, "A winning battle must emit final knockout attribution.");
+check(finalEvent?.payload?.skill_element_id === "basic", "Final Skill knockout attribution must include the finishing Skill Element.");
 check(finalEvent?.payload?.finisher_type === "skill" && finalEvent.skill_id === "punch", "The final knockout must identify its Skill finisher.");
 check(finalEvent?.payload?.remaining_enemy_count === 0, "Final knockout attribution must report no remaining enemies.");
+check(finalEvent?.payload?.is_end_of_encounter === true, "The last enemy knockout must identify the end of the encounter.");
+check(finalEvent?.payload?.is_end_of_dungeon === true, "The final encounter knockout must identify the end of the Dungeon.");
+check(nonFinalDungeonEvent?.payload?.is_end_of_encounter === true, "Every encounter-ending knockout must identify the end of the encounter.");
+check(nonFinalDungeonEvent?.payload?.is_end_of_dungeon === false, "A non-final Dungeon encounter must not identify the end of the Dungeon.");
 
 console.log("Closing Move runtime emission tests passed.");

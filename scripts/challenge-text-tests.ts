@@ -58,6 +58,24 @@ function challenge(type: CollectibleUnlockChallenge["challenge_type"] | "level_u
   };
 }
 
+const closingMove = challenge("closing_move", {
+  finisher_type: "skill",
+  skill_ids: ["vile-injection"],
+  skill_element_ids: ["vile"],
+  required_completions: 1,
+  final_knockout_scope: "end_of_encounter",
+});
+check(challengeDescription(data, closingMove).includes("Vile Element"), "Game challenge text must show the finishing Skill Element.");
+check(challengeDescription(data, closingMove).includes("encounter"), "Game challenge text must identify End of Encounter scope.");
+const statusClosingMove = challenge("closing_move", {
+  finisher_type: "status_tick",
+  status_ids: ["toxic"],
+  required_completions: 1,
+  final_knockout_scope: "end_of_dungeon",
+});
+check(challengeDescription(data, statusClosingMove).includes("Toxic tick"), "Game challenge text must show the selected ticking Status.");
+check(challengeDescription(data, statusClosingMove).includes("Dungeon"), "Game challenge text must identify End of Dungeon scope.");
+
 const diversity = challenge("collection_diversity", {
   diversity_mode: "specific_types",
   required_per_type: 1,
@@ -222,6 +240,7 @@ check(derivedChallengeProgress({
 }, specificOwnership) === 2n, "Require all ownership must complete only after every selected Relic is owned.");
 
 check(challengeDescription(data, challenge("deal_damage", { target_mode: "species", target_ids: ["001"], damage_mode: "hp_only", required_amount: 100 })) === "Deal HP damage to Ramber.", "Deal Damage HP-only text must identify the HP filter.");
+check(challengeDescription(data, challenge("deal_damage", { target_critter_ids: ["001"], skill_ids: ["vile-injection"], source_skill_tag_ids: ["stale-tag"], required_amount: 100 })) === "Deal damage to Ramber using Vile Injection Skills.", "Deal Damage text must prefer exact Skills over stale Skill Tags.");
 check(challengeDescription(data, challenge("take_damage", { target_mode: "species", target_ids: ["002"], damage_mode: "shield_only", required_amount: 100 })) === "Take Shield damage as Cragram from any enemy Critter.", "Take Damage Shield-only text must identify the Shield filter.");
 
 for (const [mode, payload, expected] of [

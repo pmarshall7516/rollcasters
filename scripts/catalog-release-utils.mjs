@@ -187,6 +187,7 @@ export function validateCatalog(catalog) {
         "damage_prevention@1", "action_cost_modifier@1", "resource_gain_loss@1", "resource_conversion@1",
         "effect_scaling@1", "repeating_effect@1", "effect_immunity@1", "effect_amplification@1",
         "critter_revival@1", "skill_usage_restriction@1", "status_duration_modifier@1",
+        "multi_hit@1", "multi_hit_modifier@1",
       ]);
       if (!supported.has(`${effect.runtimeKind}@${effect.runtimeVersion}`)) throw new Error(`Unsupported ${ownerType} effect runtime ${effect.runtimeKind}@${effect.runtimeVersion}.`);
       if (!["positive", "negative", "mixed"].includes(effect.classification)) throw new Error(`Effect ${effect.id} has invalid classification.`);

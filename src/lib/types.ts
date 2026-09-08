@@ -40,9 +40,8 @@ export type FinalKnockoutFinisherType =
   | "any";
 
 export type FinalKnockoutScope =
-  | "last_enemy"
-  | "last_active_enemy"
-  | "last_enemy_in_dungeon_battle";
+  | "end_of_encounter"
+  | "end_of_dungeon";
 
 export type UnlockChallengeTemplate = {
   id: CollectibleChallengeType;
@@ -95,12 +94,14 @@ export type CollectibleUnlockChallenge = {
   display_text?: string | null;
 };
 
-export type EffectivenessClass =
+export type BaseEffectivenessClass =
   | "extra-effective"
   | "effective"
   | "neutral"
   | "resisted"
   | "extra-resisted";
+
+export type EffectivenessClass = BaseEffectivenessClass | "immune" | "mega-resisted" | "mega-effective";
 
 type ShopEntryBase = {
   id: string;

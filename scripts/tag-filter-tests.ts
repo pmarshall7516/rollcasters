@@ -43,6 +43,30 @@ const damageChallenge = challenge("deal_damage", {
 });
 check(challengeEventIncrement(damageChallenge, damageEvent) === 7, "Damage challenges must require matching source Critter, target Critter, and Skill tags together.");
 check(challengeEventIncrement(damageChallenge, { ...damageEvent, targetCritterTagIds: ["middle-stage"] }) === 0, "Damage challenges must reject a target whose tags do not match.");
+const specificDamageChallenge = challenge("deal_damage", {
+  required_amount: 1,
+  skill_ids: ["pulse-skill"],
+  source_skill_tag_ids: ["other-skill-tag"],
+});
+check(challengeEventIncrement(specificDamageChallenge, damageEvent) === 7, "Deal Damage must count damage from a selected exact Skill even when a stale Skill Tag filter disagrees.");
+check(challengeEventIncrement(specificDamageChallenge, { ...damageEvent, skillId: "other-skill" }) === 0, "Deal Damage must reject damage from a non-selected exact Skill.");
+
+const knockoutEvent: ChallengeEvent = {
+  eventId: "knockout-1",
+  type: "critter_knocked_out",
+  sourceCritterId: "bloom-critter",
+  targetCritterId: "final-critter",
+  skillId: "pulse-skill",
+  skillTagIds: ["pulse"],
+  amount: 1,
+};
+const specificKnockoutChallenge = challenge("knock_out_critters", {
+  required_amount: 1,
+  skill_ids: ["pulse-skill"],
+  source_skill_tag_ids: ["other-skill-tag"],
+});
+check(challengeEventIncrement(specificKnockoutChallenge, knockoutEvent) === 1, "Knock Out Critters must count a selected exact finishing Skill even when a stale Skill Tag filter disagrees.");
+check(challengeEventIncrement(specificKnockoutChallenge, { ...knockoutEvent, skillId: "other-skill" }) === 0, "Knock Out Critters must reject a knockout from a non-selected exact Skill.");
 
 const useSkillEvent: ChallengeEvent = {
   eventId: "skill-1",

@@ -468,10 +468,17 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
     const goal = Number(p.required_completions ?? 1);
     const skills = namesFor(data, "skill", stringParameters(p, "skill_ids"));
     const skillTags = stringParameters(p, "skill_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    const skillElements = namesFor(data, "element", stringParameters(p, "skill_element_ids"));
+    const statuses = namesFor(data, "status", stringParameters(p, "status_ids"));
+    const skillLabel = skills.length ? skills.join(" or ") : skillTags.length ? `${skillTags.join(" or ")}-tagged Skill` : "a Skill";
+    const skillFinisher = `${skillLabel}${skillElements.length ? ` using ${skillElements.join(" or ")} Element${skillElements.length === 1 ? "" : "s"}` : ""}`;
+    const statusFinisher = `${statuses.length ? statuses.join(" or ") : "a Damage Over Time Status"} tick`;
     const finisher = p.finisher_type === "skill"
-      ? skills.length ? skills.join(" or ") : skillTags.length ? `${skillTags.join(" or ")}-tagged Skill` : "a Skill"
-      : p.finisher_type === "any" ? "any qualifying finisher" : humanize(String(p.finisher_type));
-    const scope = p.final_knockout_scope === "last_enemy_in_dungeon_battle" ? "Dungeon encounter" : "battle";
+      ? skillFinisher
+      : p.finisher_type === "status_tick"
+        ? statusFinisher
+        : p.finisher_type === "any" ? "any qualifying finisher" : humanize(String(p.finisher_type));
+    const scope = p.final_knockout_scope === "end_of_dungeon" ? "Dungeon" : "encounter";
     return `Finish ${goal} ${scope}${goal === 1 ? "" : "s"} with ${finisher}.`;
   }
   if (challenge.challenge_type === "resource_spending") return `Spend ${p.required_amount} ${humanize(String(p.resource_type))} ${p.tracking_scope === "lifetime" ? "in total" : humanize(String(p.tracking_scope))}.`;
@@ -554,6 +561,7 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
     const targetCritters = namesFor(data, "critter", stringParameters(p, "target_critter_ids"));
     const targetElements = namesFor(data, "element", stringParameters(p, "target_element_ids"));
     const targetTags = stringParameters(p, "target_critter_tag_ids").map((id) => data.catalog.tags.find((tag) => tag.id === id)?.name ?? id);
+    const skills = namesFor(data, "skill", stringParameters(p, "skill_ids"));
     const authoredSkillTagIds = p.skill_tag_ids ?? p.source_skill_tag_ids;
     const skillTags = (Array.isArray(authoredSkillTagIds) ? authoredSkillTagIds : [])
       .filter((id): id is string => typeof id === "string" && id.length > 0)
@@ -577,7 +585,7 @@ export function challengeDescription(data: AppData, challenge: CollectibleUnlock
       sourceCritters.length ? sourceCritters.join(" or ") : "",
       sourceElements.length ? `${sourceElements.join(" or ")} Element Critters` : "",
       sourceTags.length ? `${sourceTags.join(" or ")} tagged Critters` : "",
-      skillTags.length ? `${skillTags.join(" or ")} tagged Skills` : "",
+      skills.length ? `${skills.join(" or ")} Skills` : skillTags.length ? `${skillTags.join(" or ")} tagged Skills` : "",
     ].filter(Boolean);
     const targetFilters = [
       targetCritters.length ? targetCritters.join(" or ") : "",

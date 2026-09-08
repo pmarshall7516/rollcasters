@@ -76,5 +76,9 @@ check(challengeEventIncrement(challenge("skills_hit"), {
     skill_tag_ids: ["projectile"],
   },
 } as never) === 1, "Effectiveness Skill progress must count one qualifying multi-target Skill once.");
+for (const effectivenessClass of ["immune", "mega-resisted", "mega-effective"]) {
+  check(challengeEventIncrement(challenge("hits", { effectiveness_classes: [effectivenessClass] }), hit({ effectiveness_class: effectivenessClass, total_damage: 0, hp_damage: 0 })) === 1, `${effectivenessClass} must be trackable as a classified hit even with zero damage.`);
+  check(challengeEventIncrement(challenge("damage", { effectiveness_classes: [effectivenessClass] }), hit({ effectiveness_class: effectivenessClass, total_damage: 0, hp_damage: 0 })) === 0, `${effectivenessClass} zero damage must add zero damage progress.`);
+}
 
 console.log("Effectiveness Challenge runtime tests passed.");

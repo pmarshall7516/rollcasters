@@ -7,6 +7,7 @@ const value = (name) => {
   const index = args.indexOf(name)
   return index >= 0 ? args[index + 1] : undefined
 }
+const localPreview = process.env.ROLLCASTERS_LOCAL_PREVIEW === 'true'
 const configuredSource = value('--source') || args.find((argument) => !argument.startsWith('-')) || process.env.ROLLCASTERS_CATALOG_RELEASE_DIR
 if (!configuredSource) throw new Error('Pass --source or set ROLLCASTERS_CATALOG_RELEASE_DIR to an immutable Catalog Release directory.')
 const sourceRoot = path.resolve(configuredSource)
@@ -31,7 +32,7 @@ for (const asset of assetManifest.assets) {
   const assetFile = path.join(sourceRoot, 'game-assets', asset.path)
   if (sha256(assetFile) !== asset.sha256) throw new Error(`Catalog asset checksum failed: ${asset.path}.`)
 }
-if (manifest.assetGitStatus !== 'clean') {
+if (manifest.assetGitStatus !== 'clean' && !localPreview) {
   const receiptFile = path.join(sourceRoot, 'catalog-asset-provenance.json')
   const receipt = fs.existsSync(receiptFile) ? readJson(receiptFile) : null
   const legacyAccepted = manifest.catalogVersion === '2026.08.22.1'
@@ -40,6 +41,9 @@ if (manifest.assetGitStatus !== 'clean') {
     && receipt?.repository === 'pmarshall7516/rollcaster-assets'
     && /^[0-9a-f]{40}$/.test(String(receipt?.commit ?? ''))
   if (!legacyAccepted) throw new Error(`Catalog asset revision is ${manifest.assetGitStatus}; official packaging requires a clean revision or the exact 2026.08.22.1 provenance receipt.`)
+}
+if (manifest.assetGitStatus !== 'clean' && localPreview) {
+  console.warn(`Local preview accepts Catalog asset revision ${manifest.assetGitStatus}; official packaging remains clean-revision gated.`)
 }
 
 const target = path.resolve('public/desktop-catalog')

@@ -1,6 +1,8 @@
 import {
   calculateSkillDamage,
+  classifyBaseEffectiveness,
   classifyEffectiveness,
+  classifyTotalEffectiveness,
   elementEffectiveness,
   normalizeManaDiceBounds,
   rollDamagePercent,
@@ -17,6 +19,11 @@ function check(condition: unknown, message: string): asserts condition {
 check(roundHalfUp(1.5) === 2 && roundHalfUp(-1.5) === -2 && roundHalfUp(Number.NaN) === 0, "half-up rounding should preserve signed and non-finite behavior");
 check(JSON.stringify(normalizeManaDiceBounds(12.4, 3.6)) === JSON.stringify({ diceMin: 4, diceMax: 4 }), "mana bounds should clamp the rounded minimum to the rounded maximum");
 check(classifyEffectiveness(1).classification === "neutral" && classifyEffectiveness(2).classification === "extra-effective" && classifyEffectiveness(0.5).classification === "extra-resisted", "effectiveness classifications should preserve thresholds");
+check(classifyBaseEffectiveness(0.500001) === "resisted" && classifyBaseEffectiveness(2) === "extra-effective", "base effectiveness must retain the legacy five tiers");
+check(classifyTotalEffectiveness(0).classification === "immune", "zero effectiveness must be Immune");
+check(classifyTotalEffectiveness(0.099999).classification === "mega-resisted" && classifyTotalEffectiveness(0.1).classification === "extra-resisted", "low total effectiveness must distinguish Mega Resisted from Extra Resisted");
+check(classifyTotalEffectiveness(0.500001).classification === "resisted" && classifyTotalEffectiveness(1).classification === "neutral", "total effectiveness must use the exact resisted and neutral boundaries");
+check(classifyTotalEffectiveness(1.5).classification === "extra-effective" && classifyTotalEffectiveness(2.500001).classification === "mega-effective", "high total effectiveness must distinguish Extra Effective from Mega Effective");
 
 const catalog = {
   elementEffectiveness: [
@@ -33,6 +40,10 @@ const skill = { skill_type: "attack", power: 10, element_id: "fire" } as Skill;
 const single = calculateSkillDamage(catalog, attacker, damageTarget, skill, () => 0, 1);
 const multi = calculateSkillDamage(catalog, attacker, damageTarget, skill, () => 0, 2);
 check(single.damageRollPercent === 85 && single.stab && single.effectiveness === 2, "damage calculations should preserve STAB, effectiveness, and the inclusive roll floor");
+const modified = calculateSkillDamage(catalog, attacker, damageTarget, skill, () => 1, 1, { tierPercentDeltas: [0.5, 0.5] });
+check(modified.effectiveness === 4.5 && modified.baseEffectiveness === 2 && modified.baseClassification === "extra-effective" && modified.classification === "mega-effective", "tier modifiers must stack multiplicatively before the damage roll and final classification");
+const weakened = calculateSkillDamage(catalog, attacker, damageTarget, skill, () => 1, 1, { tierPercentDeltas: [-0.5] });
+check(weakened.effectiveness === 1 && weakened.damage < single.damage, "negative percent deltas must weaken the effectiveness multiplier before damage flooring");
 check(multi.targetCount === 2 && multi.spreadMultiplier === 0.75 && multi.maxDamage < single.maxDamage, "multi-target damage should preserve its spread multiplier");
 check(rollDamagePercent(() => 0) === 85 && rollDamagePercent(() => 1) === 100, "damage roll bounds should remain inclusive");
 check(rollManaDie(2, 4, () => 0) === 2 && rollManaDie(2, 4, () => 0.999999) === 4, "mana rolls should preserve inclusive bounds");

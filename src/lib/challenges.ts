@@ -101,10 +101,14 @@ function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: Chal
   const targetTags = eventArray(event, "targetCritterTagIds", "target_critter_tag_ids");
   const skillTags = eventArray(event, "skillTagIds", "skill_tag_ids");
   const skillType = event.skillType ?? (typeof payload.skill_type === "string" ? payload.skill_type : undefined);
+  const exactSkillIds = stringArray(p.skill_ids);
+  const exactSkillMatch = ["knock_out_critters", "deal_damage"].includes(challenge.challenge_type) && exactSkillIds.length > 0;
   if (!matchesAnyFilter(p.source_critter_ids, event.sourceCritterId)) return false;
   if (!matchesAnyFilter(p.source_element_ids, sourceElements)) return false;
   if (!matchesAnyFilter(p.source_critter_tag_ids, sourceTags)) return false;
-  if (!matchesAnyFilter(p.source_skill_tag_ids, skillTags)) return false;
+  if (exactSkillMatch
+    ? !matchesAnyFilter(exactSkillIds, event.skillId)
+    : !matchesAnyFilter(p.source_skill_tag_ids, skillTags)) return false;
   if (!matchesAnyFilter(p.target_critter_ids, targetCritterIds)) return false;
   if (!matchesAnyFilter(p.target_element_ids, targetElements)) return false;
   if (!matchesAnyFilter(p.target_critter_tag_ids, targetTags)) return false;
@@ -114,6 +118,8 @@ function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: Chal
     if (!matchesAnyFilter(p.skill_tag_ids, skillTags)) return false;
     if (!matchesAnyFilter(p.skill_ids, event.skillId)) return false;
     if (challenge.challenge_type === "effectiveness_strike"
+      && !matchesAnyFilter(p.skill_element_ids, String(payload.skill_element_id ?? ""))) return false;
+    if (challenge.challenge_type === "closing_move"
       && !matchesAnyFilter(p.skill_element_ids, String(payload.skill_element_id ?? ""))) return false;
     if (challenge.challenge_type === "use_skill" && !matchesAnyFilter(p.element_ids, [String(event.payload?.skill_element_id ?? "")])) return false;
   }
@@ -311,10 +317,10 @@ export function challengeEventIncrement(
     const finisherType = String(payload.finisher_type ?? "");
     const configuredFinisher = String(p.finisher_type ?? "any");
     if (configuredFinisher !== "any" && configuredFinisher !== finisherType) return 0;
-    const scope = String(p.final_knockout_scope ?? "last_enemy");
-    if (scope === "last_enemy" && Number(payload.remaining_enemy_count ?? 1) !== 0) return 0;
-    if (scope === "last_active_enemy" && Number(payload.remaining_active_enemy_count ?? 1) !== 0) return 0;
-    if (scope === "last_enemy_in_dungeon_battle" && payload.is_last_enemy_in_dungeon_battle !== true) return 0;
+    const scope = String(p.final_knockout_scope ?? "end_of_encounter");
+    if (scope === "end_of_encounter" && payload.is_end_of_encounter !== true) return 0;
+    if (scope === "end_of_dungeon" && payload.is_end_of_dungeon !== true) return 0;
+    if (!matchesAnyFilter(p.status_ids, String(payload.status_id ?? ""))) return 0;
     return matchesCombatFilters(challenge, event) ? 1 : 0;
   }
 

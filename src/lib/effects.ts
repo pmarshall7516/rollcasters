@@ -8,6 +8,8 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "direct_health_modifier@1",
   "retaliation@1",
   "damage_modifier@1",
+  "effectiveness_modifier@1",
+  "skill_effectiveness@1",
   "conditional_effect@1",
   "delayed_effect@1",
   "effect_duration@1",
@@ -26,6 +28,8 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "apply_status@1",
   "restore_hp@1",
   "damage_over_time@1",
+  "healing_over_time@1",
+  "healing_modifier@1",
   "skip_action_chance@1",
   "critter_revival@1",
   "skill_usage_restriction@1",
@@ -35,6 +39,8 @@ export const SUPPORTED_EFFECT_RUNTIMES = new Set([
   "weighted_child_selector@1",
   "critter_xp_modifier@1",
   "status_duration_modifier@1",
+  "multi_hit@1",
+  "multi_hit_modifier@1",
 ]);
 
 const TARGETS_BY_OWNER: Record<EffectOwnerType, ReadonlySet<EffectTarget>> = {
@@ -74,6 +80,15 @@ function requireFinite(value: unknown, label: string): number {
     throw new Error(`${label} must be a finite number.`);
   }
   return value;
+}
+
+function requireSafeInteger(value: unknown, label: string, minimum?: number): number {
+  const parsed = requireFinite(value, label);
+  if (!Number.isSafeInteger(parsed) || (minimum !== undefined && parsed < minimum)) {
+    const suffix = minimum === undefined ? "a safe integer" : `a safe integer greater than or equal to ${minimum}`;
+    throw new Error(`${label} must be ${suffix}.`);
+  }
+  return parsed;
 }
 
 function requireChoice<T extends string>(value: unknown, choices: readonly T[], label: string): T {
@@ -242,7 +257,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   // resolution context rather than directly selecting a Critter. Their
   // schemas intentionally do not include `target`; do not force them through
   // the owner-scoped Critter target vocabulary.
-  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1", "skill_usage_restriction@1", "turn_restriction@1", "weighted_child_selector@1"]);
+  const targetlessRuntimes = new Set(["effect_copy@1", "effect_transfer@1", "resource_gain_loss@1", "skill_usage_restriction@1", "turn_restriction@1", "weighted_child_selector@1", "effectiveness_modifier@1", "skill_effectiveness@1", "multi_hit@1"]);
   const target = parameters.target;
   if (runtimeKey === "critter_xp_modifier@1") {
     if (effect.ownerType === "skill" || effect.ownerType === "status") {
@@ -330,8 +345,8 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     if (effect.ownerType !== "skill" && effect.ownerType !== "relic") {
       throw new Error(`Effect ${effect.id} source_skill_tag_ids requires a Skill or Relic owner.`);
     }
-    if (effect.ownerType === "relic" && stringIds(parameters.source_skill_tag_ids).length && !["damage_modifier@1", "effect_amplification@1"].includes(runtimeKey)) {
-      throw new Error(`Effect ${effect.id} source_skill_tag_ids requires a Relic Damage Modifier or Effect Amplification.`);
+    if (effect.ownerType === "relic" && stringIds(parameters.source_skill_tag_ids).length && !["damage_modifier@1", "effect_amplification@1", "effectiveness_modifier@1", "skill_effectiveness@1"].includes(runtimeKey)) {
+      throw new Error(`Effect ${effect.id} source_skill_tag_ids requires a supported Relic damage or effectiveness runtime.`);
     }
     validateOptionalTagIds(parameters.source_skill_tag_ids, `Effect ${effect.id} source_skill_tag_ids`);
   }
@@ -355,6 +370,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
   const expandedKey = new Set([
     "stat_modifier@2", "shield_modifier@1", "reactive_trigger@1",
     "direct_health_modifier@1", "retaliation@1", "damage_modifier@1",
+    "effectiveness_modifier@1", "skill_effectiveness@1",
     "conditional_effect@1", "delayed_effect@1", "effect_duration@1",
     "effect_removal@1", "effect_copy@1", "effect_transfer@1",
     "damage_prevention@1", "action_cost_modifier@1", "resource_gain_loss@1",
@@ -367,6 +383,7 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     "weighted_child_selector@1",
     "critter_xp_modifier@1",
     "status_duration_modifier@1",
+    "multi_hit@1", "multi_hit_modifier@1",
   ]);
   if (expandedKey.has(runtimeKey)) {
     if (runtimeKey === "stat_modifier@2" && effect.classification === undefined && effect.execution === undefined) {
@@ -385,9 +402,87 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       }
     }
     if (parameters.chance !== undefined) validateChance(parameters.chance, `Effect ${effect.id} chance`);
+    if (["effectiveness_modifier@1", "skill_effectiveness@1"].includes(runtimeKey)) {
+      if (!["skill", "ability", "relic"].includes(effect.ownerType)) {
+        throw new Error(`Effect ${effect.id} can only be owned by a Skill, Ability, or Relic.`);
+      }
+      if (effect.execution && effect.execution !== "root") throw new Error(`Effect ${effect.id} must use Root execution.`);
+      const delta = (value: unknown, label: string): number => {
+        const parsed = requireFinite(value, label);
+        if (parsed < -1) throw new Error(`${label} cannot be less than -1.00.`);
+        return parsed;
+      };
+      const validateStringArray = (value: unknown, label: string): string[] => {
+        if (value === undefined) return [];
+        if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry.trim())) {
+          throw new Error(`${label} must be a string array when present.`);
+        }
+        return value as string[];
+      };
+      rejectUnknownKeys(
+        parameters,
+        runtimeKey === "effectiveness_modifier@1"
+          ? ["tier_modifiers", "target", "direction"]
+          : ["defender_element_rows", "target", "direction", "affected_skill_element_ids", "affected_skill_tag_ids", "affected_skill_category", "opposing_element_ids", "percent_delta"],
+        `Effect ${effect.id}`,
+      );
+      if (effect.ownerType === "skill") {
+        if (parameters.target !== undefined || parameters.direction !== undefined) throw new Error(`Effect ${effect.id} Skill-owned effectiveness uses the current Skill and has no target or direction.`);
+        if (runtimeKey === "effectiveness_modifier@1") {
+          const rows = parameters.tier_modifiers;
+          if (!Array.isArray(rows) || rows.length === 0) throw new Error(`Effect ${effect.id} tier_modifiers must contain at least one row.`);
+          const tiers = new Set<string>();
+          rows.forEach((candidate, index) => {
+            const row = requireRecord(candidate, `Effect ${effect.id} tier_modifiers[${index}]`);
+            const tier = requireChoice(row.tier, ["extra-effective", "effective", "neutral", "resisted", "extra-resisted"], `Effect ${effect.id} tier_modifiers[${index}] tier`);
+            if (tiers.has(tier)) throw new Error(`Effect ${effect.id} tier_modifiers cannot contain ${tier} more than once.`);
+            tiers.add(tier);
+            delta(row.percent_delta, `Effect ${effect.id} tier_modifiers[${index}] percent_delta`);
+          });
+        } else {
+          const rows = parameters.defender_element_rows;
+          if (!Array.isArray(rows) || rows.length === 0) throw new Error(`Effect ${effect.id} defender_element_rows must contain at least one row.`);
+          const elements = new Set<string>();
+          rows.forEach((candidate, index) => {
+            const row = requireRecord(candidate, `Effect ${effect.id} defender_element_rows[${index}]`);
+            const elementId = row.element_id;
+            if (typeof elementId !== "string" || !elementId.trim()) throw new Error(`Effect ${effect.id} defender_element_rows[${index}] element_id must be a non-empty Element ID.`);
+            if (elements.has(elementId)) throw new Error(`Effect ${effect.id} defender_element_rows cannot contain ${elementId} more than once.`);
+            elements.add(elementId);
+            delta(row.percent_delta, `Effect ${effect.id} defender_element_rows[${index}] percent_delta`);
+          });
+        }
+        return;
+      }
+      const validTarget = requireChoice(parameters.target, [...TARGETS_BY_OWNER[effect.ownerType]], `Effect ${effect.id} target for ${effect.ownerType}`);
+      if (!TARGETS_BY_OWNER[effect.ownerType].has(validTarget)) throw new Error(`Effect ${effect.id} target is not valid for its ${effect.ownerType} owner.`);
+      requireChoice(parameters.direction, ["dealt", "received"], `Effect ${effect.id} direction`);
+      if (runtimeKey === "effectiveness_modifier@1") {
+        const rows = parameters.tier_modifiers;
+        if (!Array.isArray(rows) || rows.length === 0) throw new Error(`Effect ${effect.id} tier_modifiers must contain at least one row.`);
+        const tiers = new Set<string>();
+        rows.forEach((candidate, index) => {
+          const row = requireRecord(candidate, `Effect ${effect.id} tier_modifiers[${index}]`);
+          const tier = requireChoice(row.tier, ["extra-effective", "effective", "neutral", "resisted", "extra-resisted"], `Effect ${effect.id} tier_modifiers[${index}] tier`);
+          if (tiers.has(tier)) throw new Error(`Effect ${effect.id} tier_modifiers cannot contain ${tier} more than once.`);
+          tiers.add(tier);
+          delta(row.percent_delta, `Effect ${effect.id} tier_modifiers[${index}] percent_delta`);
+        });
+      } else {
+        delta(parameters.percent_delta, `Effect ${effect.id} percent_delta`);
+        const affectedElements = validateStringArray(parameters.affected_skill_element_ids, `Effect ${effect.id} affected_skill_element_ids`);
+        const opposingElements = validateStringArray(parameters.opposing_element_ids, `Effect ${effect.id} opposing_element_ids`);
+        validateStringArray(parameters.affected_skill_tag_ids, `Effect ${effect.id} affected_skill_tag_ids`);
+        if (affectedElements.length === 0 && opposingElements.length === 0 && !stringIds(parameters.affected_skill_tag_ids).length && parameters.affected_skill_category === undefined) {
+          // An unfiltered external rule is valid and intentionally matches every Skill.
+        }
+        if (parameters.affected_skill_category !== undefined) requireChoice(parameters.affected_skill_category, ["any", "attack", "support"], `Effect ${effect.id} affected_skill_category`);
+      }
+      return;
+    }
     if (runtimeKey === "weighted_child_selector@1") {
       if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a skill.`);
-      if (effect.execution !== "root") throw new Error(`Effect ${effect.id} must use Root execution.`);
+      if (effect.execution && effect.execution !== "root") throw new Error(`Effect ${effect.id} must use Root execution.`);
       rejectUnknownKeys(parameters, ["outcome_rows", "source_element_ids", "target_element_ids"], `Effect ${effect.id}`);
       validateWeightedChildOutcomes(parameters.outcome_rows, `Effect ${effect.id} outcome_rows`);
     }
@@ -514,6 +609,38 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       const durationBonus = requireFinite(parameters.duration_bonus, `Effect ${effect.id} duration_bonus`);
       if (!Number.isInteger(durationBonus) || durationBonus < 1) throw new Error(`Effect ${effect.id} duration_bonus must be a positive integer.`);
       if (typeof parameters.fresh_only !== "boolean") throw new Error(`Effect ${effect.id} fresh_only must be boolean.`);
+    }
+    if (runtimeKey === "multi_hit@1") {
+      if (effect.ownerType !== "skill") throw new Error(`Effect ${effect.id} can only be owned by a Skill.`);
+      if (effect.execution && effect.execution !== "root") throw new Error(`Effect ${effect.id} must use Root execution.`);
+      const unsupportedParameters = Object.keys(parameters).filter((key) => !["minimum_hits", "maximum_hits"].includes(key));
+      if (unsupportedParameters.length) throw new Error(`Effect ${effect.id} contains unsupported parameter(s): ${unsupportedParameters.join(", ")}.`);
+      const minimumHits = requireSafeInteger(parameters.minimum_hits, `Effect ${effect.id} minimum_hits`, 0);
+      const maximumHits = requireSafeInteger(parameters.maximum_hits, `Effect ${effect.id} maximum_hits`, 0);
+      if (minimumHits > maximumHits) throw new Error(`Effect ${effect.id} minimum_hits cannot exceed maximum_hits.`);
+    }
+    if (runtimeKey === "multi_hit_modifier@1") {
+      if (effect.ownerType !== "ability" && effect.ownerType !== "relic") {
+        throw new Error(`Effect ${effect.id} can only be owned by an Ability or Relic.`);
+      }
+      if (effect.execution && effect.execution !== "root") throw new Error(`Effect ${effect.id} must use Root execution.`);
+      rejectUnknownKeys(
+        parameters,
+        ["target", "modifier_mode", "additional_rolls", "affected_skill_category", "affected_skill_element_ids", "affected_skill_tag_ids", "duration_type", "duration_value", "duration_clock", "target_element_ids", "target_critter_tag_ids", "source_element_ids", "source_critter_tag_ids"],
+        `Effect ${effect.id}`,
+      );
+      requireChoice(parameters.modifier_mode, ["higher", "lower"], `Effect ${effect.id} modifier_mode`);
+      requireSafeInteger(parameters.additional_rolls, `Effect ${effect.id} additional_rolls`, 1);
+      if (parameters.affected_skill_category !== undefined) {
+        requireChoice(parameters.affected_skill_category, ["any", "attack", "support"], `Effect ${effect.id} affected_skill_category`);
+      }
+      if (parameters.affected_skill_element_ids !== undefined) validateOptionalElementIds(parameters.affected_skill_element_ids, `Effect ${effect.id} affected_skill_element_ids`);
+      if (parameters.affected_skill_tag_ids !== undefined) validateOptionalTagIds(parameters.affected_skill_tag_ids, `Effect ${effect.id} affected_skill_tag_ids`);
+      if (parameters.duration_type !== undefined) requireChoice(parameters.duration_type, ["current_action", "current_turn", "target_next_turn_start", "target_next_turn_end", "turns", "rounds", "activations", "until_attack", "until_skill", "until_block", "until_swap", "until_damage", "until_shield_break", "until_leaves_active", "end_of_battle", "while_relic_equipped"], `Effect ${effect.id} duration_type`);
+      if (parameters.duration_clock !== undefined) requireChoice(parameters.duration_clock, ["owner_turn", "target_turn", "global_round"], `Effect ${effect.id} duration_clock`);
+      if (["turns", "rounds", "activations"].includes(String(parameters.duration_type))) {
+        requireSafeInteger(parameters.duration_value, `Effect ${effect.id} duration_value`, 1);
+      }
     }
     if (runtimeKey === "direct_health_modifier@1") {
       requireChoice(parameters.operation, ["heal", "lose_hp", "set_hp", "drain"], `Effect ${effect.id} operation`);
@@ -730,6 +857,26 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
     if (amount < 0) throw new Error(`Effect ${effect.id} amount is outside the allowed range.`);
     if (mode === "flat" && !Number.isInteger(amount)) throw new Error(`Effect ${effect.id} flat amount must be an integer.`);
     validateChance(parameters.chance, `Effect ${effect.id} chance`);
+    return;
+  }
+
+  if (runtimeKey === "healing_over_time@1") {
+    if (effect.ownerType !== "status") throw new Error(`Effect ${effect.id} can only be owned by a status.`);
+    rejectUnknownKeys(parameters, ["timing", "value_mode", "amount", "chance", "target"], `Effect ${effect.id}`);
+    requireChoice(parameters.timing, ["start_of_turn", "end_of_turn"], `Effect ${effect.id} timing`);
+    const mode = requireChoice(parameters.value_mode, ["flat", "percent_max_hp"], `Effect ${effect.id} value_mode`);
+    const amount = requireFinite(parameters.amount, `Effect ${effect.id} amount`);
+    if (amount < 0) throw new Error(`Effect ${effect.id} amount is outside the allowed range.`);
+    if (mode === "flat" && !Number.isInteger(amount)) throw new Error(`Effect ${effect.id} flat amount must be an integer.`);
+    validateChance(parameters.chance, `Effect ${effect.id} chance`);
+    return;
+  }
+
+  if (runtimeKey === "healing_modifier@1") {
+    if (effect.ownerType !== "status") throw new Error(`Effect ${effect.id} can only be owned by a status.`);
+    rejectUnknownKeys(parameters, ["modifier_value", "target"], `Effect ${effect.id}`);
+    const modifier = requireFinite(parameters.modifier_value, `Effect ${effect.id} modifier_value`);
+    if (modifier < -1) throw new Error(`Effect ${effect.id} modifier_value cannot be less than -1.00.`);
     return;
   }
 

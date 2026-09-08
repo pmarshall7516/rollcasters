@@ -119,6 +119,8 @@ function createEncounterBattle(
   const opponentSlots = battlefieldSlotsForCount(parseBattleFormat(run.battleFormat).opponentActiveCount);
   const encounterBattle: CombatState = {
     ...battle,
+    battleIndex: run.battleIndex,
+    battleCount: run.battleCount,
     playerUnits: battle.playerUnits.map((unit) => ({
       ...unit,
       hp: Math.min(unit.maxHp, Math.max(0, persistentHp?.[unit.userCritter?.id ?? ""] ?? unit.maxHp)),
