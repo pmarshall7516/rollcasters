@@ -97,6 +97,90 @@ const attackOnlyChallenge = challenge("use_skill", { required_amount: 1, skill_t
 check(challengeEventIncrement(attackOnlyChallenge, useSkillEvent) === 1, "Use Skill must match the selected Attack Skill Type.");
 check(challengeEventIncrement(attackOnlyChallenge, { ...useSkillEvent, skillType: "support", payload: { ...useSkillEvent.payload, skill_type: "support" } }) === 0, "Use Skill must reject the opposite Skill Type.");
 
+const targetedUseSkillChallenge = challenge("use_skill", {
+  required_amount: 1,
+  target_side: "enemies",
+  target_critter_ids: ["thunder-critter"],
+  target_element_ids: ["thunder"],
+  target_critter_tag_ids: ["first-stage"],
+});
+const targetedUseSkillEvent: ChallengeEvent = {
+  ...useSkillEvent,
+  eventId: "skill:targeted-enemy",
+  payload: {
+    ...useSkillEvent.payload,
+    target_contexts: [
+      { critter_id: "friendly-critter", side: "player", element_ids: ["thunder"], critter_tag_ids: ["first-stage"] },
+      { critter_id: "thunder-critter", side: "opponent", element_ids: ["thunder"], critter_tag_ids: ["first-stage"] },
+    ],
+  },
+};
+check(challengeEventIncrement(targetedUseSkillChallenge, targetedUseSkillEvent) === 1, "Use Skill target filters must match one qualifying enemy target in a multi-target cast.");
+check(
+  challengeEventIncrement(targetedUseSkillChallenge, {
+    ...targetedUseSkillEvent,
+    eventId: "skill:targeted-friendly-only",
+    payload: {
+      ...targetedUseSkillEvent.payload,
+      target_contexts: [{ critter_id: "thunder-critter", side: "player", element_ids: ["thunder"], critter_tag_ids: ["first-stage"] }],
+    },
+  }) === 0,
+  "Use Skill target filters must reject a matching Critter on the wrong side.",
+);
+check(
+  challengeEventIncrement({ ...targetedUseSkillChallenge, parameters: { ...targetedUseSkillChallenge.parameters, target_side: "any" } }, {
+    ...targetedUseSkillEvent,
+    eventId: "skill:any-side",
+    payload: {
+      ...targetedUseSkillEvent.payload,
+      target_contexts: [{ critter_id: "thunder-critter", side: "player", element_ids: ["thunder"], critter_tag_ids: ["first-stage"] }],
+    },
+  }) === 1,
+  "Use Skill target filters must support either side.",
+);
+check(
+  challengeEventIncrement({ ...targetedUseSkillChallenge, parameters: { ...targetedUseSkillChallenge.parameters, target_side: "any" } }, {
+    ...targetedUseSkillEvent,
+    eventId: "skill:invalid-side",
+    payload: {
+      ...targetedUseSkillEvent.payload,
+      target_contexts: [{ critter_id: "thunder-critter", side: "unknown", element_ids: ["thunder"], critter_tag_ids: ["first-stage"] }],
+    },
+  }) === 0,
+  "Use Skill target filters must reject target contexts with an invalid side.",
+);
+check(
+  challengeEventIncrement(targetedUseSkillChallenge, {
+    ...targetedUseSkillEvent,
+    eventId: "skill:split-filters",
+    payload: {
+      ...targetedUseSkillEvent.payload,
+      target_contexts: [
+        { critter_id: "thunder-critter", side: "opponent", element_ids: ["thunder"], critter_tag_ids: ["middle-stage"] },
+        { critter_id: "other-critter", side: "opponent", element_ids: ["fire"], critter_tag_ids: ["first-stage"] },
+      ],
+    },
+  }) === 0,
+  "Use Skill target Critter, Element, and Tag filters must apply to the same target.",
+);
+check(
+  challengeEventIncrement((() => {
+    const { target_side: _legacyTargetSide, ...legacyParameters } = targetedUseSkillChallenge.parameters;
+    return { ...targetedUseSkillChallenge, parameters: legacyParameters };
+  })(), {
+    ...targetedUseSkillEvent,
+    eventId: "skill:legacy-split-filters",
+    payload: {
+      ...targetedUseSkillEvent.payload,
+      target_contexts: undefined,
+      target_critter_ids: ["thunder-critter", "other-critter"],
+      target_element_ids: ["thunder", "fire"],
+      target_critter_tag_ids: ["first-stage", "middle-stage"],
+    },
+  }) === 0,
+  "Legacy context-less multi-target events must not combine target filters across different targets.",
+);
+
 const arsenalChallenge = challenge("skill_arsenal" as CollectibleUnlockChallenge["challenge_type"], {
   required_distinct_skills: 2,
   minimum_uses_per_skill: 2,

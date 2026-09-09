@@ -216,6 +216,31 @@ export function effectMatchesSourceSkill(effect: ResolvedEffectRef, skill: Pick<
   return required.length === 0 || Boolean(skill && matchesAnyTag(skill.tag_ids ?? [], required));
 }
 
+export function triggerSkillScope(effect: ResolvedEffectRef): "all" | "attack" | "support" {
+  const scope = effect.parameters.trigger_skill_scope;
+  return scope === "attack" || scope === "support" ? scope : "all";
+}
+
+export function triggerSkillTagIds(effect: ResolvedEffectRef): string[] {
+  return stringIds(effect.parameters.trigger_skill_tag_ids);
+}
+
+export function triggerSkillElementIds(effect: ResolvedEffectRef): string[] {
+  return stringIds(effect.parameters.trigger_skill_element_ids);
+}
+
+export function effectMatchesTriggerSkill(
+  effect: ResolvedEffectRef,
+  skill: Pick<Skill, "skill_type" | "element_id" | "tag_ids">,
+): boolean {
+  const scope = triggerSkillScope(effect);
+  if (scope !== "all" && skill.skill_type !== scope) return false;
+  const requiredTags = triggerSkillTagIds(effect);
+  if (!matchesAnyTag(skill.tag_ids ?? [], requiredTags)) return false;
+  const requiredElements = triggerSkillElementIds(effect);
+  return requiredElements.length === 0 || requiredElements.includes(skill.element_id);
+}
+
 export function normalizeEffectElementParameters(runtimeKind: string, input: Record<string, unknown>): Record<string, unknown> {
   const parameters = { ...input };
   // Older releases used one ambiguous element_ids field for both recipient
@@ -643,9 +668,30 @@ export function assertEffectContract(effect: ResolvedEffectRef, expectedOwner?: 
       }
     }
     if (runtimeKey === "direct_health_modifier@1") {
+      rejectUnknownKeys(
+        parameters,
+        [
+          "target", "operation", "value_type", "value", "activation_chance", "can_defeat_target",
+          "affected_by_shield", "affected_by_healing_modifiers", "overhealing_behavior", "overheal_effect_ids",
+          "target_element_ids", "source_element_ids",
+          "trigger_skill_scope", "trigger_skill_tag_ids", "trigger_skill_element_ids",
+        ],
+        `Effect ${effect.id}`,
+      );
       requireChoice(parameters.operation, ["heal", "lose_hp", "set_hp", "drain"], `Effect ${effect.id} operation`);
       requireChoice(parameters.value_type, ["flat", "percent_max_hp", "percent_current_hp", "percent_missing_hp", "percent_damage_dealt"], `Effect ${effect.id} value_type`);
       validateChance(parameters.activation_chance === undefined ? 1 : parameters.activation_chance, `Effect ${effect.id} activation_chance`);
+      const triggerScope = parameters.trigger_skill_scope === undefined
+        ? "all"
+        : requireChoice(parameters.trigger_skill_scope, ["all", "attack", "support"], `Effect ${effect.id} trigger_skill_scope`);
+      if (parameters.trigger_skill_tag_ids !== undefined) validateOptionalTagIds(parameters.trigger_skill_tag_ids, `Effect ${effect.id} trigger_skill_tag_ids`);
+      if (parameters.trigger_skill_element_ids !== undefined) validateOptionalElementIds(parameters.trigger_skill_element_ids, `Effect ${effect.id} trigger_skill_element_ids`);
+      const hasTriggerFilter = triggerScope !== "all"
+        || stringIds(parameters.trigger_skill_tag_ids).length > 0
+        || stringIds(parameters.trigger_skill_element_ids).length > 0;
+      if (hasTriggerFilter && !["attacker", "attacker_and_targets"].includes(String(parameters.target))) {
+        throw new Error(`Effect ${effect.id} trigger skill filters require an attacker or attacker_and_targets target.`);
+      }
     }
     if (runtimeKey === "conditional_effect@1") {
       const condition = requireChoice(parameters.condition, ["hp_percent", "shield_present", "shield_value", "mana", "active_state", "has_status", "has_relic", "relic_count", "last_squad_member", "action_order", "ally_defeated", "enemy_defeated", "turn_interval", "round_interval", "element", "tags", "previous_action", "previous_mana_roll", "has_stat_modifier"], `Effect ${effect.id} condition`);

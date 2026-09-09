@@ -280,7 +280,7 @@ const incomingSwap = {
 check(challengeEventIncrement(challenge("swap_action", { tracked_action: "unique_critters_swapped_in", critter_ids: ["002"], element_ids: ["frost"], dungeon_ids: ["002"], required_amount: 1 }), incomingSwap) === 1, "Swap filters must describe the Critter and Elements swapped in, including Element 2.");
 check(challengeEventIncrement(challenge("swap_action", { tracked_action: "unique_critters_swapped_in", critter_ids: ["001"], required_amount: 1 }), incomingSwap) === 0, "Swap-in filters must reject the outgoing Critter.");
 
-const multiTargetSkill = challenge("use_skill", { skill_type: "attack", target_critter_ids: ["002"], required_amount: 1 });
+const multiTargetSkill = challenge("use_skill", { skill_type: "attack", target_side: "any", target_critter_ids: ["002"], required_amount: 1 });
 check(challengeEventIncrement(multiTargetSkill, {
   eventId: "skill:multi-target",
   type: "skill_resolved",
@@ -291,6 +291,10 @@ check(challengeEventIncrement(multiTargetSkill, {
     skill_type: "attack",
     target_critter_ids: ["001", "002"],
     target_element_ids: ["basic", "vile", "frost"],
+    target_contexts: [
+      { critter_id: "001", side: "player", element_ids: ["basic"], critter_tag_ids: [] },
+      { critter_id: "002", side: "opponent", element_ids: ["vile", "frost"], critter_tag_ids: [] },
+    ],
   },
 }) === 1, "Use Skill target filters must match any target of a multi-target Skill.");
 

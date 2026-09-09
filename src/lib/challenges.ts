@@ -88,6 +88,68 @@ function matchesAnyFilter(filter: unknown, values: string[] | string | undefined
   return selected.length === 0 || selected.some((value) => candidates.includes(value));
 }
 
+type SkillTargetContext = {
+  critterId: string;
+  side: string;
+  elementIds: string[];
+  tagIds: string[];
+};
+
+function skillTargetContexts(event: ChallengeEvent): SkillTargetContext[] {
+  const raw = event.payload?.target_contexts;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const context = value as Record<string, unknown>;
+    const critterId = typeof context.critter_id === "string" ? context.critter_id : "";
+    const side = typeof context.side === "string" ? context.side : "";
+    if (!critterId || !side) return [];
+    return [{
+      critterId,
+      side,
+      elementIds: stringArray(context.element_ids),
+      tagIds: stringArray(context.critter_tag_ids ?? context.tag_ids),
+    }];
+  });
+}
+
+function matchesUseSkillTargetFilters(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): boolean {
+  const p = parametersOf(challenge);
+  const targetIds = stringArray(p.target_critter_ids);
+  const targetElements = stringArray(p.target_element_ids);
+  const targetTags = stringArray(p.target_critter_tag_ids);
+  const hasTargetScope = Object.prototype.hasOwnProperty.call(p, "target_side")
+    || targetIds.length > 0
+    || targetElements.length > 0
+    || targetTags.length > 0;
+  if (!hasTargetScope) return true;
+  const contexts = skillTargetContexts(event);
+  if (contexts.length === 0 && !Object.prototype.hasOwnProperty.call(p, "target_side")) {
+    const payload = event.payload ?? {};
+    const declaredTargetIds = stringArray(payload.target_critter_ids);
+    const resolvedTargetIds = [...(event.targetCritterId ? [event.targetCritterId] : []), ...declaredTargetIds];
+    const filterGroupCount = [targetIds, targetElements, targetTags].filter((filter) => filter.length > 0).length;
+    const singleTargetKnown = Boolean(event.targetCritterId)
+      && (!Array.isArray(payload.target_critter_ids)
+        || (declaredTargetIds.length === 1 && declaredTargetIds[0] === event.targetCritterId));
+    if (filterGroupCount > 1 && !singleTargetKnown) return false;
+    return matchesAnyFilter(targetIds, resolvedTargetIds)
+      && matchesAnyFilter(targetElements, stringArray(payload.target_element_ids))
+      && matchesAnyFilter(targetTags, stringArray(payload.target_critter_tag_ids));
+  }
+  const targetSide = String(p.target_side ?? "any");
+  if (!["enemies", "friendlies", "any"].includes(targetSide)) return false;
+  return contexts.some((target) => {
+    if (target.side !== "player" && target.side !== "opponent") return false;
+    if (targetSide === "enemies" && target.side !== "opponent") return false;
+    if (targetSide === "friendlies" && target.side !== "player") return false;
+    if (targetIds.length > 0 && !targetIds.includes(target.critterId)) return false;
+    if (targetElements.length > 0 && !targetElements.some((id) => target.elementIds.includes(id))) return false;
+    if (targetTags.length > 0 && !targetTags.some((id) => target.tagIds.includes(id))) return false;
+    return true;
+  });
+}
+
 function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: ChallengeEvent): boolean {
   const p = parametersOf(challenge);
   const payload = event.payload ?? {};
@@ -109,9 +171,13 @@ function matchesCombatFilters(challenge: CollectibleUnlockChallenge, event: Chal
   if (exactSkillMatch
     ? !matchesAnyFilter(exactSkillIds, event.skillId)
     : !matchesAnyFilter(p.source_skill_tag_ids, skillTags)) return false;
-  if (!matchesAnyFilter(p.target_critter_ids, targetCritterIds)) return false;
-  if (!matchesAnyFilter(p.target_element_ids, targetElements)) return false;
-  if (!matchesAnyFilter(p.target_critter_tag_ids, targetTags)) return false;
+  if (challenge.challenge_type === "use_skill") {
+    if (!matchesUseSkillTargetFilters(challenge, event)) return false;
+  } else {
+    if (!matchesAnyFilter(p.target_critter_ids, targetCritterIds)) return false;
+    if (!matchesAnyFilter(p.target_element_ids, targetElements)) return false;
+    if (!matchesAnyFilter(p.target_critter_tag_ids, targetTags)) return false;
+  }
   if (challenge.challenge_type === "use_skill" || challenge.challenge_type === "effectiveness_strike" || challenge.challenge_type === "closing_move") {
     const selectedSkillType = String(p.skill_type ?? "any");
     if (selectedSkillType !== "any" && selectedSkillType !== skillType) return false;

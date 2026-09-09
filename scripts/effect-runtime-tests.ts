@@ -368,6 +368,13 @@ check(
     && multiTargetSkillEvent.payload.target_critter_ids.includes("o2"),
   "Multi-target Skill progress events must expose every resolved target for challenge filters.",
 );
+check(
+  Array.isArray(multiTargetSkillEvent?.payload?.target_contexts)
+    && multiTargetSkillEvent.payload.target_contexts.length === 2
+    && multiTargetSkillEvent.payload.target_contexts.some((context) => context?.critter_id === "o1" && context?.side === "opponent")
+    && multiTargetSkillEvent.payload.target_contexts.some((context) => context?.critter_id === "o2" && context?.side === "opponent"),
+  "Multi-target Skill progress events must expose each target's side and identity context for scoped challenge filters.",
+);
 const blockContextBase = battle(eventCatalog, makePlayer(), "block-context-progress-events");
 const blockContextState = resolveCombatActions(
   {
@@ -926,6 +933,9 @@ reactiveCatalog.effectsByRelic["spiky"] = [
     value_type: "percent_max_hp",
     can_defeat_target: true,
     affected_by_shield: false,
+    trigger_skill_scope: "all",
+    trigger_skill_tag_ids: ["contact"],
+    trigger_skill_element_ids: ["basic"],
   }),
 ];
 reactiveCatalog.effectsByRelic["gambler"] = [
@@ -990,6 +1000,94 @@ const thornsDamageIndex = reactiveResult.presentationEvents.findIndex((event) =>
 const incomingDamageIndex = reactiveResult.presentationEvents.findIndex((event) => event.kind === "damage" && event.targetKeys.includes("p1"));
 check(thornsDamageIndex >= 0 && incomingDamageIndex >= 0 && thornsDamageIndex > incomingDamageIndex, "Spiky Shield retaliation must present after the incoming damage event.");
 check(reactiveResult.presentationEvents[thornsDamageIndex]?.message === "The enemy Opponent One took 5 damage from thorns.", "Spiky Shield must name the attacker, actual damage, and Effect source.");
+
+const untaggedAttackCatalog = makeCatalog();
+untaggedAttackCatalog.dungeonOpponents[0].skill_ids = ["wave"];
+untaggedAttackCatalog.effectsByRelic.spiky = reactiveCatalog.effectsByRelic.spiky;
+const untaggedAttackPlayer = makePlayer();
+untaggedAttackPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "spiky" }];
+const untaggedAttackBattle = { ...battle(untaggedAttackCatalog, untaggedAttackPlayer, "thorns-untagged-attack"), playerMana: 0, opponentMana: 10 };
+const untaggedAttackResult = resolveTurn(untaggedAttackBattle, [
+  { actorKey: "p1", type: "skip", cost: 0 },
+  { actorKey: "p2", type: "skip", cost: 0 },
+]);
+check(untaggedAttackResult.opponentUnits[0].hp === untaggedAttackBattle.opponentUnits[0].hp, "Contact-filtered Thorns must ignore an untagged attack Skill.");
+
+const wrongElementAttackCatalog = makeCatalog();
+wrongElementAttackCatalog.skills.push({ id: "aqua-contact", name: "Aqua Contact", element_id: "aqua", skill_type: "attack", power: 1, mana_cost: 0, targeting: "single_enemy", description: "Aqua Contact.", sort_order: 4, tag_ids: ["contact"] });
+wrongElementAttackCatalog.dungeonOpponents[0].skill_ids = ["aqua-contact"];
+wrongElementAttackCatalog.effectsByRelic.spiky = reactiveCatalog.effectsByRelic.spiky;
+const wrongElementPlayer = makePlayer();
+wrongElementPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "spiky" }];
+const wrongElementBattle = { ...battle(wrongElementAttackCatalog, wrongElementPlayer, "thorns-wrong-element"), playerMana: 0, opponentMana: 10 };
+const wrongElementResult = resolveTurn(wrongElementBattle, [
+  { actorKey: "p1", type: "skip", cost: 0 },
+  { actorKey: "p2", type: "skip", cost: 0 },
+]);
+check(wrongElementResult.opponentUnits[0].hp === wrongElementBattle.opponentUnits[0].hp, "Contact-filtered Thorns must ignore a Contact attack with the wrong Element.");
+
+const supportTriggerCatalog = makeCatalog();
+supportTriggerCatalog.dungeonOpponents[0].skill_ids = ["mark"];
+supportTriggerCatalog.effectsByRelic.spiky = [effect("relic", "spiky", "thorns", "direct_health_modifier", {
+  value: 5,
+  target: "attacker",
+  operation: "lose_hp",
+  value_type: "flat",
+  can_defeat_target: true,
+  affected_by_shield: false,
+  trigger_skill_scope: "support",
+  trigger_skill_tag_ids: ["pulse"],
+  trigger_skill_element_ids: ["basic"],
+})];
+const supportTriggerPlayer = makePlayer();
+supportTriggerPlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "spiky" }];
+const supportTriggerBattle = { ...battle(supportTriggerCatalog, supportTriggerPlayer, "thorns-support"), playerMana: 0, opponentMana: 10 };
+const supportTriggerResult = resolveCombatActions(
+  supportTriggerBattle,
+  [],
+  [{ actorKey: "o1", type: "skill", skillId: "mark", targetKey: "p1", cost: 2 }],
+);
+check(supportTriggerResult.opponentUnits[0].hp === supportTriggerBattle.opponentUnits[0].hp - 5, "A support-filtered Direct Health Modifier must react when the support Skill targets the equipped Critter.");
+
+const supportWrongTargetResult = resolveCombatActions(
+  supportTriggerBattle,
+  [],
+  [{ actorKey: "o1", type: "skill", skillId: "mark", targetKey: "p2", cost: 2 }],
+);
+check(supportWrongTargetResult.opponentUnits[0].hp === supportTriggerBattle.opponentUnits[0].hp, "A support-filtered Direct Health Modifier must ignore support Skills that target another Critter.");
+
+supportTriggerCatalog.skills.push({ id: "support-all", name: "Support All", element_id: "basic", skill_type: "support", power: 0, mana_cost: 0, targeting: "all_enemies", description: "Support All.", sort_order: 5, tag_ids: ["pulse"] });
+supportTriggerCatalog.dungeonOpponents[0].skill_ids = ["support-all"];
+const supportMultiTargetBattle = { ...battle(supportTriggerCatalog, supportTriggerPlayer, "thorns-support-multi-target"), playerMana: 0, opponentMana: 10 };
+const supportMultiTargetResult = resolveCombatActions(
+  supportMultiTargetBattle,
+  [],
+  [{ actorKey: "o1", type: "skill", skillId: "support-all", cost: 0 }],
+);
+check(supportMultiTargetResult.opponentUnits[0].hp === supportMultiTargetBattle.opponentUnits[0].hp - 5, "A support Skill containing the equipped Critter among multiple targets must trigger the reaction once.");
+
+const attackScopeSupportCatalog = makeCatalog();
+attackScopeSupportCatalog.dungeonOpponents[0].skill_ids = ["mark"];
+attackScopeSupportCatalog.effectsByRelic.spiky = [effect("relic", "spiky", "thorns", "direct_health_modifier", {
+  value: 5,
+  target: "attacker",
+  operation: "lose_hp",
+  value_type: "flat",
+  can_defeat_target: true,
+  affected_by_shield: false,
+  trigger_skill_scope: "attack",
+  trigger_skill_tag_ids: [],
+  trigger_skill_element_ids: [],
+})];
+const attackScopePlayer = makePlayer();
+attackScopePlayer.relicSlots = [{ user_critter_id: "up1", slot_index: 1, relic_id: "spiky" }];
+const attackScopeBattle = { ...battle(attackScopeSupportCatalog, attackScopePlayer, "thorns-attack-scope-support"), playerMana: 0, opponentMana: 10 };
+const attackScopeSupportResult = resolveCombatActions(
+  attackScopeBattle,
+  [],
+  [{ actorKey: "o1", type: "skill", skillId: "mark", targetKey: "p1", cost: 2 }],
+);
+check(attackScopeSupportResult.opponentUnits[0].hp === attackScopeBattle.opponentUnits[0].hp, "An attack-scoped Direct Health Modifier must ignore a support Skill.");
 
 const skillTypeReactiveCatalog = makeCatalog();
 skillTypeReactiveCatalog.rollcasterAbilities.push({ id: "quick-link", name: "Quick Link", description: "Spiritbond Skill reaction.", sort_order: 10 });

@@ -1483,8 +1483,14 @@ export function App() {
                     kind: currentDungeonEvent(combat)!.kind,
                     actorKey: currentDungeonEvent(combat)!.actorKey ?? null,
                     targetKeys: currentDungeonEvent(combat)!.targetKeys,
+                    skillPhase: currentDungeonEvent(combat)!.skillPhase ?? null,
+                    animation: currentDungeonEvent(combat)!.animation ?? null,
+                    silent: currentDungeonEvent(combat)!.silent ?? false,
                     damageRollPercent: currentDungeonEvent(combat)!.damageRollPercent ?? null,
                     damageSpreadPercent: currentDungeonEvent(combat)!.damageSpreadPercent ?? null,
+                    hitIndex: currentDungeonEvent(combat)!.hitIndex ?? null,
+                    hitCount: currentDungeonEvent(combat)!.hitCount ?? null,
+                    knockedOutKeys: currentDungeonEvent(combat)!.state?.units.filter((unit) => unit.knockedOut).map((unit) => unit.key) ?? [],
                     swap: currentDungeonEvent(combat)!.swap
                       ? {
                           ...currentDungeonEvent(combat)!.swap!,
@@ -5432,7 +5438,11 @@ function CombatScreen({
       : combat.phase === "select_player_actions"
             ? (targeting ? targeting.phase === "swap" ? `Choose a healthy friendly Critter to swap in after ${targeting.skill.name}.` : `Choose a legal target for ${targeting.skill.name}.` : currentActor ? `Choose your ${currentActor.name}'s action.` : "All actions are ready. Submit when prepared.")
             : combat.phase === "event_playback"
-              ? (event?.kind === "mana_refund" ? "Mana restored." : (event?.message ?? ""))
+              ? (event?.kind === "mana_refund"
+                ? "Mana restored."
+                : event?.silent
+                  ? [...combat.events.slice(0, combat.eventCursor)].reverse().find((candidate) => !candidate.silent && candidate.message)?.message ?? ""
+                  : (event?.message ?? ""))
               : combat.phase === "battle_result"
                 ? (recordingResult ? "" : "Encounter resolved.")
                 : combat.phase === "encounter_rewards"
@@ -5761,7 +5771,9 @@ function CombatScreen({
         window.clearTimeout(settleTimer);
       };
     }
-    const duration = event.kind === "skill" || event.kind === "status" || event.kind === "block"
+    const duration = event.skillPhase === "knockout"
+      ? 760
+      : event.kind === "skill" || event.kind === "status" || event.kind === "block"
       ? 620
       : event.kind === "mana_refund"
         ? 780
@@ -6552,7 +6564,14 @@ function BattleUnit({
   const healthPct = Math.max(0, Math.min(100, (visualHealth / barCapacity) * 100));
   const shieldPct = Math.max(0, Math.min(100, (visualShield / barCapacity) * 100));
   const summary = action ? combatActionSummary(data, battle, allUnits, unit, action) : null;
-  const acting = presentation?.kind === "skill" && presentation.actorKey === unit.key;
+  const acting = Boolean(presentation?.actorKey === unit.key && presentation?.animation);
+  const actingAttack = acting && presentation?.animation === "attack";
+  const actingSupport = acting && presentation?.animation === "support";
+  const presentationUnit = presentation?.state?.units.find((candidate) => candidate.key === unit.key);
+  const knockedOut = presentationUnit?.knockedOut ?? unit.hp <= 0;
+  const knockoutRevealing = knockedOut
+    && presentation?.skillPhase === "knockout"
+    && presentation.targetKeys.includes(unit.key);
   const swappingOut = presentation?.kind === "swap"
     && presentation.swap?.outgoingKey === unit.key
     && unit.active;
@@ -6584,7 +6603,7 @@ function BattleUnit({
     .map((source) => source.ownerId);
   return (
     <article
-      className={`battle-unit presentation-${presentationToken} ${interactive ? "combat-unit-interactive" : ""} ${!unit.active ? "bench" : ""} ${unit.hp <= 0 ? "knocked-out" : ""} ${opponent ? "opponent" : ""} ${selected ? "selected-lead" : ""} ${selectable ? "selectable" : ""} ${targetable ? "legal-target" : ""} ${waiting ? "waiting-turn" : ""} ${acting ? "acting-skill" : ""} ${swappingOut ? "swapping-out" : ""} ${swappingIn ? "swapping-in" : ""} ${reactionClass}`}
+      className={`battle-unit presentation-${presentationToken} ${interactive ? "combat-unit-interactive" : ""} ${!unit.active ? "bench" : ""} ${knockedOut ? "knocked-out" : ""} ${knockoutRevealing ? "knockout-reveal" : ""} ${opponent ? "opponent" : ""} ${selected ? "selected-lead" : ""} ${selectable ? "selectable" : ""} ${targetable ? "legal-target" : ""} ${waiting ? "waiting-turn" : ""} ${actingAttack ? "acting-skill" : ""} ${actingSupport ? "acting-support" : ""} ${swappingOut ? "swapping-out" : ""} ${swappingIn ? "swapping-in" : ""} ${reactionClass}`}
       data-combat-control={targetable || selectable ? "true" : undefined}
       data-combat-focus-role={targetable ? "target" : selectable ? "lead" : undefined}
       data-combat-unit-key={unit.key}

@@ -17,7 +17,7 @@ import type {
   Status,
   UserCritter,
 } from "./types.js";
-import { assertEffectContract, effectMatchesSourceCritter, effectMatchesSourceSkill, normalizeEffectElementParameters, sourceCritterTagIds, sourceElementIds, sourceSkillTagIds, targetCritterTagIds, targetElementIds } from "./effects.js";
+import { assertEffectContract, effectMatchesSourceCritter, effectMatchesSourceSkill, effectMatchesTriggerSkill, normalizeEffectElementParameters, sourceCritterTagIds, sourceElementIds, sourceSkillTagIds, targetCritterTagIds, targetElementIds } from "./effects.js";
 import { battlefieldSlotsForCount } from "./dungeons.js";
 import { calculateSkillDamage, normalizeManaDiceBounds, resolveEffectiveness, rollManaDie, roundHalfUp } from "./combat-calculations.js";
 import { actionCostModifierApplies, applyActionCostModifiers } from "./combat-costs.js";
@@ -217,6 +217,12 @@ export type CombatEffectSummary = {
 export type CombatPresentationEvent = {
   kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other" | "mana_refund";
   message: string;
+  /** Presentation phase for Skill actions, including each actual Multi-Hit activation. */
+  skillPhase?: "use" | "hit" | "summary" | "failure" | "knockout";
+  /** Animation to play for this Skill presentation event. */
+  animation?: "attack" | "support";
+  /** A silent event advances the visual sequence without replacing narration. */
+  silent?: boolean;
   effectPolarity?: "positive" | "negative";
   actorKey?: string;
   targetKeys: string[];
@@ -283,6 +289,7 @@ export type CombatPresentationState = {
     blockStreak: number;
     active: boolean;
     battlefieldSlot: number | null;
+    knockedOut: boolean;
     persistentStats: StatBlock;
     stats: StatBlock;
   }>;
@@ -387,6 +394,8 @@ export type CombatState = {
     holderKey: string;
     reason: "duplicate" | "limit";
   };
+  /** Units whose HP may reach zero during a Skill sequence before its knockout event. */
+  deferredKnockoutKeys?: string[];
 };
 
 export function effectActivationKey(
@@ -700,12 +709,13 @@ function validateRunEffects(registry: RunEffectRegistry, statuses: Record<string
           ...targetElementIds(effect),
           ...sourceElementIds(effect),
           ...((Array.isArray(effect.parameters.affected_skill_element_ids) ? effect.parameters.affected_skill_element_ids : []).filter((value): value is string => typeof value === "string")),
+          ...((Array.isArray(effect.parameters.trigger_skill_element_ids) ? effect.parameters.trigger_skill_element_ids : []).filter((value): value is string => typeof value === "string")),
           ...((Array.isArray(effect.parameters.opposing_element_ids) ? effect.parameters.opposing_element_ids : []).filter((value): value is string => typeof value === "string")),
           ...(Array.isArray(effect.parameters.defender_element_rows) ? effect.parameters.defender_element_rows.flatMap((row) => row && typeof row === "object" && !Array.isArray(row) && typeof (row as Record<string, unknown>).element_id === "string" ? [String((row as Record<string, unknown>).element_id)] : []) : []),
         ];
         const missingElement = elementIds.find((id) => !catalog.elements.some((element) => element.id === id));
         if (missingElement) throw new Error(`Effect ${effect.id} references missing Element ${missingElement}.`);
-        for (const key of ["affected_skill_tag_ids", "source_skill_tag_ids"] as const) {
+        for (const key of ["affected_skill_tag_ids", "source_skill_tag_ids", "trigger_skill_tag_ids"] as const) {
           const ids = Array.isArray(effect.parameters[key]) ? effect.parameters[key].filter((value): value is string => typeof value === "string") : [];
           const missingTag = ids.find((id) => !catalog.tags.some((tag) => tag.id === id && tag.tag_type === "skill"));
           if (missingTag) throw new Error(`Effect ${effect.id} references missing Skill Tag ${missingTag}.`);
@@ -2512,19 +2522,27 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         { kind: "other", message, actorKey: actor.key, targetKeys: [], skillId: skill.id, hpChanges: [] },
       );
     }
+    const effects = state.runEffects.skill[skill.id] ?? [];
+    const hasMultiHitDeclaration = effects.some((effect) => effect.runtimeKind === "multi_hit");
     const skillMessage = `${combatantName(actor)} used ${skill.name}!`;
-    let actionState = appendPresentationEvent(state, {
+    const skillPresentationState = hasMultiHitDeclaration
+      ? {
+          ...state,
+          deferredKnockoutKeys: [...new Set([actor.key, ...targets.map((target) => target.key)])],
+        }
+      : state;
+    let actionState = appendPresentationEvent(skillPresentationState, {
       kind: "skill",
       message: skillMessage,
+      skillPhase: "use",
+      animation: hasMultiHitDeclaration ? undefined : skill.skill_type === "attack" ? "attack" : "support",
       actorKey: actor.key,
       targetKeys: targets.map((target) => target.key),
       skillId: skill.id,
       hpChanges: [],
     });
     actionState = refreshConditionalSetupEffects(actionState, actionContext);
-    const effects = state.runEffects.skill[skill.id] ?? [];
     const skillActionId = `skill:${actor.key}:${state.effectSequence}:${state.turnEvents.length}`;
-    const hasMultiHitDeclaration = effects.some((effect) => effect.runtimeKind === "multi_hit");
     const preDamageEffectIds = new Set(
       skill.skill_type === "attack"
         ? effects
@@ -2560,6 +2578,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       }
     }
     let damageDone = 0;
+    let actualHitCount = 0;
     const effectivenessHits: Array<Record<string, unknown>> = [];
     const hitTargets: Array<{ target: CombatUnit; hitIndex: number; hitCount: number }> = [];
     let hitCountState = preDamageState;
@@ -2576,7 +2595,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       const originalTarget = hitTarget.target;
       let currentActor = findUnit(current, actor.key) ?? actor;
       let target = findUnit(current, originalTarget.key);
-      if (!target || target.hp <= 0) return current;
+      if (!currentActor || currentActor.hp <= 0 || !target || target.hp <= 0) return current;
       if (hasMultiHitDeclaration) {
         for (const effect of effects.filter((candidate) => preDamageEffectIds.has(candidate.id))) {
           current = resolveSkillEffectForHit(current, effect, {
@@ -2594,7 +2613,9 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
       }
       currentActor = findUnit(current, actor.key) ?? currentActor;
       target = findUnit(current, originalTarget.key);
-      if (!target || target.hp <= 0) return current;
+      if (!currentActor || currentActor.hp <= 0 || !target || target.hp <= 0) return current;
+      const hitPresentationStart = current.presentationEvents.length;
+      actualHitCount += 1;
       if (skill.skill_type === "attack") {
         const damageRoll = nextRandom(current.rngState);
         const effectivenessInputs = effectivenessInputsForHit(current, currentActor, target, skill, {
@@ -2632,6 +2653,8 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         let withPresentation = appendPresentationEvent(updated, {
           kind: "damage",
           message: impactMessage,
+          skillPhase: "hit",
+          animation: "attack",
           actorKey: actor.key,
           targetKeys: [target.key],
           skillId: skill.id,
@@ -2708,7 +2731,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         // The incoming damage must be visible before any equipment/status
         // reaction it causes. The reaction is still resolved synchronously,
         // so it is available before the next queued action is processed.
-        const reacted = resolveReactiveEffects(progress, "owner_attacked", currentActor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true);
+        const reacted = resolveReactiveEffects(progress, "owner_attacked", currentActor, target, damage.finalDamage, actualDamage, damage.shieldDamage, skill, undefined, undefined, true);
         current = afterHp <= 0
           ? resolveReactiveEffects(reacted, "owner_defeats_enemy", currentActor, target, damage.finalDamage, actualDamage, damage.shieldDamage, undefined, undefined, undefined, true)
           : reacted;
@@ -2740,14 +2763,59 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
           0,
           0,
           0,
-          skill.skill_type,
-          [target.key],
+          skill,
+          targets.map((candidate) => candidate.key),
           stunAggregation,
+          hitIndex === 0,
           hitIndex === 0,
         );
       }
+      if (skill.skill_type === "support") {
+        current = markSkillHitPresentation(current, hitPresentationStart, actor.key, target.key, skill.id, hitIndex + 1, hitCount);
+      }
       return current;
     }, hitCountState);
+    if (hasMultiHitDeclaration && actualHitCount === 0) {
+      next = appendPresentationEvent(next, {
+        kind: "other",
+        effectPolarity: "negative",
+        message: `${skill.name} failed.`,
+        skillPhase: "failure",
+        actorKey: actor.key,
+        targetKeys: targets.map((target) => target.key),
+        skillId: skill.id,
+        hpChanges: [],
+      });
+    } else {
+      next = appendPresentationEvent(next, {
+        kind: "other",
+        message: `${skill.name} hit ${actualHitCount} ${actualHitCount === 1 ? "time" : "times"}.`,
+        skillPhase: "summary",
+        actorKey: actor.key,
+        targetKeys: targets.map((target) => target.key),
+        skillId: skill.id,
+        hpChanges: [],
+      });
+    }
+    const deferredKnockoutKeys = new Set(next.deferredKnockoutKeys ?? []);
+    const revealedKnockoutKeys = [...deferredKnockoutKeys].filter((key) => (findUnit(next, key)?.hp ?? 1) <= 0);
+    if (revealedKnockoutKeys.length > 0) {
+      next = appendPresentationEvent(
+        { ...next, deferredKnockoutKeys: [] },
+        {
+          kind: "other",
+          message: "",
+          skillPhase: "knockout",
+          silent: true,
+          actorKey: actor.key,
+          targetKeys: revealedKnockoutKeys,
+          skillId: skill.id,
+          hpChanges: [],
+        },
+      );
+    } else if (hasMultiHitDeclaration) {
+      next = { ...next, deferredKnockoutKeys: [] };
+    }
     if (actor.side === "player" && skill.skill_type === "attack" && effectivenessHits.length > 0) {
       next = appendProgressEvent(next, {
         event_type: "effectiveness_skill_resolved",
@@ -2783,6 +2851,12 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
           target_element_ids: [...new Set(targets.flatMap((target) => critterElementIds(target.critter)))],
           source_critter_tag_ids: critterTagIds(actor.critter),
           target_critter_tag_ids: [...new Set(targets.flatMap((target) => critterTagIds(target.critter)))],
+          target_contexts: targets.map((target) => ({
+            critter_id: target.critter.id,
+            side: target.side,
+            element_ids: critterElementIds(target.critter),
+            critter_tag_ids: critterTagIds(target.critter),
+          })),
           skill_tag_ids: skill.tag_ids,
           skill_element_id: skill.element_id,
           skill_type: skill.skill_type,
@@ -2827,7 +2901,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         0,
         0,
         0,
-        skill.skill_type,
+        skill,
         targets.map((target) => target.key),
         stunAggregation,
         true,
@@ -4174,10 +4248,11 @@ function resolveReactiveEffects(
   attempted: number,
   hpDamage: number,
   shieldDamage: number,
-  eventSkillType?: Skill["skill_type"],
+  eventSkill?: Pick<Skill, "skill_type" | "element_id" | "tag_ids">,
   eventTargetKeys?: string[],
   stunAggregation?: StunAggregationContext,
   failOnDuplicateStatus = false,
+  allowDirectHealthReaction = true,
 ): CombatState {
   let next = state;
   for (const instance of state.runtimeEffects.filter((candidate) => candidate.runtimeKind === "reactive_trigger" || candidate.runtimeKind === "retaliation" || candidate.runtimeKind === "direct_health_modifier")) {
@@ -4186,10 +4261,20 @@ function resolveReactiveEffects(
     const p = parent.parameters;
     const isAttackRetaliation = instance.runtimeKind === "direct_health_modifier";
     if (isAttackRetaliation && !["attacker", "attacker_and_targets"].includes(String(p.target))) continue;
-    if (isAttackRetaliation && instance.sourceCritterKey !== defender.key) continue;
+    const isSkillUseEvent = eventSkill !== undefined && ["owner_uses_skill", "owner_uses_attack_skill", "owner_uses_support_skill"].includes(eventType);
+    if (isAttackRetaliation) {
+      if (!allowDirectHealthReaction) continue;
+      if (eventType === "owner_uses_attack_skill") continue;
+      if (eventType !== "owner_attacked" && eventType !== "owner_uses_support_skill") continue;
+      const sourceKey = instance.sourceCritterKey;
+      const sourceIsTarget = eventType === "owner_attacked"
+        ? sourceKey === defender.key
+        : Boolean(sourceKey && eventTargetKeys?.includes(sourceKey));
+      if (!sourceIsTarget) continue;
+      if (eventSkill && !effectMatchesTriggerSkill(parent, eventSkill)) continue;
+    }
     const trigger = instance.runtimeKind === "retaliation" ? String(p.trigger_condition ?? "hit") : String(p.trigger_event ?? "owner_hp_damaged");
     const isDefeatTrigger = trigger === "owner_defeats_enemy";
-    const isSkillUseEvent = eventSkillType !== undefined && ["owner_uses_skill", "owner_uses_attack_skill", "owner_uses_support_skill"].includes(eventType);
     const isTurnStartEvent = eventType === "turn_start";
     const watchedKey = isTurnStartEvent && instance.sourceCritterKey
       ? instance.sourceCritterKey
@@ -4226,7 +4311,7 @@ function resolveReactiveEffects(
     if (Number(instance.state.cooldownRemaining ?? 0) > 0) continue;
     const currentDefender = findUnit(next, defender.key) ?? defender;
     const matches = isAttackRetaliation
-      ? eventType === "owner_attacked"
+      ? eventType === "owner_attacked" || eventType === "owner_uses_support_skill"
       : instance.runtimeKind === "retaliation"
         ? ["attacked", "hit", "hp_damaged"].includes(trigger) && currentDefender.hp > 0
         : trigger === "owner_defeats_enemy"
@@ -4240,8 +4325,8 @@ function resolveReactiveEffects(
               : trigger === "owner_shield_breaks"
                 ? currentDefender.shield <= 0 && shieldDamage > 0
             : trigger === eventType || (trigger === "owner_uses_skill" && ["owner_uses_attack_skill", "owner_uses_support_skill"].includes(eventType));
-    if (eventSkillType !== undefined && trigger === "owner_uses_attack_skill" && eventSkillType !== "attack") continue;
-    if (eventSkillType !== undefined && trigger === "owner_uses_support_skill" && eventSkillType !== "support") continue;
+    if (eventSkill !== undefined && trigger === "owner_uses_attack_skill" && eventSkill.skill_type !== "attack") continue;
+    if (eventSkill !== undefined && trigger === "owner_uses_support_skill" && eventSkill.skill_type !== "support") continue;
     if (!matches) continue;
     if (p.requires_hp_damage === true && hpDamage <= 0) continue;
     if (p.requires_shield_damage === true && shieldDamage <= 0) continue;
@@ -4961,11 +5046,45 @@ function clearBlockStreak(state: CombatState, key: string): CombatState {
   };
 }
 
+function markSkillHitPresentation(
+  state: CombatState,
+  presentationStart: number,
+  actorKey: string,
+  targetKey: string,
+  skillId: string,
+  hitIndex: number,
+  hitCount: number,
+): CombatState {
+  const firstNewEventIndex = state.presentationEvents.findIndex((_, index) => index >= presentationStart);
+  if (firstNewEventIndex < 0) {
+    return appendPresentationEvent(state, {
+      kind: "other",
+      message: "",
+      skillPhase: "hit",
+      animation: "support",
+      silent: true,
+      actorKey,
+      targetKeys: [targetKey],
+      skillId,
+      hitIndex,
+      hitCount,
+      hpChanges: [],
+    });
+  }
+  return {
+    ...state,
+    presentationEvents: state.presentationEvents.map((event, index) => index === firstNewEventIndex
+      ? { ...event, skillPhase: "hit", animation: "support", actorKey, targetKeys: [targetKey], skillId, hitIndex, hitCount }
+      : event),
+  };
+}
+
 function appendPresentationEvent(
   state: CombatState,
   event: CombatPresentationEvent,
 ): CombatState {
   const units = [...state.playerUnits, ...state.opponentUnits];
+  const deferredKnockoutKeys = new Set(state.deferredKnockoutKeys ?? []);
   const presentationState: CombatPresentationState = {
     playerMana: state.playerMana,
     opponentMana: state.opponentMana,
@@ -4979,6 +5098,7 @@ function appendPresentationEvent(
       blockStreak: unit.blockStreak,
       active: unit.active,
       battlefieldSlot: unit.battlefieldSlot,
+      knockedOut: unit.hp <= 0 && !deferredKnockoutKeys.has(unit.key),
       persistentStats: { ...unit.persistentStats },
       stats: { ...unit.stats },
     })),

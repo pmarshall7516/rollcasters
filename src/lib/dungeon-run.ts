@@ -43,10 +43,15 @@ export type DungeonCombatEvent = {
   message: string;
   requiresAdvance: boolean;
   kind: "skill" | "damage" | "heal" | "swap" | "block" | "wait" | "status" | "other" | "mana_refund";
+  skillPhase?: "use" | "hit" | "summary" | "failure" | "knockout";
+  animation?: "attack" | "support";
+  silent?: boolean;
   effectPolarity?: "positive" | "negative";
   actorKey?: string;
   targetKeys: string[];
   skillId?: string;
+  hitIndex?: number;
+  hitCount?: number;
   damageRollPercent?: number;
   damageSpreadPercent?: number;
   manaRefund?: {
@@ -563,6 +568,7 @@ function presentationStateForBattle(battle: CombatState): CombatPresentationStat
       blockStreak: unit.blockStreak,
       active: unit.active,
       battlefieldSlot: unit.battlefieldSlot,
+      knockedOut: unit.hp <= 0,
       persistentStats: { ...unit.persistentStats },
       stats: { ...unit.stats },
     })),
