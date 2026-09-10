@@ -2518,7 +2518,7 @@ function HomeScreen({ data, onCollection, onBag, onShop, onSettings, onPlay, onR
           <div className="ability-list" aria-label="Rollcaster ability slots">
             {abilitySlotStates.map(({ slotIndex, unlockLevel }) => {
               if (unlockLevel === null) return <span key={slotIndex} className="ability-slot null" aria-hidden="true" />;
-              if (!activeRollcaster || activeRollcaster.level < unlockLevel) return <button key={slotIndex} type="button" className="ability-slot locked" disabled aria-label={`Ability slot ${slotIndex} unlocks at level ${unlockLevel}`}><Lock aria-hidden="true" /><span>Level {unlockLevel}</span></button>;
+              if (!activeRollcaster || activeRollcaster.level < unlockLevel) return <button key={slotIndex} type="button" className="ability-slot locked" disabled aria-label={`Ability slot ${slotIndex} unlocks at level ${unlockLevel}`}><Lock aria-hidden="true" /><span className="numeric-text">Level {unlockLevel}</span></button>;
               const row = player.abilitySlots.find((slot) => slot.user_rollcaster_id === activeRollcaster?.id && slot.slot_index === slotIndex);
               const ability = byId(data.catalog.rollcasterAbilities, row?.ability_id);
               return <AbilitySlot key={slotIndex} data={data} ability={ability} slotIndex={slotIndex} onClick={() => activeRollcaster && setEquipTarget({ type: "ability", slotIndex, owned: activeRollcaster })} />;
@@ -2752,7 +2752,7 @@ function CritterLoadoutSlot({ data, slotIndex, owned, onEquip }: { data: AppData
         <div className="loadout-relic-grid" aria-label="Relic slots">
           {relicSlotStates.map(({ slotIndex: relicSlot, unlockLevel }) => {
             if (unlockLevel === null) return <span key={relicSlot} className="loadout-relic-cell null" aria-hidden="true" />;
-            if (relicSlot > stats.relicSlots) return <button key={relicSlot} type="button" className="loadout-relic-cell locked" disabled aria-label={`Relic slot ${relicSlot} unlocks at level ${unlockLevel}`}><Lock aria-hidden="true" /><span>Level {unlockLevel}</span></button>;
+            if (relicSlot > stats.relicSlots) return <button key={relicSlot} type="button" className="loadout-relic-cell locked" disabled aria-label={`Relic slot ${relicSlot} unlocks at level ${unlockLevel}`}><Lock aria-hidden="true" /><span className="numeric-text">Level {unlockLevel}</span></button>;
             const row = data.player!.relicSlots.find((candidate) => candidate.user_critter_id === owned.id && candidate.slot_index === relicSlot);
             const relic = row?.relic_id && collectibleIsUnlocked(data, "relic", row.relic_id) ? byId(data.catalog.relics, row.relic_id) : undefined;
             return <LoadoutRelicSlot key={relicSlot} data={data} relic={relic} sourceCritter={critter} slotIndex={relicSlot} onClick={() => onEquip({ type: "relic", slotIndex: relicSlot, owned })} />;
@@ -2821,6 +2821,33 @@ function GameTooltip({ label, content, children }: { label: string; content: Rea
   );
 }
 
+function SkillTooltip({ data, skill, sourceCritter, manaCost, manaCostBreakdown, disabledReason, children }: {
+  data: AppData;
+  skill?: Skill | null;
+  sourceCritter?: Critter;
+  manaCost?: number;
+  manaCostBreakdown?: ActionCostBreakdown;
+  disabledReason?: string;
+  children: React.ReactNode;
+}) {
+  const element = skill ? byId(data.catalog.elements, skill.element_id) : null;
+  const elementPath = skill ? catalogAssetPath(data, "element", skill.element_id, element?.asset_path, "icon") : null;
+  const displayedManaCost = skill ? manaCost ?? skill.mana_cost : null;
+  const attachments = skill ? data.catalog.effectsBySkill[skill.id] ?? [] : [];
+  const effectText = skill ? attachmentText(attachments) : "";
+  const priority = skill?.priority ?? 0;
+  const priorityText = skill && priority !== 0 ? ` Priority: ${priority}` : "";
+  const targetText = skill ? `${targetingDescription(skill)}${priorityText}` : "";
+  const costSummary = skill && manaCostBreakdown ? costBreakdownText("Mana cost", manaCostBreakdown) : "";
+  const label = skill
+    ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}, ${displayedManaCost} Mana. ${skill.description} ${effectText} ${targetText} ${costSummary} ${disabledReason ?? ""}`
+    : "Choose a skill.";
+  const tooltip = skill
+    ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{manaCostBreakdown && manaCostBreakdown.sources.length > 0 && <CostBreakdownLine label="Mana cost" breakdown={manaCostBreakdown} />}{attachmentRows(attachments, sourceCritter)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</>
+    : <span className="tooltip-description">Choose a skill.</span>;
+  return <GameTooltip label={label.trim()} content={tooltip}>{children}</GameTooltip>;
+}
+
 function SkillTileGrid({ ariaLabel, children, width }: { ariaLabel: string; children: React.ReactNode; width?: number }) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(Boolean(width && width <= 180));
@@ -2838,19 +2865,13 @@ function SkillTileGrid({ ariaLabel, children, width }: { ariaLabel: string; chil
   return <div ref={gridRef} className={`skill-tile-grid ${compact ? "compact" : ""}`.trim()} aria-label={ariaLabel} style={width ? { width: "100%", maxWidth: width } : undefined}>{children}</div>;
 }
 
-function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disabledReason, selected = false, equipped = false, manaCost, manaCostBreakdown, combatControl = false, combatSkillId }: { data: AppData; skill?: Skill | null; sourceCritter?: Critter; onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void; disabled?: boolean; disabledReason?: string; selected?: boolean; equipped?: boolean; manaCost?: number; manaCostBreakdown?: ActionCostBreakdown; combatControl?: boolean; combatSkillId?: string }) {
+function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disabledReason, selected = false, equipped = false, manaCost, manaCostBreakdown, showTooltip = true, combatControl = false, combatSkillId }: { data: AppData; skill?: Skill | null; sourceCritter?: Critter; onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void; disabled?: boolean; disabledReason?: string; selected?: boolean; equipped?: boolean; manaCost?: number; manaCostBreakdown?: ActionCostBreakdown; showTooltip?: boolean; combatControl?: boolean; combatSkillId?: string }) {
   const tileRef = useRef<HTMLButtonElement>(null);
   const [skillFontSize, setSkillFontSize] = useState<number | null>(null);
   const element = skill ? byId(data.catalog.elements, skill.element_id) : null;
   const elementPath = skill ? catalogAssetPath(data, "element", skill.element_id, element?.asset_path, "icon") : null;
   const manaPath = findAssetPath(data, "mana", "mana");
   const displayedManaCost = skill ? manaCost ?? skill.mana_cost : null;
-  const attachments = skill ? data.catalog.effectsBySkill[skill.id] ?? [] : [];
-  const effectText = skill ? attachmentText(attachments) : "";
-  const priority = skill?.priority ?? 0;
-  const priorityText = skill && priority !== 0 ? ` Priority: ${priority}` : "";
-  const targetText = skill ? `${targetingDescription(skill)}${priorityText}` : "";
-  const costSummary = skill && manaCostBreakdown ? costBreakdownText("Mana cost", manaCostBreakdown) : "";
   useLayoutEffect(() => {
     const tile = tileRef.current;
     if (!tile || !skill) {
@@ -2896,14 +2917,15 @@ function SkillTile({ data, skill, sourceCritter, onClick, disabled = false, disa
       window.removeEventListener("resize", fit);
     };
   }, [skill?.name]);
-  const label = skill ? `${skill.name}, ${skill.skill_type}${skill.skill_type === "attack" ? `, ${skill.power} power` : ""}, ${displayedManaCost} Mana. ${skill.description} ${effectText} ${targetText} ${costSummary}` : "Choose a skill.";
-  const tooltip = skill ? <><span className="tooltip-heading"><AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={18} />} /><strong>{skill.name} - {skill.skill_type === "attack" ? "Attack" : "Support"}{skill.skill_type === "attack" ? ` - ${skill.power} Power` : ""}</strong></span><span className="tooltip-description">{skill.description}</span>{manaCostBreakdown && manaCostBreakdown.sources.length > 0 && <CostBreakdownLine label="Mana cost" breakdown={manaCostBreakdown} />}{attachmentRows(attachments, sourceCritter)}<span className="tooltip-target">{targetText}</span>{disabledReason && <span className="tooltip-disabled">{disabledReason}</span>}</> : <span className="tooltip-description">Choose a skill.</span>;
-  return <GameTooltip label={label.trim()} content={tooltip}><button ref={tileRef} type="button" className={`skill-tile ${skill ? "" : "empty"} ${selected ? "selected" : ""} ${equipped ? "equipped" : ""} ${!onClick ? "read-only" : ""}`} onClick={onClick} disabled={disabled} aria-disabled={!onClick || undefined} data-combat-control={combatControl ? "true" : undefined} data-combat-focus-role={combatControl ? "skill" : undefined} data-combat-skill-id={combatControl ? combatSkillId : undefined}>
+  const tile = <button ref={tileRef} type="button" className={`skill-tile ${skill ? "" : "empty"} ${selected ? "selected" : ""} ${equipped ? "equipped" : ""} ${!onClick ? "read-only" : ""}`} onClick={onClick} disabled={disabled} aria-disabled={!onClick || undefined} data-combat-control={combatControl ? "true" : undefined} data-combat-focus-role={combatControl ? "skill" : undefined} data-combat-skill-id={combatControl ? combatSkillId : undefined}>
     <span className="skill-title">{skill && <AssetIcon path={elementPath} alt={`${element?.name ?? skill.element_id} element`} fallback={<Sparkles size={16} />} />}<strong style={skillFontSize ? { fontSize: `${skillFontSize}px` } : undefined}>{skill?.name ?? "-----"}</strong></span>
     {skill?.skill_type === "attack" && <span className="skill-power">PWR {skill.power}</span>}
     {skill && <span className={`skill-mana ${actionCostTone(manaCostBreakdown)}`.trim()}><AssetIcon path={manaPath} alt="Mana" fallback={<Gem size={15} />} />{displayedManaCost}</span>}
     {(selected || equipped) && <Check className="selection-check" size={15} />}
-  </button></GameTooltip>;
+  </button>;
+  return showTooltip
+    ? <SkillTooltip data={data} skill={skill} sourceCritter={sourceCritter} manaCost={manaCost} manaCostBreakdown={manaCostBreakdown} disabledReason={disabledReason}>{tile}</SkillTooltip>
+    : tile;
 }
 
 function LoadoutRelicSlot({ data, relic, sourceCritter, slotIndex, onClick }: { data: AppData; relic?: Relic | null; sourceCritter?: Critter; slotIndex: number; onClick: () => void }) {
@@ -3005,7 +3027,7 @@ function EquipDialog({ data, target, saving, onClose, onEquip, onUnlockSkill, on
       const disabled = saving || (inSquad && !selected) || (selected && !canRemoveCurrent);
       return <button className={`candidate-card ${selected ? "selected" : ""} ${inSquad && !selected ? "in-squad" : ""}`} key={owned.id} disabled={disabled} onClick={() => onEquip(() => changeSquadSlot(selected ? target.slotIndex : equipSlotIndex, selected ? null : owned.id))}>
         <SpriteFrame size="md" selected={selected}><Sprite name={critter.name} element={critter.element_1_id} assetPath={preferredAssetPath(data, "critter", critter.id, critter.asset_path, ["card", "thumb"])} /></SpriteFrame>
-        <CritterName data={data} critter={critter} /><span>Level {owned.level}</span>{selected ? <span className="state-badge remove-badge">Select again to remove</span> : inSquad && <span className="state-badge"><Check size={14} /> In squad</span>}
+        <CritterName data={data} critter={critter} /><span className="numeric-text">Level {owned.level}</span>{selected ? <span className="state-badge remove-badge">Select again to remove</span> : inSquad && <span className="state-badge"><Check size={14} /> In squad</span>}
       </button>;
     })}</div> : <p className="empty-state">No critters available</p>;
   } else if (target.type === "skill") {
@@ -3046,8 +3068,15 @@ function EquipDialog({ data, target, saving, onClose, onEquip, onUnlockSkill, on
           : locked && !levelEligible
             ? `Unlocks at level ${unlock.unlock_level}.`
             : locked && !canUnlock
-              ? "Need " + (unlockCost - skillOwner.skill_points) + " more skill point" + (unlockCost - skillOwner.skill_points === 1 ? "" : "s") + "."
+            ? "Need " + (unlockCost - skillOwner.skill_points) + " more skill point" + (unlockCost - skillOwner.skill_points === 1 ? "" : "s") + "."
             : undefined;
+      const tooltipReason = locked
+        ? !levelEligible
+          ? `Unlocks at level ${unlock.unlock_level}.`
+          : !canUnlock
+            ? disabledReason
+            : `Unlock with ${unlockCost} skill point${unlockCost === 1 ? "" : "s"}.`
+        : disabledReason;
       const tile = <SkillTile
         data={data}
         skill={skill}
@@ -3056,30 +3085,35 @@ function EquipDialog({ data, target, saving, onClose, onEquip, onUnlockSkill, on
         equipped={equipped}
         disabled={saving || locked || equippedElsewhere.has(skill.id) || cannotRemoveLast}
         disabledReason={disabledReason}
+        showTooltip={false}
         onClick={locked ? undefined : () => onEquip(() => setCritterSkillSlot(skillOwner.id, target.slotIndex, selected ? null : skill.id))}
       />;
       if (locked) {
-        return <div className={`equip-skill-option locked ${levelEligible ? "unlockable" : "level-locked"}`.trim()} key={skill.id}>
-          {tile}
-          <div className="equip-skill-unlock-row">
-            <span className="equip-skill-unlock-requirement">Unlock at level {unlock.unlock_level} · {unlock.unlock_cost} point{unlock.unlock_cost === 1 ? "" : "s"}</span>
-            {levelEligible && <button
-                type="button"
-                className={`primary-button skill-unlock-button ${flashingId === skill.id ? "insufficient-points" : ""}`.trim()}
-                disabled={saving}
-                title={!canUnlock ? disabledReason : undefined}
-                onClick={() => {
-                  if (!canUnlock) {
-                    flash(skill.id);
-                    return;
-                  }
-                  void onUnlockSkill(skillOwner, skill.id);
-                }}
-              >Unlock · {unlock.unlock_cost}</button>}
+        return <SkillTooltip key={skill.id} data={data} skill={skill} sourceCritter={byId(data.catalog.critters, skillOwner.critter_id)} disabledReason={tooltipReason}>
+          <div className={`equip-skill-option locked ${levelEligible ? "unlockable" : "level-locked"}`.trim()}>
+            {tile}
+            <div className="equip-skill-unlock-row">
+              <span className="equip-skill-unlock-requirement">Unlock at level {unlock.unlock_level} · {unlock.unlock_cost} point{unlock.unlock_cost === 1 ? "" : "s"}</span>
+              {levelEligible && <button
+                  type="button"
+                  className={`primary-button skill-unlock-button ${flashingId === skill.id ? "insufficient-points" : ""}`.trim()}
+                  disabled={saving}
+                  title={!canUnlock ? disabledReason : undefined}
+                  onClick={() => {
+                    if (!canUnlock) {
+                      flash(skill.id);
+                      return;
+                    }
+                    void onUnlockSkill(skillOwner, skill.id);
+                  }}
+                >Unlock · <span className="numeric-text">{unlock.unlock_cost}</span></button>}
+            </div>
           </div>
-        </div>;
+        </SkillTooltip>;
       }
-      return tile;
+      return <SkillTooltip key={skill.id} data={data} skill={skill} sourceCritter={byId(data.catalog.critters, skillOwner.critter_id)} disabledReason={tooltipReason}>
+        <div className="equip-skill-option">{tile}</div>
+      </SkillTooltip>;
     };
     content = eligible.length ? <div className="equip-skill-sections">
       {unlockedEligible.length > 0 && <section className="equip-skill-section" aria-label="Unlocked skills">
@@ -3181,7 +3215,7 @@ function EquipDialog({ data, target, saving, onClose, onEquip, onUnlockSkill, on
                 }
                 void onUnlockAbility(abilityOwner, ability.id);
               }}
-            >Unlock · {unlockCost}</button>}
+            >Unlock · <span className="numeric-text">{unlockCost}</span></button>}
           </div>
         </div>;
       }
@@ -3202,7 +3236,7 @@ function EquipDialog({ data, target, saving, onClose, onEquip, onUnlockSkill, on
     content = <div className="candidate-grid">{sortByCollectibleId(player.rollcasters, (owned) => owned.rollcaster_id).map((owned) => {
       const entry = byId(data.catalog.rollcasters, owned.rollcaster_id)!;
       const selected = player.profile.active_rollcaster_id === owned.id;
-      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", entry.id, entry.asset_path, ["portrait", "card", "thumb"])} size="large" fit="portrait" /></SpriteFrame><strong className="collectible-name">{entry.name}</strong><span>Level {owned.level}</span></button>;
+      return <button className={`candidate-card ${selected ? "selected" : ""}`} key={owned.id} disabled={saving || selected} onClick={() => onEquip(() => setActiveRollcaster(owned.id))}><SpriteFrame size="lg" selected={selected}><Sprite name={entry.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", entry.id, entry.asset_path, ["portrait", "card", "thumb"])} size="large" fit="portrait" /></SpriteFrame><strong className="collectible-name">{entry.name}</strong><span className="numeric-text">Level {owned.level}</span></button>;
     })}</div>;
   }
 
@@ -3440,7 +3474,7 @@ function BagScreen({
               }}
             >
               <LootboxSprite lootbox={lootbox} variant="closed" />
-              <strong>{lootbox.name}</strong><b>×{formatAmount(owned.quantity)}</b>
+              <strong>{lootbox.name}</strong><b className="numeric-text">×{formatAmount(owned.quantity)}</b>
               <button type="button" className="primary-button lootbox-bag-open" onClick={(event) => { event.stopPropagation(); openDetails(); }}>Open</button>
             </article>;
           })}
@@ -3614,7 +3648,7 @@ function ShopScreen({
             aria-hidden="true"
           ><LootboxSprite lootbox={lootbox} variant="closed" /></span>
           <strong className="shop-item-name lootbox-shop-name">{lootbox.name}</strong>
-          <b className="shop-price lootbox-shop-price"><span>{formatAmount(shopPurchaseItemQuantity(entry, quantity))} x Lootboxes</span><span className="lootbox-price-icon" aria-hidden="true"><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /></span><span className="shop-price-cost">{formatAmount(totalPrice)}</span></b>
+          <b className="shop-price lootbox-shop-price"><span className="numeric-text">{formatAmount(shopPurchaseItemQuantity(entry, quantity))} x Lootboxes</span><span className="lootbox-price-icon" aria-hidden="true"><AssetIcon path={catalogAssetPath(data,"currency",currency.id,currency.asset_path)} alt="" loading="eager" fallback={<Coins />} /></span><span className="shop-price-cost">{formatAmount(totalPrice)}</span></b>
           <div className="shop-card-progress-slot" aria-hidden="true" />
           <div className="lootbox-shop-actions">
             {purchased ? <>
@@ -3786,7 +3820,7 @@ function LootboxRewardProgress({ data, progress, duplicateAmount, duplicateCurre
         <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
       </span>
       <strong>+{formatAmount(convertedCurrencyAmount)} {duplicateCurrency?.name ?? "currency"}</strong>
-      <small>{formatAmount(duplicateAmount)} duplicate {label.toLowerCase()} converted</small>
+      <small><span className="numeric-text">{formatAmount(duplicateAmount)}</span> duplicate {label.toLowerCase()} converted</small>
     </div>}
   </div>;
 }
@@ -4011,7 +4045,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
             const amount = formatAmount(currencyBalance(data, balanceCurrency.id));
             return <div className="coin-pill currency-pill" key={balanceCurrency.id} data-currency-id={balanceCurrency.id} aria-label={`${balanceCurrency.name}: ${amount}`}>
               <AssetIcon path={catalogAssetPath(data, "currency", balanceCurrency.id, balanceCurrency.asset_path)} alt={balanceCurrency.name} fallback={<Coins size={17} />} />
-              <span>{amount}</span>
+              <span className="numeric-text">{amount}</span>
             </div>;
           })}
         </div>}
@@ -4022,22 +4056,22 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
           <button className={`lootbox-click-target ${phase==="shaking"?"shaking":""}`} disabled><LootboxSprite lootbox={lootbox} variant={phase==="shaking"?"closed":"open"} /></button>
         </div>
         <div className="lootbox-opening-reel-slot">
-          {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong>×{formatAmount(amount)}</strong><small className="collectible-name">{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
+            {(phase==="reel"||phase==="result") && <div ref={reelViewportRef} className={`lootbox-reel ${phase==="result"?"finished":reelTarget === null ? "measuring" : "spinning"}`}><span className="lootbox-reel-center" aria-hidden="true" /><div ref={reelTrackRef} className="lootbox-reel-track" style={{ "--lootbox-reel-target": `${reelTarget ?? 0}px` } as React.CSSProperties}>{reel.map(({entry,amount,index}) => <article className={`lootbox-reel-cell ${index===reelWinnerIndex?"winner":""}`} key={`${index}:${entry.id}`}><LootboxPoolArt data={data} entry={entry} /><strong className="numeric-text">×{formatAmount(amount)}</strong><small className="collectible-name">{lootboxPoolEntryName(data,entry)}</small></article>)}</div></div>}
         </div>
         <div className="lootbox-opening-result-slot">
           {phase === "result" && receipt && <div className={`lootbox-result ${duplicateUnits > 0n ? "has-duplicate" : ""}`.trim()} data-reward-type={receipt.reward.type}>
             <span>YOU WON</span>
-            <h3>x{formatAmount(receipt.reward.amount)} <span className="collectible-name">{rewardName}</span></h3>
+            <h3><span className="numeric-text">x{formatAmount(receipt.reward.amount)}</span> <span className="collectible-name">{rewardName}</span></h3>
             {rewardProgress ? <LootboxRewardProgress data={data} progress={rewardProgress} duplicateAmount={duplicateUnits} duplicateCurrency={duplicateCurrency} convertedCurrencyAmount={receipt.reward.convertedCurrencyAmount} /> : duplicateUnits > 0n && <div className="lootbox-duplicate-conversion">
               <span className="lootbox-duplicate-currency" aria-hidden="true">
                 <AssetIcon path={duplicateCurrency ? catalogAssetPath(data, "currency", duplicateCurrency.id, duplicateCurrency.asset_path) : null} alt="" loading="eager" fallback={<Coins />} />
               </span>
-              <strong>+{formatAmount(receipt.reward.convertedCurrencyAmount)}</strong>
-              <small>{formatAmount(receipt.reward.discarded)} duplicate {receipt.reward.discarded === "1" ? "unit" : "units"} converted to {duplicateCurrency?.name ?? receipt.reward.dupeCurrencyId ?? "currency"}</small>
+              <strong className="numeric-text">+{formatAmount(receipt.reward.convertedCurrencyAmount)}</strong>
+              <small><span className="numeric-text">{formatAmount(receipt.reward.discarded)}</span> duplicate {receipt.reward.discarded === "1" ? "unit" : "units"} converted to {duplicateCurrency?.name ?? receipt.reward.dupeCurrencyId ?? "currency"}</small>
             </div>}
             <div className="lootbox-result-actions">
               <button className="secondary-button" onClick={onClose}>Back</button>
-              {availableToOpen !== null && availableToOpen > 0n && <button className="primary-button" onClick={openAnother}>Open Another ({formatAmount(availableToOpen)} left)</button>}
+              {availableToOpen !== null && availableToOpen > 0n && <button className="primary-button" onClick={openAnother}>Open Another (<span className="numeric-text">{formatAmount(availableToOpen)}</span> left)</button>}
             </div>
           </div>}
         </div>
@@ -4049,7 +4083,7 @@ function LootboxModal({ data, lootboxId, mode, initialPurchased = false, shopEnt
           <ShopQuantityControl label={`Quantity of ${lootbox.name}`} quantity={selectedPurchaseQuantity} max={99} disabled={busy || purchasePending} onChange={setSelectedPurchaseQuantity} />
           <button className="primary-button lootbox-purchase-button" disabled={busy || purchasePending} onClick={() => void purchaseBox()}>Purchase</button>
         </div></div>:<><button ref={openButtonRef} className="primary-button" disabled={!canOpen || busy} onClick={() => void openBox()} aria-keyshortcuts={controlBindings.interact}>{busy?"Opening…":purchasePending?"Saving…":"Open Now"}</button>{mode === "purchase" && <button className="secondary-button" disabled={busy || purchasePending} onClick={sendToBag}>Send to Bag</button>}</>}</footer>
-        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong className="collectible-name">{lootboxPoolEntryName(data,entry)}</strong><small>{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b>{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
+        <section className="lootbox-pool-preview"><h3>Possible rewards</h3><div>{pool.map((entry) => <article key={entry.id}><LootboxPoolArt data={data} entry={entry} /><span><strong className="collectible-name">{lootboxPoolEntryName(data,entry)}</strong><small className="numeric-text">{entry.min_amount===entry.max_amount?`×${entry.min_amount}`:`×${entry.min_amount}–${entry.max_amount}`}</small></span><b className="numeric-text">{(entry.probability*100).toFixed(entry.probability*100%1===0?0:2)}%</b></article>)}</div></section>
       </>}
     </section>
   </div>;
@@ -4319,7 +4353,7 @@ function PromoRewardGrid({ data, rewards }: { data: AppData; rewards: PromoCodeR
               <h3 className="collectible-name">{reward.name}</h3>
               <span>{outcome}</span>
             </div>
-            <strong>×{formatAmount(reward.quantity)}</strong>
+            <strong className="numeric-text">×{formatAmount(reward.quantity)}</strong>
           </article>
         );
       })}
@@ -4407,7 +4441,7 @@ function ShopEntryCard({ data, entry, quantity, busy, onQuantityChange, onPurcha
         </h3>
       </div>
       <div className="shop-entry-meta">
-        <strong>{formatAmount(shopPurchaseItemQuantity(entry, quantity))} x {lineType}</strong>
+        <strong className="numeric-text">{formatAmount(shopPurchaseItemQuantity(entry, quantity))} x {lineType}</strong>
         <span className="shop-price"><AssetIcon path={catalogAssetPath(data, "currency", currency.id, currency.asset_path)} alt={currency.name} fallback={<Coins size={18} />} /><span className="shop-price-cost">{formatAmount(shopPurchasePrice(entry, quantity))}</span></span>
       </div>
       <ShopProgressBar current={statusAvailability.current} projected={projected} goal={statusAvailability.goal} type={lineType} showCompletion={complete || maxOwned} />
@@ -4617,7 +4651,7 @@ function RollcasterGrid({
             <CardSprite className="rollcaster-sprite-frame"><Sprite name={rollcaster.name} element="basic" assetPath={preferredAssetPath(data, "rollcaster", rollcaster.id, rollcaster.asset_path, ["card"])} size="hero" fit="portrait" /></CardSprite>
             <CardName data={data} name={rollcaster.name} />
             <CollectionCardState>
-              {unlocked ? <div className="collection-progression"><p>Level {owned?.level ?? 1}</p><ProgressBar progress={progress} /></div> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} onRefresh={onRefresh} onError={onError} />}
+              {unlocked ? <div className="collection-progression"><p className="numeric-text">Level {owned?.level ?? 1}</p><ProgressBar progress={progress} /></div> : <CollectibleChallengeRows data={data} type="rollcaster" id={rollcaster.id} onRefresh={onRefresh} onError={onError} />}
               {rollcaster.description?.trim() && <p className="collection-rollcaster-description">{rollcaster.description.trim()}</p>}
             </CollectionCardState>
             <PointCounter kind="ability" points={owned?.ability_points ?? 0} />
@@ -4668,7 +4702,7 @@ function CritterGrid({
             /></CardSprite>
             <CardName data={data} name={critter.name} critter={critter} />
             <CollectionCardState>
-              {unlocked && owned ? <div className="collection-progression critter-progression"><p>Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} onRefresh={onRefresh} onError={onError} />}
+              {unlocked && owned ? <div className="collection-progression critter-progression"><p className="numeric-text">Level {owned.level}</p><ProgressBar progress={xpProgress(data.catalog.critterProgression.filter((row) => row.critter_id === critter.id), owned.level, owned.xp)} /></div> : <CollectibleChallengeRows data={data} type="critter" id={critter.id} onRefresh={onRefresh} onError={onError} />}
             </CollectionCardState>
             <StatGrid stats={stats} compact />
             <PointCounter kind="skill" points={owned?.skill_points ?? 0} />
@@ -4885,7 +4919,7 @@ function DetailModal({
         <p className="detail-level">{collectibleUnlocked && owned ? `Level ${owned.level}` : "Locked"}</p>
         <CollectibleChallengePanel data={data} type="critter" id={critter.id} unlocked={collectibleUnlocked} onRefresh={onRefresh} onError={onError} />
         {progression && <ProgressBar progress={progression} className="detail-xp-progress" />}
-        <StatGrid stats={stats} />
+        <StatGrid stats={stats} className="detail-stat-grid" />
         <h3 className="detail-section-heading">Skills <PointCounter kind="skill" points={owned?.skill_points ?? 0} inline /></h3>
         <div className="mini-grid">
           {data.catalog.critterSkillUnlocks
@@ -4899,12 +4933,23 @@ function DetailModal({
               const skill = byId(data.catalog.skills, unlock.skill_id)!;
               const unlocked = skillIds.includes(skill.id);
               const canPurchase = Boolean(collectibleUnlocked && owned && owned.level >= unlock.unlock_level && !unlocked);
+              const tooltipReason = unlocked
+                ? undefined
+                : !collectibleUnlocked
+                  ? "Unlock this Critter first."
+                  : !owned
+                    ? "Own this Critter to unlock its skills."
+                    : owned.level < unlock.unlock_level
+                      ? `Unlocks at level ${unlock.unlock_level}.`
+                      : `Unlock with ${unlock.unlock_cost} skill point${unlock.unlock_cost === 1 ? "" : "s"}.`;
               return (
-                <div key={skill.id} className={`detail-tile ${unlocked ? "unlocked" : "locked"} ${canPurchase ? "unlockable" : "level-locked"}`}>
-                  <SkillTile data={data} skill={skill} sourceCritter={critter} />
-                  <span className="unlock-requirement">Unlock level {unlock.unlock_level} · {unlock.unlock_cost} points</span>
-                  {canPurchase && owned && <button className={`primary-button skill-unlock-button ${flashingId === skill.id ? "insufficient-points" : ""}`.trim()} disabled={saving} onClick={() => purchaseSkill(owned, skill.id, unlock.unlock_cost)}>Unlock · {unlock.unlock_cost}</button>}
-                </div>
+                <SkillTooltip key={skill.id} data={data} skill={skill} sourceCritter={critter} disabledReason={tooltipReason}>
+                  <div className={`detail-tile ${unlocked ? "unlocked" : "locked"} ${canPurchase ? "unlockable" : "level-locked"}`}>
+                    <SkillTile data={data} skill={skill} sourceCritter={critter} showTooltip={false} />
+                    <span className="unlock-requirement">Unlock level {unlock.unlock_level} · {unlock.unlock_cost} points</span>
+                    {canPurchase && owned && <button className={`primary-button skill-unlock-button ${flashingId === skill.id ? "insufficient-points" : ""}`.trim()} disabled={saving} onClick={() => purchaseSkill(owned, skill.id, unlock.unlock_cost)}>Unlock · <span className="numeric-text">{unlock.unlock_cost}</span></button>}
+                  </div>
+                </SkillTooltip>
               );
           })}
         </div>
@@ -4919,7 +4964,7 @@ function DetailModal({
     return (
       <Modal title={relic.name} onClose={onClose}>
         <CollectibleDetailHero data={data} id={relic.id} name={relic.name} assetPath={preferredAssetPath(data, "relic", relic.id, relic.asset_path, ["card", "thumb", "icon"])} assetElement="metal" />
-        <p><strong>Owned:</strong> {quantity} / {relic.max_owned}</p>
+        <p><strong>Owned:</strong> <span className="numeric-text">{quantity} / {relic.max_owned}</span></p>
         <CollectibleChallengePanel data={data} type="relic" id={relic.id} unlocked={collectibleIsUnlocked(data, "relic", relic.id)} onRefresh={onRefresh} onError={onError} />
         <EffectList effects={data.catalog.effectsByRelic[relic.id] ?? []} className="effect-summary" />
         <CollectibleDescriptionSection description={relic.description} />
@@ -4955,7 +5000,7 @@ function DetailModal({
                   <EffectList effects={data.catalog.effectsByAbility[ability.id] ?? []} />
                 </article>
                 <span className="unlock-requirement">Unlock level {unlock.unlock_level} · {unlock.unlock_cost} ability point{unlock.unlock_cost === 1 ? "" : "s"}</span>
-                {canPurchase && owned && <button className="primary-button ability-unlock-button" disabled={saving} onClick={() => purchaseAbility(owned, ability.id, unlock.unlock_cost)}>Unlock · {unlock.unlock_cost}</button>}
+                {canPurchase && owned && <button className="primary-button ability-unlock-button" disabled={saving} onClick={() => purchaseAbility(owned, ability.id, unlock.unlock_cost)}>Unlock · <span className="numeric-text">{unlock.unlock_cost}</span></button>}
               </div>
             );
           })}
@@ -5122,10 +5167,10 @@ function PlayScreen({
               <h2>{entry.dungeon.name}</h2>
               <p className="dungeon-description">{entry.dungeon.description || "\u00a0"}</p>
               <div className="dungeon-stat-grid">
-                <span><small>Difficulty</small><strong>{entry.difficulty}</strong></span>
+                <span><small>Difficulty</small><strong className="numeric-text">{entry.difficulty}</strong></span>
                 <span><small>Format</small><strong>{entry.dungeon.battle_format}</strong></span>
-                <span><small>Encounters</small><strong>{entry.battleCount}</strong></span>
-                <span><small>Clears</small><strong>{entry.progress?.clear_count ?? 0}</strong></span>
+                <span><small>Encounters</small><strong className="numeric-text">{entry.battleCount}</strong></span>
+                <span><small>Clears</small><strong className="numeric-text">{entry.progress?.clear_count ?? 0}</strong></span>
               </div>
               <p className="dungeon-entry-state locked">{entry.lockedReason ?? "\u00a0"}</p>
               <button className="primary-button dungeon-enter-button" disabled={!entry.enterable} onClick={() => onStart(entry.dungeon)}>
@@ -5157,7 +5202,7 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
         </span>
         <div>
           <p className="eyebrow">{entry.mode === "boss" ? "First-clear lineup" : "Regular encounter pool"}</p>
-          <h3>{entry.pool.length} opponent{entry.pool.length === 1 ? "" : "s"}</h3>
+          <h3><span className="numeric-text">{entry.pool.length}</span> opponent{entry.pool.length === 1 ? "" : "s"}</h3>
         </div>
       </div>
       <div className="dungeon-opponent-list">
@@ -5175,7 +5220,7 @@ function DungeonInfoDialog({ data, entry, onClose }: { data: AppData; entry: Eff
                   {entry.encounterPoolRevealed
                     ? <CritterName data={data} critter={critter} />
                     : <strong className="dungeon-unknown-critter-name">?????</strong>}
-                  <small>Level {opponent.critter_level}</small>
+                  <small className="numeric-text">Level {opponent.critter_level}</small>
                 </span>
                 {entry.mode === "boss"
                   ? <span className="dungeon-boss-position"><span className="sr-only">Boss position </span>{index + 1}</span>
@@ -6139,7 +6184,7 @@ function CombatScreen({
           <div>
             <p className="eyebrow">{combat.run.effectiveMode === "boss" ? "Boss expedition" : "Dungeon expedition"}</p>
             <h1>{combat.dungeon.name}</h1>
-            <p>Encounter {combat.run.battleIndex} / {combat.run.battleCount} · Turn {battle.turn} · {combat.run.battleFormat}</p>
+            <p>Encounter <span className="numeric-text">{combat.run.battleIndex} / {combat.run.battleCount}</span> · Turn <span className="numeric-text">{battle.turn}</span> · {combat.run.battleFormat}</p>
           </div>
         </div>
 
@@ -6257,7 +6302,7 @@ function CombatScreen({
                 onClick={() => selectSkillTarget(candidate.key)}
               >
                 <SpriteFrame size="xs"><Sprite name={candidate.name} element={candidate.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", candidate.critter.id, candidate.critter.asset_path, ["battle", "card", "thumb"])} /></SpriteFrame>
-                <span><strong className="collectible-name">{candidate.name}</strong><small>0 / {candidate.maxHp} HP</small></span>
+                <span><strong className="collectible-name">{candidate.name}</strong><small className="numeric-text">0 / {candidate.maxHp} HP</small></span>
               </button>
             ))}
           </div>
@@ -6373,7 +6418,7 @@ function CombatRollcasterPanel({
           <AssetIcon path={manaAssetPath} alt={`${opponent ? "Enemy" : "Player"} Mana`} fallback={<Gem />} />
           <span className="combat-mana-value">{mana}</span>
         </strong>
-        {manaRefund && <span className="mana-refund-pop" aria-hidden="true">+{manaRefund}</span>}
+        {manaRefund && <span className="mana-refund-pop numeric-text" aria-hidden="true">+{manaRefund}</span>}
       </div>
       <div className="combat-ability-list" aria-label={`${opponent ? "Enemy" : "User"} Rollcaster abilities`}>
         {abilities.map((ability, index) => ability
@@ -6480,7 +6525,7 @@ function CombatLeadDialog({
                 <SpriteFrame size="md"><Sprite name={unit.name} element={unit.critter.element_1_id} assetPath={preferredAssetPath(data, "critter", unit.critter.id, unit.critter.asset_path, ["battle", "card", "thumb"])} /></SpriteFrame>
                 <span className="combat-lead-option-copy">
                   <CritterName data={data} critter={unit.critter} />
-                  <small>Lv {unit.level} · {unit.hp} / {unit.maxHp} HP</small>
+                  <small className="numeric-text">Lv {unit.level} · {unit.hp} / {unit.maxHp} HP</small>
                   {unit.hp <= 0 && <strong>Knocked out</strong>}
                   {fixed && <strong>Already active</strong>}
                 </span>
@@ -6921,7 +6966,7 @@ function RewardSummary({ data, rewards, layout }: { data: AppData; rewards: Dung
             <span className="combat-reward-art"><RewardEntryIcon data={data} entry={entry} /></span>
             {layout === "dungeon-outcome"
               ? <strong aria-label={`${entry.amount} x ${name}`}><span className="combat-reward-count">{entry.amount}</span><span aria-hidden="true"> x </span><span className="combat-reward-name">{name}</span></strong>
-              : <strong>{entry.amount} <span className="collectible-name">{name}</span></strong>}
+              : <strong aria-label={`${entry.amount} ${name}`}><span className="combat-reward-count">{entry.amount}</span> <span className="collectible-name">{name}</span></strong>}
             {entry.source === "duplicate_conversion" && <small>Duplicate conversion</small>}
           </article>
         );
@@ -7335,9 +7380,9 @@ function BannerNotificationView({ data, notification }: { data: AppData | null; 
         <CollectibleSprite data={data} type={notification.targetCategory} id={notification.targetId} size="xs" />
         <div className="unlock-notification-copy">
           <span className="unlock-notification-label"><ShoppingBag size={14} aria-hidden="true" /> Shop reward</span>
-          <h2>×{formatAmount(notification.granted)} <span className="collectible-name">{rewardName}</span> added</h2>
+          <h2><span className="numeric-text">×{formatAmount(notification.granted)}</span> <span className="collectible-name">{rewardName}</span> added</h2>
           {notification.discarded !== "0" && (
-            <p className="unlock-notification-detail">×{formatAmount(notification.discarded)} overflow discarded</p>
+            <p className="unlock-notification-detail"><span className="numeric-text">×{formatAmount(notification.discarded)}</span> overflow discarded</p>
           )}
         </div>
       </aside>
@@ -7350,7 +7395,7 @@ function BannerNotificationView({ data, notification }: { data: AppData | null; 
       <span className="notification-banner-icon" aria-hidden="true"><Gift size={25} /></span>
       <div className="unlock-notification-copy">
         <span className="unlock-notification-label"><Ticket size={14} aria-hidden="true" /> Promo code {notification.redemption.code}</span>
-        <h2>{rewardCount} {rewardCount === 1 ? "reward" : "rewards"} added!</h2>
+        <h2><span className="numeric-text">{rewardCount}</span> {rewardCount === 1 ? "reward" : "rewards"} added!</h2>
         {notification.redemption.playerUses !== null && (
           <p className="unlock-notification-detail">{promoClaimUsageLabel(notification.redemption)}</p>
         )}
@@ -7360,7 +7405,7 @@ function BannerNotificationView({ data, notification }: { data: AppData | null; 
 }
 
 function CostBreakdownLine({ label, breakdown }: { label: string; breakdown: ActionCostBreakdown }) {
-  return <span className="tooltip-cost-breakdown"><strong>{label}: </strong><span>{breakdown.base} (Base)</span>{breakdown.sources.map((source, index) => <strong className={source.amount < 0 ? "positive" : "negative"} key={`${source.sourceName}-${index}`}> {signedAmount(source.amount)} ({source.sourceName})</strong>)}</span>;
+  return <span className="tooltip-cost-breakdown"><strong>{label}: </strong><span className="numeric-text">{breakdown.base}</span><span> (Base)</span>{breakdown.sources.map((source, index) => <strong className={source.amount < 0 ? "positive" : "negative"} key={`${source.sourceName}-${index}`}><span className="numeric-text"> {signedAmount(source.amount)}</span> ({source.sourceName})</strong>)}</span>;
 }
 
 declare global {

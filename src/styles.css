@@ -940,6 +940,30 @@ button.catalog-card:hover,
 .collectible-detail-hero .card-name-row .asset-icon { width: 32px; height: 32px; }
 .detail-level { text-align: center; font-weight: 800; }
 .detail-xp-progress { width: 100%; max-width: none; }
+.detail-stat-grid {
+  gap: 9px;
+  margin: 18px 0 22px;
+}
+.detail-stat-grid .stat-cell {
+  min-height: 48px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgb(121 136 216 / 48%);
+  border-radius: 11px;
+  background: linear-gradient(145deg, rgb(27 34 66 / 92%), rgb(12 16 37 / 92%));
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.detail-stat-grid .stat-label {
+  color: var(--text-secondary);
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+.detail-stat-grid .stat-cell > strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 950;
+}
 .detail-section-heading { display: flex; align-items: baseline; gap: 8px; }
 .collectible-description-section { display: grid; gap: 7px; margin-top: 22px; padding: 14px 16px; border: 1px solid var(--border-soft); border-radius: 14px; background: linear-gradient(145deg, rgb(16 21 42 / 78%), rgb(8 10 24 / 58%)); }
 .collectible-description-section h3, .collectible-description-section p { margin: 0; }
@@ -1034,6 +1058,7 @@ pre {
   --success: #61dda0;
   --focus: #fff0a8;
   --font-display: Georgia, "Times New Roman", serif;
+  --font-numeric: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --radius-sm: 12px;
   --radius-md: 18px;
   --radius-lg: 24px;
@@ -1048,6 +1073,57 @@ body { background: var(--bg-deep); color: var(--text-primary); }
 button, input { color: inherit; }
 button { transition: transform var(--motion), border-color var(--motion), box-shadow var(--motion), background var(--motion), opacity var(--motion); }
 button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+.numeric-text,
+.rollcaster-level,
+.loadout-critter-level,
+.detail-level,
+.collection-progression > p,
+.point-counter,
+.inventory-count,
+.unlock-requirement,
+.equip-skill-unlock-requirement,
+.equip-ability-unlock-requirement,
+.stat-cell > strong,
+.xp-progress > p,
+.challenge-progress,
+.challenge-row > strong,
+.challenge-panel-heading > strong,
+.challenge-detail-row > strong,
+.currency-pill-amount,
+.skill-power,
+.skill-mana,
+.shop-target-id,
+.shop-entry-meta,
+.shop-purchase-quantity,
+.shop-price-cost,
+.shop-owned,
+.shop-quantity-input,
+.lootbox-shop-price,
+.lootbox-reward-progress-heading > strong,
+.promo-reward-row > strong,
+.bag-currency-amount,
+.shard-progress > p,
+.combat-die-value > strong,
+.combat-mana-value,
+.combat-level,
+.mana-roll-stat,
+.combat-mana-cost,
+.combat-xp-values,
+.combat-xp-values > small,
+.combat-xp-values > strong,
+.combat-reward-count,
+.combat-xp-identity > small,
+.combat-health-row > p,
+.dungeon-stat-grid > span > strong,
+.lootbox-reel-cell > strong,
+.lootbox-pool-preview article small,
+.dungeon-boss-position,
+.lootbox-duplicate-conversion > strong,
+.lootbox-progress-duplicate > strong {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}
 
 .app-shell {
   position: relative;
@@ -1177,10 +1253,6 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 3
 .home-layout { grid-template-columns: minmax(250px, 290px) minmax(170px, 200px) minmax(480px, 1fr); gap: 22px; }
 .rollcaster-panel { padding: 24px; }
 .portrait-button { display: grid; place-items: center; width: min(236px, 100%); padding: 0; border: 0; border-radius: var(--frame-radius); background: transparent; }
-.rollcaster-level,
-.loadout-critter-level,
-.detail-level,
-.collection-progression > p,
 .skill-title strong,
 .ability-slot strong,
 .ability-candidate > span > strong,
@@ -1230,7 +1302,8 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .loadout-critter-xp-progress { flex: 0 1 260px; width: min(260px, 100%); min-width: 0; }
 
 @container (max-width: 300px) {
-  .loadout-critter-level { flex-basis: 82px; width: 82px; font-size: 16px; }
+  .loadout-critter-level { flex-basis: 82px; width: 82px; font-size: 16px; letter-spacing: -.04em; }
+  .loadout-critter-xp-progress > p { letter-spacing: -.04em; }
 }
 
 .critter-name, .card-name-row, .collectible-name { font-family: var(--font-display); }
@@ -1358,7 +1431,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .skill-title strong { min-width: 0; overflow-wrap: normal; word-break: normal; white-space: normal; }
 .skill-title.single-word strong { overflow: hidden; white-space: nowrap; }
 .skill-title .asset-icon { flex: 0 0 auto; width: 38px; height: 38px; }
-.skill-power { grid-column: 2; grid-row: 1; align-self: center; color: var(--accent-gold); font: 900 var(--skill-meta-size)/1.1 ui-monospace, monospace; white-space: nowrap; }
+.skill-power { grid-column: 2; grid-row: 1; align-self: center; color: var(--accent-gold); font: 900 var(--skill-meta-size)/1.1 var(--font-numeric); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .skill-mana { grid-column: 2; grid-row: 2; align-self: center; display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--accent-cyan); font-size: var(--skill-meta-size); line-height: 1; font-weight: 950; }
 .skill-mana.positive, .combat-mana-cost.positive { color: var(--success); }
 .skill-mana.negative, .combat-mana-cost.negative { color: var(--danger); }
@@ -1638,11 +1711,11 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .equip-skill-option > .tooltip-anchor {
   min-width: 0;
 }
-.equip-skill-option.locked > .tooltip-anchor .skill-tile {
+.equip-skill-option.locked .skill-tile {
   filter: grayscale(.72);
   opacity: .48;
 }
-.equip-skill-option.level-locked > .equip-skill-unlock-row { opacity: .74; }
+.equip-skill-option.level-locked .equip-skill-unlock-row { opacity: .74; }
 .equip-ability-option {
   position: relative;
   display: grid;
@@ -1741,6 +1814,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .ability-candidate.equipped:not(.selected) { filter: grayscale(.75); opacity: .5; }
 .empty-state { display: grid; min-height: 180px; place-items: center; color: var(--text-secondary); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-soft); }
+.mini-grid > .tooltip-anchor { height: 100%; }
 .detail-tile { position: relative; display: grid; gap: 6px; }
 .detail-tile > span { color: var(--text-muted); font-size: 12px; }
 .detail-tile.locked .skill-tile { filter: grayscale(.82); opacity: .42; }
@@ -2227,7 +2301,7 @@ button.loadout-slot.empty .empty-relic-plus { margin: 0 auto; color: var(--accen
 .shop-quantity-control > button:first-child { border-right: 1px solid rgb(167 121 255 / 42%); }
 .shop-quantity-control > button:last-child { border-left: 1px solid rgb(167 121 255 / 42%); }
 .shop-quantity-control > button:disabled { background: rgb(27 29 53 / 88%); color: var(--text-muted); opacity: .55; text-shadow: none; }
-.shop-quantity-input { display: grid; place-items: center; width: 100%; min-width: 0; min-height: 38px; padding: 7px 2px; border: 0; background: radial-gradient(circle at 50% 35%, rgb(79 228 225 / 13%), rgb(8 10 24 / 96%) 74%); color: var(--accent-gold); font: inherit; font-size: 15px; font-weight: 950; font-variant-numeric: tabular-nums; line-height: 1.2; text-align: center; text-shadow: 0 0 10px rgb(246 194 82 / 35%); user-select: none; }
+.shop-quantity-input { display: grid; place-items: center; width: 100%; min-width: 0; min-height: 38px; padding: 7px 2px; border: 0; background: radial-gradient(circle at 50% 35%, rgb(79 228 225 / 13%), rgb(8 10 24 / 96%) 74%); color: var(--accent-gold); font: inherit; font-family: var(--font-numeric); font-size: 15px; font-weight: 950; font-variant-numeric: tabular-nums; line-height: 1.2; text-align: center; text-shadow: 0 0 10px rgb(246 194 82 / 35%); user-select: none; }
 .shop-purchase-row .shop-purchase { width: 100%; min-width: 0; }
 .lootbox-modal-purchase-row { width: min(100%, 420px); margin: 0 auto; }
 .lootbox-modal-purchase-stack { display: grid; justify-items: center; gap: 8px; width: 100%; }

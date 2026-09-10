@@ -178,7 +178,9 @@ try {
         abilityCandidateNameFont: style(".ability-candidate > span > strong").fontFamily,
         rollcasterNameFont: style(".rollcaster-panel h1.collectible-name").fontFamily,
         critterLevelFont: style(".loadout-critter-level").fontFamily,
+        critterLevelFontVariant: style(".loadout-critter-level").fontVariantNumeric,
         rollcasterLevelFont: style(".rollcaster-level").fontFamily,
+        rollcasterLevelFontVariant: style(".rollcaster-level").fontVariantNumeric,
         skillNameFont: style(".skill-title strong").fontFamily,
         statFont: style(".stat-cell").fontFamily,
         menuFont: style(".menu-button").fontFamily,
@@ -348,7 +350,10 @@ try {
       && viewport.abilitySlotBackgroundColor !== "rgba(0, 0, 0, 0)"
       && viewport.abilityList.left - viewport.rollcasterPanel.left <= 12
       && viewport.rollcasterPanel.right - viewport.abilityList.right <= 12;
-    const sharedDisplayFont = [viewport.abilityNameFont, viewport.abilityCandidateNameFont, viewport.rollcasterNameFont, viewport.critterLevelFont, viewport.rollcasterLevelFont, viewport.skillNameFont, viewport.statFont, viewport.menuFont].every((font) => font === viewport.rollcasterNameFont);
+    const sharedDisplayFont = [viewport.abilityNameFont, viewport.abilityCandidateNameFont, viewport.rollcasterNameFont, viewport.skillNameFont, viewport.statFont, viewport.menuFont].every((font) => font === viewport.rollcasterNameFont);
+    const numericLevelTypography = [viewport.critterLevelFont, viewport.rollcasterLevelFont].every((font) => font.includes("ui-monospace"))
+      && viewport.critterLevelFontVariant.includes("tabular-nums")
+      && viewport.rollcasterLevelFontVariant.includes("tabular-nums");
     const trackerIsSeparatePane = viewport.challengeTracking.top - viewport.rollcasterPanel.bottom >= 15
       && Math.abs(viewport.challengeTracking.left - viewport.rollcasterPanel.left) < .1
       && Math.abs(viewport.challengeTracking.width - viewport.rollcasterPanel.width) < .1
@@ -365,7 +370,7 @@ try {
           && Math.abs(anchor.width - expected.width) < .1
           && Math.abs(anchor.height - expected.height) < .1;
       }));
-    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && abilityGridLayout && sharedDisplayFont && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && squadLayout && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
+    return !(leftEdgesAlign && equipmentMatches && equippedRelicTreatment && compactStats && statsPlacement && scaleMatches && critterXpPosition && rollcasterXpPosition && abilityGridLayout && sharedDisplayFont && numericLevelTypography && trackerIsSeparatePane && compactMainActions && emptySquadMatchesOccupied && squadLayout && occupiedSlotsMatch && viewport.layoutColumns === expectedColumns && fillsViewport && viewport.noHorizontalOverflow);
   });
 
   const byLoadoutWidth = [...viewports].sort((a, b) => a.loadout.width - b.loadout.width);

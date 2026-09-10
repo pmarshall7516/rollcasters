@@ -64,6 +64,20 @@ try {
             <span class="effect-list effect-summary"><span class="effect-list-row"><strong>Minor Hardening:</strong> Equipped Critter gains +5 DEF.</span><span class="effect-list-row"><strong>Steady Guard:</strong> Reduces incoming damage.</span></span>
           </div>
         </section>
+        <section class="ui-test-numeric-readouts" aria-label="Numeric readouts">
+          <span class="numeric-text">42</span>
+          <span class="challenge-progress">7 / 10</span>
+          <span class="currency-pill-amount">1200</span>
+          <span class="skill-power" style="--skill-meta-size: 20px">PWR 50</span>
+          <span class="skill-mana">3</span>
+          <span class="xp-progress"><p>10 / 100 XP</p></span>
+        </section>
+        <div class="stat-grid detail-stat-grid" aria-label="Detailed critter stats">
+          <span class="stat-cell"><span class="stat-label">HP</span><strong>41</strong></span>
+          <span class="stat-cell"><span class="stat-label">ATK</span><strong>26</strong></span>
+          <span class="stat-cell"><span class="stat-label">DEF</span><strong>14</strong></span>
+          <span class="stat-cell"><span class="stat-label">SPD</span><strong>28</strong></span>
+        </div>
         <section class="collectible-description-section"><h3>Description</h3><p>A durable description section for the collectible detail popup.</p></section>
         <div style="height:260px" aria-hidden="true"></div>
       </div>
@@ -91,6 +105,24 @@ try {
       selectedSkillBorder: style(".skill-tile.selected").borderColor,
       selectedAbilityBorder: style(".ability-candidate.selected").borderColor,
       tooltipVisible: style(".def-stat > .stat-breakdown").visibility === "visible" && Number(style(".def-stat > .stat-breakdown").opacity) === 1,
+      numericTypography: [...document.querySelectorAll(".ui-test-numeric-readouts > *:not(.xp-progress), .ui-test-numeric-readouts .xp-progress > p")].map((entry) => {
+        const computed = getComputedStyle(entry);
+        return { fontFamily: computed.fontFamily, fontVariantNumeric: computed.fontVariantNumeric };
+      }),
+      detailStatPresentation: (() => {
+        const cell = document.querySelector(".detail-stat-grid .stat-cell");
+        const value = cell?.querySelector("strong");
+        if (!cell || !value) return null;
+        const cellStyle = getComputedStyle(cell);
+        const valueStyle = getComputedStyle(value);
+        return {
+          valueFontSize: Number.parseFloat(valueStyle.fontSize),
+          valueFontFamily: valueStyle.fontFamily,
+          cellPadding: cellStyle.padding,
+          cellBorderRadius: cellStyle.borderRadius,
+          cellBackgroundImage: cellStyle.backgroundImage,
+        };
+      })(),
       activeClass: document.activeElement?.className,
       focusMatches: document.querySelector(".def-stat").matches(":focus"),
       tones: { positive: style(".mana-dice-stat .positive").color, negative: style(".stat-cell .negative").color, mixed: style(".stat-cell .mixed").color },
@@ -130,10 +162,13 @@ try {
   if (result.modal.width !== 900 || result.modal.height !== 760 || !result.modal.scrollable || result.modal.scrollbarWidth !== "none") throw new Error(`Modal pane contract failed: ${JSON.stringify(result.modal)}`);
   if (result.unlockedSkillOpacity !== 1 || !result.unlockButtonOpaque || !result.unlockButtonCentered) throw new Error(`Skill detail presentation failed: ${JSON.stringify(result)}`);
   if (!result.tooltipVisible || !result.effectRowsNamed || !result.abilityRequirementsBelowCards || !result.uniformHomeStatBorders) throw new Error(`Tooltip, effect rows, ability metadata, or stat borders failed: ${JSON.stringify(result)}`);
+  if (!result.numericTypography.every(({ fontFamily, fontVariantNumeric }) => fontFamily.includes("ui-monospace") && fontVariantNumeric === "tabular-nums")) throw new Error(`Numeric readouts must use the shared monospace typography: ${JSON.stringify(result.numericTypography)}`);
+  if (!result.detailStatPresentation || result.detailStatPresentation.valueFontSize < 16 || !result.detailStatPresentation.valueFontFamily.includes("ui-monospace") || result.detailStatPresentation.cellBorderRadius === "0px" || result.detailStatPresentation.cellBackgroundImage === "none") throw new Error(`Detailed stat presentation failed: ${JSON.stringify(result.detailStatPresentation)}`);
   if (!result.skillAbilityCardsAreSolidAndMatching) throw new Error(`Skill and ability card background contract failed: ${JSON.stringify(result)}`);
   if (!result.challengeProgressRightAligned || !result.challengeActionBeforeProgress || !result.challengeActionsAligned) throw new Error(`Challenge progress alignment failed: ${JSON.stringify(result)}`);
   if (result.descriptionSection.title !== "Description" || !result.descriptionSection.text || !result.descriptionSection.visible || !result.descriptionSection.beforeBottomSpacer) throw new Error(`Collectible description section failed: ${JSON.stringify(result.descriptionSection)}`);
   if ((appSource.match(/<CollectibleDescriptionSection description=/g) ?? []).length !== 3) throw new Error("Critter, Relic, and Rollcaster detail popups must each render the shared description section.");
+  if (!appSource.includes("function SkillTooltip") || (appSource.match(/showTooltip={false}/g) ?? []).length < 2 || (appSource.match(/disabledReason={tooltipReason}/g) ?? []).length < 2) throw new Error("Skill equip and collectible detail entries must share the full skill hover tooltip, including locked-state context.");
   if (!modalSource.includes("initial?.focus({ preventScroll: true });") || !modalSource.includes("if (modal) modal.scrollTop = 0;")) throw new Error("Modal opening must focus without scrolling and reset the pane to the top.");
   const relicEquipSource = appSource.match(/} else if \(target\.type === "relic"\) \{[\s\S]*?} else if \(target\.type === "ability"\)/)?.[0] ?? "";
   if (!relicEquipSource.includes("return <GameTooltip key={relic.id} label={details}")) throw new Error("Equip Relic candidates must use the shared hover/focus tooltip.");

@@ -27,9 +27,9 @@ export function StatCell({ label, value, className = "", breakdowns = [], cost =
   );
 }
 
-export function StatGrid({ stats, compact, breakdowns = {} }: { stats: StatBlock; compact?: boolean; breakdowns?: Partial<Record<LoadoutStatKey, StatBreakdown>> }) {
+export function StatGrid({ stats, compact, breakdowns = {}, className = "" }: { stats: StatBlock; compact?: boolean; breakdowns?: Partial<Record<LoadoutStatKey, StatBreakdown>>; className?: string }) {
   return (
-    <div className={`stat-grid ${compact ? "compact" : ""}`}>
+    <div className={`stat-grid ${compact ? "compact" : ""} ${className}`.trim()}>
       <StatCell label="HP" value={<strong className={modificationTone(breakdowns.hp)}>{stats.hp}</strong>} breakdowns={breakdowns.hp ? [{ breakdown: breakdowns.hp }] : []} />
       <StatCell label="ATK" value={<strong className={modificationTone(breakdowns.atk)}>{stats.atk}</strong>} breakdowns={breakdowns.atk ? [{ breakdown: breakdowns.atk }] : []} />
       <StatCell label="DEF" value={<strong className={modificationTone(breakdowns.def)}>{stats.def}</strong>} breakdowns={breakdowns.def ? [{ breakdown: breakdowns.def }] : []} />

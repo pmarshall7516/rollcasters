@@ -100,7 +100,7 @@ check(oneResult.presentationEvents.some((event) => event.skillId === "one" && ev
 
 const singleResult = resolveCombatActions({ ...createInitialCombatState(catalog, player, dungeon, "ordinary-single"), phase: "selecting", playerMana: 0, opponentMana: 0 }, [{ actorKey: "p1", type: "skill", skillId: "single", targetKey: "o1", cost: 0 }], []);
 check(singleResult.presentationEvents.some((event) => event.skillId === "single" && event.kind === "skill" && event.animation === "attack"), "An ordinary Skill must retain its existing use animation.");
-check(singleResult.presentationEvents.some((event) => event.skillId === "single" && event.skillPhase === "summary" && event.message === "Single hit 1 time."), "An ordinary Skill must include the one-hit summary.");
+check(!singleResult.presentationEvents.some((event) => event.skillId === "single" && event.skillPhase === "summary"), "An ordinary Skill must not include a Multi-Hit hit-count summary.");
 
 const earlyKnockoutInitial = createInitialCombatState(catalog, player, dungeon, "multi-hit-target-knockout");
 const earlyKnockoutState = {

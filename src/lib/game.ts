@@ -2786,7 +2786,7 @@ function resolveAction(state: CombatState, action: CombatAction, actionContext: 
         skillId: skill.id,
         hpChanges: [],
       });
-    } else {
+    } else if (hasMultiHitDeclaration) {
       next = appendPresentationEvent(next, {
         kind: "other",
         message: `${skill.name} hit ${actualHitCount} ${actualHitCount === 1 ? "time" : "times"}.`,
