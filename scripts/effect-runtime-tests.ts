@@ -1668,11 +1668,24 @@ const grouped = groupCombatEffectRows([
   { owner_type: "skill", owner_id: "strike", id: "later", name: "Later", description: "Later.", sort_order: 8, template_id: "skill-restore-hp", runtime_kind: "restore_hp", runtime_version: 1, parameters: { value_mode: "flat", amount: 1, chance: 1, target: "self" } },
   { owner_type: "skill", owner_id: "strike", id: "first", name: "First", description: "First.", sort_order: 1, template_id: "skill-restore-hp", runtime_kind: "restore_hp", runtime_version: 1, parameters: { value_mode: "flat", amount: 1, chance: 1, target: "self" } },
   { owner_type: "relic", owner_id: "carrier", id: "first", name: "Scoped ID", description: "Scoped.", sort_order: 0, template_id: "relic-stat-modifier", runtime_kind: "stat_modifier", runtime_version: 1, parameters: { stat: "atk", value_mode: "flat", amount: 1, target: "equipped_critter" } },
-  { owner_type: "relic", owner_id: "002", id: "a597cea0-309a-4a70-9f49-bb691c38c111", name: "Lighter Roll", description: "Equipped Critter gains +1/+1 to its Mana rolls.", sort_order: 0, template_id: "relic-mana-dice-modifier", runtime_kind: "mana_dice_modifier", runtime_version: 1, parameters: { target: "equipped_critter", element_ids: [], maximum_delta: 1, minimum_delta: 1 } },
+  { owner_type: "relic", owner_id: "002", id: "a597cea0-309a-4a70-9f49-bb691c38c111", name: "Lighter Roll", description: "Equipped Critter gains +1/+1 to its Mana rolls.", sort_order: 0, template_id: "relic-mana-dice-modifier", runtime_kind: "mana_dice_modifier", runtime_version: 1, parameters: { target: "equipped_critter", element_ids: ["aqua"], maximum_delta: 1, minimum_delta: 1 } },
 ]);
 check(grouped.skill.strike.map((item) => item.id).join(",") === "first,later", "combat_effects_v1 rows must group by owner and preserve ascending sort order.");
 check(grouped.relic.carrier[0].id === "first", "Inline effect IDs may be reused by different owners without becoming shared definitions.");
-check(Array.isArray(grouped.relic["002"][0].parameters.target_element_ids) && grouped.relic["002"][0].parameters.element_ids === undefined, "Legacy element filters must normalize to explicit target Critter filters.");
+check(JSON.stringify(grouped.relic["002"][0].parameters.target_element_ids) === JSON.stringify(["aqua"]) && grouped.relic["002"][0].parameters.element_ids === undefined, "Legacy element filters must normalize to explicit target Critter filters.");
+const currentReleaseEffectRows = [
+  { owner_type: "ability" as const, owner_id: "egoist-4", id: "cc1dd498-8dd8-43c6-a203-344ef297d1e5", name: "Egoist effectiveness", description: "", sort_order: 0, template_id: "ability-effectiveness-modifier", runtime_kind: "effectiveness_modifier", runtime_version: 1, parameters: { target: "all_friendlies", direction: "dealt", tier_modifiers: [{ tier: "extra-effective", percent_delta: 0.25 }, { tier: "effective", percent_delta: 0.25 }], target_element_ids: [], target_critter_tag_ids: [] } },
+  { owner_type: "ability" as const, owner_id: "egoist-4", id: "49c10540-0057-4775-b157-577c990af1a8", name: "Egoist resistance", description: "", sort_order: 1, template_id: "ability-effectiveness-modifier", runtime_kind: "effectiveness_modifier", runtime_version: 1, parameters: { target: "all_friendlies", direction: "dealt", tier_modifiers: [{ tier: "extra-resisted", percent_delta: -0.33 }, { tier: "resisted", percent_delta: -0.33 }], target_element_ids: [], target_critter_tag_ids: [] } },
+  { owner_type: "relic" as const, owner_id: "026", id: "80a94ded-38ab-4f9c-bf29-177bc0ccfc59", name: "Tera guard", description: "", sort_order: 0, template_id: "relic-effectiveness", runtime_kind: "skill_effectiveness", runtime_version: 1, parameters: { target: "equipped_critter", direction: "received", percent_delta: -1, source_element_ids: [], target_element_ids: [], opposing_element_ids: [], source_skill_tag_ids: [], affected_skill_tag_ids: [], source_critter_tag_ids: [], target_critter_tag_ids: [], affected_skill_category: "attack", affected_skill_element_ids: ["tera"] } },
+  { owner_type: "relic" as const, owner_id: "027", id: "c8fb6776-3069-4190-82a7-597a999e239e", name: "Relic effectiveness", description: "", sort_order: 0, template_id: "relic-effectiveness-modifier", runtime_kind: "effectiveness_modifier", runtime_version: 1, parameters: { target: "equipped_critter", direction: "dealt", tier_modifiers: [{ tier: "extra-effective", percent_delta: 0.25 }, { tier: "effective", percent_delta: 0.25 }], source_element_ids: [], target_element_ids: [], source_skill_tag_ids: [], source_critter_tag_ids: [], target_critter_tag_ids: [] } },
+  { owner_type: "relic" as const, owner_id: "027", id: "07ff345d-f2f8-426b-9af8-ad34d73ab998", name: "Relic resistance", description: "", sort_order: 1, template_id: "relic-effectiveness-modifier", runtime_kind: "effectiveness_modifier", runtime_version: 1, parameters: { target: "equipped_critter", direction: "dealt", tier_modifiers: [{ tier: "extra-resisted", percent_delta: -0.33 }, { tier: "resisted", percent_delta: -0.33 }], source_element_ids: [], target_element_ids: [], source_skill_tag_ids: [], source_critter_tag_ids: [], target_critter_tag_ids: [] } },
+  { owner_type: "skill" as const, owner_id: "flora-jab", id: "0b7997e0-6188-4107-bc48-fd57128cb062", name: "Flora Jab multi-hit", description: "", sort_order: 0, template_id: "skill-multi-hit", runtime_kind: "multi_hit", runtime_version: 1, parameters: { minimum_hits: 1, maximum_hits: 3, source_skill_tag_ids: [] } },
+  { owner_type: "skill" as const, owner_id: "hot-shot", id: "179cee3b-9681-45ac-98a5-4258452dd1c3", name: "Hot Shot multi-hit", description: "", sort_order: 0, template_id: "skill-multi-hit", runtime_kind: "multi_hit", runtime_version: 1, parameters: { minimum_hits: 3, maximum_hits: 3, source_skill_tag_ids: [] } },
+  { owner_type: "skill" as const, owner_id: "sun-bathing", id: "ec1394ad-1073-40b6-ba0d-952a51fdb5eb", name: "Sun Bathing selector", description: "", sort_order: 0, template_id: "skill-weighted-child-selector", runtime_kind: "weighted_child_selector", runtime_version: 1, parameters: { outcome_rows: [{ effect_id: "936545bc-1fa3-4d85-ab1b-7ef125efe309", probability: 0.5 }, { effect_id: "46bf5425-a9cb-4ee7-9d02-7984f6c32c1a", probability: 0.5 }], source_element_ids: [], target_element_ids: [], source_skill_tag_ids: [], source_critter_tag_ids: [], target_critter_tag_ids: [] } },
+];
+let currentReleaseError: unknown;
+try { groupCombatEffectRows(currentReleaseEffectRows); } catch (error) { currentReleaseError = error; }
+check(!currentReleaseError, `Catalog 2026.09.10.1 Effect rows must load through the Game contract: ${String(currentReleaseError)}`);
 const xpBoostRows = groupCombatEffectRows([
   { owner_type: "ability", owner_id: "friendly-stat", id: "ability-xp", name: "Ability XP", description: "", sort_order: 0, template_id: "ability-critter-xp-modifier", runtime_kind: "critter_xp_modifier", runtime_version: 1, parameters: { target: "all_friendlies", distribution_mode: "shared_with_inactive", modifier_type: "percentage", modifier_value: 0.5, target_element_ids: ["bloom"], target_critter_tag_ids: [] } },
   { owner_type: "relic", owner_id: "carrier", id: "relic-xp", name: "Relic XP", description: "", sort_order: 0, template_id: "relic-critter-xp-modifier", runtime_kind: "critter_xp_modifier", runtime_version: 1, parameters: { target: "equipped_critter_allies_without_equipped", distribution_mode: "shared_with_inactive", modifier_type: "percentage", modifier_value: 0.5, target_element_ids: [], target_critter_tag_ids: [] } },
@@ -1884,7 +1897,10 @@ const passiveCatalog = makeCatalog();
 passiveCatalog.effectsByAbility = {
   "friendly-stat": [effect("ability", "friendly-stat", "friendly-stat", "stat_modifier", { stat: "def", value_mode: "percentage", amount: 0.1, target: "all_friendlies" })],
   "enemy-stat": [effect("ability", "enemy-stat", "enemy-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: -2, target: "all_enemies" })],
-  "friendly-dice": [effect("ability", "friendly-dice", "friendly-dice", "mana_dice_modifier", { minimum_delta: 1, maximum_delta: 2, target: "all_element_friendlies", target_element_ids: ["bloom"] })],
+  "friendly-dice": [
+    effect("ability", "friendly-dice", "friendly-dice", "mana_dice_modifier", { minimum_delta: 1, maximum_delta: 2, target: "all_element_friendlies", target_element_ids: ["bloom"] }),
+    effect("ability", "friendly-dice", "friendly-dice-enemies", "mana_dice_modifier", { minimum_delta: 2, maximum_delta: 3, target: "all_element_enemies", target_element_ids: ["bloom"] }),
+  ],
   "enemy-dice": [effect("ability", "enemy-dice", "enemy-dice", "mana_dice_modifier", { minimum_delta: 2, maximum_delta: 3, target: "all_element_enemies", target_element_ids: ["bloom"] })],
 };
 passiveCatalog.effectsByRelic = {
@@ -2822,7 +2838,7 @@ debuffCatalog.effectsBySkill.ritual = [
 ];
 const debuffBefore = battle(debuffCatalog, makePlayer(), "debuff-playback");
 const debuffResolved = takeTurn(debuffBefore, [{ actorKey: "p1", type: "skill", skillId: "ritual", cost: 0 }]);
-const debuffEvents = debuffResolved.presentationEvents.map((event, index) => ({
+const debuffEvents = debuffResolved.presentationEvents.filter((event) => !event.silent).map((event, index) => ({
   ...event,
   id: `debuff:${index}`,
   turn: 1,
@@ -2830,8 +2846,9 @@ const debuffEvents = debuffResolved.presentationEvents.map((event, index) => ({
   requiresAdvance: true,
 }));
 const debuffSkillEventIndex = debuffEvents.findIndex((event) => event.kind === "skill" && event.skillId === "ritual");
-const firstDebuffEvent = debuffEvents[debuffSkillEventIndex + 1];
-const secondDebuffEvent = debuffEvents[debuffSkillEventIndex + 2];
+const debuffApplicationEvents = debuffEvents.slice(debuffSkillEventIndex + 1).filter((event) => event.message.includes(" lost "));
+const firstDebuffEvent = debuffApplicationEvents[0];
+const secondDebuffEvent = debuffApplicationEvents[1];
 const firstDebuffAmount = firstDebuffEvent?.message.match(/lost −(\d+) DEF from Ritual\./)?.[1];
 const secondDebuffAmount = secondDebuffEvent?.message.match(/lost −(\d+) DEF from Ritual\./)?.[1];
 check(
@@ -2852,7 +2869,7 @@ let debuffPlayback = {
   battle: debuffBefore,
   pendingBattle: debuffResolved,
   events: debuffEvents,
-  eventCursor: debuffSkillEventIndex,
+  eventCursor: debuffEvents.findIndex((event) => event.message === firstDebuffEvent.message && event.targetKeys[0] === firstDebuffEvent.targetKeys[0]) - 1,
 } as unknown as DungeonRunState;
 debuffPlayback = advanceDungeonEvent(debuffPlayback);
 check(
@@ -3041,13 +3058,15 @@ check(
 const beforeVampire = healing.playerUnits[0].hp;
 healing = takeTurn(healing, [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 5 }]);
 check(healing.playerUnits[0].hp === beforeVampire + 3, "percent_damage_done healing must use the Skill's actual final damage and half-up percentage rounding.");
-const vampireKinds = healing.presentationEvents
+const vampirePresentation = healing.presentationEvents
   .filter((event) => event.actorKey === "p1")
-  .map((event) => event.kind)
-  .join(",");
+  .map((event) => event.kind);
+const vampireSkillIndex = vampirePresentation.indexOf("skill");
+const vampireDamageIndex = vampirePresentation.indexOf("damage");
+const vampireHealIndex = vampirePresentation.indexOf("heal");
 check(
-  vampireKinds.includes("skill,damage,heal"),
-  "Damage-drain Skills must present skill use, damage, and healing in that order.",
+  vampireSkillIndex >= 0 && vampireDamageIndex > vampireSkillIndex && vampireHealIndex > vampireDamageIndex,
+  `Damage-drain Skills must present skill use, damage, and healing in that order. Received: ${vampirePresentation.join(",")}`,
 );
 
 const draconovaCatalog = makeCatalog();
@@ -3949,8 +3968,12 @@ const multiHitCatalog = makeCatalog();
 const barrage = { ...multiHitCatalog.skills[0], id: "barrage", name: "Barrage", power: 10, mana_cost: 0 };
 multiHitCatalog.skills = [...multiHitCatalog.skills, barrage];
 multiHitCatalog.effectsBySkill.barrage = [effect("skill", "barrage", "barrage-multi", "multi_hit", { minimum_hits: 2, maximum_hits: 2 })];
+const multiHitPlayer = makePlayer();
+multiHitPlayer.skillSlots = multiHitPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: "barrage" } : slot
+));
 const barrageResult = takeTurn(
-  battle(multiHitCatalog, makePlayer(), "multi-hit-fixed"),
+  battle(multiHitCatalog, multiHitPlayer, "multi-hit-fixed"),
   [{ actorKey: "p1", type: "skill", skillId: "barrage", targetKey: "o1", cost: 0 }],
   0,
 );
@@ -3964,13 +3987,17 @@ check(
 );
 
 const zeroHitCatalog = structuredClone(multiHitCatalog);
-zeroHitCatalog.skills = [...zeroHitCatalog.skills, { ...zeroHitCatalog.skills[1], id: "zero-hit", name: "Zero Hit", skill_type: "support" as const, targeting: "single_any" as const }];
+zeroHitCatalog.skills = [...zeroHitCatalog.skills, { ...zeroHitCatalog.skills[1], id: "zero-hit", name: "Zero Hit", skill_type: "support" as const, targeting: "single_any" as const, mana_cost: 0 }];
 zeroHitCatalog.effectsBySkill["zero-hit"] = [
   effect("skill", "zero-hit", "zero-multi", "multi_hit", { minimum_hits: 0, maximum_hits: 0 }),
   effect("skill", "zero-hit", "zero-stat", "stat_modifier", { stat: "atk", value_mode: "flat", amount: -5, chance: 1, target: "targets" }),
 ];
+const zeroHitPlayer = makePlayer();
+zeroHitPlayer.skillSlots = zeroHitPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: "zero-hit" } : slot
+));
 const zeroHitResult = takeTurn(
-  battle(zeroHitCatalog, makePlayer(), "multi-hit-zero"),
+  battle(zeroHitCatalog, zeroHitPlayer, "multi-hit-zero"),
   [{ actorKey: "p1", type: "skill", skillId: "zero-hit", targetKey: "o1", cost: 0 }],
   0,
 );
@@ -3978,7 +4005,7 @@ check(zeroHitResult.opponentUnits.find((unit) => unit.key === "o1")?.stats.atk =
 check(zeroHitResult.turnEvents.some((event) => event.event_type === "skill_resolved" && event.skill_id === "zero-hit"), "A zero-hit Skill still resolves as one action.");
 
 const supportMultiHitCatalog = makeCatalog();
-const supportMultiHit = { ...supportMultiHitCatalog.skills[1], id: "support-multi", name: "Support Multi", targeting: "single_any" as const };
+const supportMultiHit = { ...supportMultiHitCatalog.skills[1], id: "support-multi", name: "Support Multi", targeting: "single_any" as const, mana_cost: 0 };
 supportMultiHitCatalog.skills = [...supportMultiHitCatalog.skills, supportMultiHit];
 supportMultiHitCatalog.rollcasterAbilities.push({ id: "support-trigger", name: "Support Trigger", description: "Support Trigger.", sort_order: 10 });
 supportMultiHitCatalog.effectsBySkill["support-multi"] = [
@@ -4003,6 +4030,9 @@ supportMultiHitCatalog.effectsByAbility["support-trigger"] = [
 ];
 const supportPlayer = makePlayer();
 supportPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, ability_id: "support-trigger" }];
+supportPlayer.skillSlots = supportPlayer.skillSlots.map((slot) => (
+  slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: "support-multi" } : slot
+));
 const supportResult = takeTurn(
   battle(supportMultiHitCatalog, supportPlayer, "multi-hit-support"),
   [{ actorKey: "p1", type: "skill", skillId: "support-multi", targetKey: "o1", cost: 0 }],
@@ -4032,18 +4062,24 @@ noDeclarationPlayer.abilitySlots = [{ user_rollcaster_id: "ur", slot_index: 1, a
 const noDeclarationResult = takeTurn(
   battle(noDeclarationCatalog, noDeclarationPlayer, "multi-hit-no-declaration"),
   [{ actorKey: "p1", type: "skill", skillId: "strike", targetKey: "o1", cost: 0 }],
-  0,
+  50,
 );
 check(noDeclarationResult.presentationEvents.filter((event) => event.kind === "damage" && event.skillId === "strike").length === 1, "A hit-count modifier must not create extra hits for a Skill without Multi-Hit.");
 
 const duplicateStatusCatalog = makeCatalog();
-duplicateStatusCatalog.skills = [...duplicateStatusCatalog.skills, { ...duplicateStatusCatalog.skills[1], id: "duplicate-status", name: "Duplicate Status", targeting: "single_any" as const }];
+duplicateStatusCatalog.skills = [...duplicateStatusCatalog.skills, { ...duplicateStatusCatalog.skills[1], id: "duplicate-status", name: "Duplicate Status", targeting: "single_any" as const, mana_cost: 0 }];
 duplicateStatusCatalog.effectsBySkill["duplicate-status"] = [
   effect("skill", "duplicate-status", "duplicate-status-multi", "multi_hit", { minimum_hits: 2, maximum_hits: 2 }),
   effect("skill", "duplicate-status", "duplicate-status-apply", "apply_status", { status_id: "finite", chance: 1, target: "targets", indefinite: true }),
 ];
 const duplicateStatusResult = takeTurn(
-  battle(duplicateStatusCatalog, makePlayer(), "multi-hit-duplicate-status"),
+  battle(duplicateStatusCatalog, (() => {
+    const player = makePlayer();
+    player.skillSlots = player.skillSlots.map((slot) => (
+      slot.user_critter_id === "up1" && slot.slot_index === 1 ? { ...slot, skill_id: "duplicate-status" } : slot
+    ));
+    return player;
+  })(), "multi-hit-duplicate-status"),
   [{ actorKey: "p1", type: "skill", skillId: "duplicate-status", targetKey: "o1", cost: 0 }],
   0,
 );

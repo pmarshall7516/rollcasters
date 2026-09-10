@@ -4782,6 +4782,7 @@ function resolveTimedEffects(state: CombatState, timing: "start_of_turn" | "end_
           if (source) next = appendHealingProgressEvent(next, target, restored, {
             sourceOwnerType: "status",
             sourceOwnerId: instance.statusId,
+            sourceCritterKey: instance.sourceCritterKey,
             sourceEffectId: effect.id,
           });
           continue;

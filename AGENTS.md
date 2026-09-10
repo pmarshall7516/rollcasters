@@ -28,6 +28,18 @@ npm test
 
 Run focused Game tests and safe browser/database checks proportional to the change. Do not publish a Catalog or Game Update unless explicitly requested.
 
+For a local desktop preview of a newly built Catalog Release, first synchronize
+the local player database to the exact release and Game version:
+
+```bash
+npm run local:player:sync -- --release <release-id> --version <game-version>
+npm run desktop:build:preview -- --release <release-id> --version <game-version>
+```
+
+The preview compatibility gate intentionally rejects a stale local release
+pointer. The sync updates only local release metadata and the compatibility
+pointer; it preserves Auth users and player state.
+
 ## Database
 
 Use the shared vault migrations and [[../rollcaster-docs/01-shared/database/migration-workflow|Migration Workflow]]. The Game migration runner is the history-aware apply path. Verify live migration history and effects before documenting application.

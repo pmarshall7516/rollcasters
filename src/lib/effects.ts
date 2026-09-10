@@ -171,6 +171,25 @@ function stringIds(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string" && id.length > 0) : [];
 }
 
+const OPTIONAL_EMPTY_SELECTOR_KEYS = [
+  "target_element_ids",
+  "source_element_ids",
+  "target_critter_tag_ids",
+  "source_critter_tag_ids",
+  "source_skill_tag_ids",
+  "affected_skill_element_ids",
+  "affected_skill_tag_ids",
+  "opposing_element_ids",
+] as const;
+
+export function normalizeOptionalEmptySelectorArrays(input: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...input };
+  for (const key of OPTIONAL_EMPTY_SELECTOR_KEYS) {
+    if (Array.isArray(normalized[key]) && normalized[key].length === 0) delete normalized[key];
+  }
+  return normalized;
+}
+
 function matchesAnyTag(tagIds: string[], required: string[]): boolean {
   return required.length === 0 || required.some((id) => tagIds.includes(id));
 }
@@ -258,7 +277,9 @@ export function normalizeEffectElementParameters(runtimeKind: string, input: Rec
 }
 
 function normalizeEffectParameters(row: CombatEffectRow): Record<string, unknown> {
-  const parameters = normalizeEffectElementParameters(row.runtime_kind, { ...requireRecord(row.parameters, `Effect ${row.id} parameters`) });
+  const parameters = normalizeOptionalEmptySelectorArrays(
+    normalizeEffectElementParameters(row.runtime_kind, { ...requireRecord(row.parameters, `Effect ${row.id} parameters`) }),
+  );
   if (row.runtime_kind === "conditional_effect") {
     const legacyTarget = typeof parameters.target === "string" ? parameters.target : undefined;
     if (parameters.effect_target === undefined && legacyTarget) parameters.effect_target = legacyTarget;

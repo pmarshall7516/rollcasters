@@ -2,6 +2,23 @@ import { createHash } from "node:crypto";
 
 export const CATALOG_SCHEMA_VERSION = 2;
 export const RUNTIME_CONTRACT_VERSION = 2;
+const OPTIONAL_EMPTY_SELECTOR_KEYS = [
+  "target_element_ids",
+  "source_element_ids",
+  "target_critter_tag_ids",
+  "source_critter_tag_ids",
+  "source_skill_tag_ids",
+  "affected_skill_element_ids",
+  "affected_skill_tag_ids",
+  "opposing_element_ids",
+];
+
+function normalizeOptionalEmptySelectorArrays(parameters) {
+  for (const key of OPTIONAL_EMPTY_SELECTOR_KEYS) {
+    if (Array.isArray(parameters[key]) && parameters[key].length === 0) delete parameters[key];
+  }
+  return parameters;
+}
 
 export function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -40,6 +57,7 @@ export function groupEffects(rows) {
       else if (row.runtime_kind !== "action_cost_modifier" && parameters.target_element_ids === undefined) parameters.target_element_ids = parameters.element_ids;
       delete parameters.element_ids;
     }
+    normalizeOptionalEmptySelectorArrays(parameters);
     const effect = {
       id: row.id,
       name: row.name,

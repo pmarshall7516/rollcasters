@@ -231,6 +231,7 @@ function eventTypeFor(challengeType: string): ChallengeEventType | null {
     deal_damage: "hp_damage_dealt",
     take_damage: "hp_damage_taken",
     use_skill: "skill_resolved",
+    skill_arsenal: "skill_resolved",
     squad_composition: "battle_completed",
     dungeon_clear: "dungeon_completed",
     resource_spending: "resource_spent",
@@ -607,10 +608,11 @@ export function applyChallengeEventIncrement(
   goal: number | bigint,
   challenge: CollectibleUnlockChallenge,
   event: ChallengeEvent,
+  dungeonOrders?: ReadonlyMap<string, number>,
 ): bigint {
   const current = safeBigInt(progress);
   const target = safeBigInt(goal);
-  const increment = BigInt(Math.max(0, Math.floor(challengeEventIncrement(challenge, event))));
+  const increment = BigInt(Math.max(0, Math.floor(challengeEventIncrement(challenge, event, dungeonOrders))));
   return increment > 0n ? (current + increment > target ? target : current + increment) : current;
 }
 
