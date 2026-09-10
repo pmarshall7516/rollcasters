@@ -10,6 +10,7 @@ import {
   sha256HexFallback,
   type CatalogPackKey,
 } from "../src/lib/catalog-release.js";
+import { assertEffectContract } from "../src/lib/effects.js";
 import type { Catalog } from "../src/lib/types.js";
 
 function check(condition: unknown, message: string): asserts condition {
@@ -142,6 +143,48 @@ const assembled = assembleCatalog([
   { schemaVersion: 1, catalogVersion: pointer.catalogVersion, pack: "dungeons", dungeons: [], dungeonOpponents: [], dungeonCompletionDrops: [], dungeonOpponentStatOverrides: [] },
 ]);
 check(Object.keys(assembled).sort().join(",") === Object.keys(emptyCatalog).sort().join(","), "Tier assembly must produce exactly one complete Catalog contract.");
+const packedEffectCatalog = assembleCatalog([
+  { schemaVersion: 1, catalogVersion: pointer.catalogVersion, pack: "core", currencies: [], elements: [], elementEffectiveness: [], starterRollcasterOptions: [], starterOptions: [], gameAssets: [] },
+  {
+    schemaVersion: 1,
+    catalogVersion: pointer.catalogVersion,
+    pack: "combat",
+    skills: [],
+    rollcasterAbilities: [],
+    relics: [],
+    statuses: [],
+    effectsBySkill: {},
+    effectsByAbility: {
+      "egoist-4": [{
+        id: "cc1dd498-8dd8-43c6-a203-344ef297d1e5",
+        name: "Bigger Benefits",
+        description: "Any Effective skills deal 25% more damage.",
+        ownerType: "ability",
+        ownerId: "egoist-4",
+        templateId: "ability-effectiveness-modifier",
+        runtimeKind: "effectiveness_modifier",
+        runtimeVersion: 1,
+        classification: "positive",
+        execution: "root",
+        parameters: {
+          target: "all_friendlies",
+          direction: "dealt",
+          tier_modifiers: [{ tier: "extra-effective", percent_delta: 0.25 }],
+          target_element_ids: [],
+          target_critter_tag_ids: [],
+        },
+        sortOrder: 0,
+      }],
+    },
+    effectsByRelic: {},
+    effectsByStatus: {},
+  },
+  { schemaVersion: 1, catalogVersion: pointer.catalogVersion, pack: "collectibles", collectibleUnlockRequirements: [], collectibleUnlockChallenges: [], shopEntries: [], lootboxes: [], lootboxPoolEntries: [], critters: [], critterProgression: [], critterSkillUnlocks: [], rollcasters: [], rollcasterProgression: [], rollcasterAbilityUnlocks: [] },
+  { schemaVersion: 1, catalogVersion: pointer.catalogVersion, pack: "dungeons", dungeons: [], dungeonOpponents: [], dungeonCompletionDrops: [], dungeonOpponentStatOverrides: [] },
+]);
+const packedEffect = packedEffectCatalog.effectsByAbility["egoist-4"]?.[0];
+check(packedEffect?.parameters.target_element_ids === undefined && packedEffect?.parameters.target_critter_tag_ids === undefined, "Immutable packed Effect parameters must normalize inert empty selector arrays before Game combat validation.");
+if (packedEffect) assertEffectContract(packedEffect, "ability");
 await expectError(() => assembleCatalog([{ schemaVersion: 1, catalogVersion: pointer.catalogVersion, pack: "core", currencies: [] }]), "Catalog release is missing");
 await expectError(() => assembleCatalog([
   { schemaVersion: 2, catalogVersion: pointer.catalogVersion, pack: "core", currencies: [], elements: [], elementEffectiveness: [], starterRollcasterOptions: [], starterOptions: [], gameAssets: [] },

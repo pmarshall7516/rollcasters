@@ -1,4 +1,5 @@
 import type { Catalog, CatalogReleaseInfo } from "./types.js";
+import { normalizeEffectElementParameters, normalizeOptionalEmptySelectorArrays } from "./effects.js";
 
 export const SUPPORTED_CATALOG_SCHEMA_VERSION = 2;
 export const CATALOG_CACHE_NAME = "rollcasters-catalog-v2";
@@ -83,6 +84,25 @@ type FetchSource = "network" | "cache";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+const EFFECT_MAP_KEYS = ["effectsBySkill", "effectsByAbility", "effectsByRelic", "effectsByStatus"] as const;
+
+function normalizePackedEffects(assembled: Record<string, unknown>): void {
+  for (const key of EFFECT_MAP_KEYS) {
+    const effectMap = assembled[key];
+    if (!isRecord(effectMap)) continue;
+    for (const [ownerId, effects] of Object.entries(effectMap)) {
+      if (!Array.isArray(effects)) continue;
+      effectMap[ownerId] = effects.map((effect) => {
+        if (!isRecord(effect) || !isRecord(effect.parameters) || typeof effect.runtimeKind !== "string") return effect;
+        const parameters = normalizeOptionalEmptySelectorArrays(
+          normalizeEffectElementParameters(effect.runtimeKind, { ...effect.parameters }),
+        );
+        return { ...effect, parameters };
+      });
+    }
+  }
 }
 
 function requiredString(record: Record<string, unknown>, key: string): string {
@@ -348,6 +368,7 @@ export function assembleCatalog(packs: readonly CatalogPack[]): Catalog {
   for (const key of CATALOG_KEYS) {
     if (!(key in assembled)) throw new Error(`Catalog release is missing ${key}.`);
   }
+  normalizePackedEffects(assembled);
   if (packs.some((pack) => pack.schemaVersion >= 2) && !("unlockChallengeTemplates" in assembled)) {
     throw new Error("Catalog schema 2 is missing unlockChallengeTemplates.");
   }
